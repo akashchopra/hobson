@@ -1216,8 +1216,46 @@
         }
         
         await this.renderRoot(itemId);
+
+        // Track recent items
+        try {
+          const item = await this.storage.get(itemId);
+          this.addToRecentItems(itemId, item.name || item.id);
+        } catch (error) {
+          // Item might not exist yet, ignore
+        }
       }
       
+      // Add item to recent items list (stored in localStorage)
+      addToRecentItems(itemId, itemName) {
+        const recent = this.getRecentItems();
+
+        // Remove if already exists (we'll re-add at end)
+        const filtered = recent.filter(item => item.id !== itemId);
+
+        // Add to end
+        filtered.push({
+          id: itemId,
+          name: itemName,
+          timestamp: Date.now()
+        });
+
+        // Keep last 20
+        const trimmed = filtered.slice(-20);
+
+        localStorage.setItem('hobson-recent-items', JSON.stringify(trimmed));
+      }
+
+      // Get recent items (most recent last)
+      getRecentItems() {
+        try {
+          const json = localStorage.getItem('hobson-recent-items');
+          return json ? JSON.parse(json) : [];
+        } catch {
+          return [];
+        }
+      }
+
       async renderRoot(itemId) {
         this.currentRoot = itemId;
         const mainView = document.getElementById("main-view");
