@@ -11,14 +11,14 @@ Hobson is a personal information management system inspired by Conway's Humane D
 No traditional build system - the project is a single HTML file (`src/hobson.html`) with embedded CSS that runs directly in the browser.
 
 - **Run:** Open `src/hobson.html` in a browser (Chrome, Firefox, Safari)
-- **Safe Mode:** Hold Shift while loading to boot kernel only (no user code items) - useful for recovery
+- **Safe Mode:** Add `?safe=1` to URL to boot kernel only (no user code items) - useful for recovery
 - **Testing:** Manual testing via the built-in REPL
 
 ## Architecture
 
 ### Core Concepts
 
-- **Item-centric data model:** Everything is an item with unified GUID structure
+- **Item-centric data model:** Everything is an item with unified item structure
 - **Type hierarchy:** Items reference types, which reference types, terminating at "atom"
 - **Code as data:** Renderers and libraries are stored as items with executable code
 - **Image-based persistence:** IndexedDB storage, browser app runs continuously
