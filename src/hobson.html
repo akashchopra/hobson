@@ -9,21 +9,46 @@
     * {
       box-sizing: border-box;
     }
-    
+
+    html, body {
+      height: 100%;
+      margin: 0;
+    }
+
     body {
       font-family: system-ui, -apple-system, sans-serif;
-      margin: 0;
       padding: 20px;
       background: #f5f5f5;
       color: #333;
+      display: flex;
+      flex-direction: column;
     }
-    
+
+    #app {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+    }
+
     #main-view {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
       background: white;
       border-radius: 8px;
       padding: 20px;
       box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-      min-height: 200px;
+      min-height: 0;
+      overflow: hidden;
+    }
+
+    /* Container view needs to be a flex child that grows */
+    .container-view {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
     }
     
     .json-view {
@@ -155,24 +180,18 @@
       background: #f0f0f0;
     }
     
-    /* REPL - Improved */
+    /* REPL - Separate Screen */
     #repl-container {
-      margin-top: 20px;
-      border-top: 2px solid #ddd;
-      padding-top: 20px;
-    }
-    
-    #repl-container.fullscreen {
-      position: fixed;
-      top: 0;
-      left: 0;
-      right: 0;
-      bottom: 0;
-      z-index: 1000;
-      background: white;
-      margin: 0;
+      display: none;
       padding: 20px;
-      border-top: none;
+    }
+
+    #repl-container.visible {
+      display: block;
+    }
+
+    #main-view.repl-active {
+      display: none;
     }
     
     .repl-header {
@@ -206,7 +225,7 @@
     
     #repl-input {
       width: 100%;
-      min-height: 120px;
+      min-height: 200px;
       font-family: 'SF Mono', Monaco, Menlo, 'Courier New', monospace;
       font-size: 13px;
       line-height: 1.5;
@@ -216,10 +235,6 @@
       resize: vertical;
       tab-size: 2;
       -moz-tab-size: 2;
-    }
-    
-    #repl-container.fullscreen #repl-input {
-      min-height: 300px;
     }
     
     .repl-actions {
@@ -469,7 +484,7 @@
               
               // Canvas area for positioned children
               const canvas = api.createElement('div', {
-                style: 'position: relative; min-height: 500px; background: white; border: 1px solid #ccc; border-radius: 4px;'
+                style: 'position: relative; flex: 1; min-height: 0; background: white; border: 1px solid #ccc; border-radius: 4px; overflow: auto;'
               }, []);
               
               const children = item.children || [];
@@ -1143,15 +1158,15 @@
       
       async boot() {
         console.log("Kernel booting...");
-        
+
         // Initialize storage
         await this.storage.initialize();
         console.log("Storage initialized");
-        
+
         // Ensure seed items exist
         await this.ensureSeedItems();
         console.log("Seed items verified");
-        
+
         // Check for safe mode via URL parameter (?safe=1)
         const params = new URLSearchParams(window.location.search);
         if (params.get("safe") === "1") {
@@ -1160,13 +1175,125 @@
           this.renderSafeMode();
           return;
         }
-        
+
         // Set up browser history handling
         this.setupHistoryHandling();
-        
-        // Get root from URL and render
-        const rootId = this.getRootFromURL();
-        await this.navigateToItem(rootId, false); // false = don't push to history
+
+        // Set up keyboard shortcuts
+        this.setupKeyboardShortcuts();
+
+        // Create REPL overlay (once, appended to body)
+        this.initREPL();
+
+        // Get root from URL, or last location, or show nothing
+        const rootId = await this.getStartingRoot();
+        if (rootId) {
+          await this.navigateToItem(rootId, false); // false = don't push to history
+        } else {
+          // Show minimal UI with no item
+          await this.renderEmptyState();
+        }
+      }
+
+      setupKeyboardShortcuts() {
+        document.addEventListener("keydown", (e) => {
+          // Ctrl+` or Cmd+` to toggle REPL
+          if ((e.ctrlKey || e.metaKey) && e.key === "`") {
+            e.preventDefault();
+            this.toggleREPL();
+          }
+          // Escape to close REPL
+          if (e.key === "Escape") {
+            const repl = document.getElementById("repl-container");
+            if (repl && repl.classList.contains("visible")) {
+              this.toggleREPL();
+            }
+          }
+        });
+      }
+
+      initREPL() {
+        // Create REPL once and append to body as an overlay
+        const repl = this.createREPL();
+        document.body.appendChild(repl);
+      }
+
+      toggleREPL() {
+        const repl = document.getElementById("repl-container");
+        const mainView = document.getElementById("main-view");
+        if (repl && mainView) {
+          const isVisible = repl.classList.contains("visible");
+          if (isVisible) {
+            // Hide REPL, show main view
+            repl.classList.remove("visible");
+            mainView.classList.remove("repl-active");
+          } else {
+            // Show REPL, hide main view
+            repl.classList.add("visible");
+            mainView.classList.add("repl-active");
+            // Focus the input when showing
+            const input = document.getElementById("repl-input");
+            if (input) input.focus();
+          }
+        }
+      }
+
+      async getStartingRoot() {
+        const params = new URLSearchParams(window.location.search);
+
+        // URL parameter takes precedence
+        const urlRoot = params.get("root");
+        if (urlRoot) {
+          // Verify the item exists
+          try {
+            await this.storage.get(urlRoot);
+            return urlRoot;
+          } catch {
+            console.warn(`URL root ${urlRoot} not found`);
+          }
+        }
+
+        // Try to get last location from preferences
+        try {
+          const lastLocation = localStorage.getItem("hobson-last-location");
+          if (lastLocation) {
+            // Verify the item still exists
+            await this.storage.get(lastLocation);
+            return lastLocation;
+          }
+        } catch {
+          console.warn("Last location not found, clearing preference");
+          localStorage.removeItem("hobson-last-location");
+        }
+
+        // No valid location found - return null to show empty state
+        return null;
+      }
+
+      saveLastLocation(itemId) {
+        // Don't save workspace as last location (it's the fallback)
+        if (itemId && itemId !== IDS.WORKSPACE) {
+          localStorage.setItem("hobson-last-location", itemId);
+        }
+      }
+
+      async renderEmptyState() {
+        const mainView = document.getElementById("main-view");
+        mainView.innerHTML = "";
+
+        // Add navigation bar with no current item
+        const navBar = this.createNavBar(null);
+        mainView.appendChild(navBar);
+
+        // Empty state message
+        const emptyState = document.createElement("div");
+        emptyState.style.cssText = "padding: 60px 20px; text-align: center; color: #666;";
+        emptyState.innerHTML = `
+          <h2 style="margin: 0 0 15px 0; color: #333;">Welcome to Hobson</h2>
+          <p style="margin: 0 0 20px 0;">No item selected. Use "All Items" to browse or create a new item.</p>
+          <p style="margin: 0; font-size: 13px; color: #999;">Press Ctrl+\` to open the REPL</p>
+        `;
+        mainView.appendChild(emptyState);
       }
       
       async ensureSeedItems() {
@@ -1210,13 +1337,17 @@
       
       getRootFromURL() {
         const params = new URLSearchParams(window.location.search);
-        return params.get("root") || IDS.WORKSPACE;
+        return params.get("root") || null;
       }
-      
+
       setupHistoryHandling() {
         window.addEventListener("popstate", async () => {
           const rootId = this.getRootFromURL();
-          await this.renderRoot(rootId);
+          if (rootId) {
+            await this.renderRoot(rootId);
+          } else {
+            await this.renderEmptyState();
+          }
         });
       }
       
@@ -1230,8 +1361,11 @@
           url.searchParams.set("root", itemId);
           window.history.pushState({ itemId }, "", url);
         }
-        
+
         await this.renderRoot(itemId);
+
+        // Save as last location for next launch
+        this.saveLastLocation(itemId);
 
         // Track recent items
         try {
@@ -1275,7 +1409,7 @@
       async renderRoot(itemId) {
         this.currentRoot = itemId;
         const mainView = document.getElementById("main-view");
-        
+
         // Save scroll positions before re-rendering (keyed by item ID)
         const scrollStates = new Map();
         const windows = mainView.querySelectorAll('[data-item-id]');
@@ -1289,18 +1423,18 @@
             });
           }
         });
-        
+
         try {
           const domNode = await this.renderItem(itemId);
           mainView.innerHTML = "";
-          
+
           // Add navigation bar
           const navBar = this.createNavBar(itemId);
           mainView.appendChild(navBar);
-          
+
           // Add rendered content
           mainView.appendChild(domNode);
-          
+
           // Restore scroll positions after re-render
           // Use setTimeout to ensure DOM is fully rendered
           setTimeout(() => {
@@ -1317,11 +1451,7 @@
               }
             });
           }, 0);
-          
-          // Add REPL
-          const repl = this.createREPL();
-          mainView.appendChild(repl);
-          
+
         } catch (error) {
           console.error("Render error:", error);
           mainView.innerHTML = "";
@@ -1332,32 +1462,26 @@
       createNavBar(currentItemId) {
         const nav = document.createElement("div");
         nav.className = "nav-bar";
-        
-        // Home button
-        const homeBtn = document.createElement("button");
-        homeBtn.textContent = "Workspace";
-        homeBtn.onclick = () => this.navigateToItem(IDS.WORKSPACE);
-        nav.appendChild(homeBtn);
-        
+
         // List all items button
         const listBtn = document.createElement("button");
         listBtn.textContent = "All Items";
         listBtn.onclick = () => this.showItemList();
         nav.appendChild(listBtn);
-        
+
         // New item button
         const newBtn = document.createElement("button");
         newBtn.textContent = "New Item";
         newBtn.onclick = () => this.createNewItem();
         nav.appendChild(newBtn);
-        
+
         // Edit current button
         if (currentItemId) {
           const editBtn = document.createElement("button");
           editBtn.textContent = "Edit Current";
           editBtn.onclick = () => this.editItemRaw(currentItemId);
           nav.appendChild(editBtn);
-          
+
           // Copy ID button
           const copyIdBtn = document.createElement("button");
           copyIdBtn.textContent = "Copy ID";
@@ -1367,7 +1491,7 @@
             setTimeout(() => copyIdBtn.textContent = "Copy ID", 1000);
           };
           nav.appendChild(copyIdBtn);
-          
+
           // Delete current button (but not for seed items)
           const isSeedItem = Object.values(IDS).includes(currentItemId);
           if (!isSeedItem) {
@@ -1378,7 +1502,15 @@
             nav.appendChild(deleteBtn);
           }
         }
-        
+
+        // REPL toggle button (right side)
+        const replBtn = document.createElement("button");
+        replBtn.textContent = "REPL";
+        replBtn.title = "Toggle REPL (Ctrl+`)";
+        replBtn.style.marginLeft = "auto";
+        replBtn.onclick = () => this.toggleREPL();
+        nav.appendChild(replBtn);
+
         return nav;
       }
       
@@ -2027,28 +2159,18 @@
       createREPL() {
         const container = document.createElement("div");
         container.id = "repl-container";
-        
+
         // Header with controls
         const header = document.createElement("div");
         header.className = "repl-header";
-        
+
         const heading = document.createElement("h3");
         heading.textContent = "REPL";
         header.appendChild(heading);
-        
+
         const controls = document.createElement("div");
         controls.className = "repl-controls";
-        
-        const fullscreenBtn = document.createElement("button");
-        fullscreenBtn.textContent = "Fullscreen";
-        fullscreenBtn.onclick = () => {
-          container.classList.toggle("fullscreen");
-          fullscreenBtn.textContent = container.classList.contains("fullscreen") 
-            ? "Exit Fullscreen"
-            : "Fullscreen";
-        };
-        controls.appendChild(fullscreenBtn);
-        
+
         const clearBtn = document.createElement("button");
         clearBtn.textContent = "Clear Transcript";
         clearBtn.onclick = () => {
@@ -2056,14 +2178,19 @@
           localStorage.setItem("repl-transcript", JSON.stringify([]));
         };
         controls.appendChild(clearBtn);
-        
+
+        const closeBtn = document.createElement("button");
+        closeBtn.textContent = "Close";
+        closeBtn.onclick = () => this.toggleREPL();
+        controls.appendChild(closeBtn);
+
         header.appendChild(controls);
         container.appendChild(header);
-        
+
         // Input area
         const input = document.createElement("textarea");
         input.id = "repl-input";
-        input.placeholder = "Enter JavaScript... (api object is available)\nUse 'return' to see expression values\n\nCtrl+Enter to run\nUp/Down for history";
+        input.placeholder = "Enter JavaScript... (api object is available)\nUse 'return' to see expression values\n\nCtrl+Enter to run | Escape to close | Up/Down for history";
         input.spellcheck = false;
         container.appendChild(input);
         
