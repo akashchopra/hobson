@@ -52,12 +52,12 @@ Editor items contain declarative UI hints:
       id: { hidden: true },
       type: { hidden: true },
       created: { readonly: true, label: "Created" },
-      "content.title": { 
+      "content.title": {
         editor: "text",
         label: "Title",
         placeholder: "Untitled"
       },
-      "content.body": {
+      "content.description": {
         editor: "markdown",
         label: "Content"
       },

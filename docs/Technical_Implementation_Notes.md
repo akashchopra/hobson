@@ -614,7 +614,7 @@ async require(itemId, callStack = new Set()) {
         // Build UI
         return api.h("div", { class: "note" }, [
           api.h("h1", {}, [item.content.title]),
-          api.h("div", { class: "content" }, [item.content.body]),
+          api.h("div", { class: "content" }, [item.content.description]),
           api.h("div", { class: "related" }, [
             api.h("h2", {}, ["Related Items"]),
             ...related.map(r => renderRelatedItem(r))

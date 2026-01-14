@@ -59,7 +59,7 @@ A renderer is a code item that displays an item of a particular type. Renderers:
         // Return DOM node displaying the item
         return api.createElement('div', {}, [
           ['h1', {}, [item.content.title]],
-          ['div', {}, [item.content.body]]
+          ['div', {}, [item.content.description]]
         ]);
       }
     `
@@ -155,14 +155,14 @@ For most types, editors are **specification items** containing UI hints:
       type: { hidden: true },
       created: { readonly: true, label: "Created" },
       modified: { readonly: true, label: "Last Modified" },
-      "content.title": { 
-        editor: "text", 
+      "content.title": {
+        editor: "text",
         label: "Title",
         placeholder: "Untitled Note"
       },
-      "content.body": { 
-        editor: "markdown", 
-        label: "Content" 
+      "content.description": {
+        editor: "markdown",
+        label: "Content"
       },
       "content.tags": { 
         editor: "tag_selector",
