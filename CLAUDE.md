@@ -86,6 +86,10 @@ children: [{ id: "item-1", x: 20, y: 20, width: 400, height: 300, z: 0 }]
 - **Known friction:** Code item creation via REPL requires multi-level string escaping (use JSON editor as workaround)
 - **Navigation pain point:** Finding previously created items is difficult - address if blocking progress
 
+## REPL Script Files
+
+When producing REPL script files, do *not* place them in /tmp. Instead *always* place them in `src\REPL Scripts`. This is very important!
+
 ## Open Design Tension
 
 **REPL-first vs UI-first** remains unresolved:
