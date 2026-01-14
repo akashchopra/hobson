@@ -73,6 +73,11 @@ children: [{ id: "item-1", x: 20, y: 20, width: 400, height: 300, z: 0 }]
 - `docs/PROJECT_MEMORY.md` - User preferences and working context
 - `docs/Code_Items.md` - Catalog of in-system code items
 
+## Key Source Files
+
+- `src\hobson.html` - The application code.
+- `src\item_backup.json` - The most recent dump of all the items in the database. Useful for looking up code items - more up to date than `docs/Code_Items.md`.
+
 ## Working Style Context
 
 - **Critique first, implement second** - Discuss trade-offs before coding
