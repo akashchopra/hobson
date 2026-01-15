@@ -69,8 +69,11 @@ export function getTagColor(tagNode) {
 
 // Create the library item
 const library = {
+  id: crypto.randomUUID(),
   name: 'tag_tree_builder',
   type: api.IDS.LIBRARY,
+  created: Date.now(),
+  modified: Date.now(),
   children: [],
   content: {
     description: 'Shared library for building hierarchical tag trees from flat tag lists',

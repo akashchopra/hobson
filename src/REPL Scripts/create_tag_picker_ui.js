@@ -266,8 +266,11 @@ export function renderTagBrowser(config, api) {
 
 // Create the library item
 const library = {
+  id: crypto.randomUUID(),
   name: 'tag_picker_ui',
   type: api.IDS.LIBRARY,
+  created: Date.now(),
+  modified: Date.now(),
   children: [],
   content: {
     description: 'Shared UI components for tag picker and tag browser',
