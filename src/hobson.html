@@ -40,7 +40,7 @@
       padding: 20px;
       box-shadow: 0 2px 4px rgba(0,0,0,0.1);
       min-height: 0;
-      overflow: hidden;
+      overflow: auto;
     }
 
     /* Container view needs to be a flex child that grows */
@@ -974,6 +974,20 @@
           title: "Workspace",
           description: "Default starting point. Add items here or navigate elsewhere."
         }
+      },
+
+      // 11. system:preferences - system preferences
+      {
+        id: "00000000-0000-0000-0000-00000000000a",
+        name: "system:preferences",
+        type: "00000000-0000-0000-0000-000000000000",
+        created: 0,
+        modified: 0,
+        children: [],
+        content: {
+          description: "System preferences and settings",
+          lastLocation: null
+        }
       }
     ];
     
@@ -988,7 +1002,8 @@
       WORKSPACE: "00000000-0000-0000-0000-000000000006",
       CONTAINER: "00000000-0000-0000-0000-000000000007",
       CONTAINER_RENDERER: "00000000-0000-0000-0000-000000000008",
-      TAG: "00000000-0000-0000-0000-000000000009"
+      TAG: "00000000-0000-0000-0000-000000000009",
+      PREFERENCES: "00000000-0000-0000-0000-00000000000a"
     };
 
     // =============================================================================
@@ -1253,27 +1268,40 @@
           }
         }
 
-        // Try to get last location from preferences
+        // Try to get last location from preferences item
         try {
-          const lastLocation = localStorage.getItem("hobson-last-location");
+          const prefs = await this.storage.get(IDS.PREFERENCES);
+          const lastLocation = prefs.content.lastLocation;
           if (lastLocation) {
             // Verify the item still exists
             await this.storage.get(lastLocation);
             return lastLocation;
           }
-        } catch {
-          console.warn("Last location not found, clearing preference");
-          localStorage.removeItem("hobson-last-location");
+        } catch (error) {
+          console.warn("Could not load last location from preferences:", error.message);
         }
 
         // No valid location found - return null to show empty state
         return null;
       }
 
-      saveLastLocation(itemId) {
+      async saveLastLocation(itemId) {
         // Don't save workspace as last location (it's the fallback)
         if (itemId && itemId !== IDS.WORKSPACE) {
-          localStorage.setItem("hobson-last-location", itemId);
+          try {
+            const prefs = await this.storage.get(IDS.PREFERENCES);
+            const updated = {
+              ...prefs,
+              content: {
+                ...prefs.content,
+                lastLocation: itemId
+              },
+              modified: Date.now()
+            };
+            await this._rawSet(updated);
+          } catch (error) {
+            console.warn("Could not save last location to preferences:", error.message);
+          }
         }
       }
 
