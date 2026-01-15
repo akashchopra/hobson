@@ -79,7 +79,22 @@
       overflow-x: auto;
       font-size: 12px;
     }
-    
+
+    /* Selection indicator */
+    [data-item-id] {
+      cursor: pointer;
+    }
+
+    [data-item-id].item-selected {
+      outline: 2px solid #007bff;
+      outline-offset: 2px;
+    }
+
+    [data-item-id]:focus {
+      outline: 2px solid #007bff;
+      outline-offset: 2px;
+    }
+
     /* Safe Mode Styles */
     #safe-mode {
       max-width: 800px;
@@ -1336,6 +1351,9 @@
         // Set up keyboard shortcuts
         this.setupKeyboardShortcuts();
 
+        // Set up selection handling
+        this.setupSelectionHandling();
+
         // Create REPL overlay (once, appended to body)
         this.initREPL();
 
@@ -1356,14 +1374,67 @@
             e.preventDefault();
             this.toggleREPL();
           }
-          // Escape to close REPL
+          // Escape to close REPL or clear selection
           if (e.key === "Escape") {
             const repl = document.getElementById("repl-container");
             if (repl && repl.classList.contains("visible")) {
               this.toggleREPL();
+            } else {
+              // Clear selection on Escape
+              this.clearSelection();
             }
           }
         });
+      }
+
+      setupSelectionHandling() {
+        document.addEventListener("click", (e) => {
+          // Don't handle selection in REPL or nav bar
+          if (e.target.closest("#repl-container") || e.target.closest(".nav-bar")) {
+            return;
+          }
+
+          // Find closest element with data-item-id
+          const itemElement = e.target.closest("[data-item-id]");
+
+          if (itemElement) {
+            const itemId = itemElement.getAttribute("data-item-id");
+            this.selectItem(itemId);
+            e.stopPropagation();
+          } else {
+            // Clicked outside any item - clear selection
+            this.clearSelection();
+          }
+        });
+      }
+
+      selectItem(itemId) {
+        // Update viewport state
+        this.viewport.select(itemId);
+
+        // Update visual indicator
+        this.updateSelectionVisual();
+      }
+
+      clearSelection() {
+        this.viewport.clearSelection();
+        this.updateSelectionVisual();
+      }
+
+      updateSelectionVisual() {
+        // Remove selection from all items
+        document.querySelectorAll("[data-item-id].item-selected").forEach(el => {
+          el.classList.remove("item-selected");
+        });
+
+        // Add selection to currently selected item
+        const selectedId = this.viewport.getSelection();
+        if (selectedId) {
+          const selectedElement = document.querySelector(`[data-item-id="${selectedId}"]`);
+          if (selectedElement) {
+            selectedElement.classList.add("item-selected");
+          }
+        }
       }
 
       initREPL() {
@@ -1602,8 +1673,12 @@
           const navBar = this.createNavBar(itemId);
           mainView.appendChild(navBar);
 
-          // Add rendered content
-          mainView.appendChild(domNode);
+          // Wrap rendered content with data-item-id for selection
+          const wrapper = document.createElement("div");
+          wrapper.setAttribute("data-item-id", itemId);
+          wrapper.style.cssText = "flex: 1; display: flex; flex-direction: column; min-height: 0;";
+          wrapper.appendChild(domNode);
+          mainView.appendChild(wrapper);
 
           // Restore scroll positions after re-render
           // Use setTimeout to ensure DOM is fully rendered
