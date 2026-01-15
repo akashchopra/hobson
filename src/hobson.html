@@ -1038,6 +1038,20 @@
           description: "System preferences and settings",
           lastLocation: null
         }
+      },
+
+      // 12. viewport - system-level container for view state
+      {
+        id: "00000000-0000-0000-0000-00000000000b",
+        name: "system:viewport",
+        type: "00000000-0000-0000-0000-000000000007", // container
+        created: 0,
+        modified: 0,
+        children: [], // Will hold { id: rootId, renderer?: rendererId }
+        content: {
+          description: "System viewport container. Manages view state for the current root item.",
+          system: true
+        }
       }
     ];
     
@@ -1053,7 +1067,8 @@
       CONTAINER: "00000000-0000-0000-0000-000000000007",
       CONTAINER_RENDERER: "00000000-0000-0000-0000-000000000008",
       TAG: "00000000-0000-0000-0000-000000000009",
-      PREFERENCES: "00000000-0000-0000-0000-00000000000a"
+      PREFERENCES: "00000000-0000-0000-0000-00000000000a",
+      VIEWPORT: "00000000-0000-0000-0000-00000000000b"
     };
 
     // =============================================================================
@@ -1206,15 +1221,84 @@
     }
 
     // =============================================================================
+    // VIEWPORT - View state management
+    // =============================================================================
+
+    class Viewport {
+      constructor(storage) {
+        this.storage = storage;
+        this.rootId = null;           // Currently viewed root item
+        this.rootRendererId = null;   // Renderer override for root (cached)
+        this.selectedItemId = null;   // Currently selected item (runtime only)
+      }
+
+      // Set the current root item (runtime only - call persist() to save)
+      setRoot(itemId) {
+        this.rootId = itemId;
+        this.selectedItemId = null; // Clear selection when navigating
+      }
+
+      // Get renderer override for current root
+      getRootRenderer() {
+        return this.rootRendererId;
+      }
+
+      // Set renderer override for current root (call persist() to save)
+      setRootRenderer(rendererId) {
+        this.rootRendererId = rendererId;
+      }
+
+      // Select an item (runtime state only, not persisted)
+      select(itemId) {
+        this.selectedItemId = itemId;
+      }
+
+      // Clear selection
+      clearSelection() {
+        this.selectedItemId = null;
+      }
+
+      // Get currently selected item
+      getSelection() {
+        return this.selectedItemId;
+      }
+
+      // Persist current state to viewport item
+      async persist() {
+        const viewport = await this.storage.get(IDS.VIEWPORT);
+        viewport.children = this.rootId
+          ? [{ id: this.rootId, renderer: this.rootRendererId }]
+          : [];
+        viewport.modified = Date.now();
+        await this.storage.set(viewport);
+      }
+
+      // Restore state from persisted viewport item
+      async restore() {
+        const viewport = await this.storage.get(IDS.VIEWPORT);
+        const child = viewport.children[0];
+        if (child) {
+          this.rootId = child.id;
+          this.rootRendererId = child.renderer || null;
+        }
+      }
+    }
+
+    // =============================================================================
     // KERNEL - Core runtime
     // =============================================================================
-    
+
     class Kernel {
       constructor() {
         this.storage = new ItemStorage();
         this.moduleCache = new Map(); // itemId -> { module, timestamp }
-        this.currentRoot = null;
+        this.viewport = null; // Initialized after storage
         this._safeMode = false;
+      }
+
+      // Getter for backwards compatibility
+      get currentRoot() {
+        return this.viewport?.rootId || null;
       }
       
       // -------------------------------------------------------------------------
@@ -1231,6 +1315,11 @@
         // Ensure seed items exist
         await this.ensureSeedItems();
         console.log("Seed items verified");
+
+        // Initialize viewport
+        this.viewport = new Viewport(this.storage);
+        await this.viewport.restore();
+        console.log("Viewport initialized");
 
         // Check for safe mode via URL parameter (?safe=1)
         const params = new URLSearchParams(window.location.search);
@@ -1442,6 +1531,9 @@
 
         await this.renderRoot(itemId);
 
+        // Persist viewport state
+        await this.viewport.persist();
+
         // Save as last location for next launch
         await this.saveLastLocation(itemId);
 
@@ -1485,7 +1577,7 @@
       }
 
       async renderRoot(itemId) {
-        this.currentRoot = itemId;
+        this.viewport.setRoot(itemId);
         const mainView = document.getElementById("main-view");
 
         // Save scroll positions before re-rendering (keyed by item ID)
@@ -1801,7 +1893,20 @@
           createREPLContext: () => kernel.createREPLAPI(),
 
           // Well-known IDs
-          IDS
+          IDS,
+
+          // Viewport API for view state management
+          viewport: {
+            select: (itemId) => kernel.viewport.select(itemId),
+            clearSelection: () => kernel.viewport.clearSelection(),
+            getSelection: () => kernel.viewport.getSelection(),
+            getRoot: () => kernel.viewport.rootId,
+            getRootRenderer: () => kernel.viewport.getRootRenderer(),
+            setRootRenderer: async (rendererId) => {
+              kernel.viewport.setRootRenderer(rendererId);
+              await kernel.viewport.persist();
+            }
+          }
         };
 
         return api;
@@ -2806,10 +2911,18 @@ HELPERS:
   helpers.recoverDeleted(index)
   helpers.clearDeleted()
 
+VIEWPORT:
+  viewport.select(id)       - Select an item
+  viewport.clearSelection() - Clear selection
+  viewport.getSelection()   - Get selected item ID
+  viewport.getRoot()        - Get current root item ID
+  viewport.getRootRenderer() - Get renderer override for root
+  viewport.setRootRenderer(id) - Set renderer override for root
+
 CONSTANTS:
   IDS.ATOM, IDS.TYPE_DEFINITION, IDS.CODE, IDS.RENDERER,
   IDS.LIBRARY, IDS.DEFAULT_RENDERER, IDS.WORKSPACE,
-  IDS.CONTAINER, IDS.CONTAINER_RENDERER
+  IDS.CONTAINER, IDS.CONTAINER_RENDERER, IDS.VIEWPORT
 
 Type api.help('methodName') for details on a specific method.`;
             }
@@ -3018,6 +3131,7 @@ Constants for seed items:
   IDS.WORKSPACE         - Default root container
   IDS.CONTAINER         - Container type
   IDS.CONTAINER_RENDERER - Container renderer
+  IDS.VIEWPORT          - System viewport container
 
 Example:
   await api.navigate(api.IDS.WORKSPACE)`
@@ -3034,10 +3148,23 @@ Example:
           createREPLContext: () => kernel.createREPLAPI(),
 
           // Well-known IDs
-          IDS
+          IDS,
+
+          // Viewport API for view state management
+          viewport: {
+            select: (itemId) => kernel.viewport.select(itemId),
+            clearSelection: () => kernel.viewport.clearSelection(),
+            getSelection: () => kernel.viewport.getSelection(),
+            getRoot: () => kernel.viewport.rootId,
+            getRootRenderer: () => kernel.viewport.getRootRenderer(),
+            setRootRenderer: async (rendererId) => {
+              kernel.viewport.setRootRenderer(rendererId);
+              await kernel.viewport.persist();
+            }
+          }
         };
       }
-      
+
       // -------------------------------------------------------------------------
       // Safe Mode
       // -------------------------------------------------------------------------
