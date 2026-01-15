@@ -183,11 +183,18 @@
     /* REPL - Separate Screen */
     #repl-container {
       display: none;
-      padding: 20px;
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      flex-direction: column;
+      overflow: hidden;
+      background: white;
     }
 
     #repl-container.visible {
-      display: block;
+      display: flex;
     }
 
     #main-view.repl-active {
@@ -198,9 +205,12 @@
       display: flex;
       justify-content: space-between;
       align-items: center;
-      margin-bottom: 15px;
+      padding: 15px 20px;
+      background: white;
+      border-bottom: 1px solid #eee;
+      flex-shrink: 0;
     }
-    
+
     .repl-header h3 {
       margin: 0;
     }
@@ -223,25 +233,44 @@
       background: #f0f0f0;
     }
     
+    .repl-input-panel {
+      display: flex;
+      flex-direction: column;
+      flex: 1;
+      min-height: 0;
+      overflow: hidden;
+    }
+
+    .repl-input-scroll {
+      flex: 1;
+      overflow-y: auto;
+      padding: 20px;
+    }
+
     #repl-input {
       width: 100%;
-      min-height: 200px;
+      height: 100%;
+      min-height: 150px;
       font-family: 'SF Mono', Monaco, Menlo, 'Courier New', monospace;
       font-size: 13px;
       line-height: 1.5;
       padding: 12px;
       border: 1px solid #ccc;
       border-radius: 4px;
-      resize: vertical;
+      resize: none;
       tab-size: 2;
       -moz-tab-size: 2;
+      box-sizing: border-box;
     }
     
     .repl-actions {
       display: flex;
       gap: 10px;
-      margin-top: 10px;
+      padding: 15px 20px;
       align-items: center;
+      background: white;
+      border-top: 1px solid #eee;
+      flex-shrink: 0;
     }
     
     .repl-actions button {
@@ -273,16 +302,68 @@
       color: #999;
     }
     
-    #repl-transcript {
-      margin-top: 20px;
-      border-top: 1px solid #eee;
-      padding-top: 15px;
+    .repl-splitter {
+      height: 6px;
+      background: #e0e0e0;
+      cursor: row-resize;
+      flex-shrink: 0;
+      position: relative;
     }
-    
-    #repl-transcript h4 {
-      margin: 0 0 10px 0;
+
+    .repl-splitter:hover {
+      background: #d0d0d0;
+    }
+
+    .repl-splitter::after {
+      content: '';
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 40px;
+      height: 3px;
+      background: #999;
+      border-radius: 2px;
+    }
+
+    .repl-transcript-panel {
+      display: flex;
+      flex-direction: column;
+      flex: 1;
+      min-height: 0;
+      overflow: hidden;
+    }
+
+    #repl-transcript {
+      flex: 1;
+      overflow-y: auto;
+      padding: 20px;
+    }
+
+    .repl-transcript-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 15px;
+    }
+
+    .repl-transcript-header h4 {
+      margin: 0;
       font-size: 14px;
       color: #666;
+    }
+
+    .repl-transcript-header button {
+      padding: 4px 10px;
+      font-size: 12px;
+      cursor: pointer;
+      border: 1px solid #ccc;
+      background: white;
+      border-radius: 4px;
+    }
+
+    .repl-transcript-header button:hover {
+      background: #f0f0f0;
     }
     
     .repl-entry {
@@ -2176,14 +2257,6 @@
         const controls = document.createElement("div");
         controls.className = "repl-controls";
 
-        const clearBtn = document.createElement("button");
-        clearBtn.textContent = "Clear Transcript";
-        clearBtn.onclick = () => {
-          document.getElementById("repl-transcript-entries").innerHTML = "";
-          localStorage.setItem("repl-transcript", JSON.stringify([]));
-        };
-        controls.appendChild(clearBtn);
-
         const closeBtn = document.createElement("button");
         closeBtn.textContent = "Close";
         closeBtn.onclick = () => this.toggleREPL();
@@ -2192,49 +2265,122 @@
         header.appendChild(controls);
         container.appendChild(header);
 
+        // Input panel (top half)
+        const inputPanel = document.createElement("div");
+        inputPanel.className = "repl-input-panel";
+
+        const inputScroll = document.createElement("div");
+        inputScroll.className = "repl-input-scroll";
+
         // Input area
         const input = document.createElement("textarea");
         input.id = "repl-input";
         input.placeholder = "Enter JavaScript... (api object is available)\nUse 'return' to see expression values\n\nCtrl+Enter to run | Escape to close | Up/Down for history";
         input.spellcheck = false;
-        container.appendChild(input);
-        
+        inputScroll.appendChild(input);
+        inputPanel.appendChild(inputScroll);
+
         // Action buttons
         const actions = document.createElement("div");
         actions.className = "repl-actions";
-        
+
         const runBtn = document.createElement("button");
         runBtn.textContent = "Run";
         runBtn.className = "primary";
         runBtn.onclick = () => this.runREPL();
         actions.appendChild(runBtn);
-        
+
         const clearInputBtn = document.createElement("button");
         clearInputBtn.textContent = "Clear";
         clearInputBtn.onclick = () => { input.value = ""; };
         actions.appendChild(clearInputBtn);
-        
+
         const hint = document.createElement("span");
         hint.className = "repl-hint";
         hint.textContent = "Ctrl+Enter to run Up/Down for history";
         actions.appendChild(hint);
-        
-        container.appendChild(actions);
-        
-        // Transcript
+
+        inputPanel.appendChild(actions);
+        container.appendChild(inputPanel);
+
+        // Splitter
+        const splitter = document.createElement("div");
+        splitter.className = "repl-splitter";
+        container.appendChild(splitter);
+
+        // Transcript panel (bottom half)
+        const transcriptPanel = document.createElement("div");
+        transcriptPanel.className = "repl-transcript-panel";
+
         const transcript = document.createElement("div");
         transcript.id = "repl-transcript";
-        
+
+        const transcriptHeader = document.createElement("div");
+        transcriptHeader.className = "repl-transcript-header";
+
         const transcriptHeading = document.createElement("h4");
         transcriptHeading.textContent = "Transcript";
-        transcript.appendChild(transcriptHeading);
-        
+        transcriptHeader.appendChild(transcriptHeading);
+
+        const clearTranscriptBtn = document.createElement("button");
+        clearTranscriptBtn.textContent = "Clear Transcript";
+        clearTranscriptBtn.onclick = () => {
+          document.getElementById("repl-transcript-entries").innerHTML = "";
+          localStorage.setItem("repl-transcript", JSON.stringify([]));
+        };
+        transcriptHeader.appendChild(clearTranscriptBtn);
+
+        transcript.appendChild(transcriptHeader);
+
         const transcriptEntries = document.createElement("div");
         transcriptEntries.id = "repl-transcript-entries";
         transcript.appendChild(transcriptEntries);
-        
-        container.appendChild(transcript);
-        
+
+        transcriptPanel.appendChild(transcript);
+        container.appendChild(transcriptPanel);
+
+        // Add splitter drag functionality
+        let isDragging = false;
+        let startY = 0;
+        let startInputHeight = 0;
+
+        splitter.addEventListener("mousedown", (e) => {
+          isDragging = true;
+          startY = e.clientY;
+          startInputHeight = inputPanel.offsetHeight;
+          document.body.style.cursor = "row-resize";
+          document.body.style.userSelect = "none";
+          e.preventDefault();
+        });
+
+        document.addEventListener("mousemove", (e) => {
+          if (!isDragging) return;
+
+          const delta = e.clientY - startY;
+          const newInputHeight = startInputHeight + delta;
+          const containerHeight = container.offsetHeight;
+          const headerHeight = header.offsetHeight;
+          const splitterHeight = 6;
+
+          // Calculate min and max heights (leaving space for transcript)
+          const minHeight = 100;
+          const maxHeight = containerHeight - headerHeight - splitterHeight - 100;
+
+          if (newInputHeight >= minHeight && newInputHeight <= maxHeight) {
+            inputPanel.style.flex = "none";
+            inputPanel.style.height = newInputHeight + "px";
+            transcriptPanel.style.flex = "1";
+          }
+        });
+
+        document.addEventListener("mouseup", () => {
+          if (isDragging) {
+            isDragging = false;
+            document.body.style.cursor = "";
+            document.body.style.userSelect = "";
+          }
+        });
+
         // Load and display saved transcript
         this.loadREPLTranscript();
         
