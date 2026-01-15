@@ -95,6 +95,79 @@
       outline-offset: 2px;
     }
 
+    /* Context Menu */
+    .context-menu {
+      position: fixed;
+      background: white;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+      min-width: 180px;
+      padding: 4px 0;
+      z-index: 10000;
+      display: none;
+    }
+
+    .context-menu.visible {
+      display: block;
+    }
+
+    .context-menu-item {
+      padding: 8px 16px;
+      cursor: pointer;
+      font-size: 13px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .context-menu-item:hover {
+      background: #f0f0f0;
+    }
+
+    .context-menu-item.disabled {
+      color: #999;
+      cursor: default;
+    }
+
+    .context-menu-item.disabled:hover {
+      background: transparent;
+    }
+
+    .context-menu-separator {
+      height: 1px;
+      background: #e0e0e0;
+      margin: 4px 0;
+    }
+
+    .context-menu-submenu {
+      position: relative;
+    }
+
+    .context-menu-submenu::after {
+      content: '\25b6';
+      font-size: 10px;
+      margin-left: auto;
+      color: #666;
+    }
+
+    .context-menu-submenu-items {
+      position: absolute;
+      left: 100%;
+      top: 0;
+      background: white;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+      min-width: 160px;
+      padding: 4px 0;
+      display: none;
+    }
+
+    .context-menu-submenu:hover .context-menu-submenu-items {
+      display: block;
+    }
+
     /* Safe Mode Styles */
     #safe-mode {
       max-width: 800px;
@@ -1354,6 +1427,9 @@
         // Set up selection handling
         this.setupSelectionHandling();
 
+        // Create context menu (once, appended to body)
+        this.initContextMenu();
+
         // Create REPL overlay (once, appended to body)
         this.initREPL();
 
@@ -1374,11 +1450,15 @@
             e.preventDefault();
             this.toggleREPL();
           }
-          // Escape to close REPL or clear selection
+          // Escape to close REPL, context menu, or clear selection
           if (e.key === "Escape") {
             const repl = document.getElementById("repl-container");
+            const contextMenu = document.getElementById("context-menu");
+
             if (repl && repl.classList.contains("visible")) {
               this.toggleREPL();
+            } else if (contextMenu && contextMenu.classList.contains("visible")) {
+              this.hideContextMenu();
             } else {
               // Clear selection on Escape
               this.clearSelection();
@@ -1388,6 +1468,7 @@
       }
 
       setupSelectionHandling() {
+        // Handle left-click for selection
         document.addEventListener("click", (e) => {
           // Don't handle selection in REPL or nav bar
           if (e.target.closest("#repl-container") || e.target.closest(".nav-bar")) {
@@ -1404,6 +1485,26 @@
           } else {
             // Clicked outside any item - clear selection
             this.clearSelection();
+          }
+        });
+
+        // Handle right-click for context menu
+        document.addEventListener("contextmenu", (e) => {
+          // Don't handle context menu in REPL or nav bar
+          if (e.target.closest("#repl-container") || e.target.closest(".nav-bar")) {
+            return;
+          }
+
+          // Find closest element with data-item-id
+          const itemElement = e.target.closest("[data-item-id]");
+
+          if (itemElement) {
+            e.preventDefault();
+            const itemId = itemElement.getAttribute("data-item-id");
+            // Select the item first
+            this.selectItem(itemId);
+            // Show context menu
+            this.showContextMenu(e.clientX, e.clientY, itemId);
           }
         });
       }
@@ -1434,6 +1535,128 @@
           if (selectedElement) {
             selectedElement.classList.add("item-selected");
           }
+        }
+      }
+
+      // -------------------------------------------------------------------------
+      // Context Menu
+      // -------------------------------------------------------------------------
+
+      initContextMenu() {
+        const menu = document.createElement("div");
+        menu.id = "context-menu";
+        menu.className = "context-menu";
+        document.body.appendChild(menu);
+
+        // Close menu when clicking outside
+        document.addEventListener("click", (e) => {
+          if (!e.target.closest(".context-menu")) {
+            this.hideContextMenu();
+          }
+        });
+
+        // Close menu on scroll
+        document.addEventListener("scroll", () => this.hideContextMenu(), true);
+      }
+
+      async showContextMenu(x, y, itemId) {
+        const menu = document.getElementById("context-menu");
+        if (!menu) return;
+
+        // Get item info for context-aware menu
+        const item = await this.storage.get(itemId);
+
+        // Build menu items
+        menu.innerHTML = "";
+
+        // "Edit Configuration" - placeholder for Phase 9
+        const editConfigItem = document.createElement("div");
+        editConfigItem.className = "context-menu-item context-menu-submenu";
+        editConfigItem.textContent = "Edit Configuration";
+        const editConfigSubmenu = document.createElement("div");
+        editConfigSubmenu.className = "context-menu-submenu-items";
+        const editConfigPlaceholder = document.createElement("div");
+        editConfigPlaceholder.className = "context-menu-item disabled";
+        editConfigPlaceholder.textContent = "(Coming soon)";
+        editConfigSubmenu.appendChild(editConfigPlaceholder);
+        editConfigItem.appendChild(editConfigSubmenu);
+        menu.appendChild(editConfigItem);
+
+        // "Display As..." - placeholder for Phase 6
+        const displayAsItem = document.createElement("div");
+        displayAsItem.className = "context-menu-item context-menu-submenu";
+        displayAsItem.textContent = "Display As...";
+        const displayAsSubmenu = document.createElement("div");
+        displayAsSubmenu.className = "context-menu-submenu-items";
+        const displayAsPlaceholder = document.createElement("div");
+        displayAsPlaceholder.className = "context-menu-item disabled";
+        displayAsPlaceholder.textContent = "(Coming soon)";
+        displayAsSubmenu.appendChild(displayAsPlaceholder);
+        displayAsItem.appendChild(displayAsSubmenu);
+        menu.appendChild(displayAsItem);
+
+        // "Edit Display" - placeholder for Phase 10
+        const editDisplayItem = document.createElement("div");
+        editDisplayItem.className = "context-menu-item";
+        editDisplayItem.textContent = "Edit Display";
+        editDisplayItem.onclick = () => {
+          this.hideContextMenu();
+          // Placeholder - will open renderer code editor
+          console.log("Edit Display clicked for:", itemId);
+        };
+        menu.appendChild(editDisplayItem);
+
+        // Separator
+        const separator = document.createElement("div");
+        separator.className = "context-menu-separator";
+        menu.appendChild(separator);
+
+        // "Edit Raw JSON" - existing functionality
+        const editRawItem = document.createElement("div");
+        editRawItem.className = "context-menu-item";
+        editRawItem.textContent = "Edit Raw JSON";
+        editRawItem.onclick = () => {
+          this.hideContextMenu();
+          this.editItemRaw(itemId);
+        };
+        menu.appendChild(editRawItem);
+
+        // "Copy ID"
+        const copyIdItem = document.createElement("div");
+        copyIdItem.className = "context-menu-item";
+        copyIdItem.textContent = "Copy ID";
+        copyIdItem.onclick = async () => {
+          this.hideContextMenu();
+          await navigator.clipboard.writeText(itemId);
+          console.log("Copied ID:", itemId);
+        };
+        menu.appendChild(copyIdItem);
+
+        // Position menu (keep within viewport)
+        const menuWidth = 180;
+        const menuHeight = 250; // Approximate
+        const viewportWidth = window.innerWidth;
+        const viewportHeight = window.innerHeight;
+
+        let menuX = x;
+        let menuY = y;
+
+        if (x + menuWidth > viewportWidth) {
+          menuX = viewportWidth - menuWidth - 10;
+        }
+        if (y + menuHeight > viewportHeight) {
+          menuY = viewportHeight - menuHeight - 10;
+        }
+
+        menu.style.left = menuX + "px";
+        menu.style.top = menuY + "px";
+        menu.classList.add("visible");
+      }
+
+      hideContextMenu() {
+        const menu = document.getElementById("context-menu");
+        if (menu) {
+          menu.classList.remove("visible");
         }
       }
 
@@ -2314,55 +2537,79 @@
       }
       
       async editItemRaw(itemId) {
-        const mainView = document.getElementById("main-view");
+        // Find the element for this item
+        const itemElement = document.querySelector(`[data-item-id="${itemId}"]`);
+        if (!itemElement) {
+          console.error("Could not find element for item:", itemId);
+          return;
+        }
+
         const item = await this.storage.get(itemId);
         const json = JSON.stringify(item, null, 2);
-        
-        mainView.innerHTML = "";
-        
+
+        // Store original styles to restore container appearance
+        const originalStyles = itemElement.style.cssText;
+
+        // Create editor UI
         const container = document.createElement("div");
         container.className = "raw-editor";
-        
+        container.style.cssText = "height: 100%; display: flex; flex-direction: column;";
+
         const heading = document.createElement("h2");
         heading.textContent = `Editing: ${item.name || item.id}`;
+        heading.style.cssText = "margin: 0 0 10px 0; font-size: 16px;";
         container.appendChild(heading);
-        
+
         const textarea = document.createElement("textarea");
         textarea.id = "raw-json";
-        textarea.rows = 30;
         textarea.value = json;
+        textarea.style.cssText = "flex: 1; min-height: 150px; font-family: monospace; font-size: 13px; padding: 10px; border: 1px solid #ccc; border-radius: 4px; resize: none;";
         container.appendChild(textarea);
-        
+
         const actions = document.createElement("div");
         actions.className = "actions";
-        
+        actions.style.cssText = "display: flex; gap: 10px; margin-top: 10px;";
+
         const saveBtn = document.createElement("button");
         saveBtn.textContent = "Save";
+        saveBtn.style.cssText = "padding: 8px 16px; cursor: pointer;";
         saveBtn.onclick = async () => {
           try {
             const updated = JSON.parse(textarea.value);
             updated.modified = Date.now();
             await this.storage.set(updated, this);
-            
+
             // Clear cache if code item
             if (await this.isCodeItem(updated)) {
               this.moduleCache.delete(updated.id);
             }
-            
-            await this.navigateToItem(updated.id);
+
+            // Re-render the root to show updated content
+            await this.renderRoot(this.currentRoot);
           } catch (error) {
             alert(`Error: ${error.message}`);
           }
         };
         actions.appendChild(saveBtn);
-        
+
         const cancelBtn = document.createElement("button");
         cancelBtn.textContent = "Cancel";
-        cancelBtn.onclick = () => this.navigateToItem(itemId);
+        cancelBtn.style.cssText = "padding: 8px 16px; cursor: pointer;";
+        cancelBtn.onclick = async () => {
+          // Re-render to restore original view
+          await this.renderRoot(this.currentRoot);
+        };
         actions.appendChild(cancelBtn);
-        
+
         container.appendChild(actions);
-        mainView.appendChild(container);
+
+        // Replace item content with editor
+        itemElement.innerHTML = "";
+        itemElement.style.cssText = originalStyles + " padding: 15px; overflow: auto;";
+        itemElement.appendChild(container);
+
+        // Focus the textarea
+        textarea.focus();
       }
       
       async createNewItem() {
