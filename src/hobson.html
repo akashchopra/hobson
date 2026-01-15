@@ -502,30 +502,11 @@
                   // Get fresh children from database (not stale closure)
                   const freshItem = await api.get(item.id);
                   const freshChildren = freshItem.children || [];
-                  
+
                   const updatedChildren = freshChildren.map(c => {
-                    const cId = typeof c === 'string' ? c : c.id;
-                    
-                    if (cId === childId) {
-                      // Convert string to object format if needed
-                      if (typeof c === 'string') {
-                        // Default values for migration (unpinned windows start at z=1000)
-                        return {
-                          id: c,
-                          x: 0,
-                          y: 0,
-                          width: 400,
-                          height: 300,
-                          z: 1000,
-                          pinned: false,
-                          ...updates  // Apply the updates
-                        };
-                      } else {
-                        // Already object format, just update
-                        return { ...c, ...updates };
-                      }
+                    if (c.id === childId) {
+                      return { ...c, ...updates };
                     }
-                    
                     return c;
                   });
                   
@@ -539,7 +520,7 @@
                 };
                 
                 for (const child of children) {
-                  const childId = typeof child === 'string' ? child : child.id;
+                  const childId = child.id;
                   const x = child.x || 0;
                   const y = child.y || 0;
                   const width = child.width || 400;
@@ -579,12 +560,8 @@
                           const freshChildren = freshItem.children || [];
                           
                           // Only consider unpinned windows for max z
-                          const unpinnedChildren = freshChildren.filter(c => 
-                            typeof c === 'string' ? false : !c.pinned
-                          );
-                          const maxZ = Math.max(...unpinnedChildren.map(c => 
-                            (typeof c === 'string' ? 1000 : c.z) || 1000
-                          ), 999); // Ensure min 1000
+                          const unpinnedChildren = freshChildren.filter(c => !c.pinned);
+                          const maxZ = Math.max(...unpinnedChildren.map(c => c.z || 1000), 999); // Ensure min 1000
                           
                           const currentZ = parseInt(wrapper.style.zIndex) || z;
                           
@@ -666,12 +643,8 @@
                           // Unpinning: move to front of unpinned layer
                           const freshItem = await api.get(item.id);
                           const freshChildren = freshItem.children || [];
-                          const unpinnedChildren = freshChildren.filter(c => 
-                            typeof c === 'string' ? false : !c.pinned
-                          );
-                          const maxZ = Math.max(...unpinnedChildren.map(c => 
-                            (typeof c === 'string' ? 1000 : c.z) || 1000
-                          ), 999);
+                          const unpinnedChildren = freshChildren.filter(c => !c.pinned);
+                          const maxZ = Math.max(...unpinnedChildren.map(c => c.z || 1000), 999);
                           const newZ = maxZ + 1;
                           
                           await updateChild(childId, { pinned: false, z: newZ });
@@ -739,12 +712,8 @@
                         // Get fresh children data from database for accurate maxZ
                         const freshItem = await api.get(item.id);
                         const freshChildren = freshItem.children || [];
-                        const unpinnedChildren = freshChildren.filter(c => 
-                          typeof c === 'string' ? false : !c.pinned
-                        );
-                        const maxZ = Math.max(...unpinnedChildren.map(c => 
-                          (typeof c === 'string' ? 1000 : c.z) || 1000
-                        ), 999);
+                        const unpinnedChildren = freshChildren.filter(c => !c.pinned);
+                        const maxZ = Math.max(...unpinnedChildren.map(c => c.z || 1000), 999);
                         
                         const currentZ = parseInt(wrapper.style.zIndex) || z;
                         const needsZUpdate = currentZ < maxZ;
@@ -1336,8 +1305,8 @@
             console.log(`Updating seed item: ${seed.name}`);
           }
 
-          if (exists && seed.id == IDS.WORKSPACE) {
-            // Don't update workspace
+          if (exists && (seed.id == IDS.WORKSPACE || seed.id == IDS.PREFERENCES)) {
+            // Don't update workspace or preferences (preserve user data)
           }
           else {
             const item = {
@@ -1393,7 +1362,7 @@
         await this.renderRoot(itemId);
 
         // Save as last location for next launch
-        this.saveLastLocation(itemId);
+        await this.saveLastLocation(itemId);
 
         // Track recent items
         try {
@@ -1694,7 +1663,17 @@
             return id;
           },
           
-          // Update item
+          // Save without triggering re-render
+          set: async (item) => {
+            const updated = {
+              ...item,
+              modified: Date.now()
+            };
+            await kernel.storage.set(updated, kernel);
+            return item.id;
+          },
+
+          // Save and trigger re-render
           update: async (item) => {
             const updated = {
               ...item,
@@ -1702,15 +1681,17 @@
             };
             await kernel.storage.set(updated, kernel);
             await kernel.renderRoot(kernel.currentRoot);
+            return item.id;
           },
-          
-          // Update item without triggering re-render (for position updates)
+
+          // Deprecated: use set() instead
           updateSilent: async (item) => {
             const updated = {
               ...item,
               modified: Date.now()
             };
             await kernel.storage.set(updated, kernel);
+            return item.id;
           },
           
           // Add child to current container
@@ -1730,11 +1711,18 @@
           
           // Get the current container item
           getCurrentItem: () => containerItem,
-          
+
+          // UI operations
+          editRaw: (itemId) => kernel.editItemRaw(itemId),
+          getRecentItems: () => kernel.getRecentItems(),
+
+          // For script execution - returns REPL API for code evaluation
+          createREPLContext: () => kernel.createREPLAPI(),
+
           // Well-known IDs
           IDS
         };
-        
+
         return api;
       }
       
@@ -1865,30 +1853,24 @@
         if (await this.wouldCreateCycle(parentId, childId)) {
           throw new Error(`Adding ${childId} to ${parentId} would create a cycle`);
         }
-        
+
         const parent = await this.storage.get(parentId);
-        
-        // Check if child already exists (handle both old and new formats)
-        const existingIndex = parent.children.findIndex(c => 
-          typeof c === 'string' ? c === childId : c.id === childId
-        );
-        
+
+        // Check if child already exists (all children are objects now)
+        const existingIndex = parent.children.findIndex(c => c.id === childId);
+
         if (existingIndex >= 0) {
           return; // Already a child
         }
-        
+
         // Calculate default position (simple diagonal stacking)
         const numChildren = parent.children.length;
         const offset = numChildren * 30; // Stack diagonally
-        
+
         // Calculate z-index: find max z of unpinned windows and add 1
-        const unpinnedChildren = parent.children.filter(c => 
-          typeof c === 'string' ? false : !c.pinned
-        );
-        const maxZ = Math.max(...unpinnedChildren.map(c => 
-          (typeof c === 'string' ? 1000 : c.z) || 1000
-        ), 999); // Ensure minimum 1000
-        
+        const unpinnedChildren = parent.children.filter(c => !c.pinned);
+        const maxZ = Math.max(...unpinnedChildren.map(c => c.z || 1000), 999);
+
         const newChild = {
           id: childId,
           x: 20 + offset,
@@ -1898,27 +1880,25 @@
           z: maxZ + 1,
           pinned: false
         };
-        
+
         const updated = {
           ...parent,
           children: [...parent.children, newChild],
           modified: Date.now()
         };
-        
+
         // Save silently without triggering re-render
         await this.storage.set(updated, this);
-        
+
         // Return the new child object for manual DOM manipulation
         return newChild;
       }
-      
+
       async removeChild(parentId, childId) {
         const parent = await this.storage.get(parentId);
         const updated = {
           ...parent,
-          children: parent.children.filter(c => 
-            typeof c === 'string' ? c !== childId : c.id !== childId
-          ),
+          children: parent.children.filter(c => c.id !== childId),
           modified: Date.now()
         };
         await this.storage.set(updated, this);
@@ -1939,14 +1919,11 @@
         localStorage.setItem('hobson-deleted-items', JSON.stringify(deletedItems));
         console.log(`Item ${item.name || item.id} moved to deletion audit trail`);
         
-        // Find all parents (handle both old and new children formats)
+        // Find all parents
         const allItems = await this.storage.getAll();
         const parents = allItems.filter(parentItem => {
           if (!parentItem.children) return false;
-          return parentItem.children.some(child => {
-            const childId = typeof child === 'string' ? child : child.id;
-            return childId === itemId;
-          });
+          return parentItem.children.some(child => child.id === itemId);
         });
         
         // Remove from all parents
@@ -2430,17 +2407,27 @@
           // Storage operations
           get: (id) => kernel.storage.get(id),
           set: async (item) => {
+            // Save without triggering re-render
             item.modified = Date.now();
             await kernel.storage.set(item, kernel);
+            return item.id;
+          },
+          update: async (item) => {
+            // Save and trigger re-render if there's a current root
+            item.modified = Date.now();
+            await kernel.storage.set(item, kernel);
+            if (kernel.currentRoot) {
+              await kernel.renderRoot(kernel.currentRoot);
+            }
             return item.id;
           },
           delete: (id) => kernel.deleteItem(id),
           query: (filter) => kernel.storage.query(filter),
           getAll: () => kernel.storage.getAll(),
-          
+
           // Code operations
           require: (name) => kernel.require(name),
-          
+
           // Navigation
           navigate: (id) => kernel.navigateToItem(id),
           
@@ -2892,7 +2879,14 @@ Example:
             
             return helpText[method] || `No help available for '${method}'.\nTry api.help() to see all methods.`;
           },
-          
+
+          // UI operations
+          editRaw: (itemId) => kernel.editItemRaw(itemId),
+          getRecentItems: () => kernel.getRecentItems(),
+
+          // For script execution - returns REPL API for code evaluation
+          createREPLContext: () => kernel.createREPLAPI(),
+
           // Well-known IDs
           IDS
         };
