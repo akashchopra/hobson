@@ -134,6 +134,11 @@
       background: transparent;
     }
 
+    .context-menu-item.selected {
+      font-weight: 500;
+      color: #0066cc;
+    }
+
     .context-menu-separator {
       height: 1px;
       background: #e0e0e0;
@@ -1606,16 +1611,81 @@
         editConfigItem.appendChild(editConfigSubmenu);
         menu.appendChild(editConfigItem);
 
-        // "Display As..." - placeholder for Phase 6
+        // "Display As..." - show available renderers for this item's type
         const displayAsItem = document.createElement("div");
         displayAsItem.className = "context-menu-item context-menu-submenu";
         displayAsItem.textContent = "Display As...";
         const displayAsSubmenu = document.createElement("div");
         displayAsSubmenu.className = "context-menu-submenu-items";
-        const displayAsPlaceholder = document.createElement("div");
-        displayAsPlaceholder.className = "context-menu-item disabled";
-        displayAsPlaceholder.textContent = "(Coming soon)";
-        displayAsSubmenu.appendChild(displayAsPlaceholder);
+
+        // Get available renderers for this item's type
+        const renderers = await this.getRenderers(item.type);
+
+        // Get current renderer override (if any) from parent's child spec
+        const parentId = this.viewport.getSelectionParent();
+        let currentRendererId = null;
+        if (parentId) {
+          const parent = await this.storage.get(parentId);
+          const childSpec = parent.children?.find(c => c.id === itemId);
+          currentRendererId = childSpec?.renderer || null;
+        }
+
+        if (renderers.length === 0) {
+          const noRenderers = document.createElement("div");
+          noRenderers.className = "context-menu-item disabled";
+          noRenderers.textContent = "(No renderers available)";
+          displayAsSubmenu.appendChild(noRenderers);
+        } else {
+          // Add "Default" option to clear renderer override
+          const defaultOption = document.createElement("div");
+          defaultOption.className = "context-menu-item" + (currentRendererId === null ? " selected" : "");
+          defaultOption.textContent = "Default" + (currentRendererId === null ? " ✓" : "");
+          defaultOption.onclick = async () => {
+            this.hideContextMenu();
+            if (parentId) {
+              await this.setChildRenderer(parentId, itemId, null);
+              await this.navigateToItem(this.viewport.rootId);
+            }
+          };
+          displayAsSubmenu.appendChild(defaultOption);
+
+          // Add separator
+          const sep = document.createElement("div");
+          sep.className = "context-menu-separator";
+          displayAsSubmenu.appendChild(sep);
+
+          // Add each available renderer
+          for (const { renderer, forType, inherited } of renderers) {
+            const rendererOption = document.createElement("div");
+            const isActive = currentRendererId === renderer.id;
+            rendererOption.className = "context-menu-item" + (isActive ? " selected" : "");
+
+            // Build label: name + inheritance indicator + active indicator
+            let label = renderer.name || renderer.id.slice(0, 8);
+            if (inherited) {
+              const typeItem = await this.storage.get(forType);
+              label += ` (from ${typeItem?.name || forType.slice(0, 8)})`;
+            }
+            if (isActive) {
+              label += " ✓";
+            }
+            rendererOption.textContent = label;
+
+            rendererOption.onclick = async () => {
+              this.hideContextMenu();
+              if (parentId) {
+                await this.setChildRenderer(parentId, itemId, renderer.id);
+                await this.navigateToItem(this.viewport.rootId);
+              } else {
+                // Item is the root - use root renderer override
+                await this.viewport.setRootRenderer(renderer.id);
+                await this.navigateToItem(this.viewport.rootId);
+              }
+            };
+            displayAsSubmenu.appendChild(rendererOption);
+          }
+        }
+
         displayAsItem.appendChild(displayAsSubmenu);
         menu.appendChild(displayAsItem);
 
