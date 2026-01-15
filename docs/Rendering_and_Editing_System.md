@@ -59,7 +59,7 @@ A renderer is a code item that displays an item of a particular type. Renderers:
         // Return DOM node displaying the item
         return api.createElement('div', {}, [
           ['h1', {}, [item.content.title]],
-          ['div', {}, [item.content.description]]
+          ['div', {}, [item.content.body]]
         ]);
       }
     `
@@ -155,14 +155,14 @@ For most types, editors are **specification items** containing UI hints:
       type: { hidden: true },
       created: { readonly: true, label: "Created" },
       modified: { readonly: true, label: "Last Modified" },
-      "content.title": {
-        editor: "text",
+      "content.title": { 
+        editor: "text", 
         label: "Title",
         placeholder: "Untitled Note"
       },
-      "content.description": {
-        editor: "markdown",
-        label: "Content"
+      "content.body": { 
+        editor: "markdown", 
+        label: "Content" 
       },
       "content.tags": { 
         editor: "tag_selector",
@@ -284,7 +284,7 @@ const editBtn = api.createElement('button', {
     const editorId = await api.selectEditor(item.type);
     await api.editItem(item.id, editorId);
   }
-}, ['Edit ▼']);
+}, ['Edit â–¼']);
 ```
 
 ### Edit Transition Patterns
@@ -391,26 +391,26 @@ This allows different visualizations within the same container - useful for spat
 
 ### Currently Implemented
 
-- ✅ Single renderer per type (default lookup)
-- ✅ Renderer type chain walking
-- ✅ Default fallback renderer
-- ✅ Editable renderers (like markdown note renderer)
+- âœ… Single renderer per type (default lookup)
+- âœ… Renderer type chain walking
+- âœ… Default fallback renderer
+- âœ… Editable renderers (like markdown note renderer)
 
 ### Decided But Not Implemented
 
-- 📋 Editor items as separate from renderers
-- 📋 Multiple renderers per type (architecture supports it)
-- 📋 Generic editor renderer
-- 📋 Field editor plugins
-- 📋 UI hints in editor specifications
+- ðŸ“‹ Editor items as separate from renderers
+- ðŸ“‹ Multiple renderers per type (architecture supports it)
+- ðŸ“‹ Generic editor renderer
+- ðŸ“‹ Field editor plugins
+- ðŸ“‹ UI hints in editor specifications
 
 ### Future Considerations
 
-- 🤔 Context-based renderer selection
-- 🤔 Per-instance renderer preferences
-- 🤔 Edit mode transitions (in-place, modal, navigation)
-- 🤔 Split view editing
-- 🤔 Renderer/editor selection UI
+- ðŸ¤” Context-based renderer selection
+- ðŸ¤” Per-instance renderer preferences
+- ðŸ¤” Edit mode transitions (in-place, modal, navigation)
+- ðŸ¤” Split view editing
+- ðŸ¤” Renderer/editor selection UI
 
 ---
 
@@ -435,6 +435,129 @@ This allows different visualizations within the same container - useful for spat
 **Prevents modification to extend:** Without multiple renderers, adding a new view requires modifying the existing renderer, which violates "extend without breaking" and risks introducing bugs.
 
 **Enables specialization:** Different contexts benefit from different visualizations. Spatial canvas might use compact renderers, while focused reading uses full renderers.
+
+---
+
+## User Interaction Model
+
+### Selection and Context Menus
+
+**Selection:**
+- Click an item to select it
+- Selected item shows visual feedback (border, highlight, etc.)
+- Selection identifies which item subsequent actions apply to
+
+**Context Menu (Right-Click):**
+
+When right-clicking a selected item, the context menu provides three primary actions:
+
+1. **Edit Configuration** 
+   - Lists available editors for the item's type
+   - User selects an editor
+   - Item's properties are opened for editing
+   - Editor replaces the visual rendering until save/cancel
+
+2. **Display As...**
+   - Lists available renderers for the item's type
+   - User selects a renderer
+   - Parent container's child specification is updated immediately
+   - Item re-renders with the chosen renderer
+   - *Note:* This modifies the parent's rendering choice, not the item itself
+
+3. **Edit Display**
+   - Opens the shared renderer code for editing
+   - Edits affect all items using this renderer
+   - Direct editing in MVP; safety mechanisms (versioning, forking) deferred
+
+### Parent-Controlled Renderer Selection
+
+Renderer selection lives in the **parent-child relationship**, not on items themselves:
+
+```javascript
+// Parent container specifies how to render each child
+{
+  id: "my-note",
+  type: "container",
+  content: {
+    children: [
+      { 
+        id: "tag-browser-1",
+        renderer: "tag-browser-compact"  // Parent's choice
+      },
+      { 
+        id: "search-widget-1"
+        // Omitted = use default renderer for type
+      }
+    ]
+  }
+}
+```
+
+**Benefits:**
+- Same item can appear in multiple containers with different renderings
+- Context (parent) determines appropriate presentation
+- No global "preferred renderer" on items
+- Flexible composition without modifying items
+
+**Default Behavior:**
+- If parent doesn't specify renderer, use type chain walk to find default
+- First renderer found for the type (or ancestor type) is used
+- Falls back to system default renderer (JSON view)
+
+### Viewport Container
+
+The top-level viewport is an implicit container that holds the currently viewed root item:
+
+```
+Viewport Container (system-defined)
+  └─ Current Root Item
+       renderer: [stored in viewport's child spec]
+```
+
+**Purpose:**
+- Provides a consistent parent for renderer selection, even for root items
+- Stores renderer choice for the currently viewed item
+- Implemented as seed items in the system
+- Not user-configurable; system-level concept
+
+**Behavior:**
+- When viewing an item as root, it's rendered as a child of viewport
+- "Display As..." works the same way for root items as for nested items
+- Viewport's child spec persists renderer choice across sessions
+
+### Interaction Patterns
+
+**Current (MVP):**
+- Click to select
+- Right-click for context menu
+- Immediate feedback for "Display As"
+- Modal/replacement for "Edit Configuration"
+
+**Future Considerations:**
+- Keyboard shortcuts ('e' for edit, etc.)
+- Double-click behavior
+- Drag-and-drop for rearranging children
+- Hover preview of alternative renderers
+- Undo for renderer code edits
+
+### Resolving Ambiguity
+
+**Multiple targetable items in same location:**
+
+In spatial layouts, rendered items may overlap or be adjacent. The selection mechanism resolves ambiguity:
+
+1. Click identifies item via DOM event target's item ID
+2. Selected item shows visual feedback
+3. Right-click operates on the currently selected item
+4. If clicking between items, parent container is selected
+
+**Unreachable containers:**
+
+If a container's entire visible area is occupied by children, reaching the container requires:
+- Navigation breadcrumbs showing ancestor chain
+- Modifier keys (e.g., Ctrl+click to select parent)
+- Hover effects revealing container boundaries
+- *(Implementation approach TBD)*
 
 ---
 

@@ -605,548 +605,29 @@
         }
       },
       
-      // 7. container - type for items that contain other items
+      // 7. viewport_type - type for the system viewport
       {
         id: "00000000-0000-0000-0000-000000000007",
-        name: "container",
-        type: "00000000-0000-0000-0000-000000000000",
-        created: 0,
-        modified: 0,
-        children: [],
-        content: {
-          description: "A container that holds and displays other items"
-        }
-      },
-      
-      // 8. container_renderer - renders container items
-      {
-        id: "00000000-0000-0000-0000-000000000008",
-        name: "container_renderer",
-        type: "00000000-0000-0000-0000-000000000003",
-        created: 0,
-        modified: 0,
-        children: [],
-        content: {
-          for_type: "00000000-0000-0000-0000-000000000007",
-          code: `
-            export async function render(item, api) {
-              const container = api.createElement('div', { class: 'container-view' }, []);
-              
-              // Header with title
-              const header = api.createElement('div', { 
-                style: 'margin-bottom: 20px; padding-bottom: 15px; border-bottom: 2px solid #e0e0e0;' 
-              }, []);
-              
-              const title = api.createElement('h2', { style: 'margin: 0; display: inline-block;' }, [
-                item.content.title || item.name || 'Untitled Container'
-              ]);
-              header.appendChild(title);
-              
-              // Add Container button
-              const addBtn = api.createElement('button', {
-                style: 'margin-left: 15px; padding: 8px 16px; cursor: pointer;',
-                onclick: async () => {
-                  const newId = await api.createChild(api.IDS.CONTAINER, {
-                    title: 'New Container'
-                  });
-                  console.log('Created container:', newId);
-                }
-              }, ['+ Add Container']);
-              header.appendChild(addBtn);
-              
-              container.appendChild(header);
-              
-              // Canvas area for positioned children
-              const canvas = api.createElement('div', {
-                style: 'position: relative; flex: 1; min-height: 0; background: white; border: 1px solid #ccc; border-radius: 4px; overflow: auto;'
-              }, []);
-              
-              const children = item.children || [];
-              
-              if (children.length === 0) {
-                const empty = api.createElement('div', { 
-                  style: 'padding: 40px; text-align: center; color: #999; font-style: italic;' 
-                }, [
-                  'This container is empty. Click "+ Add Container" to add items.'
-                ]);
-                canvas.appendChild(empty);
-              } else {
-                // Function to update child position and z-index together (silent - no re-render)
-                const updateChild = async (childId, updates) => {
-                  // Get fresh children from database (not stale closure)
-                  const freshItem = await api.get(item.id);
-                  const freshChildren = freshItem.children || [];
-
-                  const updatedChildren = freshChildren.map(c => {
-                    if (c.id === childId) {
-                      return { ...c, ...updates };
-                    }
-                    return c;
-                  });
-                  
-                  const updated = {
-                    ...freshItem,
-                    children: updatedChildren,
-                    modified: Date.now()
-                  };
-                  
-                  await api.updateSilent(updated);
-                };
-                
-                for (const child of children) {
-                  const childId = child.id;
-                  const x = child.x || 0;
-                  const y = child.y || 0;
-                  const width = child.width || 400;
-                  const height = child.height || 300;
-                  const z = child.z !== undefined ? child.z : 1000;
-                  const isPinned = child.pinned || false;
-                  
-                  try {
-                    const childItem = await api.get(childId);
-                    // Use renderer from child spec if specified, otherwise default
-                    const childRendererId = child.renderer || null;
-                    const childNode = await api.renderItem(childId, childRendererId);
-                    
-                    const wrapper = api.createElement('div', {
-                      'data-item-id': childId,
-                      'data-parent-id': item.id,
-                      style: \`
-                        position: absolute;
-                        left: \${x}px;
-                        top: \${y}px;
-                        width: \${width}px;
-                        height: \${height}px;
-                        z-index: \${z};
-                        border: 1px solid #ddd;
-                        border-radius: 6px;
-                        background: #fafafa;
-                        overflow: hidden;
-                        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-                      \`
-                    }, []);
-                    
-                    // Click anywhere on wrapper to bring to front (only for unpinned windows)
-                    if (!isPinned) {
-                      wrapper.addEventListener('mousedown', async (e) => {
-                        // Only if not clicking titlebar or resize handle
-                        if (!e.target.classList.contains('titlebar') && 
-                            !e.target.classList.contains('resize-handle')) {
-                          // Get fresh children data from database (not stale closure)
-                          const freshItem = await api.get(item.id);
-                          const freshChildren = freshItem.children || [];
-                          
-                          // Only consider unpinned windows for max z
-                          const unpinnedChildren = freshChildren.filter(c => !c.pinned);
-                          const maxZ = Math.max(...unpinnedChildren.map(c => c.z || 1000), 999); // Ensure min 1000
-                          
-                          const currentZ = parseInt(wrapper.style.zIndex) || z;
-                          
-                          if (currentZ < maxZ) {
-                            const newZ = maxZ + 1;
-                            
-                            // Update DOM immediately
-                            wrapper.style.zIndex = newZ;
-                            
-                            // Get current position from DOM (for string-to-object conversion)
-                            // Use isNaN check, not || fallback, since 0 is valid
-                            const leftPx = parseInt(wrapper.style.left);
-                            const topPx = parseInt(wrapper.style.top);
-                            const currentX = isNaN(leftPx) ? x : leftPx;
-                            const currentY = isNaN(topPx) ? y : topPx;
-                            
-                            // Save with full position data (not just z)
-                            await updateChild(childId, { 
-                              x: currentX, 
-                              y: currentY, 
-                              z: newZ,
-                              width: width,
-                              height: height,
-                              pinned: false
-                            });
-                          }
-                        }
-                      });
-                    }
-                    
-                    // Titlebar
-                    const titlebar = api.createElement('div', {
-                      class: 'titlebar',
-                      style: \`
-                        height: 24px;
-                        background: #e8e8e8;
-                        border-bottom: 1px solid #ccc;
-                        padding: 0 8px;
-                        display: flex;
-                        align-items: center;
-                        justify-content: space-between;
-                        font-size: 12px;
-                        font-weight: 500;
-                        cursor: \${isPinned ? 'default' : 'move'};
-                        user-select: none;
-                      \`
-                    }, []);
-                    
-                    // Title text
-                    const titleText = api.createElement('span', {
-                      style: 'flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;'
-                    }, [childItem.content?.title || childItem.name || childItem.id]);
-                    titlebar.appendChild(titleText);
-                    
-                    // Button container (right side)
-                    const buttonContainer = api.createElement('div', {
-                      style: 'display: flex; gap: 4px; align-items: center;'
-                    }, []);
-                    
-                    // Pin toggle button
-                    const pinBtn = api.createElement('button', {
-                      style: \`
-                        width: 18px;
-                        height: 18px;
-                        padding: 0;
-                        border: none;
-                        background: transparent;
-                        cursor: pointer;
-                        font-size: 12px;
-                        display: flex;
-                        align-items: center;
-                        justify-content: center;
-                      \`,
-                      title: isPinned ? 'Unpin (make moveable)' : 'Pin (lock in background)',
-                      onclick: async (e) => {
-                        e.stopPropagation();
-                        
-                        if (isPinned) {
-                          // Unpinning: move to front of unpinned layer
-                          const freshItem = await api.get(item.id);
-                          const freshChildren = freshItem.children || [];
-                          const unpinnedChildren = freshChildren.filter(c => !c.pinned);
-                          const maxZ = Math.max(...unpinnedChildren.map(c => c.z || 1000), 999);
-                          const newZ = maxZ + 1;
-                          
-                          await updateChild(childId, { pinned: false, z: newZ });
-                        } else {
-                          // Pinning: move to bottom of pinned layer
-                          await updateChild(childId, { pinned: true, z: 0 });
-                        }
-                        
-                        // Trigger re-render to show updated state
-                        await api.navigate(api.getCurrentRoot());
-                      }
-                    }, [isPinned ? '📌' : '📍']);
-                    buttonContainer.appendChild(pinBtn);
-                    
-                    // Close button (only for unpinned windows)
-                    if (!isPinned) {
-                      const closeBtn = api.createElement('button', {
-                        style: \`
-                          width: 18px;
-                          height: 18px;
-                          padding: 0;
-                          border: none;
-                          background: transparent;
-                          cursor: pointer;
-                          font-size: 14px;
-                          font-weight: bold;
-                          color: #666;
-                          display: flex;
-                          align-items: center;
-                          justify-content: center;
-                        \`,
-                        title: 'Close',
-                        onclick: async (e) => {
-                          e.stopPropagation();
-                          await api.removeChild(childId);
-                          // Trigger re-render to remove window
-                          await api.navigate(api.getCurrentRoot());
-                        }
-                      }, ['×']);
-                      buttonContainer.appendChild(closeBtn);
-                    }
-                    
-                    titlebar.appendChild(buttonContainer);
-                    
-                    // Drag handler (only for unpinned windows)
-                    if (!isPinned) {
-                      titlebar.addEventListener('mousedown', async (e) => {
-                        // Don't drag if clicking buttons
-                        if (e.target.tagName === 'BUTTON') {
-                          return;
-                        }
-                        
-                        e.preventDefault();
-                        e.stopPropagation();
-                        
-                        const startX = e.clientX;
-                        const startY = e.clientY;
-                        
-                        // Read current position from DOM (use isNaN check, not || fallback)
-                        const leftPx = parseInt(wrapper.style.left);
-                        const topPx = parseInt(wrapper.style.top);
-                        const startLeft = isNaN(leftPx) ? x : leftPx;
-                        const startTop = isNaN(topPx) ? y : topPx;
-                        
-                        // Get fresh children data from database for accurate maxZ
-                        const freshItem = await api.get(item.id);
-                        const freshChildren = freshItem.children || [];
-                        const unpinnedChildren = freshChildren.filter(c => !c.pinned);
-                        const maxZ = Math.max(...unpinnedChildren.map(c => c.z || 1000), 999);
-                        
-                        const currentZ = parseInt(wrapper.style.zIndex) || z;
-                        const needsZUpdate = currentZ < maxZ;
-                        
-                        const onMouseMove = (moveEvent) => {
-                          const deltaX = moveEvent.clientX - startX;
-                          const deltaY = moveEvent.clientY - startY;
-                          
-                          const newX = startLeft + deltaX;
-                          const newY = startTop + deltaY;
-                          
-                          // Update DOM immediately for smooth dragging
-                          wrapper.style.left = newX + 'px';
-                          wrapper.style.top = newY + 'px';
-                        };
-                        
-                        const onMouseUp = async (upEvent) => {
-                          document.removeEventListener('mousemove', onMouseMove);
-                          document.removeEventListener('mouseup', onMouseUp);
-                          
-                          const deltaX = upEvent.clientX - startX;
-                          const deltaY = upEvent.clientY - startY;
-                          
-                          const newX = startLeft + deltaX;
-                          const newY = startTop + deltaY;
-                          
-                          // Update position and z-index together (single save)
-                          const updates = { 
-                            x: newX, 
-                            y: newY,
-                            width: width,
-                            height: height,
-                            pinned: false
-                          };
-                          
-                          if (needsZUpdate) {
-                            const newZ = maxZ + 1;
-                            updates.z = newZ;
-                            // Update DOM z-index immediately
-                            wrapper.style.zIndex = newZ;
-                          }
-                          
-                          await updateChild(childId, updates);
-                        };
-                        
-                        document.addEventListener('mousemove', onMouseMove);
-                        document.addEventListener('mouseup', onMouseUp);
-                      });
-                    }
-                    
-                    wrapper.appendChild(titlebar);
-                    
-                    // Resize handles (only for unpinned windows)
-                    if (!isPinned) {
-                      // Helper function to create resize handler
-                      const createResizeHandle = (corner, cursorStyle) => {
-                        const positions = {
-                          'tl': { top: '0', left: '0' },
-                          'tr': { top: '0', right: '0' },
-                          'bl': { bottom: '0', left: '0' },
-                          'br': { bottom: '0', right: '0' }
-                        };
-                        
-                        const handle = api.createElement('div', {
-                          class: 'resize-handle',
-                          style: \`
-                            position: absolute;
-                            \${positions[corner].top !== undefined ? 'top: ' + positions[corner].top + ';' : ''}
-                            \${positions[corner].bottom !== undefined ? 'bottom: ' + positions[corner].bottom + ';' : ''}
-                            \${positions[corner].left !== undefined ? 'left: ' + positions[corner].left + ';' : ''}
-                            \${positions[corner].right !== undefined ? 'right: ' + positions[corner].right + ';' : ''}
-                            width: 8px;
-                            height: 8px;
-                            background: #999;
-                            cursor: \${cursorStyle};
-                            z-index: 10;
-                          \`
-                        }, []);
-                        
-                        handle.addEventListener('mousedown', async (e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          
-                          const startX = e.clientX;
-                          const startY = e.clientY;
-                          
-                          // Read current dimensions from DOM
-                          const startWidth = parseInt(wrapper.style.width) || width;
-                          const startHeight = parseInt(wrapper.style.height) || height;
-                          const leftPx = parseInt(wrapper.style.left);
-                          const topPx = parseInt(wrapper.style.top);
-                          const startLeft = isNaN(leftPx) ? x : leftPx;
-                          const startTop = isNaN(topPx) ? y : topPx;
-                          
-                          const onMouseMove = (moveEvent) => {
-                            const deltaX = moveEvent.clientX - startX;
-                            const deltaY = moveEvent.clientY - startY;
-                            
-                            // Calculate new dimensions based on corner
-                            let newWidth = startWidth;
-                            let newHeight = startHeight;
-                            let newLeft = startLeft;
-                            let newTop = startTop;
-                            
-                            if (corner === 'br') {
-                              // Bottom-right: increase width and height
-                              newWidth = Math.max(200, startWidth + deltaX);
-                              newHeight = Math.max(150, startHeight + deltaY);
-                            } else if (corner === 'bl') {
-                              // Bottom-left: change x and width, increase height
-                              newWidth = Math.max(200, startWidth - deltaX);
-                              newHeight = Math.max(150, startHeight + deltaY);
-                              newLeft = startLeft + (startWidth - newWidth);
-                            } else if (corner === 'tr') {
-                              // Top-right: change y and height, increase width
-                              newWidth = Math.max(200, startWidth + deltaX);
-                              newHeight = Math.max(150, startHeight - deltaY);
-                              newTop = startTop + (startHeight - newHeight);
-                            } else if (corner === 'tl') {
-                              // Top-left: change x, y, width, and height
-                              newWidth = Math.max(200, startWidth - deltaX);
-                              newHeight = Math.max(150, startHeight - deltaY);
-                              newLeft = startLeft + (startWidth - newWidth);
-                              newTop = startTop + (startHeight - newHeight);
-                            }
-                            
-                            // Update DOM immediately for smooth resizing
-                            wrapper.style.width = newWidth + 'px';
-                            wrapper.style.height = newHeight + 'px';
-                            wrapper.style.left = newLeft + 'px';
-                            wrapper.style.top = newTop + 'px';
-                          };
-                          
-                          const onMouseUp = async (upEvent) => {
-                            document.removeEventListener('mousemove', onMouseMove);
-                            document.removeEventListener('mouseup', onMouseUp);
-                            
-                            // Save final dimensions
-                            const finalWidth = parseInt(wrapper.style.width);
-                            const finalHeight = parseInt(wrapper.style.height);
-                            const finalLeft = parseInt(wrapper.style.left);
-                            const finalTop = parseInt(wrapper.style.top);
-                            
-                            await updateChild(childId, {
-                              x: finalLeft,
-                              y: finalTop,
-                              width: finalWidth,
-                              height: finalHeight,
-                              z: z,
-                              pinned: false
-                            });
-                          };
-                          
-                          document.addEventListener('mousemove', onMouseMove);
-                          document.addEventListener('mouseup', onMouseUp);
-                        });
-                        
-                        return handle;
-                      };
-                      
-                      // Add all 4 corner handles
-                      wrapper.appendChild(createResizeHandle('tl', 'nwse-resize'));
-                      wrapper.appendChild(createResizeHandle('tr', 'nesw-resize'));
-                      wrapper.appendChild(createResizeHandle('bl', 'nesw-resize'));
-                      wrapper.appendChild(createResizeHandle('br', 'nwse-resize'));
-                    }
-                    
-                    // Content area
-                    const contentArea = api.createElement('div', {
-                      class: 'window-content',
-                      style: 'padding: 15px; overflow: auto; height: calc(100% - 24px);'
-                    }, []);
-                    contentArea.appendChild(childNode);
-                    wrapper.appendChild(contentArea);
-                    
-                    canvas.appendChild(wrapper);
-                  } catch (error) {
-                    const errorNode = api.createElement('div', { 
-                      style: \`
-                        position: absolute;
-                        left: \${x}px;
-                        top: \${y}px;
-                        width: \${width}px;
-                        padding: 15px;
-                        border: 1px solid #ffcccc;
-                        border-radius: 6px;
-                        background: #fff0f0;
-                        color: #cc0000;
-                      \`
-                    }, [
-                      'Error rendering child: ' + childId + ' - ' + error.message
-                    ]);
-                    canvas.appendChild(errorNode);
-                  }
-                }
-              }
-              
-              container.appendChild(canvas);
-              return container;
-            }
-          `
-        }
-      },
-      
-      // 9. tag - type for classification tags
-      {
-        id: "00000000-0000-0000-0000-000000000009",
-        name: "tag",
+        name: "viewport_type",
         type: "00000000-0000-0000-0000-000000000001",
         created: 0,
         modified: 0,
         children: [],
         content: {
-          description: "A classification tag for organizing items"
+          description: "Type for the system viewport. The viewport manages view state and wraps rendered content with UI chrome."
         }
       },
 
-      // 10. workspace - default root item (now a container)
+      // 8. viewport - the system viewport instance
       {
-        id: "00000000-0000-0000-0000-000000000006",
-        name: "workspace",
-        type: "00000000-0000-0000-0000-000000000007",
-        created: 0,
-        modified: 0,
-        children: [],
-        content: {
-          title: "Workspace",
-          description: "Default starting point. Add items here or navigate elsewhere."
-        }
-      },
-
-      // 11. system:preferences - system preferences
-      {
-        id: "00000000-0000-0000-0000-00000000000a",
-        name: "system:preferences",
-        type: "00000000-0000-0000-0000-000000000000",
-        created: 0,
-        modified: 0,
-        children: [],
-        content: {
-          description: "System preferences and settings",
-          lastLocation: null
-        }
-      },
-
-      // 12. viewport - system-level container for view state
-      {
-        id: "00000000-0000-0000-0000-00000000000b",
+        id: "00000000-0000-0000-0000-000000000008",
         name: "system:viewport",
-        type: "00000000-0000-0000-0000-000000000007", // container
+        type: "00000000-0000-0000-0000-000000000007", // viewport_type
         created: 0,
         modified: 0,
         children: [], // Will hold { id: rootId, renderer?: rendererId }
         content: {
-          description: "System viewport container. Manages view state for the current root item.",
-          system: true
+          description: "System viewport. Manages view state for the current root item."
         }
       }
     ];
@@ -1159,12 +640,8 @@
       RENDERER: "00000000-0000-0000-0000-000000000003",
       LIBRARY: "00000000-0000-0000-0000-000000000004",
       DEFAULT_RENDERER: "00000000-0000-0000-0000-000000000005",
-      WORKSPACE: "00000000-0000-0000-0000-000000000006",
-      CONTAINER: "00000000-0000-0000-0000-000000000007",
-      CONTAINER_RENDERER: "00000000-0000-0000-0000-000000000008",
-      TAG: "00000000-0000-0000-0000-000000000009",
-      PREFERENCES: "00000000-0000-0000-0000-00000000000a",
-      VIEWPORT: "00000000-0000-0000-0000-00000000000b"
+      VIEWPORT_TYPE: "00000000-0000-0000-0000-000000000007",
+      VIEWPORT: "00000000-0000-0000-0000-000000000008"
     };
 
     // =============================================================================
@@ -1441,11 +918,6 @@
         // Set up keyboard shortcuts
         this.setupKeyboardShortcuts();
 
-        // Set up selection handling
-        this.setupSelectionHandling();
-
-        // Create context menu (once, appended to body)
-        this.initContextMenu();
 
         // Create REPL overlay (once, appended to body)
         this.initREPL();
@@ -1467,291 +939,14 @@
             e.preventDefault();
             this.toggleREPL();
           }
-          // Escape to close REPL, context menu, or clear selection
+          // Escape to close REPL
           if (e.key === "Escape") {
             const repl = document.getElementById("repl-container");
-            const contextMenu = document.getElementById("context-menu");
-
             if (repl && repl.classList.contains("visible")) {
               this.toggleREPL();
-            } else if (contextMenu && contextMenu.classList.contains("visible")) {
-              this.hideContextMenu();
-            } else {
-              // Clear selection on Escape
-              this.clearSelection();
             }
           }
         });
-      }
-
-      setupSelectionHandling() {
-        // Handle left-click for selection
-        document.addEventListener("click", (e) => {
-          // Don't handle selection in REPL or nav bar
-          if (e.target.closest("#repl-container") || e.target.closest(".nav-bar")) {
-            return;
-          }
-
-          // Find closest element with data-item-id
-          const itemElement = e.target.closest("[data-item-id]");
-
-          if (itemElement) {
-            const itemId = itemElement.getAttribute("data-item-id");
-            this.selectItem(itemId, itemElement);
-            e.stopPropagation();
-          } else {
-            // Clicked outside any item - clear selection
-            this.clearSelection();
-          }
-        });
-
-        // Handle right-click for context menu
-        document.addEventListener("contextmenu", (e) => {
-          // Don't handle context menu in REPL or nav bar
-          if (e.target.closest("#repl-container") || e.target.closest(".nav-bar")) {
-            return;
-          }
-
-          // Find closest element with data-item-id
-          const itemElement = e.target.closest("[data-item-id]");
-
-          if (itemElement) {
-            e.preventDefault();
-            const itemId = itemElement.getAttribute("data-item-id");
-            // Select the item first (pass element for parent context)
-            this.selectItem(itemId, itemElement);
-            // Show context menu
-            this.showContextMenu(e.clientX, e.clientY, itemId);
-          }
-        });
-      }
-
-      selectItem(itemId, itemElement = null) {
-        // Get parent ID from DOM element if available
-        let parentId = null;
-        if (itemElement) {
-          parentId = itemElement.getAttribute("data-parent-id");
-        } else {
-          // Try to find the element and read parent from it
-          const el = document.querySelector(`[data-item-id="${itemId}"]`);
-          if (el) {
-            parentId = el.getAttribute("data-parent-id");
-          }
-        }
-
-        // Update viewport state with parent context
-        this.viewport.select(itemId, parentId);
-
-        // Update visual indicator
-        this.updateSelectionVisual();
-      }
-
-      clearSelection() {
-        this.viewport.clearSelection();
-        this.updateSelectionVisual();
-      }
-
-      updateSelectionVisual() {
-        // Remove selection from all items
-        document.querySelectorAll("[data-item-id].item-selected").forEach(el => {
-          el.classList.remove("item-selected");
-        });
-
-        // Add selection to currently selected item
-        const selectedId = this.viewport.getSelection();
-        if (selectedId) {
-          const selectedElement = document.querySelector(`[data-item-id="${selectedId}"]`);
-          if (selectedElement) {
-            selectedElement.classList.add("item-selected");
-          }
-        }
-      }
-
-      // -------------------------------------------------------------------------
-      // Context Menu
-      // -------------------------------------------------------------------------
-
-      initContextMenu() {
-        const menu = document.createElement("div");
-        menu.id = "context-menu";
-        menu.className = "context-menu";
-        document.body.appendChild(menu);
-
-        // Close menu when clicking outside
-        document.addEventListener("click", (e) => {
-          if (!e.target.closest(".context-menu")) {
-            this.hideContextMenu();
-          }
-        });
-
-        // Close menu on scroll
-        document.addEventListener("scroll", () => this.hideContextMenu(), true);
-      }
-
-      async showContextMenu(x, y, itemId) {
-        const menu = document.getElementById("context-menu");
-        if (!menu) return;
-
-        // Get item info for context-aware menu
-        const item = await this.storage.get(itemId);
-
-        // Build menu items
-        menu.innerHTML = "";
-
-        // "Edit Configuration" - placeholder for Phase 9
-        const editConfigItem = document.createElement("div");
-        editConfigItem.className = "context-menu-item context-menu-submenu";
-        editConfigItem.textContent = "Edit Configuration";
-        const editConfigSubmenu = document.createElement("div");
-        editConfigSubmenu.className = "context-menu-submenu-items";
-        const editConfigPlaceholder = document.createElement("div");
-        editConfigPlaceholder.className = "context-menu-item disabled";
-        editConfigPlaceholder.textContent = "(Coming soon)";
-        editConfigSubmenu.appendChild(editConfigPlaceholder);
-        editConfigItem.appendChild(editConfigSubmenu);
-        menu.appendChild(editConfigItem);
-
-        // "Display As..." - show available renderers for this item's type
-        const displayAsItem = document.createElement("div");
-        displayAsItem.className = "context-menu-item context-menu-submenu";
-        displayAsItem.textContent = "Display As...";
-        const displayAsSubmenu = document.createElement("div");
-        displayAsSubmenu.className = "context-menu-submenu-items";
-
-        // Get available renderers for this item's type
-        const renderers = await this.getRenderers(item.type);
-
-        // Get current renderer override (if any) from parent's child spec
-        const parentId = this.viewport.getSelectionParent();
-        let currentRendererId = null;
-        if (parentId) {
-          const parent = await this.storage.get(parentId);
-          const childSpec = parent.children?.find(c => c.id === itemId);
-          currentRendererId = childSpec?.renderer || null;
-        }
-
-        if (renderers.length === 0) {
-          const noRenderers = document.createElement("div");
-          noRenderers.className = "context-menu-item disabled";
-          noRenderers.textContent = "(No renderers available)";
-          displayAsSubmenu.appendChild(noRenderers);
-        } else {
-          // Add "Default" option to clear renderer override
-          const defaultOption = document.createElement("div");
-          defaultOption.className = "context-menu-item" + (currentRendererId === null ? " selected" : "");
-          defaultOption.textContent = "Default" + (currentRendererId === null ? " ✓" : "");
-          defaultOption.onclick = async () => {
-            this.hideContextMenu();
-            if (parentId) {
-              await this.setChildRenderer(parentId, itemId, null);
-              await this.navigateToItem(this.viewport.rootId);
-            }
-          };
-          displayAsSubmenu.appendChild(defaultOption);
-
-          // Add separator
-          const sep = document.createElement("div");
-          sep.className = "context-menu-separator";
-          displayAsSubmenu.appendChild(sep);
-
-          // Add each available renderer
-          for (const { renderer, forType, inherited } of renderers) {
-            const rendererOption = document.createElement("div");
-            const isActive = currentRendererId === renderer.id;
-            rendererOption.className = "context-menu-item" + (isActive ? " selected" : "");
-
-            // Build label: name + inheritance indicator + active indicator
-            let label = renderer.name || renderer.id.slice(0, 8);
-            if (inherited) {
-              const typeItem = await this.storage.get(forType);
-              label += ` (from ${typeItem?.name || forType.slice(0, 8)})`;
-            }
-            if (isActive) {
-              label += " ✓";
-            }
-            rendererOption.textContent = label;
-
-            rendererOption.onclick = async () => {
-              this.hideContextMenu();
-              if (parentId) {
-                await this.setChildRenderer(parentId, itemId, renderer.id);
-                await this.navigateToItem(this.viewport.rootId);
-              } else {
-                // Item is the root - use root renderer override
-                await this.viewport.setRootRenderer(renderer.id);
-                await this.navigateToItem(this.viewport.rootId);
-              }
-            };
-            displayAsSubmenu.appendChild(rendererOption);
-          }
-        }
-
-        displayAsItem.appendChild(displayAsSubmenu);
-        menu.appendChild(displayAsItem);
-
-        // "Edit Display" - placeholder for Phase 10
-        const editDisplayItem = document.createElement("div");
-        editDisplayItem.className = "context-menu-item";
-        editDisplayItem.textContent = "Edit Display";
-        editDisplayItem.onclick = () => {
-          this.hideContextMenu();
-          // Placeholder - will open renderer code editor
-          console.log("Edit Display clicked for:", itemId);
-        };
-        menu.appendChild(editDisplayItem);
-
-        // Separator
-        const separator = document.createElement("div");
-        separator.className = "context-menu-separator";
-        menu.appendChild(separator);
-
-        // "Edit Raw JSON" - existing functionality
-        const editRawItem = document.createElement("div");
-        editRawItem.className = "context-menu-item";
-        editRawItem.textContent = "Edit Raw JSON";
-        editRawItem.onclick = () => {
-          this.hideContextMenu();
-          this.editItemRaw(itemId);
-        };
-        menu.appendChild(editRawItem);
-
-        // "Copy ID"
-        const copyIdItem = document.createElement("div");
-        copyIdItem.className = "context-menu-item";
-        copyIdItem.textContent = "Copy ID";
-        copyIdItem.onclick = async () => {
-          this.hideContextMenu();
-          await navigator.clipboard.writeText(itemId);
-          console.log("Copied ID:", itemId);
-        };
-        menu.appendChild(copyIdItem);
-
-        // Position menu (keep within viewport)
-        const menuWidth = 180;
-        const menuHeight = 250; // Approximate
-        const viewportWidth = window.innerWidth;
-        const viewportHeight = window.innerHeight;
-
-        let menuX = x;
-        let menuY = y;
-
-        if (x + menuWidth > viewportWidth) {
-          menuX = viewportWidth - menuWidth - 10;
-        }
-        if (y + menuHeight > viewportHeight) {
-          menuY = viewportHeight - menuHeight - 10;
-        }
-
-        menu.style.left = menuX + "px";
-        menu.style.top = menuY + "px";
-        menu.classList.add("visible");
-      }
-
-      hideContextMenu() {
-        const menu = document.getElementById("context-menu");
-        if (menu) {
-          menu.classList.remove("visible");
-        }
       }
 
       initREPL() {
@@ -1795,40 +990,26 @@
           }
         }
 
-        // Try to get last location from preferences item
+        // Try to get last location from localStorage
         try {
-          const prefs = await this.storage.get(IDS.PREFERENCES);
-          const lastLocation = prefs.content.lastLocation;
+          const lastLocation = localStorage.getItem("hobson:lastLocation");
           if (lastLocation) {
             // Verify the item still exists
             await this.storage.get(lastLocation);
             return lastLocation;
           }
         } catch (error) {
-          console.warn("Could not load last location from preferences:", error.message);
+          // Item doesn't exist, clear the stored location
+          localStorage.removeItem("hobson:lastLocation");
         }
 
         // No valid location found - return null to show empty state
         return null;
       }
 
-      async saveLastLocation(itemId) {
-        // Don't save workspace as last location (it's the fallback)
-        if (itemId && itemId !== IDS.WORKSPACE) {
-          try {
-            const prefs = await this.storage.get(IDS.PREFERENCES);
-            const updated = {
-              ...prefs,
-              content: {
-                ...prefs.content,
-                lastLocation: itemId
-              },
-              modified: Date.now()
-            };
-            await this._rawSet(updated);
-          } catch (error) {
-            console.warn("Could not save last location to preferences:", error.message);
-          }
+      saveLastLocation(itemId) {
+        if (itemId) {
+          localStorage.setItem("hobson:lastLocation", itemId);
         }
       }
 
@@ -1836,19 +1017,22 @@
         const mainView = document.getElementById("main-view");
         mainView.innerHTML = "";
 
-        // Add navigation bar with no current item
-        const navBar = this.createNavBar(null);
-        mainView.appendChild(navBar);
-
-        // Empty state message
-        const emptyState = document.createElement("div");
-        emptyState.style.cssText = "padding: 60px 20px; text-align: center; color: #666;";
-        emptyState.innerHTML = `
-          <h2 style="margin: 0 0 15px 0; color: #333;">Welcome to Hobson</h2>
-          <p style="margin: 0 0 20px 0;">No item selected. Use "All Items" to browse or create a new item.</p>
-          <p style="margin: 0; font-size: 13px; color: #999;">Press Ctrl+\` to open the REPL</p>
-        `;
-        mainView.appendChild(emptyState);
+        // Minimal empty state - just render the viewport item
+        // This will show as JSON with default_renderer until viewport_renderer is installed
+        try {
+          const domNode = await this.renderItem(IDS.VIEWPORT);
+          mainView.appendChild(domNode);
+        } catch (error) {
+          // Fallback message if viewport can't be rendered
+          const emptyState = document.createElement("div");
+          emptyState.style.cssText = "padding: 60px 20px; text-align: center; color: #666;";
+          emptyState.innerHTML = `
+            <h2 style="margin: 0 0 15px 0; color: #333;">Hobson</h2>
+            <p style="margin: 0 0 20px 0;">Press Ctrl+\` to open the REPL</p>
+            <p style="margin: 0; font-size: 13px; color: #c00;">${error.message}</p>
+          `;
+          mainView.appendChild(emptyState);
+        }
       }
       
       async ensureSeedItems() {
@@ -1863,10 +1047,9 @@
             console.log(`Updating seed item: ${seed.name}`);
           }
 
-          if (exists && (seed.id == IDS.WORKSPACE || seed.id == IDS.PREFERENCES)) {
-            // Don't update workspace or preferences (preserve user data)
-          }
-          else {
+          if (exists && seed.id === IDS.VIEWPORT) {
+            // Don't update viewport (preserve user's view state)
+          } else {
             const item = {
               ...seed,
               created: exists ? (await this.storage.get(seed.id)).created : now,
@@ -1966,16 +1149,20 @@
 
       async renderRoot(itemId) {
         this.viewport.setRoot(itemId);
+
+        // Persist viewport state so the viewport item has the rootId
+        await this.viewport.persist();
+
         const mainView = document.getElementById("main-view");
 
         // Save scroll positions before re-rendering (keyed by item ID)
         const scrollStates = new Map();
         const windows = mainView.querySelectorAll('[data-item-id]');
         windows.forEach(wrapper => {
-          const itemId = wrapper.getAttribute('data-item-id');
+          const wId = wrapper.getAttribute('data-item-id');
           const contentDiv = wrapper.querySelector('.window-content');
           if (contentDiv) {
-            scrollStates.set(itemId, {
+            scrollStates.set(wId, {
               scrollTop: contentDiv.scrollTop,
               scrollLeft: contentDiv.scrollLeft
             });
@@ -1983,27 +1170,17 @@
         });
 
         try {
-          const domNode = await this.renderItem(itemId);
+          // Render the viewport item (which will render the root item inside it)
+          const domNode = await this.renderItem(IDS.VIEWPORT);
           mainView.innerHTML = "";
-
-          // Add navigation bar
-          const navBar = this.createNavBar(itemId);
-          mainView.appendChild(navBar);
-
-          // Wrap rendered content with data-item-id for selection
-          const wrapper = document.createElement("div");
-          wrapper.setAttribute("data-item-id", itemId);
-          wrapper.style.cssText = "flex: 1; display: flex; flex-direction: column; min-height: 0;";
-          wrapper.appendChild(domNode);
-          mainView.appendChild(wrapper);
+          mainView.appendChild(domNode);
 
           // Restore scroll positions after re-render
-          // Use setTimeout to ensure DOM is fully rendered
           setTimeout(() => {
             const newWindows = mainView.querySelectorAll('[data-item-id]');
             newWindows.forEach(wrapper => {
-              const itemId = wrapper.getAttribute('data-item-id');
-              const saved = scrollStates.get(itemId);
+              const wId = wrapper.getAttribute('data-item-id');
+              const saved = scrollStates.get(wId);
               if (saved) {
                 const contentDiv = wrapper.querySelector('.window-content');
                 if (contentDiv) {
@@ -2064,6 +1241,13 @@
             nav.appendChild(deleteBtn);
           }
         }
+
+        // Import JSON button
+        const importBtn = document.createElement("button");
+        importBtn.textContent = "Import JSON";
+        importBtn.title = "Import items from JSON file";
+        importBtn.onclick = () => this.showImportFilePicker();
+        nav.appendChild(importBtn);
 
         // REPL toggle button (right side)
         const replBtn = document.createElement("button");
@@ -2368,6 +1552,8 @@
 
           // UI operations
           editRaw: (itemId) => kernel.editItemRaw(itemId),
+          showItemList: () => kernel.showItemList(),
+          import: (json) => kernel.importItems(json),
           getRecentItems: () => kernel.getRecentItems(),
 
           // For script execution - returns REPL API for code evaluation
@@ -2647,15 +1833,82 @@
       async confirmDeleteItem(itemId) {
         const item = await this.storage.get(itemId);
         const name = item.name || item.id;
-        
+
         if (!confirm(`Delete "${name}"?\n\nThis will remove the item from all containers and cannot be undone.`)) {
           return;
         }
-        
+
         await this.deleteItem(itemId);
-        
-        // Navigate to workspace after deletion
-        await this.navigateToItem(IDS.WORKSPACE);
+
+        // Clear the view after deletion
+        await this.renderEmptyState();
+      }
+
+      showImportFilePicker() {
+        const input = document.createElement("input");
+        input.type = "file";
+        input.accept = ".json";
+        input.onchange = async (e) => {
+          const file = e.target.files[0];
+          if (!file) return;
+
+          try {
+            const text = await file.text();
+            const result = await this.importItems(text);
+            alert(`Import complete!\n\nCreated: ${result.created}\nUpdated: ${result.updated}\nSkipped: ${result.skipped}`);
+
+            // Refresh the current view
+            if (this.viewport.rootId) {
+              await this.renderRoot(this.viewport.rootId);
+            } else {
+              await this.showItemList();
+            }
+          } catch (error) {
+            alert(`Import failed: ${error.message}`);
+          }
+        };
+        input.click();
+      }
+
+      async importItems(jsonString) {
+        const data = JSON.parse(jsonString);
+        const items = Array.isArray(data) ? data : [data];
+
+        let created = 0;
+        let updated = 0;
+        let skipped = 0;
+
+        for (const item of items) {
+          if (!item.id) {
+            item.id = crypto.randomUUID();
+          }
+
+          try {
+            const exists = await this.storage.exists(item.id);
+
+            // Ensure timestamps
+            if (!item.created) item.created = Date.now();
+            item.modified = Date.now();
+
+            await this.storage.set(item, this);
+
+            // Clear module cache if it's a code item
+            if (await this.isCodeItem(item)) {
+              this.moduleCache.delete(item.id);
+            }
+
+            if (exists) {
+              updated++;
+            } else {
+              created++;
+            }
+          } catch (error) {
+            console.warn(`Failed to import item ${item.id}: ${error.message}`);
+            skipped++;
+          }
+        }
+
+        return { created, updated, skipped };
       }
       
       async wouldCreateCycle(parentId, newChildId) {
@@ -2757,23 +2010,19 @@
       }
       
       async editItemRaw(itemId) {
-        // Find the element for this item
-        const itemElement = document.querySelector(`[data-item-id="${itemId}"]`);
-        if (!itemElement) {
-          console.error("Could not find element for item:", itemId);
-          return;
-        }
-
         const item = await this.storage.get(itemId);
         const json = JSON.stringify(item, null, 2);
 
-        // Store original styles to restore container appearance
-        const originalStyles = itemElement.style.cssText;
+        // Try inline editing first
+        const itemElement = document.querySelector(`[data-item-id="${itemId}"]`);
+        const isInline = !!itemElement;
 
         // Create editor UI
         const container = document.createElement("div");
         container.className = "raw-editor";
-        container.style.cssText = "height: 100%; display: flex; flex-direction: column;";
+        container.style.cssText = isInline
+          ? "height: 100%; display: flex; flex-direction: column;"
+          : "max-width: 800px; margin: 20px auto; padding: 20px; display: flex; flex-direction: column;";
 
         const heading = document.createElement("h2");
         heading.textContent = `Editing: ${item.name || item.id}`;
@@ -2783,7 +2032,7 @@
         const textarea = document.createElement("textarea");
         textarea.id = "raw-json";
         textarea.value = json;
-        textarea.style.cssText = "flex: 1; min-height: 150px; font-family: monospace; font-size: 13px; padding: 10px; border: 1px solid #ccc; border-radius: 4px; resize: none;";
+        textarea.style.cssText = "flex: 1; min-height: 300px; font-family: monospace; font-size: 13px; padding: 10px; border: 1px solid #ccc; border-radius: 4px; resize: vertical;";
         container.appendChild(textarea);
 
         const actions = document.createElement("div");
@@ -2804,8 +2053,12 @@
               this.moduleCache.delete(updated.id);
             }
 
-            // Re-render the root to show updated content
-            await this.renderRoot(this.currentRoot);
+            // Return to previous view
+            if (this.viewport.rootId) {
+              await this.renderRoot(this.viewport.rootId);
+            } else {
+              await this.showItemList();
+            }
           } catch (error) {
             alert(`Error: ${error.message}`);
           }
@@ -2816,19 +2069,30 @@
         cancelBtn.textContent = "Cancel";
         cancelBtn.style.cssText = "padding: 8px 16px; cursor: pointer;";
         cancelBtn.onclick = async () => {
-          // Re-render to restore original view
-          await this.renderRoot(this.currentRoot);
+          // Return to previous view
+          if (this.viewport.rootId) {
+            await this.renderRoot(this.viewport.rootId);
+          } else {
+            await this.showItemList();
+          }
         };
         actions.appendChild(cancelBtn);
 
         container.appendChild(actions);
 
-        // Replace item content with editor
-        itemElement.innerHTML = "";
-        itemElement.style.cssText = originalStyles + " padding: 15px; overflow: auto;";
-        itemElement.appendChild(container);
+        if (isInline) {
+          // Inline mode: replace item content
+          const originalStyles = itemElement.style.cssText;
+          itemElement.innerHTML = "";
+          itemElement.style.cssText = originalStyles + " padding: 15px; overflow: auto;";
+          itemElement.appendChild(container);
+        } else {
+          // Full-page mode: replace main view
+          const mainView = document.getElementById("main-view");
+          mainView.innerHTML = "";
+          mainView.appendChild(container);
+        }
 
-        // Focus the textarea
         textarea.focus();
       }
       
@@ -2882,7 +2146,7 @@
         
         const cancelBtn = document.createElement("button");
         cancelBtn.textContent = "Cancel";
-        cancelBtn.onclick = () => this.navigateToItem(this.currentRoot || IDS.WORKSPACE);
+        cancelBtn.onclick = () => this.viewport.rootId ? this.navigateToItem(this.viewport.rootId) : this.renderEmptyState();
         actions.appendChild(cancelBtn);
         
         container.appendChild(actions);
@@ -3488,8 +2752,7 @@ VIEWPORT:
 
 CONSTANTS:
   IDS.ATOM, IDS.TYPE_DEFINITION, IDS.CODE, IDS.RENDERER,
-  IDS.LIBRARY, IDS.DEFAULT_RENDERER, IDS.WORKSPACE,
-  IDS.CONTAINER, IDS.CONTAINER_RENDERER, IDS.VIEWPORT
+  IDS.LIBRARY, IDS.DEFAULT_RENDERER, IDS.VIEWPORT_TYPE, IDS.VIEWPORT
 
 Type api.help('methodName') for details on a specific method.`;
             }
@@ -3501,8 +2764,8 @@ Type api.help('methodName') for details on a specific method.`;
 Retrieve a single item by its ID.
 
 Example:
-  const item = await api.get('00000000-0000-0000-0000-000000000006')
-  console.log(item.name) // "workspace"`,
+  const item = await api.get(api.IDS.VIEWPORT)
+  console.log(item.name) // "system:viewport"`,
 
               set: `set(item: Item) -> Promise<string>
 
@@ -3556,7 +2819,7 @@ Example:
 Navigate to a different item (changes URL and re-renders).
 
 Example:
-  await api.navigate(api.IDS.WORKSPACE)`,
+  await api.navigate(someItemId)`,
 
               export: `export() -> Promise<number>
 
@@ -3656,7 +2919,7 @@ Example:
 Find an item by name. Returns null if not found.
 
 Example:
-  const workspace = await api.helpers.findByName('workspace')`,
+  const viewport = await api.helpers.findByName('system:viewport')`,
 
               'helpers.listByType': `helpers.listByType(typeId: string) -> Promise<Item[]>
 
@@ -3695,13 +2958,11 @@ Constants for seed items:
   IDS.RENDERER          - Renderer type
   IDS.LIBRARY           - Library type
   IDS.DEFAULT_RENDERER  - Fallback JSON renderer
-  IDS.WORKSPACE         - Default root container
-  IDS.CONTAINER         - Container type
-  IDS.CONTAINER_RENDERER - Container renderer
-  IDS.VIEWPORT          - System viewport container
+  IDS.VIEWPORT_TYPE     - Viewport type
+  IDS.VIEWPORT          - System viewport
 
 Example:
-  await api.navigate(api.IDS.WORKSPACE)`
+  const vp = await api.get(api.IDS.VIEWPORT)`
             };
             
             return helpText[method] || `No help available for '${method}'.\nTry api.help() to see all methods.`;
@@ -3709,6 +2970,8 @@ Example:
 
           // UI operations
           editRaw: (itemId) => kernel.editItemRaw(itemId),
+          showItemList: () => kernel.showItemList(),
+          import: (json) => kernel.importItems(json),
           getRecentItems: () => kernel.getRecentItems(),
 
           // For script execution - returns REPL API for code evaluation
