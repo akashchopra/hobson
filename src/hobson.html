@@ -699,10 +699,13 @@
                   
                   try {
                     const childItem = await api.get(childId);
-                    const childNode = await api.renderItem(childId);
+                    // Use renderer from child spec if specified, otherwise default
+                    const childRendererId = child.renderer || null;
+                    const childNode = await api.renderItem(childId, childRendererId);
                     
-                    const wrapper = api.createElement('div', { 
+                    const wrapper = api.createElement('div', {
                       'data-item-id': childId,
+                      'data-parent-id': item.id,
                       style: \`
                         position: absolute;
                         left: \${x}px;
@@ -1318,12 +1321,14 @@
         this.rootId = null;           // Currently viewed root item
         this.rootRendererId = null;   // Renderer override for root (cached)
         this.selectedItemId = null;   // Currently selected item (runtime only)
+        this.selectedParentId = null; // Visual parent of selected item (runtime only)
       }
 
       // Set the current root item (runtime only - call persist() to save)
       setRoot(itemId) {
         this.rootId = itemId;
         this.selectedItemId = null; // Clear selection when navigating
+        this.selectedParentId = null;
       }
 
       // Get renderer override for current root
@@ -1337,13 +1342,20 @@
       }
 
       // Select an item (runtime state only, not persisted)
-      select(itemId) {
+      select(itemId, parentId = null) {
         this.selectedItemId = itemId;
+        this.selectedParentId = parentId;
       }
 
       // Clear selection
       clearSelection() {
         this.selectedItemId = null;
+        this.selectedParentId = null;
+      }
+
+      // Get the visual parent of the selected item
+      getSelectionParent() {
+        return this.selectedParentId;
       }
 
       // Get currently selected item
@@ -1480,7 +1492,7 @@
 
           if (itemElement) {
             const itemId = itemElement.getAttribute("data-item-id");
-            this.selectItem(itemId);
+            this.selectItem(itemId, itemElement);
             e.stopPropagation();
           } else {
             // Clicked outside any item - clear selection
@@ -1501,17 +1513,29 @@
           if (itemElement) {
             e.preventDefault();
             const itemId = itemElement.getAttribute("data-item-id");
-            // Select the item first
-            this.selectItem(itemId);
+            // Select the item first (pass element for parent context)
+            this.selectItem(itemId, itemElement);
             // Show context menu
             this.showContextMenu(e.clientX, e.clientY, itemId);
           }
         });
       }
 
-      selectItem(itemId) {
-        // Update viewport state
-        this.viewport.select(itemId);
+      selectItem(itemId, itemElement = null) {
+        // Get parent ID from DOM element if available
+        let parentId = null;
+        if (itemElement) {
+          parentId = itemElement.getAttribute("data-parent-id");
+        } else {
+          // Try to find the element and read parent from it
+          const el = document.querySelector(`[data-item-id="${itemId}"]`);
+          if (el) {
+            parentId = el.getAttribute("data-parent-id");
+          }
+        }
+
+        // Update viewport state with parent context
+        this.viewport.select(itemId, parentId);
 
         // Update visual indicator
         this.updateSelectionVisual();
@@ -1986,12 +2010,17 @@
       // Rendering
       // -------------------------------------------------------------------------
       
-      async renderItem(itemId) {
+      async renderItem(itemId, rendererId = null) {
         const item = await this.storage.get(itemId);
-        
-        // Find renderer for this item's type
-        const renderer = await this.findRenderer(item.type);
-        
+
+        // Use specified renderer or find default for item's type
+        let renderer;
+        if (rendererId) {
+          renderer = await this.storage.get(rendererId);
+        } else {
+          renderer = await this.findRenderer(item.type);
+        }
+
         // Load and execute renderer
         try {
           const rendererModule = await this.require(renderer.id);
@@ -2006,23 +2035,23 @@
       async findRenderer(typeId) {
         let currentType = typeId;
         const visited = new Set();
-        
+
         while (currentType && !visited.has(currentType)) {
           visited.add(currentType);
-          
+
           // Look for a renderer for this type
           const renderers = await this.storage.query({ type: IDS.RENDERER });
           const renderer = renderers.find(r => r.content?.for_type === currentType);
-          
+
           if (renderer) {
             return renderer;
           }
-          
+
           // Move up the type chain
           if (currentType === IDS.ATOM) {
             break;
           }
-          
+
           try {
             const typeItem = await this.storage.get(currentType);
             currentType = typeItem.type;
@@ -2030,11 +2059,82 @@
             break;
           }
         }
-        
+
         // Fall back to default renderer
         return await this.storage.get(IDS.DEFAULT_RENDERER);
       }
-      
+
+      // Get all renderers for a type (including inherited from type chain)
+      async getRenderers(typeId) {
+        const allRenderers = await this.storage.query({ type: IDS.RENDERER });
+        const result = [];
+        const seenTypes = new Set();
+
+        let currentType = typeId;
+        const visited = new Set();
+
+        while (currentType && !visited.has(currentType)) {
+          visited.add(currentType);
+
+          // Find all renderers for this type
+          const renderersForType = allRenderers.filter(r => r.content?.for_type === currentType);
+          for (const renderer of renderersForType) {
+            if (!seenTypes.has(renderer.id)) {
+              seenTypes.add(renderer.id);
+              result.push({
+                renderer,
+                forType: currentType,
+                inherited: currentType !== typeId
+              });
+            }
+          }
+
+          // Move up the type chain
+          if (currentType === IDS.ATOM) {
+            break;
+          }
+
+          try {
+            const typeItem = await this.storage.get(currentType);
+            currentType = typeItem.type;
+          } catch {
+            break;
+          }
+        }
+
+        // Always include default renderer as fallback option
+        const defaultRenderer = await this.storage.get(IDS.DEFAULT_RENDERER);
+        if (!seenTypes.has(defaultRenderer.id)) {
+          result.push({
+            renderer: defaultRenderer,
+            forType: IDS.ATOM,
+            inherited: true,
+            isDefault: true
+          });
+        }
+
+        return result;
+      }
+
+      // Get the default renderer for a type
+      async getDefaultRenderer(typeId) {
+        const renderers = await this.getRenderers(typeId);
+
+        // First look for one marked as is_default
+        const defaultMarked = renderers.find(r => r.renderer.content?.is_default);
+        if (defaultMarked) {
+          return defaultMarked.renderer;
+        }
+
+        // Otherwise return the first one (most specific in type chain)
+        if (renderers.length > 0) {
+          return renderers[0].renderer;
+        }
+
+        // Fallback to system default
+        return await this.storage.get(IDS.DEFAULT_RENDERER);
+      }
+
       createRendererAPI(containerItem) {
         const kernel = this;
         
@@ -2083,10 +2183,15 @@
           
           // Load code module
           require: (nameOrId) => kernel.require(nameOrId),
-          
+
           // Render another item (for containers)
-          renderItem: (itemId) => kernel.renderItem(itemId),
-          
+          renderItem: (itemId, rendererId) => kernel.renderItem(itemId, rendererId),
+
+          // Renderer discovery
+          getRenderers: (typeId) => kernel.getRenderers(typeId),
+          getDefaultRenderer: (typeId) => kernel.getDefaultRenderer(typeId),
+          findRenderer: (typeId) => kernel.findRenderer(typeId),
+
           // Navigation
           navigate: (itemId) => kernel.navigateToItem(itemId),
           getCurrentRoot: () => kernel.currentRoot,
@@ -2174,7 +2279,15 @@
           removeChild: async (childId) => {
             await kernel.removeChild(containerItem.id, childId);
           },
-          
+
+          // Set renderer for a child in current container
+          setChildRenderer: async (childId, rendererId) => {
+            await kernel.setChildRenderer(containerItem.id, childId, rendererId);
+          },
+
+          // Find parent of an item
+          findParentOf: (itemId) => kernel.findParentOf(itemId),
+
           // Delete item entirely
           delete: async (itemId) => {
             await kernel.deleteItem(itemId);
@@ -2195,9 +2308,10 @@
 
           // Viewport API for view state management
           viewport: {
-            select: (itemId) => kernel.viewport.select(itemId),
+            select: (itemId, parentId) => kernel.viewport.select(itemId, parentId),
             clearSelection: () => kernel.viewport.clearSelection(),
             getSelection: () => kernel.viewport.getSelection(),
+            getSelectionParent: () => kernel.viewport.getSelectionParent(),
             getRoot: () => kernel.viewport.rootId,
             getRootRenderer: () => kernel.viewport.getRootRenderer(),
             setRootRenderer: async (rendererId) => {
@@ -2209,7 +2323,7 @@
 
         return api;
       }
-      
+
       createErrorView(error, itemId) {
         const container = document.createElement("div");
         container.className = "render-error";
@@ -2388,7 +2502,43 @@
         await this.storage.set(updated, this);
         await this.renderRoot(this.currentRoot);
       }
-      
+
+      // Set the renderer for a child item in a parent's children array
+      async setChildRenderer(parentId, childId, rendererId) {
+        const parent = await this.storage.get(parentId);
+        const childIndex = parent.children.findIndex(c => c.id === childId);
+
+        if (childIndex < 0) {
+          throw new Error(`Child ${childId} not found in parent ${parentId}`);
+        }
+
+        // Update the child's renderer
+        const updatedChildren = [...parent.children];
+        updatedChildren[childIndex] = {
+          ...updatedChildren[childIndex],
+          renderer: rendererId
+        };
+
+        const updated = {
+          ...parent,
+          children: updatedChildren,
+          modified: Date.now()
+        };
+
+        await this.storage.set(updated, this);
+      }
+
+      // Find the parent container for a given child item
+      async findParentOf(childId) {
+        const allItems = await this.storage.getAll();
+        for (const item of allItems) {
+          if (item.children && item.children.some(c => c.id === childId)) {
+            return item;
+          }
+        }
+        return null;
+      }
+
       async deleteItem(itemId) {
         // Get the item before deletion
         const item = await this.storage.get(itemId);
@@ -3001,6 +3151,18 @@
           // Code operations
           require: (name) => kernel.require(name),
 
+          // Renderer operations
+          renderItem: (itemId, rendererId) => kernel.renderItem(itemId, rendererId),
+          getRenderers: (typeId) => kernel.getRenderers(typeId),
+          getDefaultRenderer: (typeId) => kernel.getDefaultRenderer(typeId),
+          findRenderer: (typeId) => kernel.findRenderer(typeId),
+
+          // Parent-child operations
+          setChildRenderer: (parentId, childId, rendererId) => kernel.setChildRenderer(parentId, childId, rendererId),
+          findParentOf: (childId) => kernel.findParentOf(childId),
+          addChild: (parentId, childId) => kernel.addChild(parentId, childId),
+          removeChild: (parentId, childId) => kernel.removeChild(parentId, childId),
+
           // Navigation
           navigate: (id) => kernel.navigateToItem(id),
           
@@ -3207,6 +3369,18 @@ STORAGE:
 CODE:
   require(nameOrId)    - Load code module by name or ID
 
+RENDERERS:
+  renderItem(id, rid?) - Render item with optional renderer
+  getRenderers(typeId) - Get all renderers for type
+  getDefaultRenderer(typeId) - Get default renderer for type
+  findRenderer(typeId) - Find first renderer for type
+
+PARENT-CHILD:
+  setChildRenderer(pid, cid, rid) - Set renderer for child
+  findParentOf(id)     - Find parent container of item
+  addChild(pid, cid)   - Add child to parent
+  removeChild(pid, cid) - Remove child from parent
+
 NAVIGATION:
   navigate(id)         - Navigate to item
 
@@ -3234,9 +3408,10 @@ HELPERS:
   helpers.clearDeleted()
 
 VIEWPORT:
-  viewport.select(id)       - Select an item
+  viewport.select(id, pid?) - Select an item (with optional parent)
   viewport.clearSelection() - Clear selection
   viewport.getSelection()   - Get selected item ID
+  viewport.getSelectionParent() - Get visual parent of selection
   viewport.getRoot()        - Get current root item ID
   viewport.getRootRenderer() - Get renderer override for root
   viewport.setRootRenderer(id) - Set renderer override for root
@@ -3474,9 +3649,10 @@ Example:
 
           // Viewport API for view state management
           viewport: {
-            select: (itemId) => kernel.viewport.select(itemId),
+            select: (itemId, parentId) => kernel.viewport.select(itemId, parentId),
             clearSelection: () => kernel.viewport.clearSelection(),
             getSelection: () => kernel.viewport.getSelection(),
+            getSelectionParent: () => kernel.viewport.getSelectionParent(),
             getRoot: () => kernel.viewport.rootId,
             getRootRenderer: () => kernel.viewport.getRootRenderer(),
             setRootRenderer: async (rendererId) => {
