@@ -1410,7 +1410,14 @@
 
       // Get all editors available for a type, walking up the type chain
       async getEditors(typeId) {
-        const allEditors = await this.storage.query({ type: IDS.EDITOR });
+        // Find all items that are editors (type chain includes EDITOR)
+        const allItems = await this.storage.getAll();
+        const allEditors = [];
+        for (const item of allItems) {
+          if (await this.typeChainIncludes(item.type, IDS.EDITOR)) {
+            allEditors.push(item);
+          }
+        }
         const result = [];
         const seenIds = new Set();
 
@@ -1502,13 +1509,13 @@
 
           // Display in a modal
           this.showEditorModal(item, domNode);
-        } else if (editor.content?.ui_hints) {
-          // Declarative editor - use generic editor (to be implemented)
-          console.log("Declarative editor with ui_hints - generic editor not yet implemented");
-          this.editItemRaw(item);
         } else {
-          // No code or ui_hints - fall back to raw
-          this.editItemRaw(item);
+          // Non-code editor - render it (its renderer handles the logic)
+          const editorAPI = this.createEditorAPI(item);
+          this._editingContext = { item, editorAPI };
+          const domNode = await this.renderItem(editor.id);
+          this._editingContext = null;
+          this.showEditorModal(item, domNode);
         }
       }
 
@@ -1540,10 +1547,19 @@
             kernel.hideEditorModal();
           },
 
-          // Save and close
+          // Save and close, then refresh the view
           saveAndClose: async (updatedItem) => {
-            await save(updatedItem);
-            kernel.hideEditorModal();
+            try {
+              await save(updatedItem);
+              kernel.hideEditorModal();
+              // Refresh the current view to show changes
+              const rootId = kernel.viewport.rootId;
+              if (rootId) {
+                await kernel.renderRoot(rootId);
+              }
+            } catch (e) {
+              console.error("saveAndClose error:", e);
+            }
           }
         };
       }
@@ -1705,6 +1721,7 @@
           getEditors: (typeId) => kernel.getEditors(typeId),
           getDefaultEditor: (typeId) => kernel.getDefaultEditor(typeId),
           editItem: (itemId, editorId) => kernel.editItem(itemId, editorId),
+          getEditingContext: () => kernel._editingContext,
 
           // Navigation
           navigate: (itemId) => kernel.navigateToItem(itemId),
