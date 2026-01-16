@@ -1005,27 +1005,18 @@
           }
         }
 
-        // Try to get last location from localStorage
-        try {
-          const lastLocation = localStorage.getItem("hobson:lastLocation");
-          if (lastLocation) {
-            // Verify the item still exists
-            await this.storage.get(lastLocation);
-            return lastLocation;
+        // Fall back to viewport's persisted root (already restored from viewport item)
+        if (this.viewport.rootId) {
+          try {
+            await this.storage.get(this.viewport.rootId);
+            return this.viewport.rootId;
+          } catch {
+            console.warn(`Viewport root ${this.viewport.rootId} not found`);
           }
-        } catch (error) {
-          // Item doesn't exist, clear the stored location
-          localStorage.removeItem("hobson:lastLocation");
         }
 
         // No valid location found - return null to show empty state
         return null;
-      }
-
-      saveLastLocation(itemId) {
-        if (itemId) {
-          localStorage.setItem("hobson:lastLocation", itemId);
-        }
       }
 
       async renderEmptyState() {
@@ -1119,9 +1110,6 @@
 
         // Persist viewport state
         await this.viewport.persist();
-
-        // Save as last location for next launch
-        await this.saveLastLocation(itemId);
       }
 
       async renderRoot(itemId) {
@@ -2033,20 +2021,6 @@
       }
 
       async deleteItem(itemId) {
-        // Get the item before deletion
-        const item = await this.storage.get(itemId);
-        
-        //TODO: Why is this a kernel concern?
-        // Save to deletion audit trail
-        const deletedItems = JSON.parse(localStorage.getItem('hobson-deleted-items') || '[]');
-        deletedItems.push({
-          item,
-          deletedAt: Date.now(),
-          deletedAtReadable: new Date().toISOString()
-        });
-        localStorage.setItem('hobson-deleted-items', JSON.stringify(deletedItems));
-        console.log(`Item ${item.name || item.id} moved to deletion audit trail`);
-        
         // Find all parents
         const allItems = await this.storage.getAll();
         const parents = allItems.filter(parentItem => {
@@ -2072,7 +2046,7 @@
         const item = await this.storage.get(itemId);
         const name = item.name || item.id;
 
-        if (!confirm(`Delete "${name}"?\n\nThis will remove the item from all containers and cannot be undone.`)) {
+        if (!confirm(`Delete "${name}"?\n\nThis will permanently delete the item and cannot be undone.`)) {
           return;
         }
 
@@ -2475,7 +2449,6 @@
         clearTranscriptBtn.textContent = "Clear Transcript";
         clearTranscriptBtn.onclick = () => {
           document.getElementById("repl-transcript-entries").innerHTML = "";
-          localStorage.setItem("repl-transcript", JSON.stringify([]));
         };
         transcriptHeader.appendChild(clearTranscriptBtn);
 
@@ -2530,12 +2503,9 @@
           }
         });
 
-        // Load and display saved transcript
-        this.loadREPLTranscript();
-        
-        // Initialize history
-        this.replHistory = JSON.parse(localStorage.getItem("repl-history") || "[]");
-        this.replHistoryIndex = this.replHistory.length;
+        // Initialize history (ephemeral - not persisted)
+        this.replHistory = [];
+        this.replHistoryIndex = 0;
         
         // Keyboard shortcuts
         input.addEventListener("keydown", (e) => {
@@ -2582,63 +2552,25 @@
         
         return container;
       }
-      
-      //TODO: Why using local storage?
-      loadREPLTranscript() {
-        const entries = JSON.parse(localStorage.getItem("repl-transcript") || "[]");
+
+      addTranscriptEntry(code, result, error) {
         const container = document.getElementById("repl-transcript-entries");
-        
-        if (!container) return;
-        
-        container.innerHTML = "";
-        
-        // Show last 10 entries
-        const recent = entries.slice(-10);
-        for (const entry of recent) {
-          this.addTranscriptEntry(entry.code, entry.result, entry.error, false);
-        }
-        
-        if (entries.length === 0) {
-          const empty = document.createElement("div");
-          empty.style.color = "#999";
-          empty.style.fontStyle = "italic";
-          empty.style.padding = "20px";
-          empty.textContent = "No commands run yet. Try: await api.getAll()";
-          container.appendChild(empty);
-        }
-      }
-      
-      addTranscriptEntry(code, result, error, save = true) {
-        const container = document.getElementById("repl-transcript-entries");
-        
+
         const entry = document.createElement("div");
         entry.className = "repl-entry" + (error ? " error" : " success");
-        
+
         const codeDiv = document.createElement("div");
         codeDiv.className = "repl-entry-code";
         codeDiv.textContent = "> " + code;
         entry.appendChild(codeDiv);
-        
+
         const outputDiv = document.createElement("div");
         outputDiv.className = error ? "repl-entry-error" : "repl-entry-output";
         outputDiv.textContent = error || result;
         entry.appendChild(outputDiv);
-        
+
         container.appendChild(entry);
-        
-        // Save to localStorage
-        if (save) {
-          const transcript = JSON.parse(localStorage.getItem("repl-transcript") || "[]");
-          transcript.push({ code, result, error, timestamp: Date.now() });
-          
-          // Keep last 50 entries
-          if (transcript.length > 50) {
-            transcript.shift();
-          }
-          
-          localStorage.setItem("repl-transcript", JSON.stringify(transcript));
-        }
-        
+
         // Scroll to bottom
         entry.scrollIntoView({ behavior: "smooth", block: "nearest" });
       }
@@ -2649,16 +2581,14 @@
         
         if (!code) return;
         
-        // Add to history
+        // Add to history (ephemeral - not persisted)
         if (this.replHistory.length === 0 || this.replHistory[this.replHistory.length - 1] !== code) {
           this.replHistory.push(code);
-          
+
           // Keep last 50 commands
           if (this.replHistory.length > 50) {
             this.replHistory.shift();
           }
-          
-          localStorage.setItem("repl-history", JSON.stringify(this.replHistory));
         }
         this.replHistoryIndex = this.replHistory.length;
         
@@ -2888,47 +2818,6 @@
               }
               return codeItems;
             },
-            
-            // View deleted items
-            viewDeleted: () => {
-              const deleted = JSON.parse(localStorage.getItem('hobson-deleted-items') || '[]');
-              console.log(`Found ${deleted.length} deleted items:`);
-              deleted.forEach((entry, i) => {
-                console.log(`[${i}] ${entry.item.name || entry.item.id} - deleted ${entry.deletedAtReadable}`);
-              });
-              return deleted;
-            },
-            
-            // Recover a deleted item by index
-            recoverDeleted: async (index) => {
-              const deleted = JSON.parse(localStorage.getItem('hobson-deleted-items') || '[]');
-              
-              if (index < 0 || index >= deleted.length) {
-                throw new Error(`Index ${index} out of range (0-${deleted.length - 1})`);
-              }
-              
-              const entry = deleted[index];
-              const item = entry.item;
-              
-              // Restore the item
-              await kernel.storage.set(item, kernel);
-              
-              // Remove from deletion log
-              deleted.splice(index, 1);
-              localStorage.setItem('hobson-deleted-items', JSON.stringify(deleted));
-              
-              console.log(`Recovered: ${item.name || item.id}`);
-              return item.id;
-            },
-            
-            // Clear deletion log
-            clearDeleted: () => {
-              const deleted = JSON.parse(localStorage.getItem('hobson-deleted-items') || '[]');
-              const count = deleted.length;
-              localStorage.removeItem('hobson-deleted-items');
-              console.log(`Cleared ${count} items from deletion log`);
-              return count;
-            }
           },
           
           // Help system
@@ -2986,9 +2875,6 @@ HELPERS:
   helpers.listTypes()
   helpers.listRenderers()
   helpers.listCode()
-  helpers.viewDeleted()
-  helpers.recoverDeleted(index)
-  helpers.clearDeleted()
 
 VIEWPORT:
   viewport.select(id, pid?) - Select an item (with optional parent)
@@ -3120,9 +3006,6 @@ Example:
   listTypes()                          - List all type definitions
   listRenderers()                      - List all renderers
   listCode()                           - List all code items
-  viewDeleted()                        - Show deleted items audit
-  recoverDeleted(index)                - Restore deleted item
-  clearDeleted()                       - Clear deletion audit
 
 Type api.help('helpers.createType') for specific helper details.`,
 
