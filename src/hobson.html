@@ -629,6 +629,20 @@
         content: {
           description: "System viewport. Manages view state for the current root item."
         }
+      },
+
+      // 9. editor - type for editor items
+      {
+        id: "00000000-0000-0000-0000-000000000009",
+        name: "editor",
+        type: "00000000-0000-0000-0000-000000000002", // extends code
+        created: 0,
+        modified: 0,
+        children: [],
+        content: {
+          description: "Code that provides editing UI for an item type. Can be declarative (ui_hints) or imperative (code).",
+          required_fields: ["for_type"]
+        }
       }
     ];
     
@@ -641,7 +655,8 @@
       LIBRARY: "00000000-0000-0000-0000-000000000004",
       DEFAULT_RENDERER: "00000000-0000-0000-0000-000000000005",
       VIEWPORT_TYPE: "00000000-0000-0000-0000-000000000007",
-      VIEWPORT: "00000000-0000-0000-0000-000000000008"
+      VIEWPORT: "00000000-0000-0000-0000-000000000008",
+      EDITOR: "00000000-0000-0000-0000-000000000009"
     };
 
     // =============================================================================
@@ -1117,6 +1132,7 @@
         }
       }
       
+      //TODO: Why is this a kernel concern?
       // Add item to recent items list (stored in localStorage)
       addToRecentItems(itemId, itemName) {
         const recent = this.getRecentItems();
@@ -1137,6 +1153,7 @@
         localStorage.setItem('hobson-recent-items', JSON.stringify(trimmed));
       }
 
+      //TODO: Why is this a kernel concern?
       // Get recent items (most recent last)
       getRecentItems() {
         try {
@@ -1155,6 +1172,7 @@
 
         const mainView = document.getElementById("main-view");
 
+        //TODO: Why is this a kernel concern?
         // Save scroll positions before re-rendering (keyed by item ID)
         const scrollStates = new Map();
         const windows = mainView.querySelectorAll('[data-item-id]');
@@ -1175,6 +1193,7 @@
           mainView.innerHTML = "";
           mainView.appendChild(domNode);
 
+          //TODO: Why is this a kernel concern?
           // Restore scroll positions after re-render
           setTimeout(() => {
             const newWindows = mainView.querySelectorAll('[data-item-id]');
@@ -1389,6 +1408,242 @@
         return await this.storage.get(IDS.DEFAULT_RENDERER);
       }
 
+      // Get all editors available for a type, walking up the type chain
+      async getEditors(typeId) {
+        const allEditors = await this.storage.query({ type: IDS.EDITOR });
+        const result = [];
+        const seenIds = new Set();
+
+        let currentType = typeId;
+        const visited = new Set();
+
+        while (currentType && !visited.has(currentType)) {
+          visited.add(currentType);
+
+          // Find all editors for this type
+          const editorsForType = allEditors.filter(e => e.content?.for_type === currentType);
+          for (const editor of editorsForType) {
+            if (!seenIds.has(editor.id)) {
+              seenIds.add(editor.id);
+              result.push({
+                editor,
+                forType: currentType,
+                inherited: currentType !== typeId
+              });
+            }
+          }
+
+          // Move up the type chain
+          if (currentType === IDS.ATOM) {
+            break;
+          }
+
+          try {
+            const typeItem = await this.storage.get(currentType);
+            currentType = typeItem.type;
+          } catch {
+            break;
+          }
+        }
+
+        return result;
+      }
+
+      // Get the default editor for a type
+      async getDefaultEditor(typeId) {
+        const editors = await this.getEditors(typeId);
+
+        // First look for one marked as is_default
+        const defaultMarked = editors.find(e => e.editor.content?.is_default);
+        if (defaultMarked) {
+          return defaultMarked.editor;
+        }
+
+        // Otherwise return the first one (most specific in type chain)
+        if (editors.length > 0) {
+          return editors[0].editor;
+        }
+
+        // No editor found
+        return null;
+      }
+
+      // Edit an item using an editor
+      async editItem(itemId, editorId = null) {
+        const item = await this.storage.get(itemId);
+        if (!item) {
+          throw new Error(`Item not found: ${itemId}`);
+        }
+
+        // Get the editor
+        let editor;
+        if (editorId) {
+          editor = await this.storage.get(editorId);
+          if (!editor) {
+            throw new Error(`Editor not found: ${editorId}`);
+          }
+        } else {
+          editor = await this.getDefaultEditor(item.type);
+        }
+
+        // If no editor found, fall back to raw JSON editing
+        if (!editor) {
+          this.editItemRaw(item);
+          return;
+        }
+
+        // Execute the editor
+        // Editors can be declarative (ui_hints) or imperative (code)
+        if (editor.content?.code) {
+          // Imperative editor - execute the code
+          const editorAPI = this.createEditorAPI(item);
+          const module = await this.evaluateCodeItem(editor);
+          const domNode = await module.render(item, editorAPI);
+
+          // Display in a modal
+          this.showEditorModal(item, domNode);
+        } else if (editor.content?.ui_hints) {
+          // Declarative editor - use generic editor (to be implemented)
+          console.log("Declarative editor with ui_hints - generic editor not yet implemented");
+          this.editItemRaw(item);
+        } else {
+          // No code or ui_hints - fall back to raw
+          this.editItemRaw(item);
+        }
+      }
+
+      // Create API for editors (extends renderer API with write capabilities)
+      createEditorAPI(item) {
+        const kernel = this;
+        const rendererAPI = this.createRendererAPI(item);
+
+        // Save function - defined separately so saveAndClose can call it
+        const save = async (updatedItem) => {
+          const merged = {
+            ...item,
+            ...updatedItem,
+            id: item.id, // Prevent ID changes
+            modified: Date.now()
+          };
+          await kernel.storage.set(merged, kernel);
+          return merged;
+        };
+
+        return {
+          ...rendererAPI,
+
+          // Write operations for editors
+          save,
+
+          // Close the editor modal
+          close: () => {
+            kernel.hideEditorModal();
+          },
+
+          // Save and close
+          saveAndClose: async (updatedItem) => {
+            await save(updatedItem);
+            kernel.hideEditorModal();
+          }
+        };
+      }
+
+      // Show editor in a modal overlay
+      showEditorModal(item, content) {
+        // Remove any existing modal
+        this.hideEditorModal();
+
+        const overlay = document.createElement("div");
+        overlay.id = "editor-modal-overlay";
+        overlay.style.cssText = `
+          position: fixed;
+          top: 0;
+          left: 0;
+          right: 0;
+          bottom: 0;
+          background: rgba(0, 0, 0, 0.5);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          z-index: 10000;
+        `;
+
+        const modal = document.createElement("div");
+        modal.style.cssText = `
+          background: white;
+          border-radius: 8px;
+          max-width: 90vw;
+          max-height: 90vh;
+          overflow: auto;
+          box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+        `;
+
+        // Header with close button
+        const header = document.createElement("div");
+        header.style.cssText = `
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          padding: 12px 16px;
+          border-bottom: 1px solid #ddd;
+          background: #f5f5f5;
+          border-radius: 8px 8px 0 0;
+        `;
+
+        const title = document.createElement("span");
+        title.textContent = `Editing: ${item.name || item.id.slice(0, 8)}`;
+        title.style.fontWeight = "bold";
+
+        const closeBtn = document.createElement("button");
+        closeBtn.textContent = "×";
+        closeBtn.style.cssText = `
+          background: none;
+          border: none;
+          font-size: 24px;
+          cursor: pointer;
+          padding: 0 8px;
+        `;
+        closeBtn.onclick = () => this.hideEditorModal();
+
+        header.appendChild(title);
+        header.appendChild(closeBtn);
+
+        // Content area
+        const contentArea = document.createElement("div");
+        contentArea.style.padding = "16px";
+        contentArea.appendChild(content);
+
+        modal.appendChild(header);
+        modal.appendChild(contentArea);
+        overlay.appendChild(modal);
+
+        // Close on overlay click (but not modal click)
+        overlay.onclick = (e) => {
+          if (e.target === overlay) {
+            this.hideEditorModal();
+          }
+        };
+
+        // Close on Escape
+        const escHandler = (e) => {
+          if (e.key === "Escape") {
+            this.hideEditorModal();
+            document.removeEventListener("keydown", escHandler);
+          }
+        };
+        document.addEventListener("keydown", escHandler);
+
+        document.body.appendChild(overlay);
+      }
+
+      // Hide editor modal
+      hideEditorModal() {
+        const existing = document.getElementById("editor-modal-overlay");
+        if (existing) {
+          existing.remove();
+        }
+      }
+
       createRendererAPI(containerItem) {
         const kernel = this;
         
@@ -1445,6 +1700,11 @@
           getRenderers: (typeId) => kernel.getRenderers(typeId),
           getDefaultRenderer: (typeId) => kernel.getDefaultRenderer(typeId),
           findRenderer: (typeId) => kernel.findRenderer(typeId),
+
+          // Editors
+          getEditors: (typeId) => kernel.getEditors(typeId),
+          getDefaultEditor: (typeId) => kernel.getDefaultEditor(typeId),
+          editItem: (itemId, editorId) => kernel.editItem(itemId, editorId),
 
           // Navigation
           navigate: (itemId) => kernel.navigateToItem(itemId),
@@ -1784,6 +2044,7 @@
         await this.storage.set(updated, this);
       }
 
+      //TODO: still required?
       // Find the parent container for a given child item
       async findParentOf(childId) {
         const allItems = await this.storage.getAll();
@@ -1799,6 +2060,7 @@
         // Get the item before deletion
         const item = await this.storage.get(itemId);
         
+        //TODO: Why is this a kernel concern?
         // Save to deletion audit trail
         const deletedItems = JSON.parse(localStorage.getItem('hobson-deleted-items') || '[]');
         deletedItems.push({
@@ -2345,6 +2607,7 @@
         return container;
       }
       
+      //TODO: Why using local storage?
       loadREPLTranscript() {
         const entries = JSON.parse(localStorage.getItem("repl-transcript") || "[]");
         const container = document.getElementById("repl-transcript-entries");
@@ -2490,6 +2753,11 @@
           getRenderers: (typeId) => kernel.getRenderers(typeId),
           getDefaultRenderer: (typeId) => kernel.getDefaultRenderer(typeId),
           findRenderer: (typeId) => kernel.findRenderer(typeId),
+
+          // Editors
+          getEditors: (typeId) => kernel.getEditors(typeId),
+          getDefaultEditor: (typeId) => kernel.getDefaultEditor(typeId),
+          editItem: (itemId, editorId) => kernel.editItem(itemId, editorId),
 
           // Parent-child operations
           setChildRenderer: (parentId, childId, rendererId) => kernel.setChildRenderer(parentId, childId, rendererId),
@@ -2708,6 +2976,11 @@ RENDERERS:
   getRenderers(typeId) - Get all renderers for type
   getDefaultRenderer(typeId) - Get default renderer for type
   findRenderer(typeId) - Find first renderer for type
+
+EDITORS:
+  getEditors(typeId)   - Get all editors for type
+  getDefaultEditor(typeId) - Get default editor for type
+  editItem(id, eid?)   - Edit item with optional editor
 
 PARENT-CHILD:
   setChildRenderer(pid, cid, rid) - Set renderer for child
