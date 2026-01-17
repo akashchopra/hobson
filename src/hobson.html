@@ -841,6 +841,20 @@
         // Create REPL overlay (once, appended to body)
         this.initREPL();
 
+        // Check if we only have seed items (fresh start)
+        const allItems = await this.storage.getAll();
+        if (allItems.length === SEED_ITEMS.length) {
+          // Fresh start - show REPL with help
+          console.log("Fresh start detected - showing REPL with help");
+          await this.renderEmptyState();
+          await this.toggleREPL();
+          // Run help command automatically
+          const input = document.getElementById("repl-input");
+          input.value = "return api.help()";
+          await this.runREPL();
+          return;
+        }
+
         // Get root from URL, or last location, or show nothing
         const rootId = await this.getStartingRoot();
         if (rootId) {
@@ -852,17 +866,17 @@
       }
 
       setupKeyboardShortcuts() {
-        document.addEventListener("keydown", (e) => {
+        document.addEventListener("keydown", async (e) => {
           // Ctrl+` or Cmd+` to toggle REPL
           if ((e.ctrlKey || e.metaKey) && e.key === "`") {
             e.preventDefault();
-            this.toggleREPL();
+            await this.toggleREPL();
           }
           // Escape to close REPL
           if (e.key === "Escape") {
             const repl = document.getElementById("repl-container");
             if (repl && repl.classList.contains("visible")) {
-              this.toggleREPL();
+              await this.toggleREPL();
             }
           }
         });
@@ -874,12 +888,28 @@
         document.body.appendChild(repl);
       }
 
-      toggleREPL() {
+      async hasViewportRenderer() {
+        const renderers = await this.storage.query({ type: IDS.RENDERER });
+        return renderers.some(r => r.content?.for_type === IDS.VIEWPORT_TYPE);
+      }
+
+      async toggleREPL() {
         const repl = document.getElementById("repl-container");
         const mainView = document.getElementById("main-view");
         if (repl && mainView) {
           const isVisible = repl.classList.contains("visible");
           if (isVisible) {
+            // Check if we can close the REPL
+            const hasViewportRenderer = await this.hasViewportRenderer();
+            if (!hasViewportRenderer) {
+              // Can't close - show message in transcript
+              this.addTranscriptEntry(
+                "// Attempting to close REPL",
+                null,
+                "REPL cannot be closed until a viewport renderer is created.\nThe system needs a viewport renderer to display a usable UI.\n\nCreate one with:\n  const code = `export function render(item, api) { ... }`;\n  await api.helpers.createRenderer('viewport_renderer', api.IDS.VIEWPORT_TYPE, code);\n\nTip: Call api.rendererHelp() to see Renderer API methods."
+              );
+              return;
+            }
             // Hide REPL, show main view
             repl.classList.remove("visible");
             mainView.classList.remove("repl-active");
@@ -887,6 +917,19 @@
             // Show REPL, hide main view
             repl.classList.add("visible");
             mainView.classList.add("repl-active");
+
+            // Update status message based on whether viewport renderer exists
+            const hasViewportRenderer = await this.hasViewportRenderer();
+            const statusMsg = document.getElementById("repl-status-message");
+            if (statusMsg) {
+              if (!hasViewportRenderer) {
+                statusMsg.textContent = "Bootstrap mode - REPL cannot be closed until a viewport renderer is created";
+                statusMsg.style.display = "block";
+              } else {
+                statusMsg.style.display = "none";
+              }
+            }
+
             // Focus the input when showing
             const input = document.getElementById("repl-input");
             if (input) input.focus();
@@ -1079,13 +1122,6 @@
             nav.appendChild(deleteBtn);
           }
         }
-
-        // Import JSON button
-        const importBtn = document.createElement("button");
-        importBtn.textContent = "Import JSON";
-        importBtn.title = "Import items from JSON file";
-        importBtn.onclick = () => this.showImportFilePicker();
-        nav.appendChild(importBtn);
 
         // REPL toggle button (right side)
         const replBtn = document.createElement("button");
@@ -1656,7 +1692,6 @@
           // UI operations
           editRaw: (itemId) => kernel.editItemRaw(itemId),
           showItemList: () => kernel.showItemList(),
-          import: (json) => kernel.importItems(json),
 
           // For script execution - returns REPL API for code evaluation
           createREPLContext: () => kernel.createREPLAPI(),
@@ -1934,73 +1969,6 @@
         await this.renderEmptyState();
       }
 
-      showImportFilePicker() {
-        const input = document.createElement("input");
-        input.type = "file";
-        input.accept = ".json";
-        input.onchange = async (e) => {
-          const file = e.target.files[0];
-          if (!file) return;
-
-          try {
-            const text = await file.text();
-            const result = await this.importItems(text);
-            alert(`Import complete!\n\nCreated: ${result.created}\nUpdated: ${result.updated}\nSkipped: ${result.skipped}`);
-
-            // Refresh the current view
-            if (this.viewport.rootId) {
-              await this.renderRoot(this.viewport.rootId);
-            } else {
-              await this.showItemList();
-            }
-          } catch (error) {
-            alert(`Import failed: ${error.message}`);
-          }
-        };
-        input.click();
-      }
-
-      async importItems(jsonString) {
-        const data = JSON.parse(jsonString);
-        const items = Array.isArray(data) ? data : [data];
-
-        let created = 0;
-        let updated = 0;
-        let skipped = 0;
-
-        for (const item of items) {
-          if (!item.id) {
-            item.id = crypto.randomUUID();
-          }
-
-          try {
-            const exists = await this.storage.exists(item.id);
-
-            // Ensure timestamps
-            if (!item.created) item.created = Date.now();
-            item.modified = Date.now();
-
-            await this.storage.set(item, this);
-
-            // Clear module cache if it's a code item
-            if (await this.isCodeItem(item)) {
-              this.moduleCache.delete(item.id);
-            }
-
-            if (exists) {
-              updated++;
-            } else {
-              created++;
-            }
-          } catch (error) {
-            console.warn(`Failed to import item ${item.id}: ${error.message}`);
-            skipped++;
-          }
-        }
-
-        return { created, updated, skipped };
-      }
-      
       async wouldCreateCycle(parentId, newChildId) {
         const canReach = async (fromId, toId, visited = new Set()) => {
           if (fromId === toId) return true;
@@ -2255,12 +2223,17 @@
         heading.textContent = "REPL";
         header.appendChild(heading);
 
+        const statusMsg = document.createElement("div");
+        statusMsg.id = "repl-status-message";
+        statusMsg.style.cssText = "flex: 1; margin: 0 15px; font-size: 12px; color: #f80; display: none;";
+        header.appendChild(statusMsg);
+
         const controls = document.createElement("div");
         controls.className = "repl-controls";
 
         const closeBtn = document.createElement("button");
         closeBtn.textContent = "Close";
-        closeBtn.onclick = () => this.toggleREPL();
+        closeBtn.onclick = async () => await this.toggleREPL();
         controls.appendChild(closeBtn);
 
         header.appendChild(controls);
@@ -2567,21 +2540,64 @@
           },
           
           // Import
-          import: async (json) => {
-            const items = JSON.parse(json);
-            let created = 0, skipped = 0;
-            
-            for (const item of items) {
-              const exists = await kernel.storage.exists(item.id);
-              if (!exists) {
-                await kernel._rawSet(item);
-                created++;
-              } else {
-                skipped++;
-              }
-            }
-            
-            return { created, skipped };
+          import: async () => {
+            return new Promise((resolve, reject) => {
+              const input = document.createElement("input");
+              input.type = "file";
+              input.accept = ".json";
+              input.onchange = async (e) => {
+                const file = e.target.files[0];
+                if (!file) {
+                  reject(new Error("No file selected"));
+                  return;
+                }
+
+                try {
+                  const text = await file.text();
+                  const data = JSON.parse(text);
+                  const items = Array.isArray(data) ? data : [data];
+
+                  let created = 0;
+                  let updated = 0;
+                  let skipped = 0;
+
+                  for (const item of items) {
+                    if (!item.id) {
+                      item.id = crypto.randomUUID();
+                    }
+
+                    try {
+                      const exists = await kernel.storage.exists(item.id);
+
+                      // Ensure timestamps
+                      if (!item.created) item.created = Date.now();
+                      item.modified = Date.now();
+
+                      await kernel.storage.set(item, kernel);
+
+                      // Clear module cache if it's a code item
+                      if (await kernel.isCodeItem(item)) {
+                        kernel.moduleCache.delete(item.id);
+                      }
+
+                      if (exists) {
+                        updated++;
+                      } else {
+                        created++;
+                      }
+                    } catch (error) {
+                      console.warn(`Failed to import item ${item.id}: ${error.message}`);
+                      skipped++;
+                    }
+                  }
+
+                  resolve({ created, updated, skipped });
+                } catch (error) {
+                  reject(error);
+                }
+              };
+              input.click();
+            });
           },
           
           // Reset
@@ -2767,6 +2783,10 @@ CONSTANTS:
   IDS.ATOM, IDS.TYPE_DEFINITION, IDS.CODE, IDS.RENDERER,
   IDS.LIBRARY, IDS.DEFAULT_RENDERER, IDS.VIEWPORT_TYPE, IDS.VIEWPORT
 
+DOCUMENTATION:
+  help('methodName')   - Get help on REPL API method
+  rendererHelp()       - View Renderer API reference (for writing renderers)
+
 Type api.help('methodName') for details on a specific method.`;
             }
             
@@ -2897,25 +2917,23 @@ Example:
               'helpers.createRenderer': `helpers.createRenderer(name: string, forType: string, code: string) -> Promise<string>
 
 Create a renderer for a type. Returns the renderer's ID.
+Your render function receives (item, api) where api is the Renderer API.
 
 Example:
-  await api.helpers.createRenderer(
-    'note_renderer',
-    noteTypeId,
-    \`export function render(item, api) {
-      return api.createElement('div', {}, [item.content.description]);
-    }\`
-  )`,
+  const code = 'export function render(item, api) { ' +
+    'return api.createElement("div", {}, [item.content.text]); ' +
+    '}';
+  await api.helpers.createRenderer('note_renderer', noteTypeId, code);
+
+Tip: Call api.rendererHelp() to see all Renderer API methods.`,
 
               'helpers.createLibrary': `helpers.createLibrary(name: string, code: string) -> Promise<string>
 
 Create a reusable code library. Returns the library's ID.
 
 Example:
-  await api.helpers.createLibrary(
-    'utils',
-    \`export function formatDate(ts) { return new Date(ts).toLocaleDateString(); }\`
-  )`,
+  const code = 'export function formatDate(ts) { return new Date(ts).toLocaleDateString(); }';
+  await api.helpers.createLibrary('utils', code);`,
 
               'helpers.duplicateItem': `helpers.duplicateItem(id: string, newName?: string) -> Promise<string>
 
@@ -2978,10 +2996,148 @@ Example:
             return helpText[method] || `No help available for '${method}'.\nTry api.help() to see all methods.`;
           },
 
+          rendererHelp: (method) => {
+            if (!method) {
+              return `Renderer API Reference
+
+When you create a renderer, your render function receives (item, api).
+The 'api' parameter provides these methods for building DOM:
+
+DOM CREATION:
+  createElement(tag, props, children) - Create DOM element
+    Example:
+      api.createElement('div', { class: 'my-class', style: 'color: red;' }, [
+        'Hello ',
+        ['span', {}, ['World']]
+      ])
+
+READ-ONLY DATA ACCESS:
+  get(id)              - Get item by ID
+  query(filter)        - Find items matching filter
+  getAll()             - Get all items
+  require(nameOrId)    - Load code module
+
+RENDERING:
+  renderItem(id, rid?) - Render another item
+  getRenderers(typeId) - Get all renderers for type
+  findRenderer(typeId) - Find renderer for type
+
+NAVIGATION:
+  navigate(id)         - Navigate to item
+  getCurrentRoot()     - Get current root item
+
+CONTAINER OPERATIONS (for container renderers):
+  getCurrentItem()     - Get the container item being rendered
+  create(item, addAsChild?) - Create new item
+  createChild(type, content) - Create and add child
+  set(item)            - Save item without re-render
+  update(item)         - Save item and re-render
+  addChild(childId)    - Add child to container
+  removeChild(childId) - Remove child from container
+  setChildRenderer(cid, rid) - Set renderer for child
+  delete(itemId)       - Delete item
+
+EDITING:
+  editItem(id, eid?)   - Open item in editor
+  getEditors(typeId)   - Get editors for type
+  editRaw(itemId)      - Open raw JSON editor
+
+UTILITIES:
+  createREPLContext()  - Get REPL API for script execution
+  IDS                  - Well-known item IDs
+
+VIEWPORT (for viewport renderer):
+  viewport.select(id, pid?)  - Select item
+  viewport.getSelection()    - Get selected item
+  viewport.getRoot()         - Get root item ID
+  viewport.setRootRenderer(id) - Override root renderer
+
+Type api.rendererHelp('createElement') for specific method details.`;
+            }
+
+            const helpText = {
+              createElement: `createElement(tag, props, children) -> HTMLElement
+
+Create a DOM element with properties and children.
+
+Props can include:
+  - class: CSS class name
+  - style: CSS string or object
+  - on*: Event handlers (onClick, onKeydown, etc)
+  - Any other HTML attributes
+
+Children can be:
+  - Strings (text nodes)
+  - DOM nodes
+  - Arrays [tag, props, children] for shorthand
+
+Example:
+  return api.createElement('div', { class: 'note' }, [
+    ['h2', {}, [item.name]],
+    ['p', { style: 'color: #666;' }, [item.content.text]],
+    ['button', { onClick: () => alert('Clicked!') }, ['Click me']]
+  ]);`,
+
+              get: `get(id) -> Promise<Item>
+
+Get item by ID (read-only in renderers).
+
+Example:
+  const parent = await api.get(parentId);`,
+
+              renderItem: `renderItem(id, rendererId?) -> Promise<HTMLElement>
+
+Render another item (for container renderers).
+
+Example:
+  const childDom = await api.renderItem(childId);
+  container.appendChild(childDom);`,
+
+              getCurrentItem: `getCurrentItem() -> Item
+
+Get the container item being rendered.
+
+Example:
+  const container = api.getCurrentItem();
+  const children = container.children || [];`,
+
+              createChild: `createChild(type, content) -> Promise<string>
+
+Create new item and add as child to current container.
+Triggers re-render automatically.
+
+Example:
+  const newId = await api.createChild(noteTypeId, { text: 'New note' });`,
+
+              update: `update(item) -> Promise<string>
+
+Save item and trigger re-render.
+
+Example:
+  item.content.text = 'Updated';
+  await api.update(item);`,
+
+              viewport: `viewport - Viewport state management
+
+Methods:
+  viewport.select(itemId, parentId?) - Select item
+  viewport.getSelection() - Get selected item ID
+  viewport.getRoot() - Get current root item ID
+  viewport.setRootRenderer(id) - Override root renderer
+
+Example (in viewport renderer):
+  const selectedId = api.viewport.getSelection();
+  if (selectedId) {
+    // Highlight selected item
+  }`
+            };
+
+            return helpText[method] || `No help available for '${method}'.\nTry api.rendererHelp() to see all methods.`;
+          },
+
           // UI operations
           editRaw: (itemId) => kernel.editItemRaw(itemId),
           showItemList: () => kernel.showItemList(),
-          import: (json) => kernel.importItems(json),
 
           // For script execution - returns REPL API for code evaluation
           createREPLContext: () => kernel.createREPLAPI(),
