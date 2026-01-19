@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Hobson</title>
+  <style>
+    /* Minimal bootstrap styles - only for import UI before kernel loads */
+    /* These will be overridden by kernel-styles once loaded */
+    * {
+      box-sizing: border-box;
+    }
+    
+    html, body {
+      height: 100%;
+      margin: 0;
+    }
+    
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      padding: 20px;
+      background: #f5f5f5;
+      color: #333;
+      display: flex;
+      flex-direction: column;
+    }
+    
+    /* Import UI styles (shown before kernel loads) */
+    .bootstrap-ui {
+      max-width: 600px;
+      margin: 40px auto;
+      background: white;
+      padding: 40px;
+      border-radius: 8px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    
+    .bootstrap-ui h1 {
+      margin-top: 0;
+      margin-bottom: 20px;
+    }
+    
+    .bootstrap-ui input[type="file"] {
+      margin: 20px 0;
+      padding: 10px;
+      border: 2px solid #ccc;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    
+    .bootstrap-error {
+      background: #fff0f0;
+      border: 1px solid #ffcccc;
+      padding: 15px;
+      border-radius: 4px;
+      margin: 20px 0;
+    }
+    
+    .bootstrap-error h3 {
+      color: #cc0000;
+      margin-top: 0;
+    }
+    
+    .bootstrap-error pre {
+      background: #fff8f8;
+      padding: 10px;
+      overflow-x: auto;
+      font-size: 12px;
+    }
+  </style>
+</head>
+<body>
+  <script>
+    async function boot() {
+      try {
+        // Open IndexedDB - use version 2 to force upgrade if old version exists
+        const db = await new Promise((resolve, reject) => {
+          const request = indexedDB.open('hobson', 2);
+          
+          request.onupgradeneeded = (e) => {
+            const db = e.target.result;
+            
+            // Create object store if it doesn't exist
+            if (!db.objectStoreNames.contains('items')) {
+              const store = db.createObjectStore('items', { keyPath: 'id' });
+              // Create useful indexes
+              store.createIndex('type', 'type', { unique: false });
+              store.createIndex('name', 'name', { unique: false });
+            }
+          };
+          
+          request.onsuccess = () => resolve(request.result);
+          request.onerror = () => reject(request.error);
+        });
+        
+        // Verify object store exists
+        if (!db.objectStoreNames.contains('items')) {
+          throw new Error('Database opened but items object store is missing. Please clear your browser data and try again.');
+        }
+        
+        // Check for kernel-core (using its GUID)
+        const KERNEL_CORE_ID = '41bbf146-d5db-4e6a-87b5-7592f83a52bc';
+        
+        const kernelCore = await new Promise((resolve, reject) => {
+          const tx = db.transaction('items', 'readonly');
+          const request = tx.objectStore('items').get(KERNEL_CORE_ID);
+          request.onsuccess = () => resolve(request.result);
+          request.onerror = () => reject(request.error);
+        });
+        
+        if (!kernelCore) {
+          showImportUI(db);
+          return;
+        }
+        
+        // Create minimal require for kernel loading
+        const moduleCache = new Map();
+        
+        async function requireKernelModule(itemId) {
+          if (moduleCache.has(itemId)) {
+            return moduleCache.get(itemId);
+          }
+          
+          const item = await new Promise((resolve, reject) => {
+            const tx = db.transaction('items', 'readonly');
+            const request = tx.objectStore('items').get(itemId);
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(request.error);
+          });
+          
+          if (!item?.content?.code) {
+            throw new Error(`Kernel module not found: ${itemId}`);
+          }
+          
+          const code = `"use strict";\n${item.content.code}`;
+          const blob = new Blob([code], { type: 'application/javascript' });
+          const url = URL.createObjectURL(blob);
+          
+          try {
+            const module = await import(url);
+            moduleCache.set(itemId, module);
+            return module;
+          } finally {
+            URL.revokeObjectURL(url);
+          }
+        }
+        
+        // Load and boot kernel
+        const { loadKernel } = await requireKernelModule(KERNEL_CORE_ID);
+        const Kernel = await loadKernel(requireKernelModule);
+        
+        const kernel = new Kernel();
+        window.kernel = kernel;
+        
+        // Listen for reload requests
+        window.addEventListener('message', async (e) => {
+          if (e.data.type === 'reload-kernel') {
+            moduleCache.clear();
+            // Remove kernel's root element if it exists
+            const app = document.getElementById('app');
+            if (app) app.remove();
+            const repl = document.getElementById('repl-container');
+            if (repl) repl.remove();
+            await boot();
+          }
+        });
+        
+        // Boot kernel
+        await kernel.boot();
+        
+        // Append kernel's rootElement directly to body (no wrapper)
+        document.body.appendChild(kernel.rootElement);
+        
+      } catch (error) {
+        showError(error);
+      }
+    }
+    
+    function showImportUI(db) {
+      // Create import UI
+      const ui = document.createElement('div');
+      ui.className = 'bootstrap-ui';
+      ui.innerHTML = `
+        <h1>Import Kernel</h1>
+        <p>Hobson needs a kernel to run. Please import a kernel JSON file.</p>
+        <input type="file" id="import" accept=".json">
+        <div id="status"></div>
+      `;
+      document.body.appendChild(ui);
+      
+      document.getElementById('import').onchange = async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        
+        const status = document.getElementById('status');
+        status.textContent = 'Importing...';
+        
+        try {
+          const text = await file.text();
+          const items = JSON.parse(text);
+          
+          if (!Array.isArray(items)) {
+            throw new Error('JSON must be an array of items');
+          }
+          
+          const tx = db.transaction('items', 'readwrite');
+          const store = tx.objectStore('items');
+          
+          for (const item of items) {
+            await new Promise((resolve, reject) => {
+              const request = store.put(item);
+              request.onsuccess = () => resolve();
+              request.onerror = () => reject(request.error);
+            });
+          }
+          
+          status.textContent = `Imported ${items.length} items. Reloading...`;
+          setTimeout(() => location.reload(), 1000);
+          
+        } catch (error) {
+          status.innerHTML = `<div class="bootstrap-error">
+            <h3>Import Failed</h3>
+            <pre>${error.message}</pre>
+          </div>`;
+        }
+      };
+    }
+    
+    function showError(error) {
+      // Create error UI
+      const ui = document.createElement('div');
+      ui.className = 'bootstrap-ui';
+      ui.innerHTML = `
+        <div class="bootstrap-error">
+          <h3>Boot Failed</h3>
+          <pre>${error.message}\n${error.stack}</pre>
+        </div>
+      `;
+      document.body.appendChild(ui);
+    }
+    
+    // Boot immediately
+    boot();
+  </script>
+</body>
+</html>
