@@ -8,9 +8,9 @@ Hobson is a personal information management system inspired by Conway's Humane D
 
 ## Development Commands
 
-No traditional build system - the project is a single HTML file (`src/hobson.html`) with embedded CSS that runs directly in the browser.
+No traditional build system - the project is a single HTML file (`src/bootstrap.html`) with embedded CSS that runs directly in the browser.
 
-- **Run:** Open `src/hobson.html` in a browser (Chrome, Firefox, Safari)
+- **Run:** Open `src/bootstrap.html` in a browser (Chrome, Firefox, Safari)
 - **Safe Mode:** Add `?safe=1` to URL to boot kernel only (no user code items) - useful for recovery
 - **Testing:** Manual testing via the built-in REPL
 
@@ -38,13 +38,25 @@ No traditional build system - the project is a single HTML file (`src/hobson.htm
 
 ### Seed Item GUIDs
 ```
-00000000-0000-0000-0000-000000000000 - atom (self-referential base)
-00000000-0000-0000-0000-000000000001 - type_definition
-00000000-0000-0000-0000-000000000002 - code
-00000000-0000-0000-0000-000000000003 - renderer
-00000000-0000-0000-0000-000000000004 - library
-00000000-0000-0000-0000-000000000005 - default_renderer
-00000000-0000-0000-0000-000000000006 - workspace (default root)
+ATOM: "00000000-0000-0000-0000-000000000000",
+TYPE_DEFINITION: "11111111-0000-0000-0000-000000000000",
+CODE: "22222222-0000-0000-0000-000000000000",
+KERNEL_MODULE: "33333333-0000-0000-0000-000000000000",
+KERNEL_CORE: "33333333-1111-0000-0000-000000000000",
+KERNEL_STORAGE: "33333333-2222-0000-0000-000000000000",
+KERNEL_VIEWPORT: "33333333-3333-0000-0000-000000000000",
+KERNEL_MODULE_SYSTEM: "33333333-4444-0000-0000-000000000000",
+KERNEL_RENDERING_SYSTEM: "33333333-5555-0000-0000-000000000000",
+KERNEL_REPL: "33333333-6666-0000-0000-000000000000",
+KERNEL_SAFE_MODE: "33333333-7777-0000-0000-000000000000",
+KERNEL_STYLES: "33333333-8888-0000-0000-000000000000",
+RENDERER: "44444444-0000-0000-0000-000000000000",
+DEFAULT_RENDERER: "44444444-1111-0000-0000-000000000000",
+EDITOR: "55555555-0000-0000-0000-000000000000",
+DEFAULT_EDITOR: "55555555-1111-0000-0000-000000000000",
+LIBRARY: "66666666-0000-0000-0000-000000000000",
+VIEWPORT_TYPE: "77777777-0000-0000-0000-000000000000",
+VIEWPORT: "88888888-0000-0000-0000-000000000000"
 ```
 
 ### Code Items
@@ -75,8 +87,9 @@ children: [{ id: "item-1", x: 20, y: 20, width: 400, height: 300, z: 0 }]
 
 ## Key Source Files
 
-- `src\hobson.html` - The application code.
-- `src\item_backup.json` - The most recent dump of all the items in the database. Useful for looking up code items - more up to date than `docs/Code_Items.md`.
+- `src\bootstrap.html` - The application code.
+- `src\items\{guid}.json` - The most recent export of item with id {guid}. Use these as the reference implementation for all items.
+- `src\items\backup.json` - The most recent dump of all the items in the database. Do not read this file! Use the individual item exports.
 
 ## Working Style Context
 
