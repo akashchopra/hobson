@@ -108,50 +108,25 @@
           request.onerror = () => reject(request.error);
         });
         
-        if (!kernelCore) {
+        if (!kernelCore || !kernelCore.content?.code) {
           showImportUI(db);
           return;
         }
-        
-        // Create minimal require for kernel loading
-        const moduleCache = new Map();
-        
-        async function requireKernelModule(itemId) {
-          if (moduleCache.has(itemId)) {
-            return moduleCache.get(itemId);
-          }
-          
-          const item = await new Promise((resolve, reject) => {
-            const tx = db.transaction('items', 'readonly');
-            const request = tx.objectStore('items').get(itemId);
-            request.onsuccess = () => resolve(request.result);
-            request.onerror = () => reject(request.error);
-          });
-          
-          if (!item?.content?.code) {
-            throw new Error(`Kernel module not found: ${itemId}`);
-          }
-          
-          const code = `
-            "use strict";
-            ${item.content.code}
-            //# sourceURL=${item.name || `${item.id}.js`}
-          `;
-          const blob = new Blob([code], { type: 'application/javascript' });
-          const url = URL.createObjectURL(blob);
-          
-          try {
-            const module = await import(url);
-            moduleCache.set(itemId, module);
-            return module;
-          } finally {
-            URL.revokeObjectURL(url);
-          }
-        }
-        
-        // Load and boot kernel
-        const { loadKernel } = await requireKernelModule(KERNEL_CORE_ID);
-        const Kernel = await loadKernel(requireKernelModule);
+
+        // Import kernel-core as module
+        const code = `
+          "use strict";
+          ${kernelCore.content.code}
+          //# sourceURL=kernel-core.js
+        `;
+        const blob = new Blob([code], { type: 'application/javascript' });
+        const url = URL.createObjectURL(blob);
+
+        const { loadKernel } = await import(url);
+        URL.revokeObjectURL(url);
+
+        // Load and instantiate kernel
+        const Kernel = await loadKernel();
         
         const kernel = new Kernel();
         window.kernel = kernel;
@@ -159,7 +134,6 @@
         // Listen for reload requests
         window.addEventListener('message', async (e) => {
           if (e.data.type === 'reload-kernel') {
-            moduleCache.clear();
             // Remove kernel's root element if it exists
             const app = document.getElementById('app');
             if (app) app.remove();
