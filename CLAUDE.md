@@ -64,7 +64,6 @@ VIEWPORT: "88888888-0000-0000-0000-000000000000"
 **Renderers:**
 - Type: `renderer`, must have `content.for_type`
 - Export `render(item, api)` function returning DOM nodes
-- Read-only API access - no write operations in renderers
 
 **Libraries:**
 - Type: `library`
@@ -83,7 +82,6 @@ children: [{ id: "item-1", x: 20, y: 20, width: 400, height: 300, z: 0 }]
 - `docs/Design_Decisions_Log.md` - Source of truth for architectural decisions
 - `docs/Technical_Implementation_Notes.md` - Code-level implementation details
 - `docs/PROJECT_MEMORY.md` - User preferences and working context
-- `docs/Code_Items.md` - Catalog of in-system code items
 
 ## Key Source Files
 
@@ -99,9 +97,12 @@ children: [{ id: "item-1", x: 20, y: 20, width: 400, height: 300, z: 0 }]
 - **Known friction:** Code item creation via REPL requires multi-level string escaping (use JSON editor as workaround)
 - **Navigation pain point:** Finding previously created items is difficult - address if blocking progress
 
-## REPL Script Files
+## Working Rules
 
-When producing REPL script files, do *not* place them in /tmp. Instead *always* place them in `src\REPL Scripts`. This is very important!
+These rules are very important!
+
+- Before editing existing items, *always* confirm that the `src/items` directory contains the latest versions.
+- When producing REPL script files, do *not* place them in /tmp. Instead *always* place them in `src/REPL Scripts`. 
 
 ## Open Design Tension
 
