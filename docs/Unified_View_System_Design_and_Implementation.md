@@ -1,8 +1,19 @@
 # Unified View System: Design and Implementation Plan
 
-**Status:** Design Complete, Implementation Pending  
-**Date:** 2026-01-23  
+**Status:** Implementation Complete
+**Date:** 2026-01-24
 **Supersedes:** Rendering_and_Editing_System.md (sections on editors)
+
+**Implementation Scripts:**
+- `src/REPL Scripts/phase1-add-view-types.js` - Add VIEW, VIEW_SPEC, FIELD_VIEW types
+- `src/REPL Scripts/phase2-create-generic-view.js` - Create generic_view library
+- `src/REPL Scripts/phase3-create-field-views.js` - Create field views
+- `src/REPL Scripts/phase4-update-kernel-rendering.js` - Update kernel rendering system
+- `src/REPL Scripts/phase5-create-test-views.js` - Create test views
+- `src/REPL Scripts/phase6-migrate-to-views.js` - Migrate existing items
+- `src/REPL Scripts/phase7-update-kernel-core-api.js` - Add view methods to REPL API
+- `src/REPL Scripts/phase8-deprecate-old-types.js` - Mark deprecated types
+- `src/REPL Scripts/unified-view-system-install.js` - Master installation script
 
 ---
 
@@ -222,7 +233,7 @@ The **generic view** is a library item that:
 {
   id: "field_view_text",
   name: "field_view_text",
-  type: "00000000-0000-0000-0000-000000000004", // library type
+  type: "66666666-0000-0000-0000-000000000000", // library type
   created: 1737590400000,
   modified: 1737590400000,
   children: [],
@@ -494,17 +505,17 @@ New seed types:
 
 ```
 atom (00000000-...-000000000000)
-├─ type_definition (00000000-...-000000000001)
-│  ├─ view (00000000-...-000000000010)
-│  └─ view-spec (00000000-...-000000000011)
-└─ code (00000000-...-000000000002)
-   └─ library (00000000-...-000000000004)
-      └─ field_view (new, needs GUID)
+├─ type_definition (11111111-...-000000000000)
+│  ├─ view (aaaaaaaa-...-000000000000)
+│  └─ view-spec (bbbbbbbb-...-000000000000)
+└─ code (22222222-...-000000000000)
+   └─ library (66666666-...-000000000000)
+      └─ field_view (cccccccc-...-000000000000)
 ```
 
 **Migration notes:**
-- `renderer` (00000000-...-000000000003) becomes `view`
-- `editor` (00000000-...-000000000009) becomes obsolete
+- `renderer` (44444444-...-000000000000) becomes `view`
+- `editor` (55555555-...-000000000000) becomes obsolete
 - Existing renderers migrate to `view` type
 - Existing editor specs migrate to `view-spec` type
 
@@ -539,9 +550,9 @@ Create three new seed items with memorable GUIDs:
 ```javascript
 // view type (replaces renderer)
 {
-  id: "00000000-0000-0000-0000-000000000010",
+  id: "aaaaaaaa-0000-0000-0000-000000000000",
   name: "view",
-  type: "00000000-0000-0000-0000-000000000002", // code
+  type: "22222222-0000-0000-0000-000000000000", // code
   created: Date.now(),
   modified: Date.now(),
   children: [],
@@ -553,9 +564,9 @@ Create three new seed items with memorable GUIDs:
 
 // view-spec type
 {
-  id: "00000000-0000-0000-0000-000000000011",
+  id: "bbbbbbbb-0000-0000-0000-000000000000",
   name: "view-spec",
-  type: "00000000-0000-0000-0000-000000000001", // type_definition
+  type: "11111111-0000-0000-0000-000000000000", // type_definition
   created: Date.now(),
   modified: Date.now(),
   children: [],
@@ -567,9 +578,9 @@ Create three new seed items with memorable GUIDs:
 
 // field_view type
 {
-  id: "00000000-0000-0000-0000-000000000012",
+  id: "cccccccc-0000-0000-0000-000000000000",
   name: "field_view",
-  type: "00000000-0000-0000-0000-000000000004", // library
+  type: "66666666-0000-0000-0000-000000000000", // library
   created: Date.now(),
   modified: Date.now(),
   children: [],
@@ -601,7 +612,7 @@ Create three new seed items with memorable GUIDs:
 {
   id: "generic_view",
   name: "generic_view",
-  type: "00000000-0000-0000-0000-000000000004", // library
+  type: "66666666-0000-0000-0000-000000000000", // library
   created: Date.now(),
   modified: Date.now(),
   children: [],
@@ -644,7 +655,7 @@ Create these field views that support both modes:
 {
   id: "field_view_text",
   name: "field_view_text",
-  type: "00000000-0000-0000-0000-000000000012", // field_view
+  type: "bbbbbbbb-0000-0000-0000-000000000000", // field_view
   content: {
     description: "Simple text field",
     code: `
@@ -944,9 +955,9 @@ Update seed items:
 
 ```javascript
 {
-  id: "00000000-0000-0000-0000-000000000003",
+  id: "44444444-0000-0000-0000-000000000000",
   name: "renderer",
-  type: "00000000-0000-0000-0000-000000000002",
+  type: "22222222-0000-0000-0000-000000000000",
   content: {
     description: "DEPRECATED: Use 'view' type instead. Code that renders an item type.",
     deprecated: true,
@@ -955,9 +966,9 @@ Update seed items:
 }
 
 {
-  id: "00000000-0000-0000-0000-000000000009",
+  id: "55555555-0000-0000-0000-000000000000",
   name: "editor",
-  type: "00000000-0000-0000-0000-000000000002",
+  type: "22222222-0000-0000-0000-00000000000",
   content: {
     description: "DEPRECATED: Use 'view' or 'view-spec' type instead. Code that edits an item.",
     deprecated: true,
@@ -1224,7 +1235,7 @@ How to edit arrays of values?
 {
   id: "note_renderer",
   name: "note_renderer",
-  type: "00000000-0000-0000-0000-000000000003", // renderer
+  type: "44444444-0000-0000-0000-000000000000", // renderer
   content: {
     for_type: "note",
     code: `
@@ -1242,7 +1253,7 @@ How to edit arrays of values?
 {
   id: "note_view_markdown",
   name: "note_view_markdown",
-  type: "00000000-0000-0000-0000-000000000010", // view
+  type: "aaaaaaaa-0000-0000-0000-000000000000", // view
   content: {
     for_type: "note",
     capabilities: ["read", "write"],
@@ -1261,7 +1272,7 @@ How to edit arrays of values?
 {
   id: "note_editor",
   name: "note_editor",
-  type: "00000000-0000-0000-0000-000000000009", // editor
+  type: "55555555-0000-0000-0000-000000000000", // editor
   content: {
     for_type: "note",
     ui_hints: {
@@ -1281,7 +1292,7 @@ How to edit arrays of values?
 {
   id: "note_view_form",
   name: "note_view_form",
-  type: "00000000-0000-0000-0000-000000000011", // view-spec
+  type: "bbbbbbbb-0000-0000-0000-000000000000", // view-spec
   content: {
     for_type: "note",
     ui_hints: {
