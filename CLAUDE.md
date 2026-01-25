@@ -102,7 +102,8 @@ children: [{ id: "item-1", x: 20, y: 20, width: 400, height: 300, z: 0 }]
 These rules are very important!
 
 - Before editing existing items, *always* confirm that the `src/items` directory contains the latest versions.
-- When producing REPL script files, do *not* place them in /tmp. Instead *always* place them in `src/REPL Scripts`. 
+- **Edit JSON files directly** rather than writing REPL scripts. Edit the exported JSON files in `src/items/*.json` - this makes changes immediately ready for git commit. The user will import the updated files into Hobson.
+- If REPL scripts are needed for some reason, place them in `src/REPL Scripts` (not /tmp). 
 
 ## Open Design Tension
 
