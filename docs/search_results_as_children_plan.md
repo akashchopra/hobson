@@ -6,7 +6,7 @@ Treat search results and tag browser matches as actual children of their parent 
 
 **Prerequisite**: Cycle-safe rendering (implemented) - a search widget may find its own container as a result, which is now handled gracefully via `onCycle` callbacks.
 
-## Phase 1: Create Compact Card View
+## Phase 1: Create Compact Card View ✓ COMPLETED
 
 **Purpose**: A reusable view for displaying items in a condensed list format.
 
@@ -18,8 +18,8 @@ Treat search results and tag browser matches as actual children of their parent 
 **Functionality**:
 ```javascript
 export async function render(item, api) {
+  // Note: data-item-id is set automatically by api.renderItem()
   const card = api.createElement('div', {
-    'data-item-id': item.id,
     class: 'compact-card',
     style: 'padding: 12px; margin-bottom: 8px; background: white; border: 1px solid #ddd; border-radius: 6px; cursor: pointer; transition: all 0.2s;'
   }, []);
@@ -72,9 +72,11 @@ export async function render(item, api) {
 
 **Alternative**: This could be a declarative view-spec instead of imperative code.
 
-## Phase 2: Update Item Search Library
+## Phase 2: Update Item Search View ✓ COMPLETED
 
-**Changes to `item-search-lib`**:
+**Note**: Instead of modifying `item-search-lib`, we updated `item_search_view` directly to store results as children. The view handles search execution and child management.
+
+**Changes to `item_search_view`**:
 
 Modify the search execution to update the parent item's children:
 
@@ -132,7 +134,9 @@ input.oninput = (e) => {
 };
 ```
 
-## Phase 3: Create Item Search View
+## Phase 3: Create Item Search View ✓ COMPLETED
+
+**Note**: `item_search_view` already existed; it was updated in Phase 2 to store results as children and render them with `compact_card_view`.
 
 **Purpose**: Replace the custom rendering in `item-search-lib` with a proper view that displays children.
 
@@ -271,9 +275,9 @@ export async function render(item, api) {
 }
 ```
 
-## Phase 4: Update Tag Browser View
+## Phase 4: Update Tag Browser View ✓ COMPLETED
 
-**Changes to tag browser**:
+**Changes to `tag_browser_view`**:
 
 Similar approach - when a tag is clicked, update the browser item's children:
 
@@ -299,19 +303,18 @@ Then render children using the compact view in the results section, with `onCycl
 
 ## Phase 5: Testing Checklist
 
-- [ ] Create `compact_card_view` item
-- [ ] Test compact view displays item info correctly
-- [ ] Update `item-search-lib` with debounced child updates
-- [ ] Create `item_search_view`
-- [ ] Test search updates children correctly
-- [ ] Test context menu works on search results
-- [ ] Test "Display As..." works on search results
-- [ ] Test search results persist across sessions
-- [ ] Update tag browser view with child updates
-- [ ] Test tag browser context menus work
+- [x] Create `compact_card_view` item
+- [x] Test compact view displays item info correctly
+- [x] Update `item_search_view` with debounced child updates
+- [x] Test search updates children correctly
+- [x] Test context menu works on search results
+- [x] Test "Display As..." works on search results
+- [x] Test search results persist across sessions
+- [x] Update tag browser view with child updates
+- [x] Test tag browser context menus work
 - [ ] Test performance with 100+ search results
-- [ ] Verify no unwanted re-renders during typing
-- [ ] Test cycle handling (search widget finding its own container)
+- [x] Verify no unwanted re-renders during typing (debouncing works)
+- [x] Test cycle handling (search widget finding its own container)
 
 ## Benefits Achieved
 
@@ -346,3 +349,13 @@ Then render children using the compact view in the results section, with `onCycl
 - The system becomes more consistent - all items that look like children ARE children
 - Context menus and viewport features work uniformly across all child items
 - Cycle-safe rendering ensures no infinite loops when search results include ancestor containers
+
+## Additional Improvements Made During Implementation
+
+1. **Clickable cycle indicator**: When an item in the render path appears in results, it shows as a clickable amber card that opens the item as a sibling (rather than a static indicator)
+
+2. **Display As... support**: Results respect `childSpec.view` for per-result view overrides, enabling users to change how individual results are displayed
+
+3. **`api.renderItem()` sets `data-item-id`**: Moved this responsibility from individual views to the API layer, so context menus work automatically regardless of which view rendered the item
+
+4. **`data-parent-id` for context menus**: Views set this attribute so the viewport can determine the parent container when handling context menu actions
