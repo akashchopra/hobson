@@ -1,29 +1,23 @@
-# Sortable List Container Renderer - Implementation Plan
+# Sortable List View - Implementation Plan
 
 ## Overview
 
-Create a new renderer for containers that displays children as a vertically sortable list with drag-and-drop reordering and an item picker for adding existing items.
+Create a new view that displays any item's children as a vertically sortable list with drag-and-drop reordering and an item picker for adding existing items.
 
 ## Architecture Analysis
 
-### Current Container Model
+### Universal Applicability
 
-The existing **container renderer** uses a 2D spatial canvas model where:
-- Children have `{id, x, y, width, height, z, minimized, maximized}` properties
-- Positioning is absolute and explicit
-- Drag-and-drop moves items in 2D space
-- Items can overlap and have z-order
-
-A sortable list is fundamentally different - it's about **sequential order** rather than **spatial position**.
+Any item can have children. This view provides a sequential (list) perspective on those children, complementing the spatial (2D canvas) perspective offered by the container view. The view ignores spatial properties (x, y, width, height) and uses array order exclusively.
 
 ### Data Model Decision
 
 **Chosen Approach: Array Order Only**
 ```javascript
 children: [
-  {id: "item-1", renderer: null},
-  {id: "item-2", renderer: "compact"},
-  {id: "item-3", renderer: null}
+  {id: "item-1", view: null},
+  {id: "item-2", view: "compact"},
+  {id: "item-3", view: null}
 ]
 // Order in array = order in list
 ```
@@ -31,16 +25,16 @@ children: [
 **Rationale**:
 - Simple, minimal data
 - Already supported by existing child spec format
-- Spatial properties (x, y, etc.) ignored by list renderer
-- Maintains compatibility: switching renderers works naturally
+- Spatial properties ignored by list view
+- Maintains compatibility: switching views works naturally
 
 ### Philosophy Alignment
 
 **Humane Dozen Principles**:
-- ✅ **Self-revealing**: Drag handles make affordance clear
-- ✅ **Direct manipulation**: Drag to reorder is intuitive
-- ✅ **Always on**: List is always editable, no separate "edit mode"
-- ✅ **Unified**: Uses same item/renderer architecture as spatial containers
+- **Self-revealing**: Drag handles make affordance clear
+- **Direct manipulation**: Drag to reorder is intuitive
+- **Always on**: List is always editable, no separate "edit mode"
+- **Unified**: Uses same item/view architecture as other views
 
 **Use Cases**:
 - To-do lists / task lists
@@ -54,12 +48,12 @@ children: [
 
 ## Phase 1: Basic List Display
 
-### 1.1 Create the List Renderer Item
+### 1.1 Create the List View Item
 
-**New Item**: `sortable_list_renderer`
-- **Type**: `00000000-0000-0000-0000-000000000003` (renderer)
+**New Item**: `sortable_list_view`
+- **Type**: `aaaaaaaa-0000-0000-0000-000000000000` (renderer)
 - **Content**:
-  - `for_type`: `5c3f2631-cd4d-403a-be9c-e3a3c5ebdce9` (container type)
+  - `for_type`: `00000000-0000-0000-0000-000000000000` (atom - universal)
   - `code`: See below
 
 ### 1.2 Basic Structure
@@ -67,36 +61,29 @@ children: [
 ```javascript
 export async function render(item, api) {
   const container = api.createElement('div', {
+    class: 'sortable-list-view',
     style: 'display: flex; flex-direction: column; height: 100%; background: #fafafa;'
   }, []);
 
   // Header section
-  const header = createHeader(item, api);
+  const header = createHeader(item, api, container);
   container.appendChild(header);
 
   // List container
   const listContainer = api.createElement('div', {
-    class: 'sortable-list-container',
+    class: 'sortable-list-items',
     style: 'flex: 1; overflow-y: auto; padding: 16px;'
   }, []);
 
-  const children = item.children || [];
-
-  if (children.length === 0) {
-    const empty = api.createElement('div', {
-      style: 'text-align: center; color: #999; padding: 60px 20px; font-style: italic;'
-    }, ['This list is empty. Click "+ Add Item" to add items.']);
-    listContainer.appendChild(empty);
-  } else {
-    await renderChildren(listContainer, children, item, api);
-  }
-
   container.appendChild(listContainer);
-  
+
+  // Initial render
+  await renderChildren(listContainer, item, api);
+
   return container;
 }
 
-function createHeader(item, api) {
+function createHeader(item, api, rootContainer) {
   const header = api.createElement('div', {
     style: 'padding: 16px; border-bottom: 2px solid #e0e0e0; background: white;'
   }, []);
@@ -111,7 +98,7 @@ function createHeader(item, api) {
 
   const addButton = api.createElement('button', {
     style: 'padding: 8px 16px; background: #3498db; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 14px;',
-    onclick: () => showItemPicker(item, api)
+    onclick: () => showItemPicker(item, api, rootContainer)
   }, ['+ Add Item']);
 
   titleRow.appendChild(title);
@@ -121,19 +108,43 @@ function createHeader(item, api) {
   return header;
 }
 
-async function renderChildren(listContainer, children, parentItem, api) {
+async function renderChildren(listContainer, parentItem, api) {
+  listContainer.innerHTML = '';
+  const children = parentItem.children || [];
+
+  if (children.length === 0) {
+    const empty = api.createElement('div', {
+      style: 'text-align: center; color: #999; padding: 60px 20px; font-style: italic;'
+    }, ['This list is empty. Click "+ Add Item" to add items.']);
+    listContainer.appendChild(empty);
+    return;
+  }
+
+  // Find compact_card_view for rendering children
+  const compactViews = await api.query({ name: 'compact_card_view' });
+  const defaultViewId = compactViews[0]?.id || null;
+
   for (let i = 0; i < children.length; i++) {
-    const child = children[i];
-    const childId = typeof child === 'string' ? child : child.id;
-    
-    const listItem = await createListItem(childId, i, child.renderer || null, parentItem, api);
+    const childSpec = children[i];
+    const childId = typeof childSpec === 'string' ? childSpec : childSpec.id;
+    const childViewId = (typeof childSpec === 'object' && childSpec.view) ? childSpec.view : defaultViewId;
+
+    // Check if item exists before rendering
+    const childItem = await api.get(childId);
+    if (!childItem) continue;
+
+    const listItem = await createListItem(childId, i, childViewId, parentItem, api, listContainer);
     listContainer.appendChild(listItem);
   }
+
+  // Setup drag-and-drop after all items are rendered
+  setupDragAndDrop(listContainer, parentItem, api);
 }
 
-async function createListItem(childId, index, rendererId, parentItem, api) {
+async function createListItem(childId, index, viewId, parentItem, api, listContainer) {
   const listItem = api.createElement('div', {
     'data-item-id': childId,
+    'data-parent-id': parentItem.id,
     'data-index': index,
     class: 'sortable-list-item',
     style: `
@@ -170,24 +181,52 @@ async function createListItem(childId, index, rendererId, parentItem, api) {
 
   // Render the child item
   try {
-    const childNode = await api.renderItem(childId, rendererId);
+    const childNode = await api.renderItem(childId, viewId);
     contentArea.appendChild(childNode);
   } catch (error) {
     const errorMsg = api.createElement('div', {
       style: 'color: #c00; font-style: italic;'
-    }, ['Error rendering item: ' + error.message]);
+    }, ['Error rendering item']);
     contentArea.appendChild(errorMsg);
   }
 
+  // Remove button
+  const actions = api.createElement('div', {
+    style: `
+      width: 32px;
+      border-left: 1px solid #ddd;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    `
+  }, []);
+
+  const removeButton = api.createElement('button', {
+    style: `
+      background: none;
+      border: none;
+      color: #999;
+      cursor: pointer;
+      font-size: 18px;
+      padding: 4px;
+    `,
+    onclick: async (e) => {
+      e.stopPropagation();
+      await removeItemFromList(parentItem, childId, api, listContainer);
+    },
+    title: 'Remove from list'
+  }, ['×']);
+  removeButton.onmouseover = () => { removeButton.style.color = '#c00'; };
+  removeButton.onmouseout = () => { removeButton.style.color = '#999'; };
+
+  actions.appendChild(removeButton);
+
   listItem.appendChild(dragHandle);
   listItem.appendChild(contentArea);
+  listItem.appendChild(actions);
 
   return listItem;
-}
-
-function showItemPicker(parentItem, api) {
-  // Placeholder for Phase 2
-  alert('Item picker coming in Phase 2');
 }
 ```
 
@@ -198,31 +237,29 @@ function showItemPicker(parentItem, api) {
 │ List Title          [+ Add Item]│ ← Header with button
 ├─────────────────────────────────┤
 │                                 │
-│  ┌──┬─────────────────────────┐│
-│  │≡ │ Item 1 Content          ││ ← Drag handle + content
-│  └──┴─────────────────────────┘│
+│  ┌──┬─────────────────────┬──┐ │
+│  │≡ │ Item 1 Content      │× │ │ ← Drag handle + content + remove
+│  └──┴─────────────────────┴──┘ │
 │                                 │
-│  ┌──┬─────────────────────────┐│
-│  │≡ │ Item 2 Content          ││
-│  └──┴─────────────────────────┘│
-│                                 │
-│  ┌──┬─────────────────────────┐│
-│  │≡ │ Item 3 Content          ││
-│  └──┴─────────────────────────┘│
+│  ┌──┬─────────────────────┬──┐ │
+│  │≡ │ Item 2 Content      │× │ │
+│  └──┴─────────────────────┴──┘ │
 │                                 │
 └─────────────────────────────────┘
 ```
 
-**Deliverable**: Basic list renderer that displays children vertically with drag handles (non-functional initially).
+**Deliverable**: Basic list view that displays children vertically with drag handles and remove buttons.
 
 ---
 
-## Phase 2: Item Picker Modal
+## Phase 2: Item Picker (Reusing item-search-lib)
 
-### 2.1 Item Picker UI Implementation
+### 2.1 Item Picker Implementation
+
+Reuse `item-search-lib` for the picker modal, following the pattern established by `field-editor-itemref`:
 
 ```javascript
-function showItemPicker(parentItem, api) {
+async function showItemPicker(parentItem, api, rootContainer) {
   // Create overlay
   const overlay = api.createElement('div', {
     style: `
@@ -255,59 +292,57 @@ function showItemPicker(parentItem, api) {
 
   // Modal header
   const modalHeader = api.createElement('div', {
-    style: 'padding: 20px; border-bottom: 1px solid #ddd;'
+    style: 'display: flex; justify-content: space-between; align-items: center; padding: 20px; border-bottom: 1px solid #ddd;'
   }, []);
 
   const modalTitle = api.createElement('h3', {
-    style: 'margin: 0 0 12px 0;'
+    style: 'margin: 0;'
   }, ['Add Item to List']);
 
-  const searchInput = api.createElement('input', {
-    type: 'text',
-    placeholder: 'Search items...',
-    style: `
-      width: 100%;
-      padding: 8px 12px;
-      border: 1px solid #ddd;
-      border-radius: 4px;
-      font-size: 14px;
-    `
-  });
+  const closeBtn = api.createElement('button', {
+    style: 'padding: 4px 10px; cursor: pointer; background: transparent; border: none; font-size: 24px; color: #666;',
+    onclick: () => document.body.removeChild(overlay)
+  }, ['×']);
 
   modalHeader.appendChild(modalTitle);
-  modalHeader.appendChild(searchInput);
-
-  // Results area
-  const resultsArea = api.createElement('div', {
-    style: 'flex: 1; overflow-y: auto; padding: 16px;'
-  }, []);
-
-  // Modal footer
-  const modalFooter = api.createElement('div', {
-    style: 'padding: 16px; border-top: 1px solid #ddd; text-align: right;'
-  }, []);
-
-  const cancelButton = api.createElement('button', {
-    style: `
-      padding: 8px 16px;
-      background: #e0e0e0;
-      border: none;
-      border-radius: 4px;
-      cursor: pointer;
-      margin-right: 8px;
-    `,
-    onclick: () => document.body.removeChild(overlay)
-  }, ['Cancel']);
-
-  modalFooter.appendChild(cancelButton);
-
+  modalHeader.appendChild(closeBtn);
   modal.appendChild(modalHeader);
-  modal.appendChild(resultsArea);
-  modal.appendChild(modalFooter);
-  overlay.appendChild(modal);
 
-  // Load and display items
-  loadItemsForPicker(resultsArea, searchInput, parentItem, api, overlay);
+  // Search container
+  const searchContainer = api.createElement('div', {
+    style: 'padding: 20px; flex: 1; overflow: auto;'
+  }, []);
+  modal.appendChild(searchContainer);
+
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+
+  // Load search library and create search UI
+  const searchLib = await api.require('item-search-lib');
+
+  // Get existing child IDs to filter them out
+  const existingIds = new Set(
+    (parentItem.children || []).map(c => typeof c === 'string' ? c : c.id)
+  );
+  existingIds.add(parentItem.id); // Also exclude self
+
+  searchLib.createSearchUI(
+    searchContainer,
+    async (selectedItem) => {
+      // Check if already in list
+      if (existingIds.has(selectedItem.id)) {
+        alert('This item is already in the list.');
+        return;
+      }
+      await addItemToList(parentItem, selectedItem.id, api, rootContainer);
+      document.body.removeChild(overlay);
+    },
+    api,
+    {
+      placeholder: 'Search for items to add...',
+      autoFocus: true
+    }
+  );
 
   // Close on overlay click
   overlay.onclick = (e) => {
@@ -316,128 +351,24 @@ function showItemPicker(parentItem, api) {
     }
   };
 
-  document.body.appendChild(overlay);
-  searchInput.focus();
+  modal.onclick = (e) => e.stopPropagation();
 }
 ```
 
-### 2.2 Item Loading and Filtering
+### 2.2 Adding Items (Targeted DOM Update)
 
 ```javascript
-async function loadItemsForPicker(resultsArea, searchInput, parentItem, api, overlay) {
-  const updateResults = async () => {
-    const searchTerm = searchInput.value.toLowerCase();
-    
-    // Get all items
-    const allItems = await api.query({});
-    
-    // Filter out items already in this list
-    const existingIds = (parentItem.children || []).map(c => 
-      typeof c === 'string' ? c : c.id
-    );
-    
-    const availableItems = allItems.filter(item => {
-      // Exclude current parent and its children
-      if (item.id === parentItem.id || existingIds.includes(item.id)) {
-        return false;
-      }
-      
-      // Apply search filter
-      if (searchTerm) {
-        const name = (item.name || '').toLowerCase();
-        const title = (item.content?.title || '').toLowerCase();
-        return name.includes(searchTerm) || title.includes(searchTerm);
-      }
-      
-      return true;
-    });
-
-    // Sort by modified date (most recent first)
-    availableItems.sort((a, b) => (b.modified || 0) - (a.modified || 0));
-
-    // Clear results
-    resultsArea.innerHTML = '';
-
-    if (availableItems.length === 0) {
-      const noResults = api.createElement('div', {
-        style: 'text-align: center; color: #999; padding: 40px;'
-      }, ['No items found']);
-      resultsArea.appendChild(noResults);
-      return;
-    }
-
-    // Display results (limit to 50)
-    for (const item of availableItems.slice(0, 50)) {
-      const resultItem = await createPickerResultItem(item, parentItem, api, overlay);
-      resultsArea.appendChild(resultItem);
-    }
-  };
-
-  // Initial load
-  await updateResults();
-
-  // Update on search
-  searchInput.oninput = updateResults;
-}
-```
-
-### 2.3 Result Item Display
-
-```javascript
-async function createPickerResultItem(item, parentItem, api, overlay) {
-  const resultItem = api.createElement('div', {
-    style: `
-      padding: 12px;
-      border: 1px solid #ddd;
-      border-radius: 4px;
-      margin-bottom: 8px;
-      cursor: pointer;
-      transition: background 0.2s;
-    `,
-    onmouseenter: function() { this.style.background = '#f5f5f5'; },
-    onmouseleave: function() { this.style.background = 'white'; },
-    onclick: async () => {
-      await addItemToList(parentItem, item.id, api);
-      document.body.removeChild(overlay);
-    }
-  }, []);
-
-  // Get type name
-  const typeItem = await api.get(item.type);
-  const typeName = typeItem?.name || 'unknown';
-
-  const itemName = api.createElement('div', {
-    style: 'font-weight: 500; margin-bottom: 4px;'
-  }, [item.name || item.content?.title || item.id.slice(0, 8)]);
-
-  const itemMeta = api.createElement('div', {
-    style: 'font-size: 12px; color: #666;'
-  }, [`Type: ${typeName}`]);
-
-  resultItem.appendChild(itemName);
-  resultItem.appendChild(itemMeta);
-
-  return resultItem;
-}
-```
-
-### 2.4 Adding Items to List
-
-```javascript
-async function addItemToList(parentItem, itemId, api) {
+async function addItemToList(parentItem, itemId, api, listContainer) {
   // Get fresh parent data
   const fresh = await api.get(parentItem.id);
-  
+
   // Normalize children to object format
-  const children = (fresh.children || []).map(c => 
-    typeof c === 'string' ? { id: c, renderer: null } : c
+  const children = (fresh.children || []).map(c =>
+    typeof c === 'string' ? { id: c } : c
   );
 
   // Add new item at the end
-  children.push({
-    id: itemId,
-    renderer: null
-  });
+  children.push({ id: itemId });
 
   // Update parent
   const updated = {
@@ -447,36 +378,25 @@ async function addItemToList(parentItem, itemId, api) {
   };
 
   await api.set(updated);
-  
-  // Re-render to show the new item
-  await api.navigate(api.viewport.getRoot());
+
+  // Update local reference
+  parentItem.children = updated.children;
+
+  // Targeted DOM update: re-render just the list items
+  const itemsContainer = listContainer.querySelector('.sortable-list-items');
+  if (itemsContainer) {
+    await renderChildren(itemsContainer, parentItem, api);
+  }
 }
 ```
 
-**Deliverable**: Working item picker that allows adding existing items to the list.
+**Deliverable**: Working item picker that reuses `item-search-lib` and adds items with targeted DOM updates.
 
 ---
 
 ## Phase 3: Drag-and-Drop Reordering
 
-### 3.1 Setup Drag System
-
-```javascript
-async function renderChildren(listContainer, children, parentItem, api) {
-  for (let i = 0; i < children.length; i++) {
-    const child = children[i];
-    const childId = typeof child === 'string' ? child : child.id;
-    
-    const listItem = await createListItem(childId, i, child.renderer || null, parentItem, api);
-    listContainer.appendChild(listItem);
-  }
-  
-  // Setup drag-and-drop after all items are rendered
-  setupDragAndDrop(listContainer, parentItem, api);
-}
-```
-
-### 3.2 Drag-and-Drop Implementation
+### 3.1 Drag-and-Drop Implementation
 
 ```javascript
 function setupDragAndDrop(listContainer, parentItem, api) {
@@ -484,7 +404,7 @@ function setupDragAndDrop(listContainer, parentItem, api) {
   let draggedIndex = null;
   let dropIndicator = null;
 
-  // Create drop indicator (invisible by default)
+  // Create drop indicator
   dropIndicator = api.createElement('div', {
     class: 'drop-indicator',
     style: `
@@ -494,14 +414,13 @@ function setupDragAndDrop(listContainer, parentItem, api) {
       border-radius: 2px;
       display: none;
     `
-  });
+  }, []);
 
   const items = listContainer.querySelectorAll('.sortable-list-item');
-  
+
   items.forEach((item, index) => {
     const dragHandle = item.querySelector('.drag-handle');
-    
-    // Make item draggable via handle
+
     dragHandle.onmousedown = (e) => {
       e.preventDefault();
       startDrag(item, index, e);
@@ -511,14 +430,13 @@ function setupDragAndDrop(listContainer, parentItem, api) {
   function startDrag(item, index, e) {
     draggedItem = item;
     draggedIndex = index;
-    
+
     // Visual feedback
     item.style.opacity = '0.5';
     item.style.cursor = 'grabbing';
-    const handle = item.querySelector('.drag-handle');
-    handle.style.cursor = 'grabbing';
+    item.querySelector('.drag-handle').style.cursor = 'grabbing';
 
-    // Insert drop indicator after the dragged item
+    // Insert drop indicator
     item.parentNode.insertBefore(dropIndicator, item.nextSibling);
 
     document.onmousemove = handleDrag;
@@ -531,33 +449,24 @@ function setupDragAndDrop(listContainer, parentItem, api) {
     const items = Array.from(listContainer.querySelectorAll('.sortable-list-item'));
     const mouseY = e.clientY;
 
-    // Find where to show the drop indicator
-    let targetIndex = null;
-    
+    let targetIndex = items.length;
+
     for (let i = 0; i < items.length; i++) {
       const item = items[i];
       if (item === draggedItem) continue;
 
       const rect = item.getBoundingClientRect();
-      const itemMiddle = rect.top + rect.height / 2;
-
-      if (mouseY < itemMiddle) {
+      if (mouseY < rect.top + rect.height / 2) {
         targetIndex = i;
         break;
       }
     }
 
-    // If no target found, place at end
-    if (targetIndex === null) {
-      targetIndex = items.length;
-    }
-
-    // Show drop indicator at target position
+    // Show drop indicator
     dropIndicator.style.display = 'block';
-    
+
     if (targetIndex < items.length) {
-      const targetItem = items[targetIndex];
-      listContainer.insertBefore(dropIndicator, targetItem);
+      listContainer.insertBefore(dropIndicator, items[targetIndex]);
     } else {
       listContainer.appendChild(dropIndicator);
     }
@@ -569,24 +478,17 @@ function setupDragAndDrop(listContainer, parentItem, api) {
     const items = Array.from(listContainer.querySelectorAll('.sortable-list-item'));
     const mouseY = e.clientY;
 
-    // Calculate new index
-    let newIndex = null;
-    
+    let newIndex = items.length - 1;
+
     for (let i = 0; i < items.length; i++) {
       const item = items[i];
       if (item === draggedItem) continue;
 
       const rect = item.getBoundingClientRect();
-      const itemMiddle = rect.top + rect.height / 2;
-
-      if (mouseY < itemMiddle) {
+      if (mouseY < rect.top + rect.height / 2) {
         newIndex = i;
         break;
       }
-    }
-
-    if (newIndex === null) {
-      newIndex = items.length - 1;
     }
 
     // Adjust for removal of dragged item
@@ -596,42 +498,44 @@ function setupDragAndDrop(listContainer, parentItem, api) {
 
     // Only update if position changed
     if (newIndex !== draggedIndex) {
-      await updateChildOrder(parentItem, draggedIndex, newIndex, api);
+      await updateChildOrder(parentItem, draggedIndex, newIndex, api, listContainer);
     }
 
     // Cleanup
     draggedItem.style.opacity = '1';
     draggedItem.style.cursor = '';
-    const handle = draggedItem.querySelector('.drag-handle');
-    handle.style.cursor = 'grab';
+    draggedItem.querySelector('.drag-handle').style.cursor = 'grab';
     dropIndicator.style.display = 'none';
-    
+    if (dropIndicator.parentNode) {
+      dropIndicator.parentNode.removeChild(dropIndicator);
+    }
+
     draggedItem = null;
     draggedIndex = null;
-    
+
     document.onmousemove = null;
     document.onmouseup = null;
   }
 }
 ```
 
-### 3.3 Order Update Logic
+### 3.2 Order Update (Targeted DOM Update)
 
 ```javascript
-async function updateChildOrder(parentItem, fromIndex, toIndex, api) {
+async function updateChildOrder(parentItem, fromIndex, toIndex, api, listContainer) {
   // Get fresh data
   const fresh = await api.get(parentItem.id);
-  
+
   // Normalize children
-  let children = (fresh.children || []).map(c => 
-    typeof c === 'string' ? { id: c, renderer: null } : c
+  let children = (fresh.children || []).map(c =>
+    typeof c === 'string' ? { id: c } : c
   );
 
-  // Move item
+  // Move item in array
   const [movedItem] = children.splice(fromIndex, 1);
   children.splice(toIndex, 0, movedItem);
 
-  // Update silently to avoid re-render during interaction
+  // Save update
   const updated = {
     ...fresh,
     children: children,
@@ -639,98 +543,46 @@ async function updateChildOrder(parentItem, fromIndex, toIndex, api) {
   };
 
   await api.set(updated);
-  
-  // Trigger re-render after a brief delay to show final state
-  setTimeout(async () => {
-    await api.navigate(api.viewport.getRoot());
-  }, 100);
+
+  // Update local reference
+  parentItem.children = updated.children;
+
+  // Targeted DOM update: move the element in the DOM
+  const items = Array.from(listContainer.querySelectorAll('.sortable-list-item'));
+  const movedElement = items[fromIndex];
+
+  if (toIndex >= items.length - 1) {
+    listContainer.appendChild(movedElement);
+  } else {
+    const targetElement = toIndex > fromIndex ? items[toIndex + 1] : items[toIndex];
+    listContainer.insertBefore(movedElement, targetElement);
+  }
+
+  // Update data-index attributes
+  listContainer.querySelectorAll('.sortable-list-item').forEach((el, i) => {
+    el.setAttribute('data-index', i);
+  });
 }
 ```
 
-**Deliverable**: Full drag-and-drop reordering with visual feedback.
+**Deliverable**: Full drag-and-drop reordering with visual feedback and targeted DOM updates.
 
 ---
 
-## Phase 4: Polish & Integration
-
-### 4.1 Context Menu Integration
-
-Update the list item to support context menu (right-click):
+## Phase 4: Remove Item (Targeted DOM Update)
 
 ```javascript
-async function createListItem(childId, index, rendererId, parentItem, api) {
-  const listItem = api.createElement('div', {
-    'data-item-id': childId,
-    'data-parent-id': parentItem.id,  // Important for context menu
-    'data-index': index,
-    class: 'sortable-list-item',
-    style: `...`
-  }, []);
-  
-  // ... rest of implementation
-}
-```
-
-This allows the existing viewport context menu system to work with list items.
-
-### 4.2 Remove Button
-
-```javascript
-async function createListItem(childId, index, rendererId, parentItem, api) {
-  // ... existing code for dragHandle and contentArea ...
-
-  // Actions area
-  const actions = api.createElement('div', {
-    style: `
-      width: 32px;
-      border-left: 1px solid #ddd;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      flex-shrink: 0;
-    `
-  }, []);
-
-  const removeButton = api.createElement('button', {
-    style: `
-      background: none;
-      border: none;
-      color: #c00;
-      cursor: pointer;
-      font-size: 18px;
-      padding: 4px;
-      width: 24px;
-      height: 24px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    `,
-    onclick: async (e) => {
-      e.stopPropagation();
-      if (confirm('Remove this item from the list?')) {
-        await removeItemFromList(parentItem, childId, api);
-      }
-    },
-    title: 'Remove from list'
-  }, ['×']);
-
-  actions.appendChild(removeButton);
-
-  listItem.appendChild(dragHandle);
-  listItem.appendChild(contentArea);
-  listItem.appendChild(actions);
-
-  return listItem;
-}
-
-async function removeItemFromList(parentItem, childId, api) {
+async function removeItemFromList(parentItem, childId, api, listContainer) {
+  // Get fresh data
   const fresh = await api.get(parentItem.id);
-  
+
+  // Filter out the removed child
   const children = (fresh.children || []).filter(c => {
     const id = typeof c === 'string' ? c : c.id;
     return id !== childId;
   });
 
+  // Save update
   const updated = {
     ...fresh,
     children: children,
@@ -738,224 +590,121 @@ async function removeItemFromList(parentItem, childId, api) {
   };
 
   await api.set(updated);
-  await api.navigate(api.viewport.getRoot());
-}
-```
 
-### 4.3 Keyboard Shortcuts (Optional Enhancement)
+  // Update local reference
+  parentItem.children = updated.children;
 
-```javascript
-// In setupDragAndDrop or main render function
-listContainer.onkeydown = async (e) => {
-  const selected = listContainer.querySelector('.sortable-list-item.item-selected');
-  if (!selected) return;
-
-  const items = Array.from(listContainer.querySelectorAll('.sortable-list-item'));
-  const currentIndex = items.indexOf(selected);
-
-  if (e.key === 'ArrowUp' && e.metaKey && currentIndex > 0) {
-    e.preventDefault();
-    await updateChildOrder(parentItem, currentIndex, currentIndex - 1, api);
-  } else if (e.key === 'ArrowDown' && e.metaKey && currentIndex < items.length - 1) {
-    e.preventDefault();
-    await updateChildOrder(parentItem, currentIndex, currentIndex + 1, api);
+  // Targeted DOM update: remove the element
+  const itemElement = listContainer.querySelector(`[data-item-id="${childId}"]`);
+  if (itemElement) {
+    itemElement.remove();
   }
-};
-```
 
-### 4.4 CSS Styles
+  // Update data-index attributes
+  listContainer.querySelectorAll('.sortable-list-item').forEach((el, i) => {
+    el.setAttribute('data-index', i);
+  });
 
-Create a CSS item for better styling:
-
-**New Item**: `sortable_list_styles`
-- **Type**: CSS type ID
-- **Content**:
-
-```css
-.sortable-list-item:hover .drag-handle {
-  background: #e8e8e8;
-}
-
-.sortable-list-item.item-selected {
-  box-shadow: 0 0 0 2px #3498db;
-}
-
-.drag-handle:active {
-  cursor: grabbing !important;
-}
-
-.drop-indicator {
-  animation: pulse 0.5s ease-in-out infinite;
-}
-
-@keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.5; }
+  // Show empty state if no children left
+  if (children.length === 0) {
+    listContainer.innerHTML = '';
+    const empty = api.createElement('div', {
+      style: 'text-align: center; color: #999; padding: 60px 20px; font-style: italic;'
+    }, ['This list is empty. Click "+ Add Item" to add items.']);
+    listContainer.appendChild(empty);
+  }
 }
 ```
+
+**Deliverable**: Item removal with targeted DOM updates, no full re-render.
 
 ---
 
 ## Phase 5: Testing & Edge Cases
 
-### 5.1 Test Scenarios
+### Test Scenarios
 
-| Scenario | Expected Behavior | Status |
-|----------|------------------|--------|
-| Empty list | Shows empty state message | ⏳ |
-| Add single item | Item appears at end | ⏳ |
-| Add multiple items | All appear in order | ⏳ |
-| Drag item up | Order updates correctly | ⏳ |
-| Drag item down | Order updates correctly | ⏳ |
-| Remove item | Item removed, others stay in order | ⏳ |
-| Switch to spatial renderer | Items get default positions | ⏳ |
-| Switch back to list renderer | Order preserved | ⏳ |
-| Item already in list | Hidden from picker | ⏳ |
-| Search in picker | Filters correctly | ⏳ |
+| Scenario | Expected Behavior |
+|----------|------------------|
+| Empty list | Shows empty state message |
+| Add single item | Item appears at end |
+| Add multiple items | All appear in order |
+| Drag item up | Order updates, DOM moves element |
+| Drag item down | Order updates, DOM moves element |
+| Remove item | Item removed from DOM, others stay |
+| Remove last item | Shows empty state |
+| Item already in list | Picker shows alert, doesn't add |
+| Switch to spatial view | Items get default positions |
+| Switch back to list view | Order preserved |
+| Deleted child item | Skipped gracefully |
 
-### 5.2 Edge Cases
+### Edge Cases Handled
 
-**Case 1: Mixed child format (string vs object)**
-- **Issue**: Children might be stored as strings or objects
-- **Solution**: Normalize on read: `typeof c === 'string' ? { id: c, renderer: null } : c`
-
-**Case 2: Switching from spatial to list renderer**
-- **Behavior**: Array order is preserved, spatial properties ignored
-- **Action**: No action needed
-
-**Case 3: Switching from list to spatial renderer**
-- **Issue**: Items have no x/y/z properties
-- **Solution**: Spatial renderer already handles this with default positioning
-
-**Case 4: Item deleted while in list**
-- **Issue**: Will error on render
-- **Solution**: Add try-catch around `renderItem` (already present in Phase 1)
-
-**Case 5: Circular references**
-- **Issue**: Could create cycles
-- **Solution**: Protected by kernel's `addChild` cycle detection ✓
-
-**Case 6: Performance with large lists**
-- **Issue**: 100+ items might be slow
-- **Solution**: Defer virtualization until proven necessary
+1. **Mixed child format**: Normalized on read
+2. **Switching views**: Array order preserved, spatial properties ignored
+3. **Deleted items**: Checked with `api.get()` before rendering
+4. **Self-reference**: Parent ID excluded from picker
+5. **Circular references**: Protected by kernel's cycle detection
 
 ---
 
 ## Implementation Checklist
 
 ### Phase 1: Basic Display
-- [ ] Create `sortable_list_renderer` item
-- [ ] Implement header with title
+- [ ] Create `sortable_list_view` item
+- [ ] Implement header with title and add button
 - [ ] Implement empty state
-- [ ] Implement list item rendering
-- [ ] Add drag handle (visual only)
-- [ ] Test with existing container items
+- [ ] Implement list item rendering with compact cards
+- [ ] Add drag handle (visual)
+- [ ] Add remove button
 
 ### Phase 2: Item Picker
 - [ ] Implement modal overlay
-- [ ] Implement search input
-- [ ] Implement item filtering logic
-- [ ] Implement result display
-- [ ] Implement item selection
-- [ ] Test adding items to list
+- [ ] Integrate `item-search-lib.createSearchUI()`
+- [ ] Filter out existing children
+- [ ] Implement targeted add with DOM update
 
 ### Phase 3: Drag-and-Drop
-- [ ] Implement drag start
+- [ ] Implement drag start from handle
 - [ ] Implement drag move with indicator
-- [ ] Implement drop logic
-- [ ] Implement order update
-- [ ] Test reordering items
+- [ ] Implement drop with targeted DOM move
+- [ ] Update data-index attributes
 
 ### Phase 4: Polish
-- [ ] Add context menu integration
-- [ ] Add remove button
-- [ ] Create CSS styles item
-- [ ] Add keyboard shortcuts (optional)
 - [ ] Test all interactions
-
-### Phase 5: Testing
-- [ ] Run full test suite
-- [ ] Test edge cases
-- [ ] Test renderer switching
-- [ ] Document usage
-- [ ] Update project documentation
+- [ ] Handle empty state transitions
+- [ ] Verify context menu works (data-item-id, data-parent-id)
 
 ---
 
 ## Success Criteria
 
-1. ✅ Users can create a container and switch to "sortable list" renderer
-2. ✅ Users can add existing items via picker modal
-3. ✅ Users can drag-and-drop to reorder items
-4. ✅ Users can remove items from list
-5. ✅ Order persists across sessions
-6. ✅ Renderer switching works correctly (list ↔ spatial)
-7. ✅ Context menu works on list items
-8. ✅ No crashes or data corruption
+1. Users can view any item's children as a sortable list
+2. Users can add existing items via picker (reusing item-search-lib)
+3. Users can drag-and-drop to reorder items
+4. Users can remove items from list
+5. All operations use targeted DOM updates (no full re-render)
+6. Order persists across sessions
+7. View switching works correctly
+8. Context menu works on list items
 
 ---
 
-## Technical Notes
-
-### Key Patterns Used
-
-1. **Normalization Pattern**: Always normalize children format when reading:
-   ```javascript
-   const children = (item.children || []).map(c => 
-     typeof c === 'string' ? { id: c, renderer: null } : c
-   );
-   ```
-
-2. **Silent Updates During Interaction**: Use `api.set()` during drag to avoid flashing, then trigger re-render on completion
-
-3. **Fresh Data Pattern**: Always fetch fresh data before updates to avoid stale closure bugs:
-   ```javascript
-   const fresh = await api.get(parentItem.id);
-   // Work with fresh.children
-   ```
-
-4. **Context Menu Integration**: Add `data-parent-id` attribute to enable viewport context menu
-
-5. **Error Boundaries**: Wrap child rendering in try-catch to handle missing/broken items gracefully
-
-### API Methods Used
+## API Methods Used
 
 - `api.createElement(tag, props, children)` - Create DOM elements
-- `api.renderItem(itemId, rendererId)` - Render child items
+- `api.renderItem(itemId, viewId)` - Render child items
 - `api.get(itemId)` - Fetch item data
-- `api.set(item)` - Save without triggering re-render
+- `api.set(item)` - Save item
 - `api.query(filter)` - Query for items
-- `api.navigate(itemId)` - Navigate to trigger re-render
+- `api.require(name)` - Load library (item-search-lib)
 
 ---
 
 ## Future Enhancements
 
-### Possible Variations
-
-1. **Compact List Renderer**: Minimal padding, smaller text
-2. **Numbered List Renderer**: Shows position numbers
-3. **Checklist Renderer**: Adds checkbox to each item
-4. **Tree List Renderer**: Hierarchical with collapse/expand
-
-### Advanced Features
-
-1. **Multi-select**: Shift+click to select range, Cmd+click for individual
-2. **Bulk operations**: Delete/move multiple items at once
-3. **Nested lists**: Lists within lists
-4. **Virtualization**: Render only visible items for performance
-5. **Quick add**: Inline form to create new items directly
-6. **Sorting options**: Alphabetical, by date, by type, etc.
-7. **Filtering**: Show/hide items by type or tag
-
----
-
-## Notes for Implementation
-
-- Start with Phase 1 to establish the basic structure
-- Test thoroughly before moving to next phase
-- Keep the code modular - each function should be self-contained
-- Follow existing patterns from spatial container renderer
-- Preserve the ability to switch between renderers
-- Don't modify kernel - work within existing architecture
-- Document any deviations from this plan
+1. **Keyboard shortcuts**: Cmd/Ctrl+Arrow to reorder selected item
+2. **Multi-select**: Shift+click to select range
+3. **Inline create**: Add new item directly without picker
+4. **Numbered list variant**: Shows position numbers
+5. **Checklist variant**: Adds checkbox to each item
