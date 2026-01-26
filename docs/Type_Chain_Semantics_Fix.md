@@ -79,6 +79,13 @@ isCodeItem(item) {
 
 **Keep type chain walking for:** Renderer lookup, editor lookup (delegation patterns)
 
-**Stop type chain walking for:** Capability detection, identity checks (use direct inspection)
+**Stop type chain walking for:** Capability detection, *transitive* identity checks
 
-This makes the system's semantics clear and consistent.
+**Direct type matching remains valid for:** Identity queries like "is this a renderer?" or "show me all type definitions" - checking `item.type === RENDERER_ID` is correct because it asks about the item's immediate type, not a transitive relationship.
+
+**Use content inspection for:** Capability detection like "does this item have executable code?" - checking `item.content?.code` is correct because capabilities are self-describing.
+
+This makes the system's semantics clear and consistent:
+- **Type chain** → behavior delegation (inheritance)
+- **Direct type** → identity (what kind of thing is this?)
+- **Content presence** → capability (what can this thing do?)
