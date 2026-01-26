@@ -1,8 +1,23 @@
 # Viewport Chrome Simplification
 
-**Status**: Proposed  
-**Date**: 2026-01-26  
+**Status**: Completed
+**Date**: 2026-01-26
 **Author**: System Design Review
+**Completed**: 2026-01-26
+
+## Completion Notes
+
+Implementation completed across two commits:
+- `20df2cc` - Simplify viewport chrome: remove navbar, add keyboard shortcuts
+- `a21fb06` - Refactor: move item decoration from kernel to viewport
+
+**Key implementation decisions:**
+- "Add Child Item" is a context menu option on ANY item (not just containers)
+- Item decoration (data-item-id, tooltips) uses decorator pattern passed from viewport_view
+- Decorator propagates through render context automatically to nested items
+- Item list is now a modal overlay (not page replacement) to avoid history issues
+- Global error handlers added for uncaught promise rejections
+- Selection now stores element reference to fix duplicate-item-in-DOM bug
 
 ---
 
@@ -493,29 +508,35 @@ Proposed keyboard shortcuts for Hobson:
 
 ## Implementation Checklist
 
-- [ ] Phase 1: Extract type picker to library
-- [ ] Phase 1: Enhance item list with keyboard nav
-- [ ] Phase 1: Add Cmd+K listener
-- [ ] Phase 1: Test keyboard shortcut
-- [ ] **Phase 1: Implement browser tab title updates**
-- [ ] **Phase 1: Add tooltip system to rendering**
-- [ ] **Phase 1: Test tooltips on various item types**
-- [ ] Phase 2: Remove Back button
-- [ ] Phase 2: Test browser navigation
-- [ ] Phase 2: Verify browser title updates on navigation
-- [ ] Phase 3: Add container canvas context menu
-- [ ] Phase 3: Add "Add Item Here" to menu
-- [ ] Phase 3: Test context menu placement
-- [ ] Phase 3: Remove "+ New Item" button
-- [ ] Phase 4: Remove "All Items" button
-- [ ] Phase 4: Remove navbar div entirely
-- [ ] Phase 4: Update viewport_renderer
-- [ ] Phase 4: Verify tooltips provide adequate context
-- [ ] Phase 4: Update empty state messages
-- [ ] Phase 5: Add Cmd+? help screen
-- [ ] Phase 5: Fine-tune tooltip content format
-- [ ] Phase 5: Test all functionality
-- [ ] Phase 5: Update documentation
+- [x] Phase 1: Extract type picker to library (`type-picker-lib`)
+- [x] Phase 1: Enhance item list with keyboard nav (modal overlay with search)
+- [x] Phase 1: Add Cmd+K listener
+- [x] Phase 1: Test keyboard shortcut
+- [x] **Phase 1: Implement browser tab title updates**
+- [x] **Phase 1: Add tooltip system to rendering** (via decorator pattern)
+- [x] **Phase 1: Test tooltips on various item types**
+- [x] Phase 2: Remove Back button
+- [x] Phase 2: Test browser navigation
+- [x] Phase 2: Verify browser title updates on navigation
+- [x] Phase 3: Add "Add Child Item" to context menu (on ANY item, not just containers)
+- [x] Phase 3: Test context menu placement
+- [x] Phase 3: Remove "+ New Item" button
+- [x] Phase 4: Remove "All Items" button
+- [x] Phase 4: Remove navbar div entirely
+- [x] Phase 4: Update viewport_view
+- [x] Phase 4: Verify tooltips provide adequate context
+- [x] Phase 4: Update empty state messages
+- [x] Phase 5: Add Cmd+? help screen
+- [x] Phase 5: Fine-tune tooltip content format (name + type)
+- [x] Phase 5: Test all functionality
+- [x] Phase 5: Update documentation
+
+**Additional work completed:**
+- [x] Add global error handlers for uncaught promise rejections (kernel-core)
+- [x] Fix empty viewport state (render viewport even without root)
+- [x] Fix right-click on empty viewport shows context menu
+- [x] Refactor: move decoration logic from kernel to viewport (decorator pattern)
+- [x] Fix selection bug when same item appears multiple times in DOM
 
 ---
 
