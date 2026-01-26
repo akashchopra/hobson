@@ -41,20 +41,25 @@ This document describes the schema for child entries in an item's `children` arr
 { id: "a1b2c3d4-..." }
 ```
 
-### Container view with spatial positioning
+### Container view with spatial positioning and banner config
 
 ```javascript
 {
   id: "a1b2c3d4-...",
   view: {
-    type: "f6af99f7-b5ec-4d87-b78d-c79ba9ca1f0d",  // container-view
+    type: "ef793c27-2d4b-4c99-b05a-2769db5bc5a9",  // container_view
+    // Spatial positioning (for this item as a window in its parent)
     x: 20,
     y: 50,
     width: 400,
     height: 300,
     z: 1000,
-    bannerPosition: "left",
-    bannerSize: 200
+    pinned: false,
+    minimized: false,
+    maximized: false,
+    // Banner config (for the description panel inside this view)
+    bannerPosition: "left",   // "left" | "right" | "top" | "bottom"
+    bannerSize: 200           // pixels
   }
 }
 ```
