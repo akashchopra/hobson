@@ -651,29 +651,30 @@ async function removeItemFromList(parentItem, childId, api, listContainer) {
 ## Implementation Checklist
 
 ### Phase 1: Basic Display
-- [ ] Create `sortable_list_view` item
-- [ ] Implement header with title and add button
-- [ ] Implement empty state
-- [ ] Implement list item rendering with compact cards
-- [ ] Add drag handle (visual)
-- [ ] Add remove button
+- [x] Create `sortable_list_view` item
+- [x] Implement header with title and add button
+- [x] Implement empty state
+- [x] Implement list item rendering with compact cards
+- [x] Add drag handle (visual)
+- [x] Add remove button
 
 ### Phase 2: Item Picker
-- [ ] Implement modal overlay
-- [ ] Integrate `item-search-lib.createSearchUI()`
-- [ ] Filter out existing children
-- [ ] Implement targeted add with DOM update
+- [x] Implement modal overlay
+- [x] Integrate `item-search-lib.createSearchUI()`
+- [x] Filter out existing children
+- [x] Implement targeted add with DOM update
 
 ### Phase 3: Drag-and-Drop
-- [ ] Implement drag start from handle
-- [ ] Implement drag move with indicator
-- [ ] Implement drop with targeted DOM move
-- [ ] Update data-index attributes
+- [x] Implement drag start from handle
+- [x] Implement drag move with indicator
+- [x] Implement drop with targeted DOM move
+- [x] Update data-index attributes
 
 ### Phase 4: Polish
-- [ ] Test all interactions
-- [ ] Handle empty state transitions
-- [ ] Verify context menu works (data-item-id, data-parent-id)
+- [x] Test all interactions
+- [x] Handle empty state transitions
+- [x] Verify context menu works (data-item-id, data-parent-id)
+- [ ] Resolve "Display As..." behavior in list view (deferred - needs design thought)
 
 ---
 
