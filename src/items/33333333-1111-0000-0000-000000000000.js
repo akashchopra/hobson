@@ -862,8 +862,8 @@ export async function loadKernel(require, storageBackend) {
         ...parent,
         children: parent.children.filter(c => c.id !== childId)
       };
+      // Save silently without triggering re-render (consistent with addChild)
       await this.saveItem(updated);
-      await this.renderRoot(this.currentRoot);
     }
 
     async setChildView(parentId, childId, viewId) {
