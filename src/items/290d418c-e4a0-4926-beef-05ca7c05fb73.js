@@ -60,7 +60,8 @@
             }                                                                                                 
           };
           await api.set(updated);
-          await api.rerenderItem(updated.id);
+          // No need to rerender, as the editor visual state is already up to date with latest edits.
+          //await api.rerenderItem(updated.id);
 
           saveIndicator.textContent = 'Saved!';                                                               
           saveIndicator.style.color = '#00aa00';                                                              

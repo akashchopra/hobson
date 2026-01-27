@@ -8,7 +8,7 @@ export class ModuleSystem {
     this.kernel = kernel;
     this.moduleCache = new Map(); // itemId -> { module, timestamp }
   }
-  
+
   async require(nameOrId, callStack = new Set()) {
     // Resolve name to ID if necessary
     let itemId = nameOrId;
