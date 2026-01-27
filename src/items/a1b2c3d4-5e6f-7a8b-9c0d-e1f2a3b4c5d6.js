@@ -5,7 +5,17 @@
 
 
 // Hobson-flavored markdown renderer
-// Handles item:// links and transclusions
+// Handles item:// links, transclusions, and query blocks
+
+// Helper: Escape HTML for safe attribute values
+const escapeHtml = (str) => {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+};
 
 // Helper: Parse item URL
 const parseItemUrl = (url) => {
@@ -213,6 +223,111 @@ export async function render(markdown, api) {
       errorDiv.style.cssText = 'background: #fff3cd; border: 1px solid #ffc107; border-radius: 4px; padding: 8px 12px; margin: 10px 0; color: #856404; font-style: italic;';
       errorDiv.textContent = '[Missing: ' + altText + ' - ' + err.message + ']';
       img.parentNode.replaceChild(errorDiv, img);
+    }
+  }
+
+  // Handle query blocks (```query ... ```)
+  const queryBlocks = content.querySelectorAll('pre > code.language-query');
+  for (const codeBlock of queryBlocks) {
+    const pre = codeBlock.parentElement;
+    const queryCode = codeBlock.textContent;
+
+    try {
+      // Helper: wrap content with transclusion chrome
+      const transclude = (item, text, options = {}) => {
+        const chrome = options.chrome || 'subtle';
+        const itemId = typeof item === 'string' ? item : item.id;
+        const itemName = typeof item === 'string' ? itemId : (item.name || itemId);
+        if (chrome === 'none') return text;
+        if (chrome === 'full') {
+          return `<div class="query-transclude-full" data-item-id="${escapeHtml(itemId)}" data-item-name="${escapeHtml(itemName)}">\n\n${text}\n\n</div>`;
+        }
+        // Subtle chrome: append a link marker (doesn't interfere with markdown list processing)
+        return `${text} [↗](transclude://${itemId}?name=${encodeURIComponent(itemName)})`;
+      };
+
+      // Helper: apply transclude to each item
+      const transcludeEach = (items, formatter, options = {}) => {
+        return items.map(item => transclude(item, formatter(item), options)).join('\n');
+      };
+
+      // Execute the query code with api and helpers in scope
+      const AsyncFunction = Object.getPrototypeOf(async function(){}).constructor;
+      const fn = new AsyncFunction('api', 'transclude', 'transcludeEach', queryCode);
+      const result = await fn(api, transclude, transcludeEach);
+
+      // Render the result as markdown
+      const resultHtml = markdownit.render(result || '');
+      const resultDiv = api.createElement('div', { className: 'query-result' });
+      resultDiv.innerHTML = resultHtml;
+
+      // Process item:// links in the query result
+      const resultLinks = resultDiv.querySelectorAll('a[data-item-link]');
+      resultLinks.forEach(link => {
+        const href = link.getAttribute('data-item-link');
+        const parsed = parseItemUrl(href);
+        if (parsed) {
+          link.onclick = (e) => {
+            e.preventDefault();
+            api.siblingContainer?.addSibling(parsed.itemId);
+          };
+          link.style.cssText = 'color: #007bff; text-decoration: none; border-bottom: 1px solid #007bff; cursor: pointer;';
+        }
+      });
+
+      // Process transclude:// links (subtle chrome)
+      const transcludeLinks = resultDiv.querySelectorAll('a[href^="transclude://"]');
+      for (const link of transcludeLinks) {
+        const href = link.getAttribute('href');
+        const match = href.match(/^transclude:\/\/([^?]+)\?name=(.+)$/);
+        if (match) {
+          const itemId = match[1];
+          const itemName = decodeURIComponent(match[2]);
+
+          // Style as subtle chrome
+          link.style.cssText = 'color: #999; font-size: 0.75em; margin-left: 3px; cursor: pointer; text-decoration: none; vertical-align: super;';
+          link.title = 'From: ' + itemName;
+          link.onclick = (e) => {
+            e.preventDefault();
+            api.siblingContainer?.addSibling(itemId);
+          };
+        }
+      }
+
+      // Process full transclusion markers
+      const fullMarkers = resultDiv.querySelectorAll('.query-transclude-full');
+      for (const marker of fullMarkers) {
+        const itemId = marker.getAttribute('data-item-id');
+        const itemName = marker.getAttribute('data-item-name');
+
+        // Create full chrome wrapper
+        const wrapperDiv = api.createElement('div', { className: 'transclusion-container' });
+        wrapperDiv.style.cssText = 'background: #f9f9f9; border: 1px solid #e0e0e0; border-radius: 6px; padding: 15px; margin: 15px 0;';
+
+        const header = api.createElement('div');
+        header.style.cssText = 'font-size: 12px; color: #666; margin-bottom: 10px; padding-bottom: 8px; border-bottom: 1px solid #ddd; cursor: pointer;';
+        header.textContent = 'From: ' + itemName;
+        header.onclick = () => api.siblingContainer?.addSibling(itemId);
+        wrapperDiv.appendChild(header);
+
+        // Move marker contents into wrapper
+        const contentDiv = api.createElement('div');
+        while (marker.firstChild) {
+          contentDiv.appendChild(marker.firstChild);
+        }
+        wrapperDiv.appendChild(contentDiv);
+
+        marker.parentNode.replaceChild(wrapperDiv, marker);
+      }
+
+      // Replace the pre block with the result
+      pre.parentNode.replaceChild(resultDiv, pre);
+
+    } catch (err) {
+      const errorDiv = api.createElement('div');
+      errorDiv.style.cssText = 'background: #ffebee; border: 1px solid #f44336; border-radius: 4px; padding: 8px 12px; margin: 10px 0; color: #c62828;';
+      errorDiv.textContent = '[Query error: ' + err.message + ']';
+      pre.parentNode.replaceChild(errorDiv, pre);
     }
   }
 
