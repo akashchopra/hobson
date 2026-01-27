@@ -3,6 +3,7 @@
 // Type: 66666666-0000-0000-0000-000000000000
 
 
+
 // Hobson-flavored markdown renderer
 // Handles item:// links and transclusions
 
@@ -170,7 +171,7 @@ export async function render(markdown, api) {
         const header = api.createElement('div');
         header.style.cssText = 'font-size: 12px; color: #666; margin-bottom: 10px; padding-bottom: 8px; border-bottom: 1px solid #ddd; cursor: pointer;';
         header.textContent = 'Transcluded from: ' + headerDesc;
-        header.onclick = () => api.navigate(parsed.itemId);
+        header.onclick = () => api.siblingContainer.addSibling(parsed.itemId);
         wrapperDiv.appendChild(header);
 
         const pre = api.createElement('pre');

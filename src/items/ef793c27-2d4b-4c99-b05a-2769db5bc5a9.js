@@ -3,6 +3,7 @@
 // Type: aaaaaaaa-0000-0000-0000-000000000000
 
 
+
 export async function render(item, api) {
   // SCROLL PRESERVATION: Save scroll positions from existing DOM before re-render
   const scrollStates = new Map();

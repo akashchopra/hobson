@@ -2,6 +2,7 @@
 // ID: e7707000-0000-0000-0000-000000000011
 // Type: aaaaaaaa-0000-0000-0000-000000000000
 
+
 // Error List View - displays all errors newest first with clear all option
 
 const ERROR_TYPE_ID = 'e7707000-0000-0000-0000-000000000001';

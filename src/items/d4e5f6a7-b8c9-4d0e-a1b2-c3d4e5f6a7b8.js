@@ -2,6 +2,7 @@
 // ID: d4e5f6a7-b8c9-4d0e-a1b2-c3d4e5f6a7b8
 // Type: aaaaaaaa-0000-0000-0000-000000000000
 
+
 export async function render(item, api) {
   // data-item-id is set automatically by api.renderItem()
   const card = api.createElement('div', {
@@ -11,7 +12,7 @@ export async function render(item, api) {
 
   // Title
   const title = api.createElement('div', {
-    style: 'font-weight: 500; color: #333; margin-bottom: 6px;'
+    style: 'font-weight: 500; color: #333; margin-bottom: 6px; overflow: hidden;'
   }, [item.name || item.content?.title || item.id.substring(0, 8)]);
   card.appendChild(title);
 
