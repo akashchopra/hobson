@@ -58,9 +58,10 @@
               ...item.content,                                                                                
               code: editor.getValue()                                                                         
             }                                                                                                 
-          };                                                                                                  
-          await api.update(updated);                                                                          
-                                                                                                              
+          };
+          await api.set(updated);
+          await api.rerenderItem(updated.id);
+
           saveIndicator.textContent = 'Saved!';                                                               
           saveIndicator.style.color = '#00aa00';                                                              
           saveBtn.textContent = 'Save';                                                                       

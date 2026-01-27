@@ -177,7 +177,8 @@ export function render(item, api) {
         resolved: !content.resolved
       }
     };
-    await api.update(updated);
+    await api.set(updated);
+    await api.rerenderItem(updated.id);
   };
   actions.appendChild(resolveBtn);
   

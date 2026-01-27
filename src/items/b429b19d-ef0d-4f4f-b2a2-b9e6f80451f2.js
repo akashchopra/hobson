@@ -159,7 +159,8 @@ export async function render(item, viewSpec, api) {
     saveBtn.textContent = 'Save';
     saveBtn.onclick = async () => {
       try {
-        await api.update(editedItem);
+        await api.set(editedItem);
+        await api.rerenderItem(editedItem.id);
         console.log('Saved successfully');
       } catch (e) {
         alert('Save failed: ' + e.message);
@@ -173,7 +174,8 @@ export async function render(item, viewSpec, api) {
     saveAndViewBtn.textContent = 'Save & View';
     saveAndViewBtn.onclick = async () => {
       try {
-        await api.update(editedItem);
+        await api.set(editedItem);
+        await api.rerenderItem(editedItem.id);
         await returnToDefaultView(item.id, api);
       } catch (e) {
         alert('Save failed: ' + e.message);

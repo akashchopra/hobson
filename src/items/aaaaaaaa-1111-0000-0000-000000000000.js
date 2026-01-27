@@ -28,7 +28,8 @@ export async function render(item, api) {
   saveBtn.onclick = async () => {
     try {
       const updated = JSON.parse(textarea.value);
-      await api.update(updated);
+      await api.set(updated);
+      await api.rerenderItem(updated.id);
     } catch (e) {
       alert('Error: ' + e.message);
     }
