@@ -77,7 +77,7 @@ export async function render(markdown, api) {
   const markdownitModule = await api.require('markdown-it-wrapper');
   const markdownit = markdownitModule.default;
 
-  // Configure link rendering for item:// links
+  // Configure link rendering for item:// links and external links
   const renderer = markdownit.renderer;
   const defaultLinkRender = renderer.rules.link_open || function(tokens, idx, opts, env, self) {
     return self.renderToken(tokens, idx, opts);
@@ -91,6 +91,10 @@ export async function render(markdown, api) {
       if (href.startsWith('item://')) {
         token.attrSet('data-item-link', href);
         token.attrSet('href', '#');
+      } else if (href.startsWith('http://') || href.startsWith('https://')) {
+        // External links open in new tab
+        token.attrSet('target', '_blank');
+        token.attrSet('rel', 'noopener noreferrer');
       }
     }
     return defaultLinkRender(tokens, idx, opts, env, self);
