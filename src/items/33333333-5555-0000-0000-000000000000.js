@@ -167,8 +167,18 @@ export class RenderingSystem {
     let updated = 0;
     for (const instance of instances) {
       try {
-        // Re-render with same view and parent context
-        const newDom = await this.renderItem(itemId, instance.viewId, {}, {
+        // Look up current view from parent's children array (may have changed via setChildView)
+        let currentViewId = instance.viewId;
+        if (instance.parentId) {
+          const parent = await this.kernel.storage.get(instance.parentId);
+          const childEntry = parent?.children?.find(c => c.id === itemId);
+          if (childEntry?.view?.type !== undefined) {
+            currentViewId = childEntry.view.type;
+          }
+        }
+
+        // Re-render with current view and parent context
+        const newDom = await this.renderItem(itemId, currentViewId, {}, {
           parentId: instance.parentId
         });
 

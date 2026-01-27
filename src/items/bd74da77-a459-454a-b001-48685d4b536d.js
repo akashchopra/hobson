@@ -429,11 +429,13 @@ export async function render(item, api) {
         hideContextMenu();
         if (selectedParentId) {
           await setChildView(selectedParentId, itemId, null);
+          // Re-render just this item (preserves sibling scroll positions)
+          await api.rerenderItem(itemId);
         } else {
           await setRootView(null);
+          // Root view change needs full re-render
+          await api.navigate(api.viewport.getRoot());
         }
-        // Re-render by navigating to current root
-        await api.navigate(api.viewport.getRoot());
       };
       displayAsSubmenu.appendChild(defaultOption);
 
@@ -458,11 +460,13 @@ export async function render(item, api) {
           hideContextMenu();
           if (selectedParentId) {
             await setChildView(selectedParentId, itemId, view.id);
+            // Re-render just this item (preserves sibling scroll positions)
+            await api.rerenderItem(itemId);
           } else {
             await setRootView(view.id);
+            // Root view change needs full re-render
+            await api.navigate(api.viewport.getRoot());
           }
-          // Re-render by navigating to current root
-          await api.navigate(api.viewport.getRoot());
         };
         displayAsSubmenu.appendChild(viewOption);
       }

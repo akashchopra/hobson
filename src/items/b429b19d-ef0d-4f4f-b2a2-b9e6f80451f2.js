@@ -36,20 +36,24 @@ async function returnToDefaultView(itemId, api) {
     // It's the viewport root - clear root view override
     console.log('[returnToDefaultView] clearing viewport root view');
     await api.viewport.setRootView(null);
+    // Root view change needs full re-render
+    console.log('[returnToDefaultView] navigating to:', api.viewport.getRoot());
+    await api.navigate(api.viewport.getRoot());
   } else {
     // It's a child - use rendering parent from context, fall back to data hierarchy
     const renderingParentId = api.getParentId ? api.getParentId() : null;
     console.log('[returnToDefaultView] renderingParentId:', renderingParentId);
-    const parent = renderingParentId 
+    const parent = renderingParentId
       ? await api.get(renderingParentId)
       : await api.findParentOf(itemId);
     console.log('[returnToDefaultView] clearing child view, parent:', parent?.id);
     if (parent) {
       await api.setChildView(parent.id, itemId, null);
     }
+    // Re-render just this item (preserves sibling scroll positions)
+    console.log('[returnToDefaultView] re-rendering item:', itemId);
+    await api.rerenderItem(itemId);
   }
-  console.log('[returnToDefaultView] navigating to:', api.viewport.getRoot());
-  await api.navigate(api.viewport.getRoot());
 }
 
 export async function render(item, viewSpec, api) {
