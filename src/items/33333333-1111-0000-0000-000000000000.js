@@ -313,6 +313,9 @@ export async function loadKernel(require, storageBackend) {
       if (!mainView) return;
 
       try {
+        // Clear render instance registry before full re-render (Phase 2)
+        this.rendering.clearInstances();
+
         // Render the viewport item itself (not the root directly)
         // The viewport renderer will create navigation and render the root inside
         const dom = await this.rendering.renderItem(IDS.VIEWPORT);
@@ -810,6 +813,16 @@ export async function loadKernel(require, storageBackend) {
           off: (event, handler) => kernel.events.off(event, handler),
           emit: (event, data) => kernel.events.emit(event, data),
           list: () => kernel.events.getRegisteredEvents()
+        },
+
+        // Render instances (Phase 2)
+        instances: {
+          getByItemId: (itemId) => kernel.rendering.registry.getByItemId(itemId),
+          getByViewId: (viewId) => kernel.rendering.registry.getByViewId(viewId),
+          get: (instanceId) => kernel.rendering.registry.get(instanceId),
+          getAll: () => kernel.rendering.registry.getAll(),
+          getSummary: () => kernel.rendering.registry.getSummary(),
+          clear: () => kernel.rendering.registry.clear()
         }
       };
     }

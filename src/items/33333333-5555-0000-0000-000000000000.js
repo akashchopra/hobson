@@ -2,10 +2,155 @@
 // ID: 33333333-5555-0000-0000-000000000000
 // Type: 33333333-0000-0000-0000-000000000000
 
+// Render Instance Registry - tracks what's currently rendered
+class RenderInstanceRegistry {
+  constructor() {
+    this.instances = new Map();      // instanceId -> InstanceInfo
+    this.byItemId = new Map();       // itemId -> Set<instanceId>
+    this.byViewId = new Map();       // viewId -> Set<instanceId>
+    this.byParentId = new Map();     // parentId -> Set<instanceId>
+    this.nextId = 1;
+  }
+
+  register(domNode, itemId, viewId, parentId) {
+    const instanceId = this.nextId++;
+
+    const info = {
+      instanceId,
+      domNode,
+      itemId,
+      viewId,
+      parentId,
+      timestamp: Date.now()
+    };
+
+    this.instances.set(instanceId, info);
+
+    // Index by itemId
+    if (!this.byItemId.has(itemId)) {
+      this.byItemId.set(itemId, new Set());
+    }
+    this.byItemId.get(itemId).add(instanceId);
+
+    // Index by viewId
+    if (!this.byViewId.has(viewId)) {
+      this.byViewId.set(viewId, new Set());
+    }
+    this.byViewId.get(viewId).add(instanceId);
+
+    // Index by parentId
+    const parentKey = parentId || '__root__';
+    if (!this.byParentId.has(parentKey)) {
+      this.byParentId.set(parentKey, new Set());
+    }
+    this.byParentId.get(parentKey).add(instanceId);
+
+    // Add data attribute to DOM for debugging and Phase 3 lookup
+    if (domNode && domNode.setAttribute) {
+      domNode.setAttribute('data-render-instance', instanceId);
+    }
+
+    return instanceId;
+  }
+
+  unregister(instanceId) {
+    const info = this.instances.get(instanceId);
+    if (!info) return false;
+
+    // Remove from all indexes
+    this.instances.delete(instanceId);
+
+    const itemSet = this.byItemId.get(info.itemId);
+    if (itemSet) {
+      itemSet.delete(instanceId);
+      if (itemSet.size === 0) this.byItemId.delete(info.itemId);
+    }
+
+    const viewSet = this.byViewId.get(info.viewId);
+    if (viewSet) {
+      viewSet.delete(instanceId);
+      if (viewSet.size === 0) this.byViewId.delete(info.viewId);
+    }
+
+    const parentKey = info.parentId || '__root__';
+    const parentSet = this.byParentId.get(parentKey);
+    if (parentSet) {
+      parentSet.delete(instanceId);
+      if (parentSet.size === 0) this.byParentId.delete(parentKey);
+    }
+
+    return true;
+  }
+
+  unregisterByParent(parentId) {
+    const parentKey = parentId || '__root__';
+    const instanceIds = this.byParentId.get(parentKey);
+    if (!instanceIds) return 0;
+
+    let count = 0;
+    for (const instanceId of [...instanceIds]) {
+      if (this.unregister(instanceId)) count++;
+    }
+    return count;
+  }
+
+  clear() {
+    const count = this.instances.size;
+    this.instances.clear();
+    this.byItemId.clear();
+    this.byViewId.clear();
+    this.byParentId.clear();
+    return count;
+  }
+
+  get(instanceId) {
+    return this.instances.get(instanceId) || null;
+  }
+
+  getByItemId(itemId) {
+    const instanceIds = this.byItemId.get(itemId);
+    if (!instanceIds) return [];
+    return [...instanceIds].map(id => this.instances.get(id)).filter(Boolean);
+  }
+
+  getByViewId(viewId) {
+    const instanceIds = this.byViewId.get(viewId);
+    if (!instanceIds) return [];
+    return [...instanceIds].map(id => this.instances.get(id)).filter(Boolean);
+  }
+
+  getByParentId(parentId) {
+    const parentKey = parentId || '__root__';
+    const instanceIds = this.byParentId.get(parentKey);
+    if (!instanceIds) return [];
+    return [...instanceIds].map(id => this.instances.get(id)).filter(Boolean);
+  }
+
+  getAll() {
+    return [...this.instances.values()];
+  }
+
+  // For debugging: summary of current state
+  getSummary() {
+    return {
+      totalInstances: this.instances.size,
+      uniqueItems: this.byItemId.size,
+      uniqueViews: this.byViewId.size,
+      uniqueParents: this.byParentId.size
+    };
+  }
+}
+
 // kernel-rendering module
 export class RenderingSystem {
   constructor(kernel) {
     this.kernel = kernel;
+    this.registry = new RenderInstanceRegistry();
+  }
+
+  // Clear all render instances (called before full re-render)
+  clearInstances() {
+    return this.registry.clear();
   }
 
   async renderItem(itemId, viewId = null, options = {}, context = {}) {
@@ -58,6 +203,13 @@ export class RenderingSystem {
       }
       const api = this.createRendererAPI(item, newContext);
       const domNode = await viewModule.render(item, isViewSpec ? viewSpecItem : api, isViewSpec ? api : undefined);
+
+      // Register render instance (Phase 2)
+      if (domNode) {
+        const parentId = context.parentId || null;
+        this.registry.register(domNode, itemId, view.id, parentId);
+      }
+
       return domNode;
     } catch (error) {
       // Log to console for full async stack trace (dev tools show more than error.stack)
@@ -256,7 +408,7 @@ export class RenderingSystem {
           viewId = viewIdOrConfig.type || null;
           viewConfig = viewIdOrConfig;
         }
-        
+
         // Merge decorator and viewConfig into context for propagation
         const decorator = options?.decorator || context.decorator;
         const mergedContext = {
@@ -265,9 +417,9 @@ export class RenderingSystem {
           viewConfig,
           parentId: containerItem.id  // Pass parent ID for updateViewConfig
         };
-        
+
         const domNode = await rendering.renderItem(itemId, viewId, options || {}, mergedContext);
-        
+
         // Apply decorator if present (from options or inherited context)
         if (domNode && decorator) {
           try {
@@ -293,35 +445,35 @@ export class RenderingSystem {
         }
         return null;
       },
-      
+
       // Get the parent ID that rendered this item
       getParentId: () => context.parentId || null,
-      
+
       // Update the view config for the current item in the parent's children array
       // This persists view-specific state like banner position, sort order, etc.
       // For root items (rendered by viewport), updates the viewport's root view config instead.
       updateViewConfig: async (updates) => {
         const parentId = context.parentId;
-        
+
         // For viewport root items (parent is the viewport itself), update viewport's root view config
         if (parentId === IDS.VIEWPORT && kernel.viewport.rootId === containerItem.id) {
           kernel.viewport.updateRootViewConfig(updates);
           await kernel.viewport.persist();
           return true;
         }
-        
+
         if (!parentId) {
           console.warn('updateViewConfig: no parent ID in context');
           return false;
         }
-        
+
         const parent = await kernel.storage.get(parentId);
         const childIndex = parent.children?.findIndex(c => c.id === containerItem.id);
         if (childIndex < 0) {
           console.warn('updateViewConfig: item not found in parent children');
           return false;
         }
-        
+
         // Merge updates into existing view config
         const currentChild = parent.children[childIndex];
         parent.children[childIndex] = {
@@ -329,7 +481,7 @@ export class RenderingSystem {
           view: { ...(currentChild.view || {}), ...updates }
         };
         parent.modified = Date.now();
-        
+
         await kernel.saveItem(parent);
         return true;
       },
@@ -429,7 +581,7 @@ export class RenderingSystem {
       restorePreviousView: async (itemId) => {
         // Check if item is the viewport root FIRST (regardless of data hierarchy)
         const isViewportRoot = kernel.viewport.rootId === itemId;
-        
+
         if (isViewportRoot) {
           // It's the viewport root - restore from viewport
           if (kernel.viewport.restorePreviousRootView) {
@@ -449,10 +601,10 @@ export class RenderingSystem {
           }
           return false;
         }
-        
+
         // Not the viewport root - use rendering parent from context, fall back to data hierarchy
         const renderingParentId = context.parentId;
-        const parent = renderingParentId 
+        const parent = renderingParentId
           ? await kernel.storage.get(renderingParentId)
           : await kernel.findParentOf(itemId);
         if (!parent) {
@@ -573,6 +725,13 @@ export class RenderingSystem {
       events: {
         on: (event, handler) => kernel.events.on(event, handler),
         off: (event, handler) => kernel.events.off(event, handler)
+      },
+
+      // Render instances API (read-only for renderers)
+      instances: {
+        getByItemId: (itemId) => rendering.registry.getByItemId(itemId),
+        getAll: () => rendering.registry.getAll(),
+        getSummary: () => rendering.registry.getSummary()
       }
     };
 
