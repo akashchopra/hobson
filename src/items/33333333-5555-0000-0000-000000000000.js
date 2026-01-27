@@ -153,6 +153,42 @@ export class RenderingSystem {
     return this.registry.clear();
   }
 
+  // Partial re-render: update specific item(s) in place without full viewport re-render (Phase 3)
+  async rerenderItem(itemId) {
+    // Find existing instance(s) for this item
+    const instances = this.registry.getByItemId(itemId);
+
+    if (instances.length === 0) {
+      // Not currently rendered - nothing to update
+      return { updated: 0, notFound: true };
+    }
+
+    let updated = 0;
+    for (const instance of instances) {
+      try {
+        // Re-render with same view and parent context
+        const newDom = await this.renderItem(itemId, instance.viewId, {}, {
+          parentId: instance.parentId
+        });
+
+        // Replace content in existing container
+        const oldDom = instance.domNode;
+        if (oldDom && oldDom.parentNode) {
+          oldDom.parentNode.replaceChild(newDom, oldDom);
+          updated++;
+        }
+
+        // Unregister old instance (new one was registered by renderItem)
+        this.registry.unregister(instance.instanceId);
+      } catch (error) {
+        console.error(`[Partial Re-render Error] Item ${itemId}:`, error);
+        // Continue with other instances even if one fails
+      }
+    }
+
+    return { updated, total: instances.length };
+  }
+
   async renderItem(itemId, viewId = null, options = {}, context = {}) {
     const IDS = this.kernel.IDS;
     const renderPath = context.renderPath || [];
@@ -726,6 +762,9 @@ export class RenderingSystem {
         on: (event, handler) => kernel.events.on(event, handler),
         off: (event, handler) => kernel.events.off(event, handler)
       },
+
+      // Partial re-render (Phase 3) - update specific item in place
+      rerenderItem: (itemId) => rendering.rerenderItem(itemId),
 
       // Render instances API (read-only for renderers)
       instances: {

@@ -8,7 +8,7 @@ Assessment of the reactive rendering proposal in `Event System and Reactive Rend
 |-------|--------|-------|
 | **Phase 1: Event System** | Complete | `EventBus` class, wildcard matching, events for `item:created/updated/deleted` and `system:error` |
 | **Phase 2: Render Instance Tracking** | Complete | `RenderInstanceRegistry` tracks all rendered items |
-| **Phase 3: Partial Re-render** | Not implemented | All changes still trigger `renderRoot()` |
+| **Phase 3: Partial Re-render** | Complete | `rerenderItem(itemId)` updates item in place |
 | **Phase 4: Reactive Rendering** | Different approach | Implemented as code-item watchers, not view-level watches |
 
 ## What Actually Got Built
