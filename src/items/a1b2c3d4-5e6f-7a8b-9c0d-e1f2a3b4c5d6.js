@@ -102,7 +102,7 @@ export async function render(markdown, api) {
   content.style.cssText = 'line-height: 1.8; font-size: 16px;';
   content.innerHTML = html;
 
-  // Handle item:// link clicks
+  // Handle item:// link clicks - open as sibling in current container
   const links = content.querySelectorAll('a[data-item-link]');
   links.forEach(link => {
     const href = link.getAttribute('data-item-link');
@@ -110,7 +110,7 @@ export async function render(markdown, api) {
     if (parsed) {
       link.onclick = (e) => {
         e.preventDefault();
-        api.navigate(parsed.itemId);
+        api.siblingContainer?.addSibling(parsed.itemId);
       };
       link.style.cssText = 'color: #007bff; text-decoration: none; border-bottom: 1px solid #007bff; cursor: pointer;';
     }

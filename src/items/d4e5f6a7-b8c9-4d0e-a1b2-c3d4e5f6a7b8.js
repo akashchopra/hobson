@@ -48,7 +48,7 @@ export async function render(item, api) {
   // Click to open as sibling window
   card.onclick = (e) => {
     e.stopPropagation();
-    api.openSibling(item.id);
+    api.siblingContainer?.addSibling(item.id);
   };
 
   return card;

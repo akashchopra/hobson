@@ -264,6 +264,87 @@ export async function render(item, api) {
     const baseZ = 2;
     const maxZ = Math.max(...children.map(c => ((c.view?.z) || 0) + baseZ), baseZ) + 1;
 
+    // Helper: Bring a window to front
+    // Checks both database AND DOM z-values to ensure window goes on top
+    const bringToFront = async (childIdToFront) => {
+      const freshItem = await api.get(item.id);
+      const freshChildren = freshItem.children || [];
+
+      // Get max z from database (unpinned, non-minimized)
+      const unpinned = freshChildren.filter(c => !c.view?.pinned && !c.view?.minimized);
+      const maxDbZ = Math.max(...unpinned.map(c => c.view?.z || 0), 0);
+
+      // Get max z from DOM (sibling windows may have higher z from previous interactions)
+      const siblingWrappers = document.querySelectorAll(`[data-parent-id="${item.id}"]`);
+      let maxDomZ = baseZ;
+      siblingWrappers.forEach(w => {
+        const z = parseInt(w.style.zIndex) || 0;
+        if (z > maxDomZ) maxDomZ = z;
+      });
+
+      // Find target in unpinned list
+      const targetChild = unpinned.find(c => c.id === childIdToFront);
+      if (!targetChild) return null; // Pinned or minimized
+
+      // Current z of target (database value + baseZ)
+      const currentDbZ = (targetChild.view?.z || 0) + baseZ;
+
+      // Max z considering both database and DOM
+      const maxZ = Math.max(maxDbZ + baseZ, maxDomZ);
+
+      // If already at or above max, no change needed
+      if (currentDbZ >= maxZ) return null;
+
+      // New z is max + 1
+      const newDomZ = maxZ + 1;
+      const newStoredZ = newDomZ - baseZ;
+
+      await updateChild(childIdToFront, { z: newStoredZ });
+
+      // Return the DOM z-index (with baseZ included)
+      return newDomZ;
+    };
+
+    // Sibling container object - passed to children so they can add siblings
+    const siblingContainer = {
+      id: item.id,
+      addSibling: async (childId) => {
+        const freshItem = await api.get(item.id);
+        const freshChildren = freshItem.children || [];
+        const existingChild = freshChildren.find(c => c.id === childId);
+
+        if (existingChild) {
+          // Item already exists - bring to front and unminimize
+          const wasMinimized = existingChild.view?.minimized;
+
+          // Update to unminimize if needed
+          if (wasMinimized) {
+            await updateChild(childId, { minimized: false });
+          }
+
+          // Bring to front (handles z-index)
+          const newZ = await bringToFront(childId);
+
+          // Update DOM immediately if we got a new z value
+          if (newZ !== null) {
+            const wrapper = document.querySelector(`[data-parent-id="${item.id}"][data-item-id="${childId}"]`);
+            if (wrapper) {
+              wrapper.style.zIndex = newZ;
+            }
+          }
+
+          // Re-render if was minimized (need to show the window)
+          if (wasMinimized) {
+            await api.navigate(api.getCurrentRoot());
+          }
+        } else {
+          // Item doesn't exist - add as new child
+          await api.addChild(childId);
+          await api.navigate(api.getCurrentRoot());
+        }
+      }
+    };
+
     // Cycle handler for when a child item is already being rendered in the ancestor chain
     const onCycle = (cycleItem) => api.createElement('div', {
       class: 'cycle-marker',
@@ -284,7 +365,8 @@ export async function render(item, api) {
       try {
         const childItem = await api.get(childId);
         // Pass full view config so child can access and update its view state
-        const childNode = await api.renderItem(childId, childView.type ? childView : null, { onCycle });
+        // Pass siblingContainer so children can add siblings to this container
+        const childNode = await api.renderItem(childId, childView.type ? childView : null, { onCycle, siblingContainer });
 
         // Base styles - override if maximized
         let wrapperStyle = `
@@ -326,41 +408,13 @@ export async function render(item, api) {
         // Click anywhere on wrapper to bring to front (only for unpinned, non-maximized windows)
         if (!isPinned && !isMaximized) {
           wrapper.addEventListener('mousedown', async (e) => {
-            // Only if not clicking titlebar or resize handle
+            // Only if not clicking titlebar or resize handle (they have their own handlers)
             if (!e.target.classList.contains('titlebar') &&
                 !e.target.classList.contains('resize-handle')) {
-              // Get fresh children data from database (not stale closure)
-              const freshItem = await api.get(item.id);
-              const freshChildren = freshItem.children || [];
-
-              // Only consider unpinned windows for max z
-              const unpinnedChildren = freshChildren.filter(c => !c.view?.pinned);
-              const currentMaxZ = Math.max(...unpinnedChildren.map(c => ((c.view?.z) || 0) + baseZ), baseZ);
-
-              const currentZ = parseInt(wrapper.style.zIndex) || z;
-
-              if (currentZ < currentMaxZ) {
-                const newZ = currentMaxZ + 1;
-
-                // Update DOM immediately
+              const newZ = await bringToFront(childId);
+              if (newZ !== null) {
+                // Update DOM immediately (newZ already includes baseZ)
                 wrapper.style.zIndex = newZ;
-
-                // Get current position from DOM (for string-to-object conversion)
-                // Use isNaN check, not || fallback, since 0 is valid
-                const leftPx = parseInt(wrapper.style.left);
-                const topPx = parseInt(wrapper.style.top);
-                const currentX = isNaN(leftPx) ? x : leftPx;
-                const currentY = isNaN(topPx) ? y : topPx;
-
-                // Save with full position data (not just z)
-                await updateChild(childId, {
-                  x: currentX,
-                  y: currentY,
-                  z: newZ - baseZ,
-                  width: width,
-                  height: height,
-                  pinned: false
-                });
               }
             }
           });
@@ -474,14 +528,49 @@ export async function render(item, api) {
               e.stopPropagation();
 
               if (isPinned) {
-                // Unpinning: move to front of unpinned layer
+                // Unpinning: bring to front (will normalize z-indices)
                 const freshItem = await api.get(item.id);
                 const freshChildren = freshItem.children || [];
-                const unpinnedChildren = freshChildren.filter(c => !c.view?.pinned);
-                const unpinnedMaxZ = Math.max(...unpinnedChildren.map(c => (c.view?.z || 0)), 0);
-                const newZ = unpinnedMaxZ + 1;
 
-                await updateChild(childId, { pinned: false, z: newZ });
+                // First unpin, then bring to front
+                const unpinned = freshChildren
+                  .filter(c => !c.view?.pinned && !c.view?.minimized)
+                  .map(c => ({ id: c.id, z: c.view?.z || 0 }))
+                  .sort((a, b) => a.z - b.z);
+
+                // Add this item at the end
+                unpinned.push({ id: childId, z: unpinned.length });
+
+                // Build map of new z-values
+                const newZValues = new Map();
+                unpinned.forEach((c, index) => {
+                  newZValues.set(c.id, index);
+                });
+
+                // Update all children
+                const updatedChildren = freshChildren.map(c => {
+                  if (c.id === childId) {
+                    return {
+                      ...c,
+                      view: { ...(c.view || {}), pinned: false, z: newZValues.get(c.id) }
+                    };
+                  }
+                  if (newZValues.has(c.id)) {
+                    return {
+                      ...c,
+                      view: { ...(c.view || {}), z: newZValues.get(c.id) }
+                    };
+                  }
+                  return c;
+                });
+
+                const updated = {
+                  ...freshItem,
+                  children: updatedChildren,
+                  modified: Date.now()
+                };
+
+                await api.updateSilent(updated);
               } else {
                 // Pinning: move to bottom of pinned layer
                 await updateChild(childId, { pinned: true, z: 0 });
@@ -535,6 +624,12 @@ export async function render(item, api) {
             e.preventDefault();
             e.stopPropagation();
 
+            // Bring to front immediately on titlebar click
+            const newZ = await bringToFront(childId);
+            if (newZ !== null) {
+              wrapper.style.zIndex = newZ;
+            }
+
             const startX = e.clientX;
             const startY = e.clientY;
 
@@ -543,15 +638,6 @@ export async function render(item, api) {
             const topPx = parseInt(wrapper.style.top);
             const startLeft = isNaN(leftPx) ? x : leftPx;
             const startTop = isNaN(topPx) ? y : topPx;
-
-            // Get fresh children data from database for accurate maxZ
-            const freshItem = await api.get(item.id);
-            const freshChildren = freshItem.children || [];
-            const unpinnedChildren = freshChildren.filter(c => !c.view?.pinned);
-            const currentMaxZ = Math.max(...unpinnedChildren.map(c => (c.z || 0) + baseZ), baseZ);
-
-            const currentZ = parseInt(wrapper.style.zIndex) || z;
-            const needsZUpdate = currentZ < currentMaxZ;
 
             const onMouseMove = (moveEvent) => {
               const deltaX = moveEvent.clientX - startX;
@@ -575,23 +661,14 @@ export async function render(item, api) {
               const newX = startLeft + deltaX;
               const newY = startTop + deltaY;
 
-              // Update position and z-index together (single save)
-              const updates = {
+              // Update position (z already handled by bringToFront)
+              await updateChild(childId, {
                 x: newX,
                 y: newY,
                 width: parseInt(wrapper.style.width) || width,
                 height: parseInt(wrapper.style.height) || height,
                 pinned: false
-              };
-
-              if (needsZUpdate) {
-                const newZ = currentMaxZ + 1;
-                updates.z = newZ - baseZ;
-                // Update DOM z-index immediately
-                wrapper.style.zIndex = newZ;
-              }
-
-              await updateChild(childId, updates);
+              });
             };
 
             document.addEventListener('mousemove', onMouseMove);
@@ -631,6 +708,12 @@ export async function render(item, api) {
             handle.addEventListener('mousedown', async (e) => {
               e.preventDefault();
               e.stopPropagation();
+
+              // Bring to front on resize
+              const newZ = await bringToFront(childId);
+              if (newZ !== null) {
+                wrapper.style.zIndex = newZ;
+              }
 
               const startX = e.clientX;
               const startY = e.clientY;
@@ -686,7 +769,7 @@ export async function render(item, api) {
                 document.removeEventListener('mousemove', onMouseMove);
                 document.removeEventListener('mouseup', onMouseUp);
 
-                // Save final dimensions
+                // Save final dimensions (z already handled by bringToFront)
                 const finalWidth = parseInt(wrapper.style.width);
                 const finalHeight = parseInt(wrapper.style.height);
                 const finalLeft = parseInt(wrapper.style.left);
@@ -697,7 +780,6 @@ export async function render(item, api) {
                   y: finalTop,
                   width: finalWidth,
                   height: finalHeight,
-                  z: (parseInt(wrapper.style.zIndex) || z) - baseZ,
                   pinned: false
                 });
               };
@@ -776,14 +858,49 @@ export async function render(item, api) {
           `,
           title: itemName,
           onclick: async () => {
-            // Restore window: move to front of unpinned layer
+            // Restore window and bring to front using normalized z-indices
             const freshItem = await api.get(item.id);
             const freshChildren = freshItem.children || [];
-            const unpinnedChildren = freshChildren.filter(c => !c.view?.pinned);
-            const unpinnedMaxZ = Math.max(...unpinnedChildren.map(c => (c.view?.z || 0)), 0);
-            const newZ = unpinnedMaxZ + 1;
 
-            await updateChild(childId, { minimized: false, z: newZ });
+            // Get unpinned, non-minimized children sorted by z
+            const unpinned = freshChildren
+              .filter(c => !c.view?.pinned && !c.view?.minimized && c.id !== childId)
+              .map(c => ({ id: c.id, z: c.view?.z || 0 }))
+              .sort((a, b) => a.z - b.z);
+
+            // Add restored window at the end (front)
+            unpinned.push({ id: childId, z: unpinned.length });
+
+            // Build map of new z-values
+            const newZValues = new Map();
+            unpinned.forEach((c, index) => {
+              newZValues.set(c.id, index);
+            });
+
+            // Update all children
+            const updatedChildren = freshChildren.map(c => {
+              if (c.id === childId) {
+                return {
+                  ...c,
+                  view: { ...(c.view || {}), minimized: false, z: newZValues.get(c.id) }
+                };
+              }
+              if (newZValues.has(c.id)) {
+                return {
+                  ...c,
+                  view: { ...(c.view || {}), z: newZValues.get(c.id) }
+                };
+              }
+              return c;
+            });
+
+            const updated = {
+              ...freshItem,
+              children: updatedChildren,
+              modified: Date.now()
+            };
+
+            await api.updateSilent(updated);
             await api.navigate(api.getCurrentRoot());
           }
         }, []);

@@ -483,11 +483,16 @@ export class RenderingSystem {
 
         // Merge decorator and viewConfig into context for propagation
         const decorator = options?.decorator || context.decorator;
+        // siblingContainer: if explicitly passed in options, use that; otherwise pass through from context
+        const siblingContainer = options?.siblingContainer !== undefined
+          ? options.siblingContainer
+          : context.siblingContainer;
         const mergedContext = {
           ...context,
           decorator,
           viewConfig,
-          parentId: containerItem.id  // Pass parent ID for updateViewConfig
+          parentId: containerItem.id,  // Pass parent ID for updateViewConfig
+          siblingContainer  // Pass sibling container for openSibling
         };
 
         const domNode = await rendering.renderItem(itemId, viewId, options || {}, mergedContext);
@@ -567,15 +572,10 @@ export class RenderingSystem {
       navigate: (itemId, params) => kernel.navigateToItem(itemId, params),
       getCurrentRoot: () => kernel.currentRoot,
 
-      // Open item as sibling window in current container
-      openSibling: async (itemId) => {
-        const currentRoot = kernel.currentRoot;
-        if (!currentRoot) {
-          throw new Error('No current root container');
-        }
-        await kernel.addChild(currentRoot, itemId);
-        // Trigger re-render to show the new child
-        await kernel.renderRoot(currentRoot);
+      // Sibling container object (provided by container views like container_view)
+      // Use api.siblingContainer.addSibling(itemId) to add items to the current container
+      get siblingContainer() {
+        return context.siblingContainer || null;
       },
 
       // Create new item

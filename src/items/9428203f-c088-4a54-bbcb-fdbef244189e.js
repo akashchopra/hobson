@@ -94,7 +94,7 @@ export async function render(search, api) {
 
     card.onclick = (e) => {
       e.stopPropagation();
-      api.openSibling(cycleItem.id);
+      api.siblingContainer?.addSibling(cycleItem.id);
     };
 
     return card;

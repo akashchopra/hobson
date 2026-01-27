@@ -181,7 +181,7 @@ function showErrorToast(message, errorId, context, api) {
       api.navigate(errorId);
     } else {
       // Error was in child - open error as sibling
-      api.openSibling(errorId);
+      api.siblingContainer?.addSibling(errorId);
     }
     toast.remove();
   };
