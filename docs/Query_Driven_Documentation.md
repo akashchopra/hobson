@@ -148,6 +148,20 @@ return modules.map(m => `- **${m.name}**: ${m.content.description || 'No descrip
 - Takes returned string, parses as markdown
 - Inserts rendered result into document
 
+**Transclusion chrome:**
+
+Query results should maintain provenance—each result needs transclusion chrome linking to its source item. This enables navigation from the generated list to the actual items.
+
+Helper API:
+```javascript
+const modules = await api.query({ type: GUIDS.KERNEL_MODULE });
+return api.transcludeEach(modules, m =>
+  `- **${m.name}**: ${m.content.description}`
+);
+```
+
+`api.transcludeEach(items, formatter)` wraps each formatted result with standard transclusion chrome linking to the source item's ID. For single items, `api.transclude(item, content)` provides the same wrapping.
+
 **Pros:**
 - Self-contained: document contains its own logic
 - Full JS power: no template language to design or outgrow
@@ -218,6 +232,7 @@ Query items (Option 2) have merit—reusability, testability, discoverability. H
 - Extend markdown renderer to recognize ` ```query ` code blocks
 - Execute code with `api` in scope (async supported)
 - Parse returned string as markdown, insert into document
+- Implement `api.transclude(item, content)` and `api.transcludeEach(items, formatter)` helpers for per-result chrome
 
 **Phase 2: Error Handling**
 - Graceful failure display (show error in document, don't break render)
