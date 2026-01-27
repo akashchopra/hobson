@@ -387,8 +387,10 @@ export async function render(item, api) {
       if (!isPinned && !isMaximized) {
         wrapper.addEventListener('mousedown', async (e) => {
           // Only if not clicking titlebar or resize handle (they have their own handlers)
+          // Also skip links - clicking a link opens a sibling, not focuses this window
           if (!e.target.classList.contains('titlebar') &&
-              !e.target.classList.contains('resize-handle')) {
+              !e.target.classList.contains('resize-handle') &&
+              !e.target.closest('a')) {
             const newZ = await bringToFront(childId);
             if (newZ !== null) {
               // Update DOM immediately (newZ already includes baseZ)
