@@ -174,12 +174,20 @@ export class RenderingSystem {
         // Replace content in existing container
         const oldDom = instance.domNode;
         if (oldDom && oldDom.parentNode) {
+          // Unregister all instances in the old DOM subtree (including nested children)
+          const nestedInstances = oldDom.querySelectorAll('[data-render-instance]');
+          for (const el of nestedInstances) {
+            this.registry.unregister(parseInt(el.dataset.renderInstance, 10));
+          }
+          // Unregister the root instance itself
+          this.registry.unregister(instance.instanceId);
+
           oldDom.parentNode.replaceChild(newDom, oldDom);
           updated++;
+        } else {
+          // DOM not in document, just unregister
+          this.registry.unregister(instance.instanceId);
         }
-
-        // Unregister old instance (new one was registered by renderItem)
-        this.registry.unregister(instance.instanceId);
       } catch (error) {
         console.error(`[Partial Re-render Error] Item ${itemId}:`, error);
         // Continue with other instances even if one fails
@@ -187,6 +195,34 @@ export class RenderingSystem {
     }
 
     return { updated, total: instances.length };
+  }
+
+  // Re-render all items using a specific view (useful when view code changes)
+  async rerenderByView(viewId) {
+    const instances = this.registry.getByViewId(viewId);
+
+    if (instances.length === 0) {
+      return { updated: 0, notFound: true };
+    }
+
+    // Track which items we've already processed to avoid duplicate re-renders
+    // (same item can have multiple instances if rendered in multiple places)
+    const processedItems = new Set();
+    let updated = 0;
+
+    for (const instance of instances) {
+      if (processedItems.has(instance.itemId)) continue;
+      processedItems.add(instance.itemId);
+
+      try {
+        const result = await this.rerenderItem(instance.itemId);
+        updated += result.updated;
+      } catch (error) {
+        console.error(`[rerenderByView] Error re-rendering item ${instance.itemId}:`, error);
+      }
+    }
+
+    return { updated, items: processedItems.size };
   }
 
   async renderItem(itemId, viewId = null, options = {}, context = {}) {
@@ -765,6 +801,9 @@ export class RenderingSystem {
 
       // Partial re-render (Phase 3) - update specific item in place
       rerenderItem: (itemId) => rendering.rerenderItem(itemId),
+
+      // Re-render all items using a specific view (useful when view code changes)
+      rerenderByView: (viewId) => rendering.rerenderByView(viewId),
 
       // Render instances API (read-only for renderers)
       instances: {

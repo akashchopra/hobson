@@ -680,6 +680,7 @@ export async function loadKernel(require, storageBackend) {
         // Rendering operations
         renderItem: (itemId, viewId) => kernel.rendering.renderItem(itemId, viewId),
         rerenderItem: (itemId) => kernel.rendering.rerenderItem(itemId),
+        rerenderByView: (viewId) => kernel.rendering.rerenderByView(viewId),
         getViews: (typeId) => kernel.rendering.getViews(typeId),
         getDefaultView: (typeId) => kernel.rendering.getDefaultView(typeId),
         findView: (typeId) => kernel.rendering.findView(typeId),
