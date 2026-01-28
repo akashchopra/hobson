@@ -536,46 +536,6 @@ export async function render(item, api) {
     };
     contextMenu.appendChild(exportItem);
 
-    // Dock submenu (for items in containers)
-    if (selectedParentId) {
-      const dockItem = api.createElement('div', { class: 'context-menu-item context-menu-submenu' }, ['Dock']);
-      const dockSubmenu = api.createElement('div', { class: 'context-menu-submenu-items' }, []);
-
-      const dockPositions = ['Left', 'Right', 'Top', 'Bottom'];
-      for (const pos of dockPositions) {
-        const dockPosItem = api.createElement('div', { class: 'context-menu-item' }, ['Dock ' + pos]);
-        dockPosItem.onclick = async (e) => {
-          e.stopPropagation();
-          hideContextMenu();
-          const parent = await api.get(selectedParentId);
-          const childSpec = parent.children?.find(c => c.id === itemId);
-          if (!childSpec) return;
-
-          const anyChild = document.querySelector('[data-parent-id="' + selectedParentId + '"]');
-          const canvas = anyChild?.parentElement;
-          const canvasWidth = canvas ? canvas.clientWidth : 1000;
-          const canvasHeight = canvas ? canvas.clientHeight : 600;
-          const childView = childSpec.view || {};
-          const width = childView.width || 400;
-          const height = childView.height || 300;
-
-          let newView = { ...childView, minimized: false, maximized: false };
-          if (pos === 'Left') { newView.x = 0; newView.y = 0; newView.height = canvasHeight; }
-          else if (pos === 'Right') { newView.x = canvasWidth - width; newView.y = 0; newView.height = canvasHeight; }
-          else if (pos === 'Top') { newView.x = 0; newView.y = 0; newView.width = canvasWidth; }
-          else if (pos === 'Bottom') { newView.x = 0; newView.y = canvasHeight - height; newView.width = canvasWidth; }
-
-          parent.children = parent.children.map(c => c.id === itemId ? { ...c, view: newView } : c);
-          parent.modified = Date.now();
-          await api.update(parent);
-        };
-        dockSubmenu.appendChild(dockPosItem);
-      }
-
-      dockItem.appendChild(dockSubmenu);
-      contextMenu.appendChild(dockItem);
-    }
-
     // Delete
     contextMenu.appendChild(api.createElement('div', { class: 'context-menu-separator' }, []));
     const deleteItem = api.createElement('div', { class: 'context-menu-item', style: 'color: #d33;' }, ['Delete']);

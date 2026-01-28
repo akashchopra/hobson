@@ -418,6 +418,184 @@ export async function render(item, api) {
         `
       }, []);
 
+      // Menu button (left side)
+      const menuBtn = api.createElement('button', {
+        style: `
+          width: 20px;
+          height: 18px;
+          padding: 0;
+          margin-right: 6px;
+          border: none;
+          background: transparent;
+          cursor: pointer;
+          font-size: 12px;
+          color: #666;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        `,
+        title: 'Window menu'
+      }, ['≡']);
+
+      // Menu dropdown
+      const showWindowMenu = (e) => {
+        e.stopPropagation();
+
+        // Remove any existing window menu
+        const existingMenu = document.querySelector('.window-menu');
+        if (existingMenu) existingMenu.remove();
+
+        const btnRect = menuBtn.getBoundingClientRect();
+        const menu = api.createElement('div', {
+          class: 'window-menu',
+          style: `
+            position: fixed;
+            left: ${btnRect.left}px;
+            top: ${btnRect.bottom + 2}px;
+            background: white;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+            z-index: 100000;
+            min-width: 120px;
+            font-size: 13px;
+          `
+        }, []);
+
+        const createMenuItem = (label, onClick) => {
+          const item = api.createElement('div', {
+            style: `
+              padding: 8px 12px;
+              cursor: pointer;
+            `
+          }, [label]);
+          item.addEventListener('mouseenter', () => { item.style.background = '#f5f5f5'; });
+          item.addEventListener('mouseleave', () => { item.style.background = 'transparent'; });
+          item.addEventListener('click', (e) => {
+            e.stopPropagation();
+            menu.remove();
+            onClick();
+          });
+          return item;
+        };
+
+        const createSeparator = () => {
+          return api.createElement('div', {
+            style: 'height: 1px; background: #ddd; margin: 4px 0;'
+          }, []);
+        };
+
+        // Pin/Unpin option
+        menu.appendChild(createMenuItem(isPinned ? 'Unpin' : 'Pin', async () => {
+          if (isPinned) {
+            // Unpinning: bring to front
+            const freshItem = await api.get(item.id);
+            const freshChildren = freshItem.children || [];
+
+            const unpinned = freshChildren
+              .filter(c => !c.view?.pinned && !c.view?.minimized)
+              .map(c => ({ id: c.id, z: c.view?.z || 0 }))
+              .sort((a, b) => a.z - b.z);
+
+            unpinned.push({ id: childId, z: unpinned.length });
+
+            const newZValues = new Map();
+            unpinned.forEach((c, index) => {
+              newZValues.set(c.id, index);
+            });
+
+            const updatedChildren = freshChildren.map(c => {
+              if (c.id === childId) {
+                return {
+                  ...c,
+                  view: { ...(c.view || {}), pinned: false, z: newZValues.get(c.id) }
+                };
+              }
+              if (newZValues.has(c.id)) {
+                return {
+                  ...c,
+                  view: { ...(c.view || {}), z: newZValues.get(c.id) }
+                };
+              }
+              return c;
+            });
+
+            const updated = {
+              ...freshItem,
+              children: updatedChildren,
+              modified: Date.now()
+            };
+
+            await api.updateSilent(updated);
+          } else {
+            // Pinning: move to bottom
+            await updateChild(childId, { pinned: true, z: 0 });
+          }
+          await api.navigate(api.getCurrentRoot());
+        }));
+
+        menu.appendChild(createSeparator());
+
+        // Dock options
+        const dockPositions = [
+          { label: 'Dock Left', pos: 'left' },
+          { label: 'Dock Right', pos: 'right' },
+          { label: 'Dock Top', pos: 'top' },
+          { label: 'Dock Bottom', pos: 'bottom' }
+        ];
+
+        for (const { label, pos } of dockPositions) {
+          menu.appendChild(createMenuItem(label, async () => {
+            const containerEl = wrapper.parentElement;
+            const canvasWidth = containerEl ? containerEl.clientWidth : 1000;
+            const canvasHeight = containerEl ? containerEl.clientHeight : 600;
+            const currentWidth = parseInt(wrapper.style.width) || 400;
+            const currentHeight = parseInt(wrapper.style.height) || 300;
+
+            let newView = { minimized: false, maximized: false, pinned: false };
+            if (pos === 'left') {
+              newView.x = 0;
+              newView.y = 0;
+              newView.width = currentWidth;
+              newView.height = canvasHeight;
+            } else if (pos === 'right') {
+              newView.x = canvasWidth - currentWidth;
+              newView.y = 0;
+              newView.width = currentWidth;
+              newView.height = canvasHeight;
+            } else if (pos === 'top') {
+              newView.x = 0;
+              newView.y = 0;
+              newView.width = canvasWidth;
+              newView.height = currentHeight;
+            } else if (pos === 'bottom') {
+              newView.x = 0;
+              newView.y = canvasHeight - currentHeight;
+              newView.width = canvasWidth;
+              newView.height = currentHeight;
+            }
+
+            await updateChild(childId, newView);
+            await api.navigate(api.getCurrentRoot());
+          }));
+        }
+
+        document.body.appendChild(menu);
+
+        // Close menu on click outside
+        const closeMenu = () => {
+          menu.remove();
+          document.removeEventListener('mousedown', onMouseDown, true);
+        };
+        const onMouseDown = (evt) => {
+          if (!menu.contains(evt.target) && evt.target !== menuBtn) closeMenu();
+        };
+        setTimeout(() => document.addEventListener('mousedown', onMouseDown, true), 0);
+      };
+
+      menuBtn.addEventListener('click', showWindowMenu);
+      titlebar.appendChild(menuBtn);
+
       // Title text
       const titleText = api.createElement('span', {
         style: 'flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;'
@@ -428,6 +606,70 @@ export async function render(item, api) {
       const buttonContainer = api.createElement('div', {
         style: 'display: flex; gap: 4px; align-items: center;'
       }, []);
+
+      // Pin indicator (only shown when pinned - clicking unpins)
+      if (isPinned) {
+        const pinIndicator = api.createElement('button', {
+          style: `
+            width: 18px;
+            height: 18px;
+            padding: 0;
+            border: none;
+            background: transparent;
+            cursor: pointer;
+            font-size: 12px;
+            color: #666;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+          `,
+          title: 'Unpin (make moveable)',
+          onclick: async (e) => {
+            e.stopPropagation();
+            // Unpinning: bring to front
+            const freshItem = await api.get(item.id);
+            const freshChildren = freshItem.children || [];
+
+            const unpinned = freshChildren
+              .filter(c => !c.view?.pinned && !c.view?.minimized)
+              .map(c => ({ id: c.id, z: c.view?.z || 0 }))
+              .sort((a, b) => a.z - b.z);
+
+            unpinned.push({ id: childId, z: unpinned.length });
+
+            const newZValues = new Map();
+            unpinned.forEach((c, index) => {
+              newZValues.set(c.id, index);
+            });
+
+            const updatedChildren = freshChildren.map(c => {
+              if (c.id === childId) {
+                return {
+                  ...c,
+                  view: { ...(c.view || {}), pinned: false, z: newZValues.get(c.id) }
+                };
+              }
+              if (newZValues.has(c.id)) {
+                return {
+                  ...c,
+                  view: { ...(c.view || {}), z: newZValues.get(c.id) }
+                };
+              }
+              return c;
+            });
+
+            const updated = {
+              ...freshItem,
+              children: updatedChildren,
+              modified: Date.now()
+            };
+
+            await api.updateSilent(updated);
+            await api.navigate(api.getCurrentRoot());
+          }
+        }, ['📌']);
+        buttonContainer.appendChild(pinIndicator);
+      }
 
       // Minimize button (not for pinned windows)
       if (!isPinned) {
@@ -486,81 +728,6 @@ export async function render(item, api) {
           }
         }, [isMaximized ? '❐' : '□']);
         buttonContainer.appendChild(maxBtn);
-      }
-
-      // Pin toggle button (only for normal non-maximized windows)
-      if (!isMaximized) {
-        const pinBtn = api.createElement('button', {
-          style: `
-            width: 18px;
-            height: 18px;
-            padding: 0;
-            border: none;
-            background: transparent;
-            cursor: pointer;
-            font-size: 12px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-          `,
-          title: isPinned ? 'Unpin (make moveable)' : 'Pin (lock in background)',
-          onclick: async (e) => {
-            e.stopPropagation();
-
-            if (isPinned) {
-              // Unpinning: bring to front (will normalize z-indices)
-              const freshItem = await api.get(item.id);
-              const freshChildren = freshItem.children || [];
-
-              // First unpin, then bring to front
-              const unpinned = freshChildren
-                .filter(c => !c.view?.pinned && !c.view?.minimized)
-                .map(c => ({ id: c.id, z: c.view?.z || 0 }))
-                .sort((a, b) => a.z - b.z);
-
-              // Add this item at the end
-              unpinned.push({ id: childId, z: unpinned.length });
-
-              // Build map of new z-values
-              const newZValues = new Map();
-              unpinned.forEach((c, index) => {
-                newZValues.set(c.id, index);
-              });
-
-              // Update all children
-              const updatedChildren = freshChildren.map(c => {
-                if (c.id === childId) {
-                  return {
-                    ...c,
-                    view: { ...(c.view || {}), pinned: false, z: newZValues.get(c.id) }
-                  };
-                }
-                if (newZValues.has(c.id)) {
-                  return {
-                    ...c,
-                    view: { ...(c.view || {}), z: newZValues.get(c.id) }
-                  };
-                }
-                return c;
-              });
-
-              const updated = {
-                ...freshItem,
-                children: updatedChildren,
-                modified: Date.now()
-              };
-
-              await api.updateSilent(updated);
-            } else {
-              // Pinning: move to bottom of pinned layer
-              await updateChild(childId, { pinned: true, z: 0 });
-            }
-
-            // Trigger re-render to show updated state
-            await api.navigate(api.getCurrentRoot());
-          }
-        }, [isPinned ? '📌' : '📍']);
-        buttonContainer.appendChild(pinBtn);
       }
 
       // Close button (only for unpinned windows)
