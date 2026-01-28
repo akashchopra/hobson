@@ -927,7 +927,8 @@ export async function render(item, api) {
             const deltaY = moveEvent.clientY - startY;
 
             const newX = startLeft + deltaX;
-            const newY = startTop + deltaY;
+            // Constrain Y so title bar can't go above container top
+            const newY = Math.max(0, startTop + deltaY);
 
             // Update DOM immediately for smooth dragging
             wrapper.style.left = newX + 'px';
@@ -942,7 +943,8 @@ export async function render(item, api) {
             const deltaY = upEvent.clientY - startY;
 
             const finalX = startLeft + deltaX;
-            const finalY = startTop + deltaY;
+            // Constrain Y so title bar can't go above container top
+            const finalY = Math.max(0, startTop + deltaY);
 
             // Update position (z already handled by bringToFront)
             await updateChild(childId, {
