@@ -11,7 +11,7 @@
   box-shadow: 0 4px 12px rgba(0,0,0,0.15);
   min-width: 180px;
   padding: 4px 0;
-  z-index: 10000;
+  z-index: 2147483647;
   display: none;
 }
 

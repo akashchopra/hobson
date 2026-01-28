@@ -193,12 +193,13 @@ export async function render(item, api) {
   };
 
   // Context menu for empty/background state
+  // Append to document.body so it's always above windows (which can have high z-indices)
   const contextMenu = api.createElement('div', {
     id: 'context-menu',
     class: 'context-menu',
     style: 'display: none;'
   }, []);
-  container.appendChild(contextMenu);
+  document.body.appendChild(contextMenu);
 
   const hideContextMenu = () => {
     contextMenu.style.display = 'none';
@@ -265,6 +266,7 @@ export async function render(item, api) {
         for (const node of mutation.removedNodes) {
           if (node === container || node.contains?.(container)) {
             document.removeEventListener('keydown', globalKeyHandler);
+            contextMenu.remove();
             observer.disconnect();
             return;
           }
@@ -679,6 +681,7 @@ export async function render(item, api) {
       for (const node of mutation.removedNodes) {
         if (node === container || node.contains?.(container)) {
           document.removeEventListener('keydown', globalKeyHandler);
+          contextMenu.remove();
           observer.disconnect();
           return;
         }
