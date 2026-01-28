@@ -169,6 +169,8 @@ export async function render(errorList, api) {
     errorList.children = [];
     await api.set(errorList);
 
+    // Refresh from database to ensure consistent state after deletions
+    await refreshErrors();
     await renderResults();
   };
 
