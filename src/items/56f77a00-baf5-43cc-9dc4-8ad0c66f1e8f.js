@@ -25,9 +25,9 @@ export async function render(value, options, api) {
   await api.require('codemirror-markdown');
   const CodeMirror = window.CodeMirror;
 
-  // Editor container
+  // Editor container - resizable
   const editorContainer = api.createElement('div');
-  editorContainer.style.cssText = 'border: 1px solid #d0d0d0; border-radius: 6px; overflow: hidden; min-height: 300px;';
+  editorContainer.style.cssText = 'border: 1px solid #d0d0d0; border-radius: 6px; overflow: hidden; min-height: 120px; height: 150px; resize: vertical;';
   wrapper.appendChild(editorContainer);
 
   // Create CodeMirror instance
@@ -37,16 +37,20 @@ export async function render(value, options, api) {
     lineNumbers: true,
     lineWrapping: true,
     theme: 'default',
-    viewportMargin: 2000,
+    viewportMargin: Infinity,
     placeholder: placeholder || '',
     extraKeys: {
       'Tab': (editor) => editor.replaceSelection('  ')
     }
   });
 
-  cm.setSize('100%', '300px');
+  cm.setSize('100%', '100%');
 
-  // Refresh after layout completes to fix gutter width calculation
+  // Refresh CodeMirror when container is resized
+  const resizeObserver = new ResizeObserver(() => cm.refresh());
+  resizeObserver.observe(editorContainer);
+
+  // Also refresh after layout completes to fix gutter width calculation
   requestAnimationFrame(() => cm.refresh());
 
   // Call onChange on edits

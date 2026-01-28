@@ -123,14 +123,6 @@ export async function render(item, viewSpec, api) {
       ...hint
     }, api);
 
-    // Give markdown fields a generous fixed height
-    const isMarkdown = hint.field_view === 'markdown_editable' ||
-                       hint.field_view === 'markdown_readonly';
-
-    if (isMarkdown) {
-      fieldElement.style.minHeight = '400px';
-    }
-
     scrollArea.appendChild(fieldElement);
 
     // Add divider after field if requested
