@@ -1,7 +1,3 @@
-// Item: kernel-rendering
-// ID: 33333333-5555-0000-0000-000000000000
-// Type: 33333333-0000-0000-0000-000000000000
-
 
 // Render Instance Registry - tracks what's currently rendered
 class RenderInstanceRegistry {
@@ -236,6 +232,27 @@ export class RenderingSystem {
     return { updated, items: processedItems.size };
   }
 
+  // Re-render all items of a given type (for when type preference changes)
+  async rerenderByType(typeId) {
+    const instances = this.registry.getAll();
+    let updated = 0;
+
+    for (const instance of instances) {
+      try {
+        const item = await this.kernel.storage.get(instance.itemId);
+        // Only re-render if item is of this type AND doesn't have its own preference
+        if (item.type === typeId && !item.preferredView) {
+          await this.rerenderItem(instance.itemId);
+          updated++;
+        }
+      } catch (e) {
+        // Item may have been deleted - skip
+      }
+    }
+
+    return { updated };
+  }
+
   async renderItem(itemId, viewId = null, options = {}, context = {}) {
     const IDS = this.kernel.IDS;
     const renderPath = context.renderPath || [];
@@ -256,12 +273,14 @@ export class RenderingSystem {
 
     const item = await this.kernel.storage.get(itemId);
 
-    // Use specified view or find default for item's type
+    // Use specified view or find default via preference hierarchy
     let view;
     if (viewId) {
+      // Explicit view specified by caller (highest priority)
       view = await this.kernel.storage.get(viewId);
     } else {
-      view = await this.findView(item.type);
+      // Use preference hierarchy: item.preferredView → type.preferredView → type chain
+      view = await this.resolveView(item);
     }
 
     // Build new context with updated render path
@@ -308,6 +327,37 @@ export class RenderingSystem {
       });
       return this.createErrorView(error, itemId);
     }
+  }
+
+  // Resolve view using preference hierarchy: item.preferredView → type.preferredView → type chain
+  async resolveView(item) {
+    // 1. Check item's preferred view
+    if (item.preferredView) {
+      try {
+        const view = await this.kernel.storage.get(item.preferredView);
+        if (view) return view;
+      } catch (e) {
+        console.warn(`Preferred view ${item.preferredView} not found for item ${item.id}, checking type preference`);
+      }
+    }
+
+    // 2. Check type definition's preferred view
+    try {
+      const typeItem = await this.kernel.storage.get(item.type);
+      if (typeItem.preferredView) {
+        try {
+          const view = await this.kernel.storage.get(typeItem.preferredView);
+          if (view) return view;
+        } catch (e) {
+          console.warn(`Preferred view ${typeItem.preferredView} not found for type ${typeItem.name}, using type chain lookup`);
+        }
+      }
+    } catch (e) {
+      // Type not found - fall through to type chain lookup
+    }
+
+    // 3. Fall back to type chain lookup
+    return await this.findView(item.type);
   }
 
   // Find view for a type (walks up type chain)
@@ -422,6 +472,25 @@ export class RenderingSystem {
   async getDefaultView(typeId) {
     const views = await this.getViews(typeId);
     return views.length > 0 ? views[0].view : null;
+  }
+
+  // Get the view that would be used for a specific item (full preference hierarchy)
+  async getEffectiveView(itemId) {
+    const item = await this.kernel.storage.get(itemId);
+    return await this.resolveView(item);
+  }
+
+  // Get the type-level preferred view (for showing in modal)
+  async getTypePreferredView(typeId) {
+    try {
+      const typeItem = await this.kernel.storage.get(typeId);
+      if (typeItem.preferredView) {
+        return await this.kernel.storage.get(typeItem.preferredView);
+      }
+    } catch (e) {
+      // Fall through
+    }
+    return await this.findView(typeId);
   }
 
   createRendererAPI(containerItem, context = {}) {
@@ -578,6 +647,77 @@ export class RenderingSystem {
       getViews: (typeId) => kernel.rendering.getViews(typeId),
       getDefaultView: (typeId) => kernel.rendering.getDefaultView(typeId),
       findView: (typeId) => kernel.rendering.findView(typeId),
+
+      // Preferred view management
+      setPreferredView: async (itemId, viewId) => {
+        const item = await kernel.storage.get(itemId);
+        if (viewId) {
+          item.preferredView = viewId;
+        } else {
+          delete item.preferredView;
+        }
+        item.modified = Date.now();
+        await kernel.saveItem(item);
+
+        // If this is a type definition, re-render all items of this type
+        if (item.type === kernel.IDS.TYPE_DEFINITION) {
+          await rendering.rerenderByType(itemId);
+        } else {
+          await rendering.rerenderItem(itemId);
+        }
+      },
+
+      getPreferredView: async (itemId) => {
+        const item = await kernel.storage.get(itemId);
+        return item.preferredView || null;
+      },
+
+      // Convenience method: set preferred view for an item's type
+      setTypePreferredView: async (itemId, viewId) => {
+        const item = await kernel.storage.get(itemId);
+        const typeItem = await kernel.storage.get(item.type);
+        if (viewId) {
+          typeItem.preferredView = viewId;
+        } else {
+          delete typeItem.preferredView;
+        }
+        typeItem.modified = Date.now();
+        await kernel.saveItem(typeItem);
+        await rendering.rerenderByType(item.type);
+      },
+
+      getTypePreferredView: async (itemId) => {
+        const item = await kernel.storage.get(itemId);
+        const typeItem = await kernel.storage.get(item.type);
+        return typeItem.preferredView || null;
+      },
+
+      // Get the effective view for an item (full hierarchy)
+      getEffectiveView: (itemId) => rendering.getEffectiveView(itemId),
+
+      // Get the type name for an item (for modal labels)
+      getTypeName: async (itemId) => {
+        const item = await kernel.storage.get(itemId);
+        const typeItem = await kernel.storage.get(item.type);
+        return typeItem.name || typeItem.id.slice(0, 8);
+      },
+
+      // Get contextual view override (from parent's child spec)
+      getContextualView: async (itemId, parentId) => {
+        if (!parentId) return null;
+        try {
+          const parent = await kernel.storage.get(parentId);
+          const childSpec = parent.children?.find(c =>
+            (typeof c === 'string' ? c : c.id) === itemId
+          );
+          if (childSpec && typeof childSpec === 'object' && childSpec.view?.type) {
+            return childSpec.view.type;
+          }
+        } catch (e) {
+          // Parent not found
+        }
+        return null;
+      },
 
       // Navigation (params: { field, line, col } for line highlighting)
       navigate: (itemId, params) => kernel.navigateToItem(itemId, params),
@@ -815,6 +955,9 @@ export class RenderingSystem {
 
       // Re-render all items using a specific view (useful when view code changes)
       rerenderByView: (viewId) => rendering.rerenderByView(viewId),
+
+      // Re-render all items of a given type (useful when type preference changes)
+      rerenderByType: (typeId) => rendering.rerenderByType(typeId),
 
       // Render instances API (read-only for renderers)
       instances: {

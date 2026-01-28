@@ -1,7 +1,3 @@
-// Item: kernel-core
-// ID: 33333333-1111-0000-0000-000000000000
-// Type: 33333333-0000-0000-0000-000000000000
-
 // kernel-core
 export async function loadKernel(require, storageBackend) {
   // Event system
@@ -681,9 +677,32 @@ export async function loadKernel(require, storageBackend) {
         renderItem: (itemId, viewId) => kernel.rendering.renderItem(itemId, viewId),
         rerenderItem: (itemId) => kernel.rendering.rerenderItem(itemId),
         rerenderByView: (viewId) => kernel.rendering.rerenderByView(viewId),
+        rerenderByType: (typeId) => kernel.rendering.rerenderByType(typeId),
         getViews: (typeId) => kernel.rendering.getViews(typeId),
         getDefaultView: (typeId) => kernel.rendering.getDefaultView(typeId),
         findView: (typeId) => kernel.rendering.findView(typeId),
+        getEffectiveView: (itemId) => kernel.rendering.getEffectiveView(itemId),
+
+        // Preferred view management
+        setPreferredView: async (itemId, viewId) => {
+          const item = await kernel.storage.get(itemId);
+          if (viewId) {
+            item.preferredView = viewId;
+          } else {
+            delete item.preferredView;
+          }
+          item.modified = Date.now();
+          await kernel.saveItem(item);
+          if (kernel.currentRoot) {
+            await kernel.renderRoot(kernel.currentRoot);
+          }
+          return item.preferredView || null;
+        },
+
+        getPreferredView: async (itemId) => {
+          const item = await kernel.storage.get(itemId);
+          return item.preferredView || null;
+        },
 
         // Parent-child operations
         setChildView: (parentId, childId, viewId) => kernel.setChildView(parentId, childId, viewId),

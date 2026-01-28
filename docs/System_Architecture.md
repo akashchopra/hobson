@@ -234,6 +234,63 @@ When rendering an item:
 3. First match wins (can override via per-child view)
 4. Fall back to default JSON view if nothing found
 
+### View Preferences
+
+Users can customize view selection at three levels using the `preferredView` field:
+
+| Level | Where Stored | Question Answered |
+|-------|--------------|-------------------|
+| **Contextual** | Parent's child spec `view.type` | "How should this parent display this child?" |
+| **Item** | Item's `preferredView` field | "What view does this specific item prefer?" |
+| **Type** | Type definition's `preferredView` field | "What view do items of this type prefer?" |
+
+The `preferredView` field is a top-level item property (not in `content`) because the kernel reads it during view resolution.
+
+**View Resolution Order:**
+
+```
+1. Explicit viewId passed to renderItem()     → use that
+2. Parent's child spec has view.type          → use that (contextual override)
+3. Item has preferredView field               → use that (item preference)
+4. Type definition has preferredView field    → use that (type preference)
+5. Walk type chain for VIEW/VIEW_SPEC         → use first match
+6. DEFAULT_VIEW                               → fallback (JSON inspector)
+```
+
+**Example:**
+
+```javascript
+// Item with preferred view
+{
+  id: "my-workspace",
+  type: "note-type-id",
+  preferredView: "container-view-id",  // This note prefers spatial view
+  content: { ... }
+}
+
+// Type definition with preferred view
+{
+  id: "note-type-id",
+  type: TYPE_DEFINITION,
+  name: "note",
+  preferredView: "note-view-editable",  // All notes prefer editable view
+  content: { description: "A markdown note" }
+}
+```
+
+**API Methods:**
+
+- `api.setPreferredView(itemId, viewId)` — Set preferred view on any item (including type definitions)
+- `api.getPreferredView(itemId)` — Get an item's preferred view
+- `api.getEffectiveView(itemId)` — Get the view that would actually be used (full hierarchy)
+- `api.getContextualView(itemId, parentId)` — Get contextual override from parent
+
+**UI Access:**
+
+Right-click any item to access:
+- **View As...** — Quick contextual override (common for read/edit switching)
+- **View Settings...** — Modal showing all three levels with explanations
+
 ### Imperative Views
 
 For complex interactions, export a render function:

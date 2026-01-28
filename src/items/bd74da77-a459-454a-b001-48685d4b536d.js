@@ -1,7 +1,3 @@
-// Item: viewport_view
-// ID: bd74da77-a459-454a-b001-48685d4b536d
-// Type: aaaaaaaa-0000-0000-0000-000000000000
-
 
 export async function render(item, api) {
   // Load dependencies
@@ -355,6 +351,229 @@ export async function render(item, api) {
     return api.viewport.getRootView();
   };
 
+  // View Settings Modal - shows all three levels of view preferences
+  const showViewSettingsModal = async (itemId, parentId) => {
+    const item = await api.get(itemId);
+    const typeItem = await api.get(item.type);
+    const typeName = typeItem.name || 'item';
+    const views = await api.getViews(item.type);
+    const effectiveView = await api.getEffectiveView(itemId);
+
+    // Get current values at each level
+    const contextualViewId = await api.getContextualView(itemId, parentId);
+    const itemPreferredViewId = item.preferredView || null;
+    const typePreferredViewId = typeItem.preferredView || null;
+
+    // Helper to get view name by ID
+    const getViewName = async (viewId) => {
+      if (!viewId) return 'None';
+      try {
+        const v = await api.get(viewId);
+        return v.content?.displayName || v.name || viewId.slice(0, 8);
+      } catch {
+        return viewId.slice(0, 8) + ' (missing)';
+      }
+    };
+
+    // Create modal overlay
+    const overlay = api.createElement('div', {
+      class: 'view-settings-overlay',
+      style: 'position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 10001;'
+    }, []);
+
+    const modal = api.createElement('div', {
+      class: 'view-settings-modal',
+      style: 'background: var(--bg-primary, white); border: 1px solid var(--border-color, #ddd); border-radius: 8px; width: 420px; max-width: 90vw; box-shadow: 0 4px 20px rgba(0,0,0,0.3);'
+    }, []);
+
+    // Header
+    const itemName = item.name || item.content?.title || item.id.slice(0, 8);
+    const header = api.createElement('div', {
+      style: 'display: flex; justify-content: space-between; align-items: center; padding: 16px 20px; border-bottom: 1px solid var(--border-color, #ddd);'
+    }, []);
+    header.innerHTML = '<h3 style="margin: 0; font-size: 16px;">View Settings for "' + itemName + '"</h3>';
+    const closeBtn = api.createElement('button', {
+      style: 'background: none; border: none; font-size: 20px; cursor: pointer; color: #666; padding: 0 4px;',
+      onclick: () => overlay.remove()
+    }, ['\u00d7']);
+    header.appendChild(closeBtn);
+    modal.appendChild(header);
+
+    // Body
+    const body = api.createElement('div', { style: 'padding: 20px;' }, []);
+
+    // Current effective view
+    const effectiveName = await getViewName(effectiveView?.id);
+    const currentSection = api.createElement('div', { style: 'margin-bottom: 16px; padding: 12px; background: var(--bg-secondary, #f5f5f5); border-radius: 6px;' }, []);
+    currentSection.innerHTML = 'Currently showing: <strong>' + effectiveName + '</strong>';
+    body.appendChild(currentSection);
+
+    // Helper to create a section
+    const createSection = (label, description, currentViewId, onSelect, onClear) => {
+      const section = api.createElement('div', { style: 'margin-bottom: 20px;' }, []);
+      
+      const labelEl = api.createElement('div', { style: 'font-weight: 600; margin-bottom: 4px;' }, [label]);
+      section.appendChild(labelEl);
+      
+      const descEl = api.createElement('div', { style: 'font-size: 13px; color: var(--text-secondary, #666); margin-bottom: 8px;' }, [description]);
+      section.appendChild(descEl);
+      
+      const controlRow = api.createElement('div', { style: 'display: flex; gap: 8px; align-items: center;' }, []);
+      
+      const select = api.createElement('select', { style: 'flex: 1; padding: 6px 8px; border: 1px solid var(--border-color, #ccc); border-radius: 4px;' }, []);
+      
+      // None option
+      const noneOpt = api.createElement('option', { value: '' }, ['None']);
+      if (!currentViewId) noneOpt.selected = true;
+      select.appendChild(noneOpt);
+      
+      // View options - sorted alphabetically
+      const sortedViews = [...views].sort((a, b) => {
+        const nameA = a.view.content?.displayName || a.view.name || a.view.id.slice(0, 8);
+        const nameB = b.view.content?.displayName || b.view.name || b.view.id.slice(0, 8);
+        return nameA.localeCompare(nameB);
+      });
+      for (const { view } of sortedViews) {
+        const opt = api.createElement('option', { value: view.id }, []);
+        opt.textContent = view.content?.displayName || view.name || view.id.slice(0, 8);
+        if (view.id === currentViewId) opt.selected = true;
+        select.appendChild(opt);
+      }
+      
+      select.onchange = () => onSelect(select.value || null);
+      controlRow.appendChild(select);
+      
+      if (currentViewId && onClear) {
+        const clearBtn = api.createElement('button', {
+          style: 'padding: 6px 12px; border: 1px solid var(--border-color, #ccc); border-radius: 4px; background: var(--bg-primary, white); cursor: pointer;',
+          onclick: onClear
+        }, ['Clear']);
+        controlRow.appendChild(clearBtn);
+      }
+      
+      section.appendChild(controlRow);
+      return section;
+    };
+
+    // Helper to create read-only section (for contextual)
+    const createReadOnlySection = (label, description, currentViewId, onClear) => {
+      const section = api.createElement('div', { style: 'margin-bottom: 20px;' }, []);
+      
+      const labelEl = api.createElement('div', { style: 'font-weight: 600; margin-bottom: 4px;' }, [label]);
+      section.appendChild(labelEl);
+      
+      const descEl = api.createElement('div', { style: 'font-size: 13px; color: var(--text-secondary, #666); margin-bottom: 8px;' }, [description]);
+      section.appendChild(descEl);
+      
+      const controlRow = api.createElement('div', { style: 'display: flex; gap: 8px; align-items: center;' }, []);
+      
+      const valueEl = api.createElement('span', { style: 'flex: 1; padding: 6px 8px; background: var(--bg-secondary, #f0f0f0); border-radius: 4px;' }, []);
+      getViewName(currentViewId).then(name => { valueEl.textContent = name; });
+      controlRow.appendChild(valueEl);
+      
+      if (currentViewId && onClear) {
+        const clearBtn = api.createElement('button', {
+          style: 'padding: 6px 12px; border: 1px solid var(--border-color, #ccc); border-radius: 4px; background: var(--bg-primary, white); cursor: pointer;',
+          onclick: onClear
+        }, ['Clear']);
+        controlRow.appendChild(clearBtn);
+      }
+      
+      section.appendChild(controlRow);
+      return section;
+    };
+
+    // Refresh modal after changes
+    const refreshModal = async () => {
+      overlay.remove();
+      await showViewSettingsModal(itemId, parentId);
+    };
+
+    // Section 1: In this context (read-only, set via View As menu)
+    const contextSection = createReadOnlySection(
+      'In this context',
+      'Override for this location only (set via "View As..." menu)',
+      contextualViewId,
+      contextualViewId ? async () => {
+        // Clear contextual override
+        if (parentId) {
+          await api.setChildView(parentId, itemId, null);
+          await api.rerenderItem(itemId);
+        } else {
+          await api.viewport.setRootView(null);
+          await api.navigate(api.viewport.getRoot());
+        }
+        await refreshModal();
+      } : null
+    );
+    body.appendChild(contextSection);
+
+    // Divider
+    body.appendChild(api.createElement('hr', { style: 'border: none; border-top: 1px solid var(--border-color, #ddd); margin: 16px 0;' }, []));
+
+    // Section 2: For this item
+    const itemSection = createSection(
+      'For this item',
+      'Default view wherever this item appears',
+      itemPreferredViewId,
+      async (viewId) => {
+        await api.setPreferredView(itemId, viewId);
+        await refreshModal();
+      },
+      itemPreferredViewId ? async () => {
+        await api.setPreferredView(itemId, null);
+        await refreshModal();
+      } : null
+    );
+    body.appendChild(itemSection);
+
+    // Divider
+    body.appendChild(api.createElement('hr', { style: 'border: none; border-top: 1px solid var(--border-color, #ddd); margin: 16px 0;' }, []));
+
+    // Section 3: For all [Type]s
+    const typeDisplayName = typeName.charAt(0).toUpperCase() + typeName.slice(1);
+    const typeSection = createSection(
+      'For all ' + typeDisplayName + 's',
+      'Default view for items of this type',
+      typePreferredViewId,
+      async (viewId) => {
+        await api.setPreferredView(item.type, viewId);
+        await refreshModal();
+      },
+      typePreferredViewId ? async () => {
+        await api.setPreferredView(item.type, null);
+        await refreshModal();
+      } : null
+    );
+    body.appendChild(typeSection);
+
+    // Resolution note
+    const noteEl = api.createElement('div', {
+      style: 'margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border-color, #ddd); font-size: 12px; color: var(--text-secondary, #888); text-align: center;'
+    }, ['Resolution order: context \u2192 item \u2192 type \u2192 system']);
+    body.appendChild(noteEl);
+
+    modal.appendChild(body);
+    overlay.appendChild(modal);
+
+    // Close on overlay click
+    overlay.onclick = (e) => {
+      if (e.target === overlay) overlay.remove();
+    };
+    modal.onclick = (e) => e.stopPropagation();
+
+    // Close on Escape
+    const escHandler = (e) => {
+      if (e.key === 'Escape') {
+        overlay.remove();
+        document.removeEventListener('keydown', escHandler);
+      }
+    };
+    document.addEventListener('keydown', escHandler);
+
+    document.body.appendChild(overlay);
+  };
+
   const showContextMenu = async (x, y, itemId) => {
     const menuItem = await api.get(itemId);
     contextMenu.innerHTML = '';
@@ -403,7 +622,7 @@ export async function render(item, api) {
     contextMenu.appendChild(api.createElement('div', { class: 'context-menu-separator' }, []));
 
     // "Display As..." submenu
-    const displayAsItem = api.createElement('div', { class: 'context-menu-item context-menu-submenu' }, ['Display As...']);
+    const displayAsItem = api.createElement('div', { class: 'context-menu-item context-menu-submenu' }, ['View As...']);
     const displayAsSubmenu = api.createElement('div', { class: 'context-menu-submenu-items' }, []);
 
     // Get available views for this type
@@ -423,38 +642,20 @@ export async function render(item, api) {
       const noViews = api.createElement('div', { class: 'context-menu-item disabled' }, ['(No views available)']);
       displayAsSubmenu.appendChild(noViews);
     } else {
-      // Default option
-      const defaultOption = api.createElement('div', {
-        class: 'context-menu-item' + (currentViewId === null ? ' selected' : '')
-      }, ['Default' + (currentViewId === null ? ' ✓' : '')]);
-      defaultOption.onclick = async () => {
-        hideContextMenu();
-        if (selectedParentId) {
-          await setChildView(selectedParentId, itemId, null);
-          // Re-render just this item (preserves sibling scroll positions)
-          await api.rerenderItem(itemId);
-        } else {
-          await setRootView(null);
-          // Root view change needs full re-render
-          await api.navigate(api.viewport.getRoot());
-        }
-      };
-      displayAsSubmenu.appendChild(defaultOption);
+      // Sort views alphabetically by display name
+      const sortedViews = [...views].sort((a, b) => {
+        const nameA = a.view.content?.displayName || a.view.name || a.view.id.slice(0, 8);
+        const nameB = b.view.content?.displayName || b.view.name || b.view.id.slice(0, 8);
+        return nameA.localeCompare(nameB);
+      });
 
-      const sep = api.createElement('div', { class: 'context-menu-separator' }, []);
-      displayAsSubmenu.appendChild(sep);
-
-      for (const { view, forType, inherited } of views) {
+      for (const { view, forType, inherited } of sortedViews) {
         const isActive = currentViewId === view.id;
         const viewOption = api.createElement('div', {
           class: 'context-menu-item' + (isActive ? ' selected' : '')
         }, []);
 
         let label = view.content?.displayName || view.name || view.id.slice(0, 8);
-        if (inherited) {
-          const typeItem = await api.get(forType);
-          label += ' (from ' + (typeItem?.name || forType.slice(0, 8)) + ')';
-        }
         if (isActive) label += ' ✓';
         viewOption.textContent = label;
 
@@ -476,6 +677,14 @@ export async function render(item, api) {
 
     displayAsItem.appendChild(displayAsSubmenu);
     contextMenu.appendChild(displayAsItem);
+
+    // "View Settings..." option - opens modal for item/type preferences
+    const viewSettingsItem = api.createElement('div', { class: 'context-menu-item' }, ['View Settings...']);
+    viewSettingsItem.onclick = async () => {
+      hideContextMenu();
+      await showViewSettingsModal(itemId, selectedParentId);
+    };
+    contextMenu.appendChild(viewSettingsItem);
 
     // Separator
     contextMenu.appendChild(api.createElement('div', { class: 'context-menu-separator' }, []));
