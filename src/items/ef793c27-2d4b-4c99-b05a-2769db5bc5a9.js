@@ -368,7 +368,7 @@ export async function render(item, api) {
           top: 0;
           right: 0;
           bottom: 0;
-          z-index: 10000;
+          z-index: 1000000;
           border: 1px solid #ddd;
           border-radius: 6px;
           background: #fafafa;
