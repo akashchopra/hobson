@@ -20,9 +20,10 @@ export async function render(item, api) {
   });
 
   // Main container - position relative for absolute children
+  // overflow: auto allows scrolling to off-screen floating windows
   const container = api.createElement('div', {
     'data-container-id': item.id,
-    style: 'position: relative; width: 100%; height: 100%; overflow: hidden;'
+    style: 'position: relative; width: 100%; height: 100%; overflow: auto;'
   }, []);
 
   // Get view config for banner state (persisted in parent's child entry)
@@ -214,6 +215,90 @@ export async function render(item, api) {
 
   container.appendChild(banner);
 
+  // === ANCHOR-BASED POSITIONING HELPERS ===
+
+  // Convert anchor-relative position to absolute CSS values
+  const calculateAbsolutePosition = (view, containerWidth, containerHeight) => {
+    const anchor = view.anchor || 'top-left';
+    const isEdgeH = anchor === 'top' || anchor === 'bottom';
+    const isEdgeV = anchor === 'left' || anchor === 'right';
+
+    // Edge anchors fill perpendicular axis
+    const width = isEdgeH ? containerWidth : (view.width || 500);
+    const height = isEdgeV ? containerHeight : (view.height || 400);
+
+    let left, top;
+    switch (anchor) {
+      case 'top-left':
+      default:
+        left = view.x || 0;
+        top = view.y || 0;
+        break;
+      case 'top-right':
+        left = containerWidth - (view.x || 0) - width;
+        top = view.y || 0;
+        break;
+      case 'bottom-left':
+        left = view.x || 0;
+        top = containerHeight - (view.y || 0) - height;
+        break;
+      case 'bottom-right':
+        left = containerWidth - (view.x || 0) - width;
+        top = containerHeight - (view.y || 0) - height;
+        break;
+      case 'left':
+        left = view.x || 0;
+        top = 0;
+        break;
+      case 'right':
+        left = containerWidth - (view.x || 0) - width;
+        top = 0;
+        break;
+      case 'top':
+        left = 0;
+        top = view.y || 0;
+        break;
+      case 'bottom':
+        left = 0;
+        top = containerHeight - (view.y || 0) - height;
+        break;
+    }
+    return { left, top, width, height };
+  };
+
+  // Calculate nearest corner and convert absolute position to anchor-relative
+  const pinToNearestCorner = (view, containerWidth, containerHeight) => {
+    const x = view.x || 0;
+    const y = view.y || 0;
+    const width = view.width || 500;
+    const height = view.height || 400;
+
+    const centerX = x + width / 2;
+    const centerY = y + height / 2;
+
+    const anchorX = centerX < containerWidth / 2 ? 'left' : 'right';
+    const anchorY = centerY < containerHeight / 2 ? 'top' : 'bottom';
+    const anchor = `${anchorY}-${anchorX}`;
+
+    const newX = anchorX === 'left' ? x : containerWidth - x - width;
+    const newY = anchorY === 'top' ? y : containerHeight - y - height;
+
+    return { anchor, x: newX, y: newY };
+  };
+
+  // Check anchor type
+  const isCornerAnchor = (anchor) => {
+    return anchor === 'top-right' || anchor === 'bottom-left' || anchor === 'bottom-right';
+  };
+
+  const isEdgeAnchor = (anchor) => {
+    return anchor === 'left' || anchor === 'right' || anchor === 'top' || anchor === 'bottom';
+  };
+
+  const isAnchored = (anchor) => {
+    return isCornerAnchor(anchor) || isEdgeAnchor(anchor);
+  };
+
   // Children (windows)
   const children = item.children || [];
 
@@ -269,8 +354,9 @@ export async function render(item, api) {
     const getMaxZ = async () => {
       const freshItem = await api.get(item.id);
       const freshChildren = freshItem.children || [];
-      const unpinned = freshChildren.filter(c => !c.view?.pinned && !c.view?.minimized);
-      const maxDbZ = Math.max(...unpinned.map(c => c.view?.z || 0), 0);
+      // Exclude anchored windows from max z calculation
+      const floating = freshChildren.filter(c => !isAnchored(c.view?.anchor) && !c.view?.minimized);
+      const maxDbZ = Math.max(...floating.map(c => c.view?.z || 0), 0);
 
       const siblingWrappers = document.querySelectorAll(`[data-parent-id="${item.id}"]`);
       let maxDomZ = baseZ;
@@ -288,9 +374,9 @@ export async function render(item, api) {
       const freshItem = await api.get(item.id);
       const freshChildren = freshItem.children || [];
 
-      // Get max z from database (unpinned, non-minimized)
-      const unpinned = freshChildren.filter(c => !c.view?.pinned && !c.view?.minimized);
-      const maxDbZ = Math.max(...unpinned.map(c => c.view?.z || 0), 0);
+      // Get max z from database (floating, non-minimized - exclude anchored)
+      const floating = freshChildren.filter(c => !isAnchored(c.view?.anchor) && !c.view?.minimized);
+      const maxDbZ = Math.max(...floating.map(c => c.view?.z || 0), 0);
 
       // Get max z from DOM (sibling windows may have higher z from previous interactions)
       const siblingWrappers = document.querySelectorAll(`[data-parent-id="${item.id}"]`);
@@ -300,9 +386,9 @@ export async function render(item, api) {
         if (z > maxDomZ) maxDomZ = z;
       });
 
-      // Find target in unpinned list
-      const targetChild = unpinned.find(c => c.id === childIdToFront);
-      if (!targetChild) return null; // Pinned or minimized
+      // Find target in floating list
+      const targetChild = floating.find(c => c.id === childIdToFront);
+      if (!targetChild) return null; // Anchored or minimized
 
       // Current z of target (database value + baseZ)
       const currentDbZ = (targetChild.view?.z || 0) + baseZ;
@@ -335,16 +421,62 @@ export async function render(item, api) {
     // Helper: Create a window wrapper for a child item
     // This is extracted so addSibling can create windows without full re-render
     const createWindowForChild = async (childId, childView = {}) => {
-      const x = childView.x || 0;
-      const y = childView.y || 0;
-      const width = childView.width || 500;
-      const height = childView.height || 400;
-      const z = childView.z !== undefined ? childView.z + baseZ : (await getMaxZ()) + 1;
-      const isPinned = childView.pinned || false;
-      const isMaximized = childView.maximized || false;
+      // Get container dimensions for anchor calculations
+      const containerRect = container.getBoundingClientRect();
+      const containerWidth = containerRect.width || 1000;
+      const containerHeight = containerRect.height || 600;
+
+      // Determine anchor state
+      const anchor = childView.anchor || null;
+      const windowIsAnchored = isAnchored(anchor);
+      const windowIsCornerAnchored = isCornerAnchor(anchor);
+      const windowIsEdgeAnchored = isEdgeAnchor(anchor);
+
+      // Migration: convert old pinned property to anchor
+      let effectiveView = { ...childView };
+      if (childView.pinned && !anchor) {
+        // Migrate pinned window to nearest corner anchor
+        const pinResult = pinToNearestCorner(childView, containerWidth, containerHeight);
+        effectiveView = {
+          ...childView,
+          anchor: pinResult.anchor,
+          x: pinResult.x,
+          y: pinResult.y,
+          pinned: undefined // Remove old property
+        };
+        // Persist the migration
+        await updateChild(childId, {
+          anchor: pinResult.anchor,
+          x: pinResult.x,
+          y: pinResult.y,
+          pinned: null // Delete old property
+        });
+      }
+
+      // Calculate position based on anchor
+      let x, y, width, height;
+      if (windowIsAnchored || effectiveView.anchor) {
+        const pos = calculateAbsolutePosition(effectiveView, containerWidth, containerHeight);
+        // Add scroll offset so anchored windows stay in viewport
+        x = pos.left + container.scrollLeft;
+        y = pos.top + container.scrollTop;
+        width = pos.width;
+        height = pos.height;
+      } else {
+        x = effectiveView.x || 0;
+        y = effectiveView.y || 0;
+        width = effectiveView.width || 500;
+        height = effectiveView.height || 400;
+      }
+
+      // Anchored windows get z=1 (behind regular windows but above banner at z=0)
+      const z = windowIsAnchored || effectiveView.anchor
+        ? 1
+        : (effectiveView.z !== undefined ? effectiveView.z + baseZ : (await getMaxZ()) + 1);
+      const isMaximized = effectiveView.maximized || false;
 
       const childItem = await api.get(childId);
-      const childNode = await api.renderItem(childId, childView.type ? childView : null, { onCycle, siblingContainer });
+      const childNode = await api.renderItem(childId, effectiveView.type ? effectiveView : null, { onCycle, siblingContainer });
 
       // Base styles - override if maximized
       let wrapperStyle = `
@@ -380,11 +512,12 @@ export async function render(item, api) {
       const wrapper = api.createElement('div', {
         'data-item-id': childId,
         'data-parent-id': item.id,
+        'data-anchor': effectiveView.anchor || '',
         style: wrapperStyle
       }, []);
 
-      // Click anywhere on wrapper to bring to front (only for unpinned, non-maximized windows)
-      if (!isPinned && !isMaximized) {
+      // Click anywhere on wrapper to bring to front (only for floating, non-maximized windows)
+      if (!windowIsAnchored && !effectiveView.anchor && !isMaximized) {
         wrapper.addEventListener('mousedown', async (e) => {
           // Only if not clicking titlebar or resize handle (they have their own handlers)
           // Also skip links - clicking a link opens a sibling, not focuses this window
@@ -400,6 +533,9 @@ export async function render(item, api) {
         });
       }
 
+      // Determine if window can be dragged
+      const canDrag = !windowIsAnchored && !effectiveView.anchor && !isMaximized;
+
       // Titlebar
       const titlebar = api.createElement('div', {
         class: 'titlebar',
@@ -413,7 +549,7 @@ export async function render(item, api) {
           justify-content: space-between;
           font-size: 12px;
           font-weight: 500;
-          cursor: ${isPinned || isMaximized ? 'default' : 'move'};
+          cursor: ${canDrag ? 'move' : 'default'};
           user-select: none;
         `
       }, []);
@@ -463,20 +599,20 @@ export async function render(item, api) {
         }, []);
 
         const createMenuItem = (label, onClick) => {
-          const item = api.createElement('div', {
+          const menuItemEl = api.createElement('div', {
             style: `
               padding: 8px 12px;
               cursor: pointer;
             `
           }, [label]);
-          item.addEventListener('mouseenter', () => { item.style.background = '#f5f5f5'; });
-          item.addEventListener('mouseleave', () => { item.style.background = 'transparent'; });
-          item.addEventListener('click', (e) => {
-            e.stopPropagation();
+          menuItemEl.addEventListener('mouseenter', () => { menuItemEl.style.background = '#f5f5f5'; });
+          menuItemEl.addEventListener('mouseleave', () => { menuItemEl.style.background = 'transparent'; });
+          menuItemEl.addEventListener('click', (clickE) => {
+            clickE.stopPropagation();
             menu.remove();
             onClick();
           });
-          return item;
+          return menuItemEl;
         };
 
         const createSeparator = () => {
@@ -485,97 +621,116 @@ export async function render(item, api) {
           }, []);
         };
 
-        // Pin/Unpin option
-        menu.appendChild(createMenuItem(isPinned ? 'Unpin' : 'Pin', async () => {
-          if (isPinned) {
-            // Unpinning: bring to front
-            const freshItem = await api.get(item.id);
-            const freshChildren = freshItem.children || [];
-
-            const unpinned = freshChildren
-              .filter(c => !c.view?.pinned && !c.view?.minimized)
-              .map(c => ({ id: c.id, z: c.view?.z || 0 }))
-              .sort((a, b) => a.z - b.z);
-
-            unpinned.push({ id: childId, z: unpinned.length });
-
-            const newZValues = new Map();
-            unpinned.forEach((c, index) => {
-              newZValues.set(c.id, index);
-            });
-
-            const updatedChildren = freshChildren.map(c => {
-              if (c.id === childId) {
-                return {
-                  ...c,
-                  view: { ...(c.view || {}), pinned: false, z: newZValues.get(c.id) }
-                };
-              }
-              if (newZValues.has(c.id)) {
-                return {
-                  ...c,
-                  view: { ...(c.view || {}), z: newZValues.get(c.id) }
-                };
-              }
-              return c;
-            });
-
-            const updated = {
-              ...freshItem,
-              children: updatedChildren,
-              modified: Date.now()
-            };
-
-            await api.updateSilent(updated);
-          } else {
-            // Pinning: move to bottom
-            await updateChild(childId, { pinned: true, z: 0 });
-          }
-          await api.navigate(api.getCurrentRoot());
-        }));
-
-        menu.appendChild(createSeparator());
-
-        // Dock options
-        const dockPositions = [
-          { label: 'Dock Left', pos: 'left' },
-          { label: 'Dock Right', pos: 'right' },
-          { label: 'Dock Top', pos: 'top' },
-          { label: 'Dock Bottom', pos: 'bottom' }
-        ];
-
-        for (const { label, pos } of dockPositions) {
-          menu.appendChild(createMenuItem(label, async () => {
+        // Pin option (only for floating windows)
+        if (!windowIsAnchored && !effectiveView.anchor) {
+          menu.appendChild(createMenuItem('Pin', async () => {
             const containerEl = wrapper.parentElement;
-            const canvasWidth = containerEl ? containerEl.clientWidth : 1000;
-            const canvasHeight = containerEl ? containerEl.clientHeight : 600;
+            const cWidth = containerEl ? containerEl.clientWidth : 1000;
+            const cHeight = containerEl ? containerEl.clientHeight : 600;
+
+            // Get current position from DOM
+            const currentX = parseInt(wrapper.style.left) || 0;
+            const currentY = parseInt(wrapper.style.top) || 0;
+            const currentWidth = parseInt(wrapper.style.width) || 500;
+            const currentHeight = parseInt(wrapper.style.height) || 400;
+
+            const pinResult = pinToNearestCorner({
+              x: currentX,
+              y: currentY,
+              width: currentWidth,
+              height: currentHeight
+            }, cWidth, cHeight);
+
+            await updateChild(childId, {
+              anchor: pinResult.anchor,
+              x: pinResult.x,
+              y: pinResult.y,
+              z: 0,
+              pinned: null // Remove old property if present
+            });
+            await api.navigate(api.getCurrentRoot());
+          }));
+
+          menu.appendChild(createSeparator());
+
+          // Dock options
+          const dockPositions = [
+            { label: 'Dock Left', pos: 'left' },
+            { label: 'Dock Right', pos: 'right' },
+            { label: 'Dock Top', pos: 'top' },
+            { label: 'Dock Bottom', pos: 'bottom' }
+          ];
+
+          for (const { label, pos } of dockPositions) {
+            menu.appendChild(createMenuItem(label, async () => {
+              const currentWidth = parseInt(wrapper.style.width) || 400;
+              const currentHeight = parseInt(wrapper.style.height) || 300;
+
+              await updateChild(childId, {
+                anchor: pos,
+                x: 0,
+                y: 0,
+                width: currentWidth,
+                height: currentHeight,
+                z: 0,
+                minimized: false,
+                maximized: false,
+                pinned: null
+              });
+              await api.navigate(api.getCurrentRoot());
+            }));
+          }
+        }
+
+        // Unpin option (for corner-anchored windows)
+        if (windowIsCornerAnchored || isCornerAnchor(effectiveView.anchor)) {
+          menu.appendChild(createMenuItem('Unpin', async () => {
+            const containerEl = wrapper.parentElement;
+            const cWidth = containerEl ? containerEl.clientWidth : 1000;
+            const cHeight = containerEl ? containerEl.clientHeight : 600;
+
+            // Convert anchor-relative position back to absolute
+            const absPos = calculateAbsolutePosition(effectiveView, cWidth, cHeight);
+
+            // Get max z for bringing to front
+            const maxZ = await getMaxZ();
+
+            await updateChild(childId, {
+              anchor: null,
+              x: absPos.left,
+              y: absPos.top,
+              width: absPos.width,
+              height: absPos.height,
+              z: maxZ - baseZ + 1
+            });
+            await api.navigate(api.getCurrentRoot());
+          }));
+        }
+
+        // Undock option (for edge-anchored windows)
+        if (windowIsEdgeAnchored || isEdgeAnchor(effectiveView.anchor)) {
+          menu.appendChild(createMenuItem('Undock', async () => {
+            const containerEl = wrapper.parentElement;
+            const cWidth = containerEl ? containerEl.clientWidth : 1000;
+            const cHeight = containerEl ? containerEl.clientHeight : 600;
+
+            // Get current rendered dimensions from DOM
+            const currentLeft = parseInt(wrapper.style.left) || 0;
+            const currentTop = parseInt(wrapper.style.top) || 0;
             const currentWidth = parseInt(wrapper.style.width) || 400;
             const currentHeight = parseInt(wrapper.style.height) || 300;
 
-            let newView = { minimized: false, maximized: false, pinned: false };
-            if (pos === 'left') {
-              newView.x = 0;
-              newView.y = 0;
-              newView.width = currentWidth;
-              newView.height = canvasHeight;
-            } else if (pos === 'right') {
-              newView.x = canvasWidth - currentWidth;
-              newView.y = 0;
-              newView.width = currentWidth;
-              newView.height = canvasHeight;
-            } else if (pos === 'top') {
-              newView.x = 0;
-              newView.y = 0;
-              newView.width = canvasWidth;
-              newView.height = currentHeight;
-            } else if (pos === 'bottom') {
-              newView.x = 0;
-              newView.y = canvasHeight - currentHeight;
-              newView.width = canvasWidth;
-              newView.height = currentHeight;
-            }
+            // Get max z for bringing to front
+            const maxZ = await getMaxZ();
 
-            await updateChild(childId, newView);
+            await updateChild(childId, {
+              anchor: null,
+              x: currentLeft,
+              y: currentTop,
+              width: currentWidth,
+              height: currentHeight,
+              z: maxZ - baseZ + 1
+            });
             await api.navigate(api.getCurrentRoot());
           }));
         }
@@ -585,12 +740,12 @@ export async function render(item, api) {
         // Close menu on click outside
         const closeMenu = () => {
           menu.remove();
-          document.removeEventListener('mousedown', onMouseDown, true);
+          document.removeEventListener('mousedown', onMenuMouseDown, true);
         };
-        const onMouseDown = (evt) => {
+        const onMenuMouseDown = (evt) => {
           if (!menu.contains(evt.target) && evt.target !== menuBtn) closeMenu();
         };
-        setTimeout(() => document.addEventListener('mousedown', onMouseDown, true), 0);
+        setTimeout(() => document.addEventListener('mousedown', onMenuMouseDown, true), 0);
       };
 
       menuBtn.addEventListener('click', showWindowMenu);
@@ -607,9 +762,9 @@ export async function render(item, api) {
         style: 'display: flex; gap: 4px; align-items: center;'
       }, []);
 
-      // Pin indicator (only shown when pinned - clicking unpins)
-      if (isPinned) {
-        const pinIndicator = api.createElement('button', {
+      // Anchor indicator (shown for anchored windows - clicking unpins/undocks)
+      if (windowIsAnchored || effectiveView.anchor) {
+        const anchorIndicator = api.createElement('button', {
           style: `
             width: 18px;
             height: 18px;
@@ -623,56 +778,38 @@ export async function render(item, api) {
             align-items: center;
             justify-content: center;
           `,
-          title: 'Unpin (make moveable)',
-          onclick: async (e) => {
-            e.stopPropagation();
-            // Unpinning: bring to front
-            const freshItem = await api.get(item.id);
-            const freshChildren = freshItem.children || [];
+          title: windowIsEdgeAnchored || isEdgeAnchor(effectiveView.anchor) ? 'Undock' : 'Unpin',
+          onclick: async (clickE) => {
+            clickE.stopPropagation();
+            const containerEl = wrapper.parentElement;
+            const cWidth = containerEl ? containerEl.clientWidth : 1000;
+            const cHeight = containerEl ? containerEl.clientHeight : 600;
 
-            const unpinned = freshChildren
-              .filter(c => !c.view?.pinned && !c.view?.minimized)
-              .map(c => ({ id: c.id, z: c.view?.z || 0 }))
-              .sort((a, b) => a.z - b.z);
+            // Get current rendered position/dimensions
+            const currentLeft = parseInt(wrapper.style.left) || 0;
+            const currentTop = parseInt(wrapper.style.top) || 0;
+            const currentWidth = parseInt(wrapper.style.width) || 400;
+            const currentHeight = parseInt(wrapper.style.height) || 300;
 
-            unpinned.push({ id: childId, z: unpinned.length });
+            // Get max z for bringing to front
+            const maxZ = await getMaxZ();
 
-            const newZValues = new Map();
-            unpinned.forEach((c, index) => {
-              newZValues.set(c.id, index);
+            await updateChild(childId, {
+              anchor: null,
+              x: currentLeft,
+              y: currentTop,
+              width: currentWidth,
+              height: currentHeight,
+              z: maxZ - baseZ + 1
             });
-
-            const updatedChildren = freshChildren.map(c => {
-              if (c.id === childId) {
-                return {
-                  ...c,
-                  view: { ...(c.view || {}), pinned: false, z: newZValues.get(c.id) }
-                };
-              }
-              if (newZValues.has(c.id)) {
-                return {
-                  ...c,
-                  view: { ...(c.view || {}), z: newZValues.get(c.id) }
-                };
-              }
-              return c;
-            });
-
-            const updated = {
-              ...freshItem,
-              children: updatedChildren,
-              modified: Date.now()
-            };
-
-            await api.updateSilent(updated);
             await api.navigate(api.getCurrentRoot());
           }
         }, ['📌']);
-        buttonContainer.appendChild(pinIndicator);
+        buttonContainer.appendChild(anchorIndicator);
       }
 
-      // Minimize button (not for pinned windows)
-      if (!isPinned) {
+      // Minimize button (not for anchored windows)
+      if (!windowIsAnchored && !effectiveView.anchor) {
         const minimizeBtn = api.createElement('button', {
           style: `
             width: 18px;
@@ -689,8 +826,8 @@ export async function render(item, api) {
             justify-content: center;
           `,
           title: 'Minimize',
-          onclick: async (e) => {
-            e.stopPropagation();
+          onclick: async (clickE) => {
+            clickE.stopPropagation();
             await updateChild(childId, { minimized: true, maximized: false });
             await api.navigate(api.getCurrentRoot());
           }
@@ -698,8 +835,8 @@ export async function render(item, api) {
         buttonContainer.appendChild(minimizeBtn);
       }
 
-      // Maximize/Restore button (not for pinned windows)
-      if (!isPinned) {
+      // Maximize/Restore button (not for anchored windows)
+      if (!windowIsAnchored && !effectiveView.anchor) {
         const maxBtn = api.createElement('button', {
           style: `
             width: 18px;
@@ -715,8 +852,8 @@ export async function render(item, api) {
             justify-content: center;
           `,
           title: isMaximized ? 'Restore' : 'Maximize',
-          onclick: async (e) => {
-            e.stopPropagation();
+          onclick: async (clickE) => {
+            clickE.stopPropagation();
             if (isMaximized) {
               // Restore
               await updateChild(childId, { maximized: false });
@@ -730,8 +867,8 @@ export async function render(item, api) {
         buttonContainer.appendChild(maxBtn);
       }
 
-      // Close button (only for unpinned windows)
-      if (!isPinned) {
+      // Close button (only for floating windows)
+      if (!windowIsAnchored && !effectiveView.anchor) {
         const closeBtn = api.createElement('button', {
           style: `
             width: 18px;
@@ -748,8 +885,8 @@ export async function render(item, api) {
             justify-content: center;
           `,
           title: 'Close',
-          onclick: async (e) => {
-            e.stopPropagation();
+          onclick: async (clickE) => {
+            clickE.stopPropagation();
             await api.removeChild(childId);
             wrapper.remove();
           }
@@ -759,8 +896,8 @@ export async function render(item, api) {
 
       titlebar.appendChild(buttonContainer);
 
-      // Drag handler (only for unpinned, non-maximized windows)
-      if (!isPinned && !isMaximized) {
+      // Drag handler (only for floating, non-maximized windows)
+      if (canDrag) {
         titlebar.addEventListener('mousedown', async (e) => {
           // Don't drag if clicking buttons
           if (e.target.tagName === 'BUTTON') {
@@ -804,16 +941,16 @@ export async function render(item, api) {
             const deltaX = upEvent.clientX - startX;
             const deltaY = upEvent.clientY - startY;
 
-            const newX = startLeft + deltaX;
-            const newY = startTop + deltaY;
+            const finalX = startLeft + deltaX;
+            const finalY = startTop + deltaY;
 
             // Update position (z already handled by bringToFront)
             await updateChild(childId, {
-              x: newX,
-              y: newY,
+              x: finalX,
+              y: finalY,
               width: parseInt(wrapper.style.width) || width,
               height: parseInt(wrapper.style.height) || height,
-              pinned: false
+              anchor: null
             });
           };
 
@@ -824,8 +961,8 @@ export async function render(item, api) {
 
       wrapper.appendChild(titlebar);
 
-      // Resize handles (only for unpinned, non-maximized windows)
-      if (!isPinned && !isMaximized) {
+      // Resize handles (only for floating, non-maximized windows)
+      if (canDrag) {
         // Helper function to create resize handler
         const createResizeHandle = (corner, cursorStyle) => {
           const positions = {
@@ -851,9 +988,9 @@ export async function render(item, api) {
             `
           }, []);
 
-          handle.addEventListener('mousedown', async (e) => {
-            e.preventDefault();
-            e.stopPropagation();
+          handle.addEventListener('mousedown', async (handleE) => {
+            handleE.preventDefault();
+            handleE.stopPropagation();
 
             // Bring to front on resize
             const newZ = await bringToFront(childId);
@@ -861,8 +998,8 @@ export async function render(item, api) {
               wrapper.style.zIndex = newZ;
             }
 
-            const startX = e.clientX;
-            const startY = e.clientY;
+            const startX = handleE.clientX;
+            const startY = handleE.clientY;
 
             // Read current dimensions from DOM
             const startWidth = parseInt(wrapper.style.width) || width;
@@ -911,7 +1048,7 @@ export async function render(item, api) {
               wrapper.style.top = newTop + 'px';
             };
 
-            const onMouseUp = async (upEvent) => {
+            const onMouseUp = async () => {
               document.removeEventListener('mousemove', onMouseMove);
               document.removeEventListener('mouseup', onMouseUp);
 
@@ -926,7 +1063,7 @@ export async function render(item, api) {
                 y: finalTop,
                 width: finalWidth,
                 height: finalHeight,
-                pinned: false
+                anchor: null
               });
             };
 
@@ -942,6 +1079,90 @@ export async function render(item, api) {
         wrapper.appendChild(createResizeHandle('tr', 'nesw-resize'));
         wrapper.appendChild(createResizeHandle('bl', 'nesw-resize'));
         wrapper.appendChild(createResizeHandle('br', 'nwse-resize'));
+      }
+
+      // Edge resize handles for docked windows (edge-anchored)
+      if (windowIsEdgeAnchored || isEdgeAnchor(effectiveView.anchor)) {
+        const edgeAnchor = effectiveView.anchor;
+        // For docked windows, allow resizing only on the non-docked edge
+        const createEdgeResizeHandle = (edge, cursorStyle) => {
+          let handleStyle = 'position: absolute; background: transparent;';
+          if (edge === 'right') {
+            handleStyle += ' right: 0; top: 0; bottom: 0; width: 6px;';
+          } else if (edge === 'left') {
+            handleStyle += ' left: 0; top: 0; bottom: 0; width: 6px;';
+          } else if (edge === 'bottom') {
+            handleStyle += ' bottom: 0; left: 0; right: 0; height: 6px;';
+          } else if (edge === 'top') {
+            handleStyle += ' top: 0; left: 0; right: 0; height: 6px;';
+          }
+
+          const handle = api.createElement('div', {
+            class: 'resize-handle',
+            style: handleStyle + ` cursor: ${cursorStyle};`
+          }, []);
+
+          handle.addEventListener('mouseenter', () => {
+            handle.style.background = 'rgba(0, 0, 0, 0.1)';
+          });
+          handle.addEventListener('mouseleave', () => {
+            handle.style.background = 'transparent';
+          });
+
+          handle.addEventListener('mousedown', async (handleE) => {
+            handleE.preventDefault();
+            handleE.stopPropagation();
+
+            const startX = handleE.clientX;
+            const startY = handleE.clientY;
+            const startWidth = parseInt(wrapper.style.width) || width;
+            const startHeight = parseInt(wrapper.style.height) || height;
+
+            const onMouseMove = (moveEvent) => {
+              const deltaX = moveEvent.clientX - startX;
+              const deltaY = moveEvent.clientY - startY;
+
+              if (edge === 'right' && edgeAnchor === 'left') {
+                wrapper.style.width = Math.max(100, startWidth + deltaX) + 'px';
+              } else if (edge === 'left' && edgeAnchor === 'right') {
+                wrapper.style.width = Math.max(100, startWidth - deltaX) + 'px';
+              } else if (edge === 'bottom' && edgeAnchor === 'top') {
+                wrapper.style.height = Math.max(50, startHeight + deltaY) + 'px';
+              } else if (edge === 'top' && edgeAnchor === 'bottom') {
+                wrapper.style.height = Math.max(50, startHeight - deltaY) + 'px';
+              }
+            };
+
+            const onMouseUp = async () => {
+              document.removeEventListener('mousemove', onMouseMove);
+              document.removeEventListener('mouseup', onMouseUp);
+
+              const finalWidth = parseInt(wrapper.style.width);
+              const finalHeight = parseInt(wrapper.style.height);
+
+              await updateChild(childId, {
+                width: finalWidth,
+                height: finalHeight
+              });
+            };
+
+            document.addEventListener('mousemove', onMouseMove);
+            document.addEventListener('mouseup', onMouseUp);
+          });
+
+          return handle;
+        };
+
+        // Add appropriate resize handle based on dock position
+        if (edgeAnchor === 'left') {
+          wrapper.appendChild(createEdgeResizeHandle('right', 'ew-resize'));
+        } else if (edgeAnchor === 'right') {
+          wrapper.appendChild(createEdgeResizeHandle('left', 'ew-resize'));
+        } else if (edgeAnchor === 'top') {
+          wrapper.appendChild(createEdgeResizeHandle('bottom', 'ns-resize'));
+        } else if (edgeAnchor === 'bottom') {
+          wrapper.appendChild(createEdgeResizeHandle('top', 'ns-resize'));
+        }
       }
 
       // Content area
@@ -972,14 +1193,16 @@ export async function render(item, api) {
             await updateChild(childId, { minimized: false });
           }
 
-          // Bring to front (handles z-index)
-          const newZ = await bringToFront(childId);
+          // Bring to front (handles z-index) - only for non-anchored windows
+          if (!isAnchored(existingChild.view?.anchor)) {
+            const newZ = await bringToFront(childId);
 
-          // Update DOM immediately if we got a new z value
-          if (newZ !== null) {
-            const wrapper = document.querySelector(`[data-parent-id="${item.id}"][data-item-id="${childId}"]`);
-            if (wrapper) {
-              wrapper.style.zIndex = newZ;
+            // Update DOM immediately if we got a new z value
+            if (newZ !== null) {
+              const wrapper = document.querySelector(`[data-parent-id="${item.id}"][data-item-id="${childId}"]`);
+              if (wrapper) {
+                wrapper.style.zIndex = newZ;
+              }
             }
           }
 
@@ -1036,22 +1259,22 @@ export async function render(item, api) {
         container.appendChild(wrapper);
       } catch (error) {
         const childView = child.view || {};
-        const x = childView.x || 0;
-        const y = childView.y || 0;
-        const width = childView.width || 500;
-        const z = (childView.z || 0) + baseZ;
+        const xPos = childView.x || 0;
+        const yPos = childView.y || 0;
+        const widthVal = childView.width || 500;
+        const zVal = (childView.z || 0) + baseZ;
         const errorNode = api.createElement('div', {
           style: `
             position: absolute;
-            left: ${x}px;
-            top: ${y}px;
-            width: ${width}px;
+            left: ${xPos}px;
+            top: ${yPos}px;
+            width: ${widthVal}px;
             padding: 15px;
             border: 1px solid #ffcccc;
             border-radius: 6px;
             background: #fff0f0;
             color: #cc0000;
-            z-index: ${z};
+            z-index: ${zVal};
           `
         }, [
           'Error rendering child: ' + child.id + ' - ' + error.message
@@ -1094,19 +1317,19 @@ export async function render(item, api) {
             const freshItem = await api.get(item.id);
             const freshChildren = freshItem.children || [];
 
-            // Get unpinned, non-minimized children sorted by z
-            const unpinned = freshChildren
-              .filter(c => !c.view?.pinned && !c.view?.minimized && c.id !== childId)
+            // Get floating, non-minimized children sorted by z
+            const floating = freshChildren
+              .filter(c => !isAnchored(c.view?.anchor) && !c.view?.minimized && c.id !== childId)
               .map(c => ({ id: c.id, z: c.view?.z || 0 }))
               .sort((a, b) => a.z - b.z);
 
             // Add restored window at the end (front)
-            unpinned.push({ id: childId, z: unpinned.length });
+            floating.push({ id: childId, z: floating.length });
 
             // Build map of new z-values
             const newZValues = new Map();
-            unpinned.forEach((c, index) => {
-              newZValues.set(c.id, index);
+            floating.forEach((c, idx) => {
+              newZValues.set(c.id, idx);
             });
 
             // Update all children
@@ -1147,6 +1370,57 @@ export async function render(item, api) {
         console.error('Error rendering minimized item:', childId, error);
       }
     }
+
+    // Update anchored window positions on container resize or scroll
+    // Anchored windows stay in the viewport (sticky behavior) - scroll offset is added
+    const updateAnchoredWindowPositions = (containerWidth, containerHeight, scrollLeft, scrollTop) => {
+      const windowWrappers = container.querySelectorAll('[data-anchor]');
+      windowWrappers.forEach(wrapper => {
+        const anchorAttr = wrapper.getAttribute('data-anchor');
+        if (!anchorAttr || anchorAttr === 'top-left' || anchorAttr === '') return;
+
+        const childIdAttr = wrapper.getAttribute('data-item-id');
+        const childEntry = children.find(c => c.id === childIdAttr);
+        if (!childEntry) return;
+
+        const view = childEntry.view || {};
+        const pos = calculateAbsolutePosition({ ...view, anchor: anchorAttr }, containerWidth, containerHeight);
+
+        // Add scroll offset so anchored windows stay in viewport
+        wrapper.style.left = (pos.left + scrollLeft) + 'px';
+        wrapper.style.top = (pos.top + scrollTop) + 'px';
+        wrapper.style.width = pos.width + 'px';
+        wrapper.style.height = pos.height + 'px';
+      });
+    };
+
+    // Track container dimensions for scroll handler
+    let lastContainerWidth = container.clientWidth || 1000;
+    let lastContainerHeight = container.clientHeight || 600;
+
+    const resizeObserver = new ResizeObserver(entries => {
+      for (const entry of entries) {
+        lastContainerWidth = entry.contentRect.width;
+        lastContainerHeight = entry.contentRect.height;
+        updateAnchoredWindowPositions(
+          lastContainerWidth,
+          lastContainerHeight,
+          container.scrollLeft,
+          container.scrollTop
+        );
+      }
+    });
+    resizeObserver.observe(container);
+
+    // Scroll handler to keep anchored windows in viewport
+    container.addEventListener('scroll', () => {
+      updateAnchoredWindowPositions(
+        lastContainerWidth,
+        lastContainerHeight,
+        container.scrollLeft,
+        container.scrollTop
+      );
+    });
   }
 
   // SCROLL PRESERVATION: Restore scroll positions after DOM is created
