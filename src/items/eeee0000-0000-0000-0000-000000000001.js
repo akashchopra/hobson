@@ -133,7 +133,11 @@ function collectElementInfo(element) {
 
     if (Object.keys(entry).length > 0) {
       entry.tagName = el.tagName.toLowerCase();
-      entry.className = el.className;
+      // Filter out inspector's own classes from display
+      entry.className = el.className
+        .split(' ')
+        .filter(c => c && c !== 'hobson-inspect-highlight' && c !== 'hobson-inspect-mode')
+        .join(' ');
       info.chain.push(entry);
     }
 
