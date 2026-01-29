@@ -30,8 +30,8 @@ export async function showTypePicker(api) {
           const typeBtn = api.createElement('button', {
             style: 'padding: 12px; text-align: left; border: 1px solid #ddd; border-radius: 4px; background: white; cursor: pointer;',
             onclick: () => {
-              closeModal();
               resolve(type.id);
+              closeModal();
             }
           }, []);
 

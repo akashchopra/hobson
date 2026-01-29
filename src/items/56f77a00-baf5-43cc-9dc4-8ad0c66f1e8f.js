@@ -33,7 +33,7 @@ export async function render(value, options, api) {
   // Editor container - sizing depends on mode
   const editorContainer = api.createElement('div');
   editorContainer.style.cssText = isFill
-    ? 'border: 1px solid #d0d0d0; border-radius: 6px; overflow: hidden; flex: 1; min-height: 0;'
+    ? 'border: 1px solid #d0d0d0; border-radius: 6px; overflow: hidden; flex: 1; min-height: 150px;'
     : 'border: 1px solid #d0d0d0; border-radius: 6px; overflow: hidden; min-height: 40px; height: 80px; resize: vertical;';
   wrapper.appendChild(editorContainer);
 

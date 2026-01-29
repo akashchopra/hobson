@@ -259,8 +259,8 @@ export function confirm(options = {}) {
         cancelBtn.textContent = cancelText;
         cancelBtn.style.cssText = 'padding: 8px 16px; cursor: pointer; border: 1px solid #ccc; background: white; border-radius: 4px;';
         cancelBtn.onclick = () => {
-          closeModal();
           resolve(false);
+          closeModal();
         };
         buttonRow.appendChild(cancelBtn);
 
@@ -268,8 +268,8 @@ export function confirm(options = {}) {
         confirmBtn.textContent = confirmText;
         confirmBtn.style.cssText = `padding: 8px 16px; cursor: pointer; border: none; background: ${confirmBtnColor}; color: white; border-radius: 4px;`;
         confirmBtn.onclick = () => {
-          closeModal();
           resolve(true);
+          closeModal();
         };
         buttonRow.appendChild(confirmBtn);
 
