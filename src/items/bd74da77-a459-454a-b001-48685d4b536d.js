@@ -282,15 +282,31 @@ export async function render(item, api) {
   // This is viewport-specific; users can customize by modifying this function
   const itemDecorator = async (dom, itemId, item) => {
     dom.setAttribute('data-item-id', itemId);
-    
-    // Add tooltip with item name and type
+
+    // Add tooltip with item name, type, and tags
     const itemName = item.name || item.content?.title || itemId.slice(0, 8);
     let typeName = item.type.slice(0, 8);
     try {
       const typeItem = await api.get(item.type);
       typeName = typeItem.name || typeName;
     } catch {}
-    dom.setAttribute('title', itemName + ' (' + typeName + ')');
+
+    let titleText = itemName + ' (' + typeName + ')';
+
+    // Add tags to tooltip if present
+    if (item.tags?.length) {
+      const tagNames = await Promise.all(item.tags.map(async tagId => {
+        try {
+          const tag = await api.get(tagId);
+          return tag.content?.name || tag.name || tagId.slice(0, 8);
+        } catch {
+          return tagId.slice(0, 8);
+        }
+      }));
+      titleText += '\nTags: ' + tagNames.join(', ');
+    }
+
+    dom.setAttribute('title', titleText);
   };
 
   // Render the root item with decorator for viewport integration
