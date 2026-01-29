@@ -1,6 +1,6 @@
 # Element Inspector: Design and Implementation Plan
 
-**Status:** Reviewed
+**Status:** Implemented
 **Date:** 2026-01-29
 
 ---
@@ -95,6 +95,20 @@ A library item that provides:
    - Source line (if debug mode was active)
    - Parent context
 5. **Navigation** — Click any link to navigate, optionally with line number for code views
+
+### Inspector Overlay Fields
+
+When you click an element in inspect mode, the overlay displays:
+
+| Field | Meaning |
+|-------|---------|
+| **Element** | The DOM element you clicked (`<tag>.classname`) — shown at top to identify what you're inspecting |
+| **Item** | The data item being rendered by the view |
+| **Source** | The code item and line number that called `api.createElement()` to create this element — click to navigate to that line |
+| **View** | The view used for rendering (only shown if different from Source, to avoid redundancy) |
+| **via X** | Shown in smaller text if the viewport decorator assigned a different item context |
+
+The overlay shows a chain of entries as you walk up the DOM tree, revealing the rendering hierarchy.
 
 ### Information Collected
 
@@ -486,20 +500,23 @@ export function inspect(element, api) {
 
 **Activation:**
 
-The inspector can be activated:
-1. Automatically at boot (add to a startup item)
-2. Manually via REPL: `const inspector = await api.require('element-inspector'); inspector.activate(api);`
-3. Via a toolbar button (future enhancement)
+The inspector is activated automatically when loading with `?debug=1`. The kernel loads the element-inspector library and activates it during boot.
+
+**Keyboard shortcut:** `Ctrl+Shift+>` (or `Ctrl+Shift+.` — same keys, since Shift turns `.` into `>`) toggles inspect mode on/off.
+
+Manual activation via REPL (if not in debug mode):
+```javascript
+const inspector = (await api.require('element-inspector')).activate(api);
+inspector.toggle();  // Enter inspect mode
+```
 
 **Testing:**
-- Activate inspector via REPL
-- Press Ctrl+Shift+. to enter inspect mode
-- Hover over elements, verify highlight
-- Click element, verify overlay appears
-- With `?debug=1`, verify source locations shown
-- Click links, verify navigation works
-- Verify line parameter is passed to navigate
-- Call `deactivate()` and verify cleanup
+- Load with `?debug=1` — inspector auto-activates
+- Press `Ctrl+Shift+>` to enter inspect mode (cursor becomes crosshair)
+- Hover over elements — blue highlight appears
+- Click element — overlay shows Item, Source, View chain
+- Click links — navigates to source item (line navigation pending code view support)
+- Press `Ctrl+Shift+>` again or `Escape` to exit inspect mode
 
 ---
 
