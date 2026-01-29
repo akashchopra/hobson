@@ -4,17 +4,22 @@
 
 
 // Markdown editable field view
+// Supports sizing option: "compact" (default) or "fill"
 export async function render(value, options, api) {
-  const { onChange, label, placeholder } = options;
+  const { onChange, label, placeholder, sizing } = options;
   const markdown = value || '';
+  const isFill = sizing === 'fill';
 
   const wrapper = api.createElement('div', { className: 'field-markdown-editable' });
-  wrapper.style.cssText = 'display: flex; flex-direction: column; gap: 8px;';
+  // For fill mode, wrapper needs flex: 1 and min-height: 0 to allow shrinking
+  wrapper.style.cssText = isFill
+    ? 'display: flex; flex-direction: column; gap: 8px; flex: 1; min-height: 0;'
+    : 'display: flex; flex-direction: column; gap: 8px;';
 
   if (label) {
     const labelEl = api.createElement('label');
     labelEl.textContent = label;
-    labelEl.style.cssText = 'font-weight: 500; font-size: 14px; color: #333;';
+    labelEl.style.cssText = 'font-weight: 500; font-size: 14px; color: #333; flex-shrink: 0;';
     wrapper.appendChild(labelEl);
   }
 
@@ -25,9 +30,11 @@ export async function render(value, options, api) {
   await api.require('codemirror-markdown');
   const CodeMirror = window.CodeMirror;
 
-  // Editor container - resizable
+  // Editor container - sizing depends on mode
   const editorContainer = api.createElement('div');
-  editorContainer.style.cssText = 'border: 1px solid #d0d0d0; border-radius: 6px; overflow: hidden; min-height: 120px; height: 150px; resize: vertical;';
+  editorContainer.style.cssText = isFill
+    ? 'border: 1px solid #d0d0d0; border-radius: 6px; overflow: hidden; flex: 1; min-height: 0;'
+    : 'border: 1px solid #d0d0d0; border-radius: 6px; overflow: hidden; min-height: 120px; height: 150px; resize: vertical;';
   wrapper.appendChild(editorContainer);
 
   // Create CodeMirror instance
@@ -63,12 +70,12 @@ export async function render(value, options, api) {
   // Insert link/transclusion button
   const insertBtn = api.createElement('button');
   insertBtn.textContent = 'Insert Link/Transclusion';
-  insertBtn.style.cssText = 'padding: 8px 16px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; align-self: flex-start;';
+  insertBtn.style.cssText = 'padding: 8px 16px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; align-self: flex-start; flex-shrink: 0;';
   wrapper.appendChild(insertBtn);
 
   // Picker container (hidden initially)
   const pickerContainer = api.createElement('div');
-  pickerContainer.style.cssText = 'display: none; padding: 15px; border: 1px solid #ddd; border-radius: 6px; background: #f9f9f9;';
+  pickerContainer.style.cssText = 'display: none; padding: 15px; border: 1px solid #ddd; border-radius: 6px; background: #f9f9f9; flex-shrink: 0;';
   wrapper.appendChild(pickerContainer);
 
   insertBtn.onclick = async () => {
