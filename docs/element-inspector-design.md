@@ -1,6 +1,6 @@
 # Element Inspector: Design and Implementation Plan
 
-**Status:** Proposed  
+**Status:** Reviewed
 **Date:** 2026-01-29
 
 ---
@@ -56,7 +56,9 @@ Source location capture has a cost (creating Error objects for stack traces). Ra
 |------|---------|-------|----------|
 | Normal | Default | — | No overhead |
 | Global debug | `?debug=1` URL | All elements | Exploring the whole UI |
-| Subtree debug | Context menu / API | Item + descendants | Inspecting a specific area |
+| Subtree debug | REPL / API | Item + descendants | Inspecting a specific area |
+
+**Note on subtree debug:** The initial implementation exposes subtree debug only via API (`api.rerenderItemDebug(itemId)`). Context menu integration is deferred to a future enhancement, keeping Phase 1-2 scope minimal.
 
 ### Element Attribution
 
@@ -84,7 +86,7 @@ The source location is parsed from the stack trace, extracting the item name (fr
 
 A library item that provides:
 
-1. **Activation** — Keyboard shortcut (e.g., Ctrl+Shift+I) or toolbar button
+1. **Activation** — Keyboard shortcut (Ctrl+Shift+.) or toolbar button
 2. **Visual mode** — Cursor change, highlight on hover
 3. **Element inspection** — On click, collect attribution data by walking up the DOM
 4. **Information display** — Overlay or panel showing:
@@ -127,11 +129,12 @@ this.debugMode = new URLSearchParams(window.location.search).has('debug');
 **Changes to kernel-rendering:**
 
 ```javascript
-// In renderItem(), merge debug into context
+// In renderItem(), merge debug and viewId into context
 const newContext = {
   ...context,
   renderPath: [...renderPath, itemId],
-  debug: context.debug || this.kernel.debugMode
+  debug: context.debug || this.kernel.debugMode,
+  viewId: view.id  // Pass view ID so createElement can stamp it on elements
 };
 ```
 
@@ -162,14 +165,14 @@ rerenderItemDebug: async (itemId) => {
 // In kernel-rendering or as shared utility
 function parseSourceLocation(stack) {
   // Stack format (Chrome): "at functionName (sourceURL:line:col)"
-  // Stack format (Firefox): "functionName@sourceURL:line:col"
+  // Stack format (Firefox/Safari): "functionName@sourceURL:line:col"
   // We want lines that reference Hobson item names (no path separators, no blob:)
-  
+
   const lines = stack.split('\n');
   for (const line of lines) {
     // Match sourceURL references (item names don't contain / or \)
     const match = line.match(/\(([^\/\\:]+):(\d+):\d+\)/) ||  // Chrome
-                  line.match(/@([^\/\\:]+):(\d+):\d+/);        // Firefox
+                  line.match(/@([^\/\\:]+):(\d+):\d+/);        // Firefox/Safari
     if (match) {
       const [, itemName, lineNum] = match;
       // Skip internal names (e.g., createElement itself)
@@ -182,19 +185,24 @@ function parseSourceLocation(stack) {
 }
 ```
 
+Note: Safari uses the same `@` format as Firefox, so the Firefox regex handles both. The existing `default-error-handler` item uses similar parsing and confirms cross-browser compatibility.
+
 **Changes to createElement in createRendererAPI():**
 
 ```javascript
 createElement(tag, props = {}, children = []) {
   const element = document.createElement(tag);
-  
+
   // Debug attribution
   const debugActive = context.debug || kernel.debugMode;
   if (debugActive) {
     // Always stamp view context (cheap, no stack trace)
-    element.setAttribute('data-view-id', currentViewId);
+    // Note: viewId comes from context.viewId, set when renderItem() creates the API
+    if (context.viewId) {
+      element.setAttribute('data-view-id', context.viewId);
+    }
     element.setAttribute('data-for-item', containerItem.id);
-    
+
     // Capture source location (requires stack trace)
     try {
       const stack = new Error().stack;
@@ -207,12 +215,12 @@ createElement(tag, props = {}, children = []) {
       // Ignore - best effort
     }
   }
-  
+
   // ... existing implementation
 }
 ```
 
-Note: `currentViewId` and `containerItem` are already available in the closure scope of `createRendererAPI`.
+Note: `containerItem` is available in the closure scope of `createRendererAPI`. The `viewId` must be passed via `context.viewId`, which requires a small change to `renderItem()` to include it when constructing the context.
 
 **Testing:**
 - Load with `?debug=1`
@@ -234,18 +242,17 @@ Note: `currentViewId` and `containerItem` are already available in the closure s
   content: {
     description: "Inspect UI elements to find which view rendered them.",
     code: `
+let inspectorState = null;
+
 export function activate(api) {
+  if (inspectorState) {
+    console.warn('Element inspector already active');
+    return inspectorState;
+  }
+
   let active = false;
   let overlay = null;
-  
-  // Keyboard shortcut: Ctrl+Shift+I
-  document.addEventListener('keydown', (e) => {
-    if (e.ctrlKey && e.shiftKey && e.key === 'I') {
-      e.preventDefault();
-      toggleInspectMode();
-    }
-  });
-  
+
   function toggleInspectMode() {
     active = !active;
     document.body.classList.toggle('hobson-inspect-mode', active);
@@ -254,27 +261,58 @@ export function activate(api) {
       overlay = null;
     }
   }
-  
+
+  // Keyboard shortcut: Ctrl+Shift+. (avoids conflict with browser DevTools)
+  const keyHandler = (e) => {
+    if (e.ctrlKey && e.shiftKey && e.key === '.') {
+      e.preventDefault();
+      toggleInspectMode();
+    }
+  };
+  document.addEventListener('keydown', keyHandler);
+
   // Click handler when active
-  document.addEventListener('click', async (e) => {
+  const clickHandler = async (e) => {
     if (!active) return;
     e.preventDefault();
     e.stopPropagation();
-    
+
     const info = collectElementInfo(e.target);
     showInspectorOverlay(info, e.clientX, e.clientY, api);
-  }, true);
-  
+  };
+  document.addEventListener('click', clickHandler, true);
+
   // Hover highlight when active
-  document.addEventListener('mouseover', (e) => {
+  const mouseoverHandler = (e) => {
     if (!active) return;
     e.target.classList.add('hobson-inspect-highlight');
-  }, true);
-  
-  document.addEventListener('mouseout', (e) => {
+  };
+  document.addEventListener('mouseover', mouseoverHandler, true);
+
+  const mouseoutHandler = (e) => {
     if (!active) return;
     e.target.classList.remove('hobson-inspect-highlight');
-  }, true);
+  };
+  document.addEventListener('mouseout', mouseoutHandler, true);
+
+  inspectorState = {
+    toggle: toggleInspectMode,
+    isActive: () => active
+  };
+
+  return inspectorState;
+}
+
+export function deactivate() {
+  // Note: Full cleanup requires storing handler references.
+  // For now, this just resets state. A full implementation would
+  // store handlers in inspectorState and remove them here.
+  if (inspectorState) {
+    if (inspectorState.isActive()) {
+      inspectorState.toggle();
+    }
+    inspectorState = null;
+  }
 }
 
 function collectElementInfo(element) {
@@ -369,7 +407,7 @@ async function showInspectorOverlay(info, x, y, api) {
     }
   }
   
-  html += '<div style="margin-top: 8px; font-size: 11px; color: #999;">Press Ctrl+Shift+I to exit inspect mode</div>';
+  html += '<div style="margin-top: 8px; font-size: 11px; color: #999;">Press Ctrl+Shift+. to exit inspect mode</div>';
   
   overlay.innerHTML = html;
   
@@ -455,12 +493,13 @@ The inspector can be activated:
 
 **Testing:**
 - Activate inspector via REPL
-- Press Ctrl+Shift+I to enter inspect mode
+- Press Ctrl+Shift+. to enter inspect mode
 - Hover over elements, verify highlight
 - Click element, verify overlay appears
 - With `?debug=1`, verify source locations shown
 - Click links, verify navigation works
 - Verify line parameter is passed to navigate
+- Call `deactivate()` and verify cleanup
 
 ---
 
@@ -502,3 +541,18 @@ This design achieves the goal of answering "who rendered this?" for any UI eleme
 - **Consistency** with Hobson's philosophy (inspector is itself an item, modifiable, inspectable)
 
 The implementation can proceed incrementally: Phase 1 and 2 are small kernel changes that enable Phase 3, which is a pure library addition.
+
+---
+
+## API Dependencies (Verified)
+
+The following existing APIs are required by this design and have been verified to exist:
+
+| API | Location | Notes |
+|-----|----------|-------|
+| `api.navigate(itemId, { line, col })` | kernel-core | Line/col params supported via URL query |
+| `api.query({ name })` | kernel-storage | Generic filter-based query |
+| `api.instances.getByItemId()` | kernel-rendering | RenderInstanceRegistry lookup |
+| `containerItem` in API closure | kernel-rendering | Available in `createRendererAPI()` |
+
+**Required addition:** `context.viewId` must be passed from `renderItem()` to enable `data-view-id` stamping.
