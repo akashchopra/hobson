@@ -54,7 +54,7 @@ export class SafeMode {
     
     listEl.innerHTML = `<h2>${title} (${items.length})</h2>`;
     
-    items.sort((a,b) => a.name.localeCompare(b.name));
+    items.sort((a,b) => (a.name || '').localeCompare(b.name || ''));
 
     for (const item of items) {
       const preview = document.createElement("div");
@@ -62,7 +62,7 @@ export class SafeMode {
       preview.innerHTML = `
         <div class="item-info">
           <div class="item-name">${this._escapeHtml(item.name || item.id)}</div>
-          <div class="item-type">Type: ${item.type}</div>
+          <div class="item-type">Type: ${this._escapeHtml(item.type)}</div>
         </div>
         <div>
           <button onclick="kernel.safeMode.editItem('${item.id}')">Edit as JSON</button>
