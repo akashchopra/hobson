@@ -108,6 +108,6 @@
 
 ## Verdict
 
-**Status:** ⚠️ Needs performance fix
+**Status:** ✓ Fixed (2026-01-29)
 
-Core functionality is solid, but view resolution performance should be addressed. The render instance registry is well-implemented.
+Performance fix applied: `findView()` and `getViews()` now query all views/view-specs once at the start and filter locally, rather than querying per type in the chain.

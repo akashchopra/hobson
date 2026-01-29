@@ -92,6 +92,10 @@
 
 ## Verdict
 
-**Status:** ⚠️ Needs memory leak fix
+**Status:** ✓ Fixed (2026-01-29)
 
-The UI is well-constructed but the document-level event listeners need cleanup handling.
+Memory leak fixed:
+- Added `_documentMouseMoveHandler` and `_documentMouseUpHandler` instance properties
+- Added `_cleanupDocumentListeners()` method
+- Added `_setupSplitterListeners()` method for reuse
+- Cleanup called when REPL is hidden, re-added when shown

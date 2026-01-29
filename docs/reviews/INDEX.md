@@ -22,9 +22,9 @@ This directory contains the comprehensive code review of all JavaScript-containi
 | [kernel-storage](./kernel-storage.md) | ✓ Pass | None |
 | [kernel-viewport](./kernel-viewport.md) | ✓ Pass | None |
 | [kernel-module-system](./kernel-module-system.md) | ✓ Pass | None (minor improvements suggested) |
-| [kernel-rendering](./kernel-rendering.md) | ⚠️ Needs Fix | Performance: inefficient queries |
-| [kernel-repl](./kernel-repl.md) | ⚠️ Needs Fix | Memory leak: event listeners |
-| [kernel-safe-mode](./kernel-safe-mode.md) | ❌ Critical | XSS vulnerability, sort crash |
+| [kernel-rendering](./kernel-rendering.md) | ✓ Fixed | Performance: queries moved outside loop |
+| [kernel-repl](./kernel-repl.md) | ✓ Fixed | Memory leak: listeners now cleaned up |
+| [kernel-safe-mode](./kernel-safe-mode.md) | ✓ Fixed | XSS and sort crash both fixed |
 
 **Note:** kernel-core was reviewed but is too large for a single document. Key findings are in ACTION_PLAN.md.
 
@@ -81,10 +81,10 @@ All field views follow consistent patterns. No critical issues found.
 | Field Editor | Notes |
 |--------------|-------|
 | field-editor-text | Standard input |
-| field-editor-number | Uses `document.createElement` (inconsistent) |
-| field-editor-checkbox | Standard toggle |
+| field-editor-number | ✓ Fixed: Now uses `api.createElement()` |
+| field-editor-checkbox | ✓ Fixed: Now uses `api.createElement()` |
 | field-editor-select | Dropdown |
-| field-editor-itemref | ⚠️ Needs Escape key handling |
+| field-editor-itemref | ✓ Fixed: Now uses modal-lib (Escape key handled) |
 
 ---
 
@@ -103,12 +103,12 @@ These are minified external libraries, included for reference:
 
 ## Quick Reference: Issue Counts
 
-| Priority | Count | Items Affected |
-|----------|-------|----------------|
-| Critical | 2 | kernel-safe-mode |
-| High | 3 | kernel-rendering, kernel-repl, field-editor-itemref |
-| Medium | 4 | container_view, various |
-| Low/Notes | 4 | Various |
+| Priority | Total | Fixed | Remaining |
+|----------|-------|-------|-----------|
+| Critical | 2 | 2 | 0 |
+| High | 3 | 3 | 0 |
+| Medium | 4 | 2 | 2 (container_view, hobson-markdown splitting deferred) |
+| Low/Notes | 4 | 0 | 4 |
 
 ---
 

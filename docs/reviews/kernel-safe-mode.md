@@ -104,9 +104,11 @@
 
 ## Verdict
 
-**Status:** ❌ Has security vulnerability + crash bug
+**Status:** ✓ Fixed (2026-01-29)
 
-Both issues should be fixed before the next release. Safe Mode is the recovery mechanism, so it must be robust.
+Both issues have been fixed:
+- XSS: Added `this._escapeHtml(item.type)` to escape the type ID
+- Sort crash: Changed to `(a.name || '').localeCompare(b.name || '')`
 
 ---
 

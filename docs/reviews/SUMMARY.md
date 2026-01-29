@@ -53,15 +53,15 @@ This document summarizes the comprehensive code review of all JavaScript-contain
 **Modal Overlays:**
 Multiple items implement similar modal patterns independently:
 
-| Item | Modal Purpose |
-|------|---------------|
-| type-picker-lib | Type selection |
-| field-editor-itemref | Item selection |
-| tag-picker-ui | Tag tree display |
-| kernel-core (showHelp) | Help display |
-| kernel-core (showItemList) | Item listing |
+| Item | Modal Purpose | Status |
+|------|---------------|--------|
+| type-picker-lib | Type selection | ✓ Refactored to use modal-lib |
+| field-editor-itemref | Item selection | ✓ Refactored to use modal-lib |
+| tag-picker-ui | Tag tree display | Uses own pattern |
+| kernel-core (showHelp) | Help display | Uses own pattern |
+| kernel-core (showItemList) | Item listing | Uses own pattern |
 
-**Recommendation:** Extract to `modal-lib` with standard behavior (Escape key, focus trap, backdrop click).
+**Status:** Created `modal-lib` (2264e4e7-4ff7-4013-9f09-5393ff0e3116) with `showModal()`, `confirm()`, `alert()`. Two items refactored to use it.
 
 ---
 
@@ -73,7 +73,7 @@ Two approaches are used inconsistently:
 | `api.createElement()` | Most view code |
 | `document.createElement()` | Some field editors, kernel code |
 
-**Recommendation:** Standardize on `api.createElement()` for all view/library code to enable future enhancements (testing, SSR).
+**Status:** Fixed field-editor-number and field-editor-checkbox to use `api.createElement()`. Kernel code intentionally uses `document.createElement()` since it runs before the API is available.
 
 ---
 
@@ -127,7 +127,7 @@ Multiple approaches:
 ### 4. Memory Management
 
 **Identified Leaks:**
-1. kernel-repl: Document-level event listeners not cleaned up
+1. kernel-repl: Document-level event listeners ✓ FIXED (added cleanup methods)
 2. Potential: Modal overlays may not clean up if removed unexpectedly
 
 **DOM Reference Patterns:**
@@ -183,7 +183,7 @@ Well-designed with consistent patterns:
 ## Security Considerations
 
 ### XSS Vectors Found:
-1. **kernel-safe-mode `_renderItemList()`** - Item names in innerHTML (CRITICAL)
+1. **kernel-safe-mode `_renderItemList()`** - Item type in innerHTML ✓ FIXED (added `_escapeHtml()`)
 
 ### Mitigated:
 - hobson-markdown has `escapeHtml()` for user content
@@ -210,11 +210,19 @@ Well-designed with consistent patterns:
 
 ## Conclusion
 
-The codebase is generally well-structured with clear separation of concerns. The main areas needing attention are:
+The codebase is generally well-structured with clear separation of concerns.
 
-1. **Security:** Fix XSS vulnerability in safe-mode
-2. **Performance:** Optimize view resolution queries
-3. **Maintainability:** Extract shared modal library, split container_view
-4. **Memory:** Clean up event listeners in REPL
+### Completed Fixes (7 of 13 issues):
+1. **Security:** ✓ XSS vulnerability in safe-mode fixed
+2. **Crash:** ✓ Sort crash with undefined names fixed
+3. **Performance:** ✓ View resolution queries optimized
+4. **Memory:** ✓ REPL event listeners cleaned up
+5. **Accessibility:** ✓ Modal Escape key handling via modal-lib
+6. **Consistency:** ✓ Element creation standardized in field editors
 
-See [ACTION_PLAN.md](./ACTION_PLAN.md) for prioritized fixes.
+### Remaining (Deferred):
+- **Maintainability:** Split container_view (~1000 lines) - significant refactoring
+- **Maintainability:** Split hobson-markdown parsing logic - significant refactoring
+- **Minor:** Low priority notes (error handling gaps, unused code)
+
+See [ACTION_PLAN.md](./ACTION_PLAN.md) for full details.
