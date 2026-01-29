@@ -367,22 +367,25 @@ export class RenderingSystem {
   // Find view for a type (walks up type chain)
   async findView(typeId) {
     const IDS = this.kernel.IDS;
+
+    // Query all views once at the beginning (not per type in chain)
+    const allViews = await this.kernel.storage.query({ type: IDS.VIEW });
+    const allViewSpecs = await this.kernel.storage.query({ type: IDS.VIEW_SPEC });
+
     let currentType = typeId;
     const visited = new Set();
 
     while (currentType && !visited.has(currentType)) {
       visited.add(currentType);
 
-      // Look for VIEW items
-      const views = await this.kernel.storage.query({ type: IDS.VIEW });
-      const view = views.find(v => v.content?.for_type === currentType);
+      // Look for VIEW items (filter locally)
+      const view = allViews.find(v => v.content?.for_type === currentType);
       if (view) {
         return view;
       }
 
       // Look for VIEW_SPEC items (declarative views)
-      const viewSpecs = await this.kernel.storage.query({ type: IDS.VIEW_SPEC });
-      const viewSpec = viewSpecs.find(v => v.content?.for_type === currentType);
+      const viewSpec = allViewSpecs.find(v => v.content?.for_type === currentType);
       if (viewSpec) {
         return viewSpec;
       }
@@ -410,14 +413,17 @@ export class RenderingSystem {
     const result = [];
     const seenIds = new Set();
 
+    // Query all views once at the beginning (not per type in chain)
+    const allViews = await this.kernel.storage.query({ type: IDS.VIEW });
+    const allViewSpecs = await this.kernel.storage.query({ type: IDS.VIEW_SPEC });
+
     let currentType = typeId;
     const visited = new Set();
 
     while (currentType && !visited.has(currentType)) {
       visited.add(currentType);
 
-      // Include views
-      const allViews = await this.kernel.storage.query({ type: IDS.VIEW });
+      // Include views (filter locally)
       const viewsForType = allViews.filter(v => v.content?.for_type === currentType);
       for (const view of viewsForType) {
         if (!seenIds.has(view.id)) {
@@ -431,7 +437,6 @@ export class RenderingSystem {
       }
 
       // Include view-specs (declarative views)
-      const allViewSpecs = await this.kernel.storage.query({ type: IDS.VIEW_SPEC });
       const viewSpecsForType = allViewSpecs.filter(v => v.content?.for_type === currentType);
       for (const viewSpec of viewSpecsForType) {
         if (!seenIds.has(viewSpec.id)) {

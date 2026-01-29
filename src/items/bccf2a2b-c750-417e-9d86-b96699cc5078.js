@@ -139,6 +139,15 @@ export function render(value, onChange, api, options = {}) {
       modalBox.onclick = (e) => {
         e.stopPropagation();
       };
+
+      // Escape key to close modal
+      const handleEscape = (e) => {
+        if (e.key === 'Escape') {
+          document.body.removeChild(overlay);
+          document.removeEventListener('keydown', handleEscape);
+        }
+      };
+      document.addEventListener('keydown', handleEscape);
     };
   }
 

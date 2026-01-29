@@ -9,6 +9,9 @@ export class REPL {
     this.history = [];
     this.historyIndex = 0;
     this.containerElement = null;
+    // Store references to document-level event handlers for cleanup
+    this._documentMouseMoveHandler = null;
+    this._documentMouseUpHandler = null;
   }
   
   createContainer() {
@@ -112,46 +115,11 @@ export class REPL {
     transcriptPanel.appendChild(transcript);
     container.appendChild(transcriptPanel);
 
-    // Add splitter drag functionality
-    let isDragging = false;
-    let startY = 0;
-    let startInputHeight = 0;
+    // Store container reference before setting up listeners
+    this.containerElement = container;
 
-    splitter.addEventListener("mousedown", (e) => {
-      isDragging = true;
-      startY = e.clientY;
-      startInputHeight = inputPanel.offsetHeight;
-      document.body.style.cursor = "row-resize";
-      document.body.style.userSelect = "none";
-      e.preventDefault();
-    });
-
-    document.addEventListener("mousemove", (e) => {
-      if (!isDragging) return;
-
-      const delta = e.clientY - startY;
-      const newInputHeight = startInputHeight + delta;
-      const containerHeight = container.offsetHeight;
-      const headerHeight = header.offsetHeight;
-      const splitterHeight = 6;
-
-      const minHeight = 100;
-      const maxHeight = containerHeight - headerHeight - splitterHeight - 100;
-
-      if (newInputHeight >= minHeight && newInputHeight <= maxHeight) {
-        inputPanel.style.flex = "none";
-        inputPanel.style.height = newInputHeight + "px";
-        transcriptPanel.style.flex = "1";
-      }
-    });
-
-    document.addEventListener("mouseup", () => {
-      if (isDragging) {
-        isDragging = false;
-        document.body.style.cursor = "";
-        document.body.style.userSelect = "";
-      }
-    });
+    // Setup splitter drag functionality (uses _setupSplitterListeners for reuse)
+    this._setupSplitterListeners();
 
     // Keyboard shortcuts
     input.addEventListener("keydown", (e) => {
@@ -194,11 +162,10 @@ export class REPL {
         }
       }
     });
-    
-    this.containerElement = container;
+
     return container;
   }
-  
+
   addTranscriptEntry(code, result, error) {
     const container = document.getElementById("repl-transcript-entries");
     if (!container) return;
@@ -268,24 +235,103 @@ export class REPL {
     }
   }
   
+  // Clean up document-level event listeners to prevent memory leaks
+  _cleanupDocumentListeners() {
+    if (this._documentMouseMoveHandler) {
+      document.removeEventListener("mousemove", this._documentMouseMoveHandler);
+      this._documentMouseMoveHandler = null;
+    }
+    if (this._documentMouseUpHandler) {
+      document.removeEventListener("mouseup", this._documentMouseUpHandler);
+      this._documentMouseUpHandler = null;
+    }
+  }
+
   async toggle() {
     const repl = document.getElementById("repl-container");
     const mainView = document.getElementById("main-view");
     if (!repl || !mainView) return;
-    
+
     const isVisible = repl.classList.contains("visible");
     if (isVisible) {
       // Hide REPL, show main view
       repl.classList.remove("visible");
       mainView.classList.remove("repl-active");
+      // Clean up document-level listeners when hiding
+      this._cleanupDocumentListeners();
     } else {
       // Show REPL, hide main view
       repl.classList.add("visible");
       mainView.classList.add("repl-active");
-      
+
+      // Re-add document listeners if they were cleaned up
+      if (!this._documentMouseMoveHandler) {
+        this._setupSplitterListeners();
+      }
+
       // Focus the input
       const input = document.getElementById("repl-input");
       if (input) input.focus();
     }
+  }
+
+  // Setup splitter drag listeners (called from createContainer and toggle)
+  _setupSplitterListeners() {
+    const container = this.containerElement;
+    if (!container) return;
+
+    const inputPanel = container.querySelector('.repl-input-panel');
+    const transcriptPanel = container.querySelector('.repl-transcript-panel');
+    const header = container.querySelector('.repl-header');
+
+    if (!inputPanel || !transcriptPanel || !header) return;
+
+    let isDragging = false;
+    let startY = 0;
+    let startInputHeight = 0;
+
+    // Store the mousedown state setter for the splitter
+    const splitter = container.querySelector('.repl-splitter');
+    if (splitter && !splitter._hasMouseDown) {
+      splitter._hasMouseDown = true;
+      splitter.addEventListener("mousedown", (e) => {
+        isDragging = true;
+        startY = e.clientY;
+        startInputHeight = inputPanel.offsetHeight;
+        document.body.style.cursor = "row-resize";
+        document.body.style.userSelect = "none";
+        e.preventDefault();
+      });
+    }
+
+    this._documentMouseMoveHandler = (e) => {
+      if (!isDragging) return;
+
+      const delta = e.clientY - startY;
+      const newInputHeight = startInputHeight + delta;
+      const containerHeight = container.offsetHeight;
+      const headerHeight = header.offsetHeight;
+      const splitterHeight = 6;
+
+      const minHeight = 100;
+      const maxHeight = containerHeight - headerHeight - splitterHeight - 100;
+
+      if (newInputHeight >= minHeight && newInputHeight <= maxHeight) {
+        inputPanel.style.flex = "none";
+        inputPanel.style.height = newInputHeight + "px";
+        transcriptPanel.style.flex = "1";
+      }
+    };
+
+    this._documentMouseUpHandler = () => {
+      if (isDragging) {
+        isDragging = false;
+        document.body.style.cursor = "";
+        document.body.style.userSelect = "";
+      }
+    };
+
+    document.addEventListener("mousemove", this._documentMouseMoveHandler);
+    document.addEventListener("mouseup", this._documentMouseUpHandler);
   }
 }
