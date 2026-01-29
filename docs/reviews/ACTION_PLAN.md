@@ -79,7 +79,7 @@ This document outlines all issues found during the comprehensive code review, or
 **Files:** Multiple items used similar modal overlay patterns.
 
 **Fix Applied:**
-- Created new `modal-lib` library (`modal-lib-0000-0000-0000-000000000000`)
+- Created new `modal-lib` library (`2264e4e7-4ff7-4013-9f09-5393ff0e3116`)
 - Updated `type-picker-lib` to use modal-lib
 - Updated `field-editor-itemref` to use modal-lib
 - Library provides: `showModal()`, `confirm()`, `alert()` with standard behavior
