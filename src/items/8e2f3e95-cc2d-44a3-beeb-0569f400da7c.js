@@ -44,9 +44,66 @@ export async function render(value, options, api) {
 
   cm.setSize('100%', '400px');
 
+  // Process comment spans to make item:// links clickable
+  const processCommentLinks = () => {
+    const linkRegex = /\[([^\]]+)\]\(item:\/\/([a-f0-9-]+)\)/g;
+    const comments = editorContainer.querySelectorAll('.cm-comment:not([data-links-processed])');
+    
+    comments.forEach(span => {
+      span.setAttribute('data-links-processed', 'true');
+      const text = span.textContent;
+      if (!linkRegex.test(text)) return;
+      
+      // Reset regex state and process
+      linkRegex.lastIndex = 0;
+      const parts = [];
+      let lastIndex = 0;
+      let match;
+      
+      while ((match = linkRegex.exec(text)) !== null) {
+        // Add text before this match
+        if (match.index > lastIndex) {
+          parts.push(document.createTextNode(text.slice(lastIndex, match.index)));
+        }
+        
+        // Create clickable link
+        const linkText = match[1];
+        const itemId = match[2];
+        const link = document.createElement('a');
+        link.textContent = linkText;
+        link.href = '#';
+        link.style.cssText = 'color: #007bff; text-decoration: underline; cursor: pointer;';
+        link.onclick = (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          if (api.siblingContainer) {
+            api.siblingContainer.addSibling(itemId);
+          } else {
+            api.navigate(itemId);
+          }
+        };
+        parts.push(link);
+        
+        lastIndex = match.index + match[0].length;
+      }
+      
+      // Add remaining text after last match
+      if (lastIndex < text.length) {
+        parts.push(document.createTextNode(text.slice(lastIndex)));
+      }
+      
+      // Replace span contents
+      if (parts.length > 0) {
+        span.textContent = '';
+        parts.forEach(part => span.appendChild(part));
+      }
+    });
+  };
+
   // Refresh after layout completes
   requestAnimationFrame(() => {
     cm.refresh();
+    processCommentLinks();
 
     // Check URL params for line navigation (field=code&line=X&col=Y)
     const urlParams = new URLSearchParams(window.location.search);
@@ -72,6 +129,11 @@ export async function render(value, options, api) {
         document.head.appendChild(style);
       }
     }
+  });
+
+  // Re-process links when viewport changes (scroll/resize)
+  cm.on('viewportChange', () => {
+    requestAnimationFrame(processCommentLinks);
   });
 
   return wrapper;

@@ -1,3 +1,7 @@
+// Item: kernel-core
+// ID: 33333333-1111-0000-0000-000000000000
+// Type: 33333333-0000-0000-0000-000000000000
+
 // kernel-core
 export async function loadKernel(require, storageBackend) {
   // Event system

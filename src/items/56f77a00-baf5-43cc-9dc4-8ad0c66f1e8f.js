@@ -34,7 +34,7 @@ export async function render(value, options, api) {
   const editorContainer = api.createElement('div');
   editorContainer.style.cssText = isFill
     ? 'border: 1px solid #d0d0d0; border-radius: 6px; overflow: hidden; flex: 1; min-height: 0;'
-    : 'border: 1px solid #d0d0d0; border-radius: 6px; overflow: hidden; min-height: 120px; height: 150px; resize: vertical;';
+    : 'border: 1px solid #d0d0d0; border-radius: 6px; overflow: hidden; min-height: 40px; height: 80px; resize: vertical;';
   wrapper.appendChild(editorContainer);
 
   // Create CodeMirror instance

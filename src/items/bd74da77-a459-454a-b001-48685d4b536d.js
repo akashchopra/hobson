@@ -1,3 +1,7 @@
+// Item: viewport_view
+// ID: bd74da77-a459-454a-b001-48685d4b536d
+// Type: aaaaaaaa-0000-0000-0000-000000000000
+
 
 export async function render(item, api) {
   // Load dependencies
@@ -638,12 +642,16 @@ export async function render(item, api) {
       currentViewId = getRootView();
     }
 
-    if (views.length === 0) {
+    // Separate normal views from debug views
+    const normalViews = views.filter(v => v.view.content?.category !== 'debug');
+    const debugViews = views.filter(v => v.view.content?.category === 'debug');
+
+    if (normalViews.length === 0) {
       const noViews = api.createElement('div', { class: 'context-menu-item disabled' }, ['(No views available)']);
       displayAsSubmenu.appendChild(noViews);
     } else {
       // Sort views alphabetically by display name
-      const sortedViews = [...views].sort((a, b) => {
+      const sortedViews = [...normalViews].sort((a, b) => {
         const nameA = a.view.content?.displayName || a.view.name || a.view.id.slice(0, 8);
         const nameB = b.view.content?.displayName || b.view.name || b.view.id.slice(0, 8);
         return nameA.localeCompare(nameB);
@@ -685,6 +693,44 @@ export async function render(item, api) {
       await showViewSettingsModal(itemId, selectedParentId);
     };
     contextMenu.appendChild(viewSettingsItem);
+
+    // "Debug" submenu with debug views (Raw JSON, etc.)
+    if (debugViews.length > 0) {
+      const debugItem = api.createElement('div', { class: 'context-menu-item context-menu-submenu' }, ['Debug']);
+      const debugSubmenu = api.createElement('div', { class: 'context-menu-submenu-items' }, []);
+
+      const sortedDebugViews = [...debugViews].sort((a, b) => {
+        const nameA = a.view.content?.displayName || a.view.name || a.view.id.slice(0, 8);
+        const nameB = b.view.content?.displayName || b.view.name || b.view.id.slice(0, 8);
+        return nameA.localeCompare(nameB);
+      });
+
+      for (const { view } of sortedDebugViews) {
+        const isActive = currentViewId === view.id;
+        const viewOption = api.createElement('div', {
+          class: 'context-menu-item' + (isActive ? ' selected' : '')
+        }, []);
+
+        let label = view.content?.displayName || view.name || view.id.slice(0, 8);
+        if (isActive) label += ' \u2713';
+        viewOption.textContent = label;
+
+        viewOption.onclick = async () => {
+          hideContextMenu();
+          if (selectedParentId) {
+            await setChildView(selectedParentId, itemId, view.id);
+            await api.rerenderItem(itemId);
+          } else {
+            await setRootView(view.id);
+            await api.navigate(api.viewport.getRoot());
+          }
+        };
+        debugSubmenu.appendChild(viewOption);
+      }
+
+      debugItem.appendChild(debugSubmenu);
+      contextMenu.appendChild(debugItem);
+    }
 
     // Separator
     contextMenu.appendChild(api.createElement('div', { class: 'context-menu-separator' }, []));

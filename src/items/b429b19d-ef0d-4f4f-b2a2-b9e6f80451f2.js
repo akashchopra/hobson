@@ -115,13 +115,21 @@ export async function render(item, viewSpec, api) {
       : null;
 
     // Render field - AWAIT in case it's async!
-    const fieldElement = await fieldView.render(value, {
-      mode: hint.mode || 'readonly',
-      onChange,
-      label: hint.label,
-      placeholder: hint.placeholder,
-      ...hint
-    }, api);
+    let fieldElement;
+    try {
+      fieldElement = await fieldView.render(value, {
+        mode: hint.mode || 'readonly',
+        onChange,
+        label: hint.label,
+        placeholder: hint.placeholder,
+        ...hint
+      }, api);
+    } catch (renderError) {
+      console.error('Error rendering field:', path, 'with view:', fieldViewName, renderError);
+      fieldElement = api.createElement('div');
+      fieldElement.style.cssText = 'color: red; font-size: 12px;';
+      fieldElement.textContent = 'Error: ' + renderError.message;
+    }
 
     scrollArea.appendChild(fieldElement);
 

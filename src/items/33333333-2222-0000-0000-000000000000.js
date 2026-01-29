@@ -70,6 +70,7 @@ export class Storage {
   }
 
   async _validateItem(item, kernel) {
+    // See [item/atom](item://00000000-0000-0000-0000-000000000000)
     const ATOM_ID = kernel?.IDS?.ATOM || "00000000-0000-0000-0000-000000000000";
 
     // Validate type chain (must reach atom, no cycles)
