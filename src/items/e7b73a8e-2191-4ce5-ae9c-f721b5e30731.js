@@ -54,23 +54,20 @@ export async function render(value, options, api) {
 
   cm.setSize('100%', '400px');
 
-  // Refresh after layout completes to fix gutter width calculation
-  requestAnimationFrame(() => {
-    cm.refresh();
-
-    // Check URL params for line navigation (field=code&line=X&col=Y)
+  // Function to handle line navigation
+  const navigateToLine = () => {
     const urlParams = new URLSearchParams(window.location.search);
-    const field = urlParams.get('field');
     const line = parseInt(urlParams.get('line'), 10);
     const col = parseInt(urlParams.get('col'), 10) || 0;
 
-    if (field === 'code' && !isNaN(line) && line > 0) {
+    if (!isNaN(line) && line > 0) {
       // CodeMirror uses 0-based line numbers
       const cmLine = line - 1;
 
       // Scroll line into view and set cursor
       cm.scrollIntoView({ line: cmLine, ch: col }, 100);
       cm.setCursor({ line: cmLine, ch: col });
+      cm.focus();
 
       // Add highlight class to the line
       cm.addLineClass(cmLine, 'background', 'line-highlight');
@@ -83,7 +80,28 @@ export async function render(value, options, api) {
         document.head.appendChild(style);
       }
     }
-  });
+  };
+
+  // Use IntersectionObserver to refresh CodeMirror when visible
+  const observer = new IntersectionObserver((entries) => {
+    for (const entry of entries) {
+      if (entry.isIntersecting) {
+        cm.refresh();
+        navigateToLine();
+        observer.disconnect();
+        break;
+      }
+    }
+  }, { threshold: 0.1 });
+  observer.observe(editorContainer);
+
+  // Also refresh on first focus as fallback
+  const focusHandler = () => {
+    cm.refresh();
+    navigateToLine();
+    editorContainer.removeEventListener('click', focusHandler);
+  };
+  editorContainer.addEventListener('click', focusHandler);
 
   // Call onChange on edits
   if (onChange) {
