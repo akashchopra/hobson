@@ -47,7 +47,7 @@ export function render(value, onChange, api, options = {}) {
 
     // Clear button (only show if there's a value)
     const clearBtn = document.createElement('button');
-    clearBtn.textContent = '×';
+    clearBtn.textContent = '\u00d7';
     clearBtn.title = 'Clear selection';
     clearBtn.style.cssText = 'padding: 8px 12px; cursor: pointer; background: #dc3545; color: white; border: none; border-radius: 4px; font-size: 16px; font-weight: bold;';
     clearBtn.onclick = () => {
@@ -59,66 +59,26 @@ export function render(value, onChange, api, options = {}) {
       container.appendChild(clearBtn);
     }
 
-    // Modal/overlay
+    // Modal using modal-lib
     const openModal = async () => {
-      const overlay = document.createElement('div');
-      overlay.style.cssText = `
-        position: fixed;
-        top: 0;
-        left: 0;
-        right: 0;
-        bottom: 0;
-        background: rgba(0, 0, 0, 0.5);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        z-index: 10000;
-      `;
+      const modalLib = await api.require('modal-lib');
 
-      const modalBox = document.createElement('div');
-      modalBox.style.cssText = `
-        background: white;
-        padding: 24px;
-        border-radius: 8px;
-        width: 600px;
-        max-height: 80vh;
-        overflow: auto;
-        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
-      `;
-
-      // Modal header
-      const modalHeader = document.createElement('div');
-      modalHeader.style.cssText = 'display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; padding-bottom: 12px; border-bottom: 2px solid #e0e0e0;';
-
-      const modalTitle = document.createElement('h3');
-      modalTitle.textContent = options.modalTitle || 'Select Item';
-      modalTitle.style.cssText = 'margin: 0; font-size: 18px;';
-      modalHeader.appendChild(modalTitle);
-
-      const closeBtn = document.createElement('button');
-      closeBtn.textContent = '×';
-      closeBtn.style.cssText = 'padding: 4px 10px; cursor: pointer; background: transparent; border: none; font-size: 24px; color: #666; line-height: 1;';
-      closeBtn.onclick = () => document.body.removeChild(overlay);
-      modalHeader.appendChild(closeBtn);
-
-      modalBox.appendChild(modalHeader);
-
-      // Search UI container
-      const searchContainer = document.createElement('div');
-      modalBox.appendChild(searchContainer);
-
-      overlay.appendChild(modalBox);
-      document.body.appendChild(overlay);
+      const { close, contentContainer } = modalLib.showModal({
+        title: options.modalTitle || 'Select Item',
+        width: '600px',
+        maxHeight: '80vh',
+        api
+      });
 
       // Load search library and create search UI
       const searchLib = await api.require('item-search-lib');
       searchLib.createSearchUI(
-        searchContainer,
+        contentContainer,
         (selectedItem) => {
           onChange(selectedItem.id);
           value = selectedItem.id;
           updateDisplay();
-          document.body.removeChild(overlay);
+          close();
         },
         api,
         {
@@ -127,27 +87,6 @@ export function render(value, onChange, api, options = {}) {
           autoFocus: true
         }
       );
-
-      // Click backdrop to close
-      overlay.onclick = (e) => {
-        if (e.target === overlay) {
-          document.body.removeChild(overlay);
-        }
-      };
-
-      // Stop propagation on modal box to prevent backdrop close
-      modalBox.onclick = (e) => {
-        e.stopPropagation();
-      };
-
-      // Escape key to close modal
-      const handleEscape = (e) => {
-        if (e.key === 'Escape') {
-          document.body.removeChild(overlay);
-          document.removeEventListener('keydown', handleEscape);
-        }
-      };
-      document.addEventListener('keydown', handleEscape);
     };
   }
 
