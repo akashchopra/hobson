@@ -420,7 +420,8 @@ export async function render(item, api) {
 
     // Helper: Create a window wrapper for a child item
     // This is extracted so addSibling can create windows without full re-render
-    const createWindowForChild = async (childId, childView = {}) => {
+    // navigateTo: optional { field, line, region } for scroll-to-line/region
+    const createWindowForChild = async (childId, childView = {}, navigateTo = null) => {
       // Get container dimensions for anchor calculations
       const containerRect = container.getBoundingClientRect();
       const containerWidth = containerRect.width || 1000;
@@ -476,7 +477,7 @@ export async function render(item, api) {
       const isMaximized = effectiveView.maximized || false;
 
       const childItem = await api.get(childId);
-      const childNode = await api.renderItem(childId, effectiveView.type ? effectiveView : null, { onCycle, siblingContainer });
+      const childNode = await api.renderItem(childId, effectiveView.type ? effectiveView : null, { onCycle, siblingContainer, navigateTo });
 
       // Base styles - override if maximized
       let wrapperStyle = `
@@ -1181,7 +1182,8 @@ export async function render(item, api) {
     // Sibling container object - passed to children so they can add siblings
     siblingContainer = {
       id: item.id,
-      addSibling: async (childId) => {
+      // navigateTo: optional { field, line, region } for scroll-to-line/region navigation
+      addSibling: async (childId, navigateTo = null) => {
         const freshItem = await api.get(item.id);
         const freshChildren = freshItem.children || [];
         const existingChild = freshChildren.find(c => c.id === childId);
@@ -1243,7 +1245,7 @@ export async function render(item, api) {
             width: 500,
             height: 400,
             z: newZ - baseZ
-          });
+          }, navigateTo);
 
           // Find the container element in the DOM and append
           const containerEl = document.querySelector(`[data-container-id="${item.id}"]`);

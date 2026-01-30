@@ -111,13 +111,22 @@ export async function render(markdown, api) {
   };
 
   // Render markdown to HTML
-  const html = markdownit.render(md);
+  let html = markdownit.render(md);
+
+  // Process region markers: emit invisible anchor spans for [BEGIN:name] markers
+  // This allows scroll-to-region navigation in rendered markdown
+  html = html.replace(
+    /<!--\s*\[BEGIN:([^\]]+)\]\s*-->/g,
+    (match, regionName) => {
+      return `<span data-region-start="${escapeHtml(regionName)}" style="display:none;"></span>${match}`;
+    }
+  );
 
   const content = api.createElement('div', { className: 'markdown-content' });
   content.style.cssText = 'line-height: 1.8; font-size: 16px;';
   content.innerHTML = html;
 
-  // Handle item:// link clicks - open as sibling in current container
+  // Handle item:// link clicks - open as sibling in current container, or navigate if root
   const links = content.querySelectorAll('a[data-item-link]');
   links.forEach(link => {
     const href = link.getAttribute('data-item-link');
@@ -125,7 +134,19 @@ export async function render(markdown, api) {
     if (parsed) {
       link.onclick = (e) => {
         e.preventDefault();
-        api.siblingContainer?.addSibling(parsed.itemId);
+        // Build navigateTo params from URL fragment and query params
+        const navigateTo = {
+          field: parsed.fragment,
+          line: parsed.queryParams.lines ? parseInt(parsed.queryParams.lines) : null,
+          region: parsed.queryParams.region || null
+        };
+        const hasNavigation = navigateTo.field || navigateTo.line || navigateTo.region;
+
+        if (api.siblingContainer) {
+          api.siblingContainer.addSibling(parsed.itemId, hasNavigation ? navigateTo : null);
+        } else {
+          api.navigate(parsed.itemId, hasNavigation ? navigateTo : null);
+        }
       };
       link.style.cssText = 'color: #007bff; text-decoration: none; border-bottom: 1px solid #007bff; cursor: pointer;';
     }
@@ -269,7 +290,18 @@ export async function render(markdown, api) {
         if (parsed) {
           link.onclick = (e) => {
             e.preventDefault();
-            api.siblingContainer?.addSibling(parsed.itemId);
+            const navigateTo = {
+              field: parsed.fragment,
+              line: parsed.queryParams.lines ? parseInt(parsed.queryParams.lines) : null,
+              region: parsed.queryParams.region || null
+            };
+            const hasNavigation = navigateTo.field || navigateTo.line || navigateTo.region;
+
+            if (api.siblingContainer) {
+              api.siblingContainer.addSibling(parsed.itemId, hasNavigation ? navigateTo : null);
+            } else {
+              api.navigate(parsed.itemId, hasNavigation ? navigateTo : null);
+            }
           };
           link.style.cssText = 'color: #007bff; text-decoration: none; border-bottom: 1px solid #007bff; cursor: pointer;';
         }
@@ -289,7 +321,11 @@ export async function render(markdown, api) {
           link.title = 'From: ' + itemName;
           link.onclick = (e) => {
             e.preventDefault();
-            api.siblingContainer?.addSibling(itemId);
+            if (api.siblingContainer) {
+              api.siblingContainer.addSibling(itemId);
+            } else {
+              api.navigate(itemId);
+            }
           };
         }
       }

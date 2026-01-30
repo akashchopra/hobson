@@ -6,6 +6,18 @@
 // Generic view library - interprets view-spec items
 // Supports both sync and async field views
 
+// Helper: Parse navigation params from URL (for root context)
+function getNavigateToFromURL() {
+  const params = new URLSearchParams(window.location.search);
+  const field = params.get('field');
+  if (!field) return null;
+  return {
+    field,
+    line: params.get('line') ? parseInt(params.get('line')) : null,
+    region: params.get('region') || null
+  };
+}
+
 function getNestedValue(obj, path) {
   return path.split('.').reduce((curr, key) => curr?.[key], obj);
 }
@@ -74,6 +86,10 @@ export async function render(item, viewSpec, api) {
   // Get ui_hints from view spec
   const uiHints = viewSpec.content?.ui_hints || {};
 
+  // Get navigation params for scroll-to-line/region support
+  // Try context first (sibling navigation), then URL params (root navigation)
+  const navigateTo = (api.getNavigateTo ? api.getNavigateTo() : null) || getNavigateToFromURL();
+
   // Render each field according to ui_hints
   for (const [path, hint] of Object.entries(uiHints)) {
     if (hint.hidden) continue;
@@ -114,6 +130,11 @@ export async function render(item, viewSpec, api) {
         }
       : null;
 
+    // Check if this field is the navigation target for scroll-to-line/region
+    // navigateTo.field is just 'code' but path might be 'content.code', so compare last segment
+    const fieldName = path.split('.').pop();
+    const isNavigationTarget = navigateTo && navigateTo.field === fieldName;
+
     // Render field - AWAIT in case it's async!
     let fieldElement;
     try {
@@ -122,6 +143,9 @@ export async function render(item, viewSpec, api) {
         onChange,
         label: hint.label,
         placeholder: hint.placeholder,
+        // Pass scroll params if this is the navigation target
+        scrollToLine: isNavigationTarget ? navigateTo.line : null,
+        scrollToRegion: isNavigationTarget ? navigateTo.region : null,
         ...hint
       }, api);
     } catch (renderError) {

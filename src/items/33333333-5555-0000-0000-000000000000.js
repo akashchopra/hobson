@@ -576,12 +576,17 @@ export class RenderingSystem {
         const siblingContainer = options?.siblingContainer !== undefined
           ? options.siblingContainer
           : context.siblingContainer;
+        // navigateTo: if explicitly passed in options, use that; otherwise pass through from context
+        const navigateTo = options?.navigateTo !== undefined
+          ? options.navigateTo
+          : context.navigateTo;
         const mergedContext = {
           ...context,
           decorator,
           viewConfig,
           parentId: containerItem.id,  // Pass parent ID for updateViewConfig
-          siblingContainer  // Pass sibling container for openSibling
+          siblingContainer,  // Pass sibling container for openSibling
+          navigateTo  // Pass navigation params for scroll-to-line/region
         };
 
         const domNode = await rendering.renderItem(itemId, viewId, options || {}, mergedContext);
@@ -614,6 +619,10 @@ export class RenderingSystem {
 
       // Get the parent ID that rendered this item
       getParentId: () => context.parentId || null,
+
+      // Get navigation params passed from parent (for scroll-to-line/region)
+      // Returns { field, line, region } or null
+      getNavigateTo: () => context.navigateTo || null,
 
       // Update the view config for the current item in the parent's children array
       // This persists view-specific state like banner position, sort order, etc.

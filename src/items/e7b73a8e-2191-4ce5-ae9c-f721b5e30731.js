@@ -3,9 +3,25 @@
 // Type: cccccccc-0000-0000-0000-000000000000
 
 
+// Helper: Find the line number where a region starts
+function findRegionStartLine(text, regionName) {
+  const lines = text.split('\n');
+  const marker = '[BEGIN:' + regionName + ']';
+  for (let i = 0; i < lines.length; i++) {
+    const cleaned = lines[i].trim()
+      .replace(/^\/\/\s*/, '')
+      .replace(/^#\s*/, '')
+      .replace(/^<!--\s*/, '')
+      .replace(/\s*-->$/, '')
+      .trim();
+    if (cleaned === marker) return i + 2; // Line after marker (1-indexed)
+  }
+  return null;
+}
+
 // Code editable field view
 export async function render(value, options, api) {
-  const { onChange, label, language = 'javascript' } = options;
+  const { onChange, label, language = 'javascript', scrollToLine, scrollToRegion } = options;
   const code = value || '';
 
   const wrapper = api.createElement('div', { className: 'field-code-editable' });
@@ -54,15 +70,30 @@ export async function render(value, options, api) {
 
   cm.setSize('100%', '400px');
 
-  // Function to handle line navigation
-  const navigateToLine = () => {
-    const urlParams = new URLSearchParams(window.location.search);
-    const line = parseInt(urlParams.get('line'), 10);
-    const col = parseInt(urlParams.get('col'), 10) || 0;
+  // Function to handle line/region navigation
+  const navigateToTarget = () => {
+    // First try options (passed from generic_view), then fall back to URL params
+    let targetLine = scrollToLine;
+    let col = 0;
 
-    if (!isNaN(line) && line > 0) {
+    // If scrollToRegion is specified but no line, find the region
+    if (scrollToRegion && !targetLine) {
+      targetLine = findRegionStartLine(code, scrollToRegion);
+    }
+
+    // Fallback to URL params for backward compatibility
+    if (!targetLine) {
+      const urlParams = new URLSearchParams(window.location.search);
+      const urlLine = parseInt(urlParams.get('line'), 10);
+      col = parseInt(urlParams.get('col'), 10) || 0;
+      if (!isNaN(urlLine) && urlLine > 0) {
+        targetLine = urlLine;
+      }
+    }
+
+    if (targetLine) {
       // CodeMirror uses 0-based line numbers
-      const cmLine = line - 1;
+      const cmLine = targetLine - 1;
 
       // Scroll line into view and set cursor
       cm.scrollIntoView({ line: cmLine, ch: col }, 100);
@@ -87,7 +118,7 @@ export async function render(value, options, api) {
     for (const entry of entries) {
       if (entry.isIntersecting) {
         cm.refresh();
-        navigateToLine();
+        navigateToTarget();
         observer.disconnect();
         break;
       }
@@ -98,7 +129,7 @@ export async function render(value, options, api) {
   // Also refresh on first focus as fallback
   const focusHandler = () => {
     cm.refresh();
-    navigateToLine();
+    navigateToTarget();
     editorContainer.removeEventListener('click', focusHandler);
   };
   editorContainer.addEventListener('click', focusHandler);

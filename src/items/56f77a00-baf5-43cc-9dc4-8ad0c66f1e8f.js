@@ -3,10 +3,26 @@
 // Type: cccccccc-0000-0000-0000-000000000000
 
 
+// Helper: Find the line number where a region starts
+function findRegionStartLine(text, regionName) {
+  const lines = text.split('\n');
+  const marker = '[BEGIN:' + regionName + ']';
+  for (let i = 0; i < lines.length; i++) {
+    const cleaned = lines[i].trim()
+      .replace(/^\/\/\s*/, '')
+      .replace(/^#\s*/, '')
+      .replace(/^<!--\s*/, '')
+      .replace(/\s*-->$/, '')
+      .trim();
+    if (cleaned === marker) return i + 2; // Line after marker (1-indexed)
+  }
+  return null;
+}
+
 // Markdown editable field view
 // Supports sizing option: "compact" (default) or "fill"
 export async function render(value, options, api) {
-  const { onChange, label, placeholder, sizing } = options;
+  const { onChange, label, placeholder, sizing, scrollToLine, scrollToRegion } = options;
   const markdown = value || '';
   const isFill = sizing === 'fill';
 
@@ -53,9 +69,53 @@ export async function render(value, options, api) {
 
   cm.setSize('100%', '100%');
 
+  // Function to handle line/region navigation
+  const navigateToTarget = () => {
+    let targetLine = scrollToLine;
+
+    // If scrollToRegion is specified but no line, find the region
+    if (scrollToRegion && !targetLine) {
+      targetLine = findRegionStartLine(markdown, scrollToRegion);
+    }
+
+    if (targetLine) {
+      // CodeMirror uses 0-based line numbers
+      const cmLine = targetLine - 1;
+
+      // Scroll line into view and set cursor
+      cm.scrollIntoView({ line: cmLine, ch: 0 }, 100);
+      cm.setCursor({ line: cmLine, ch: 0 });
+      cm.focus();
+
+      // Add highlight class to the line
+      cm.addLineClass(cmLine, 'background', 'line-highlight');
+
+      // Add CSS for highlight if not present
+      if (!document.getElementById('line-highlight-css')) {
+        const style = document.createElement('style');
+        style.id = 'line-highlight-css';
+        style.textContent = '.line-highlight { background: #fff3cd !important; }';
+        document.head.appendChild(style);
+      }
+    }
+  };
+
   // Refresh CodeMirror when container is resized
   const resizeObserver = new ResizeObserver(() => cm.refresh());
   resizeObserver.observe(editorContainer);
+
+  // Use IntersectionObserver to refresh CodeMirror when visible and navigate
+  const observer = new IntersectionObserver((entries) => {
+    for (const entry of entries) {
+      if (entry.isIntersecting) {
+        cm.refresh();
+        navigateToTarget();
+        observer.disconnect();
+        break;
+      }
+    }
+  }, { threshold: 0.1 });
+  observer.observe(editorContainer);
 
   // Also refresh after layout completes to fix gutter width calculation
   requestAnimationFrame(() => cm.refresh());

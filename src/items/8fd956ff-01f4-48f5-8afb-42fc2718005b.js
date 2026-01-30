@@ -5,9 +5,9 @@
 
 // Markdown readonly field view
 export async function render(value, options, api) {
-  const { label } = options;
+  const { label, scrollToRegion } = options;
   const markdown = value || '';
-  
+
   const wrapper = api.createElement('div', { className: 'field-markdown-readonly' });
   wrapper.style.cssText = 'display: flex; flex-direction: column; gap: 4px;';
 
@@ -23,5 +23,29 @@ export async function render(value, options, api) {
   const content = await hobsonMarkdown.render(markdown, api);
 
   wrapper.appendChild(content);
+
+  // Handle scroll-to-region navigation
+  // hobson-markdown emits <span data-region-start="name"> anchors for region markers
+  if (scrollToRegion) {
+    // Use setTimeout to ensure DOM is ready after append
+    setTimeout(() => {
+      const anchor = wrapper.querySelector(`[data-region-start="${scrollToRegion}"]`);
+      if (anchor) {
+        // Find the next visible sibling to scroll to (the anchor itself is display:none)
+        let target = anchor.nextElementSibling;
+        if (!target) target = anchor.parentElement;
+        if (target) {
+          target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          // Add brief highlight effect
+          target.style.transition = 'background 0.3s';
+          target.style.background = '#fff3cd';
+          setTimeout(() => {
+            target.style.background = '';
+          }, 2000);
+        }
+      }
+    }, 100);
+  }
+
   return wrapper;
 }
