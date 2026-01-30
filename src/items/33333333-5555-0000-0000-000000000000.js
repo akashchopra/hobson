@@ -7,13 +7,13 @@
 function parseSourceLocation(stack) {
   const lines = stack.split('\n');
   for (const line of lines) {
-    const match = line.match(/\(([^\/\\:]+):(\d+):\d+\)/) ||  // Chrome
-                  line.match(/@([^\/\\:]+):(\d+):\d+/);        // Firefox/Safari
+    const match = line.match(/\((.+?):(\d+):\d+\)/) ||  // Chrome
+                  line.match(/@(.+?):(\d+):\d+/);        // Firefox/Safari
     if (match) {
       const [, itemName, lineNum] = match;
       // Strip .js suffix and skip kernel-rendering itself
       const cleanName = itemName.replace(/\.js$/, '');
-      if (cleanName !== 'kernel-rendering') {
+      if (cleanName !== 'kernel:rendering') {
         return { itemName: cleanName, line: parseInt(lineNum, 10) };
       }
     }
