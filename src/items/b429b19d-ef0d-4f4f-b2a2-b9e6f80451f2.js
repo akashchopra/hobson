@@ -1,4 +1,4 @@
-// Item: generic_view
+// Item: system:generic-view
 // ID: b429b19d-ef0d-4f4f-b2a2-b9e6f80451f2
 // Type: 66666666-0000-0000-0000-000000000000
 
@@ -98,15 +98,15 @@ export async function render(item, viewSpec, api) {
     const value = getNestedValue(item, path);
 
     // Load field view
-    const fieldViewName = 'field_view_' + (hint.field_view || 'json');
+    const fieldViewName = 'field-view-' + (hint.field_view || 'json');
     let fieldView;
 
     try {
       fieldView = await api.require(fieldViewName);
     } catch (e) {
-      console.warn('Field view not found: ' + fieldViewName + ', using field_view_json');
+      console.warn('Field view not found: ' + fieldViewName + ', using field-view-json');
       try {
-        fieldView = await api.require('field_view_json');
+        fieldView = await api.require('field-view-json');
       } catch (e2) {
         // Ultimate fallback - create inline
         fieldView = {

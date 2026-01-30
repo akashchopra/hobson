@@ -68,7 +68,7 @@ async function renderChildren(listContainer, parentItem, api) {
     return;
   }
 
-  const compactViews = await api.query({ name: 'compact_card_view' });
+  const compactViews = await api.query({ name: 'system:compact-card-view' });
   const defaultViewId = compactViews[0]?.id || COMPACT_CARD_VIEW_ID;
 
   for (let i = 0; i < children.length; i++) {

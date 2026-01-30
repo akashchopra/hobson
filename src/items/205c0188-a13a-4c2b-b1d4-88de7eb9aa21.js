@@ -1,4 +1,4 @@
-// Item: field_view_object
+// Item: field-view-object
 // ID: 205c0188-a13a-4c2b-b1d4-88de7eb9aa21
 // Type: cccccccc-0000-0000-0000-000000000000
 
@@ -93,33 +93,33 @@ export async function render(value, options, api) {
         // Check if it looks like a GUID (item reference)
         const guidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
         if (guidPattern.test(val)) {
-          const fieldView = await api.require('field_view_item_ref');
+          const fieldView = await api.require('field-view-item-ref');
           fieldEl = await fieldView.render(val, {
             mode,
             onChange: isEditable ? (v) => updateProp(key, v) : null
           }, api);
         } else if (val.length > 100 || val.includes('\n')) {
           // Use textarea for long strings or strings with newlines
-          const fieldView = await api.require('field_view_textarea');
+          const fieldView = await api.require('field-view-textarea');
           fieldEl = await fieldView.render(val, {
             mode,
             onChange: isEditable ? (v) => updateProp(key, v) : null
           }, api);
         } else {
-          const fieldView = await api.require('field_view_text');
+          const fieldView = await api.require('field-view-text');
           fieldEl = await fieldView.render(val, {
             mode,
             onChange: isEditable ? (v) => updateProp(key, v) : null
           }, api);
         }
       } else if (valType === 'number') {
-        const fieldView = await api.require('field_view_number');
+        const fieldView = await api.require('field-view-number');
         fieldEl = await fieldView.render(val, {
           mode,
           onChange: isEditable ? (v) => updateProp(key, v) : null
         }, api);
       } else if (valType === 'boolean') {
-        const fieldView = await api.require('field_view_checkbox');
+        const fieldView = await api.require('field-view-checkbox');
         fieldEl = await fieldView.render(val, {
           mode,
           onChange: isEditable ? (v) => updateProp(key, v) : null
@@ -133,7 +133,7 @@ export async function render(value, options, api) {
         }, api);
       } else {
         // Arrays and other types: fall back to JSON
-        const fieldView = await api.require('field_view_json');
+        const fieldView = await api.require('field-view-json');
         fieldEl = await fieldView.render(val, {
           mode,
           onChange: isEditable ? (v) => updateProp(key, v) : null

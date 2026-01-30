@@ -8,8 +8,8 @@
 const ERROR_TYPE_ID = 'e7707000-0000-0000-0000-000000000001';
 
 export async function render(errorList, api) {
-  // Find compact_card_view for rendering errors
-  const compactViews = await api.query({ name: 'compact_card_view' });
+  // Find compact-card-view for rendering errors
+  const compactViews = await api.query({ name: 'system:compact-card-view' });
   const compactViewId = compactViews[0]?.id || null;
   const container = api.createElement('div', {
     class: 'error-list-view',

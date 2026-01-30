@@ -107,6 +107,7 @@ export async function loadKernel(require, storageBackend) {
 
       this.currentRoot = null;
       this._safeMode = false;
+      this.debugMode = false;
 
       this.rootElement = document.createElement('div');
       this.rootElement.id = 'app';
@@ -118,9 +119,10 @@ export async function loadKernel(require, storageBackend) {
       await this.ensureSeedItems();
       await this.applyStyles();
 
-      // Check for safe mode
+      // Check for safe mode and debug mode
       const params = new URLSearchParams(window.location.search);
       this._safeMode = params.get('safe') === '1';
+      this.debugMode = params.has('debug');
 
       if (this._safeMode) {
         this.safeMode.render(this.rootElement.querySelector('#main-view'));
@@ -197,6 +199,17 @@ export async function loadKernel(require, storageBackend) {
         } else {
           // No root - render the viewport anyway, it will show empty state
           await this.renderViewport();
+        }
+
+        // Auto-activate element inspector in debug mode
+        if (this.debugMode) {
+          try {
+            const inspectorModule = await this.moduleSystem.require('element-inspector');
+            const api = this.createREPLAPI();
+            this._elementInspector = inspectorModule.activate(api);
+          } catch (e) {
+            console.warn('Could not load element-inspector:', e.message);
+          }
         }
       }
     }

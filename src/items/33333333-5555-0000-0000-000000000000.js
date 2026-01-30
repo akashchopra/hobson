@@ -1,7 +1,27 @@
-// Item: kernel-rendering
+// Item: kernel:rendering
 // ID: 33333333-5555-0000-0000-000000000000
 // Type: 33333333-0000-0000-0000-000000000000
 
+
+// Parse stack trace to extract source item name and line number
+function parseSourceLocation(stack) {
+  const lines = stack.split('\n');
+  for (const line of lines) {
+    const match = line.match(/\(([^\/\\:]+):(\d+):\d+\)/) ||  // Chrome
+                  line.match(/@([^\/\\:]+):(\d+):\d+/);        // Firefox/Safari
+    if (match) {
+      const [, itemName, lineNum] = match;
+      // Strip .js suffix and skip kernel-rendering itself
+      const cleanName = itemName.replace(/\.js$/, '');
+      if (cleanName !== 'kernel-rendering') {
+        return { itemName: cleanName, line: parseInt(lineNum, 10) };
+      }
+    }
+  }
+  return null;
+}
+
+// Render Instance Registry - tracks what's currently rendered
 class RenderInstanceRegistry {
   constructor() {
     this.instances = new Map();      // instanceId -> InstanceInfo
@@ -288,19 +308,21 @@ export class RenderingSystem {
     // Build new context with updated render path
     const newContext = {
       ...context,
-      renderPath: [...renderPath, itemId]
+      renderPath: [...renderPath, itemId],
+      viewId: view.id,
+      debug: context.debug || this.kernel.debugMode
     };
 
     // Load and execute view
     try {
-      // Check if view is actually a view-spec (needs generic_view to interpret)
+      // Check if view is actually a view-spec (needs system:generic-view to interpret)
       const isViewSpec = IDS.VIEW_SPEC && view.type === IDS.VIEW_SPEC;
 
       let viewModule;
       let viewSpecItem = null;
       if (isViewSpec) {
-        // Load generic_view to interpret the view-spec
-        viewModule = await this.kernel.moduleSystem.require('generic_view');
+        // Load system:generic-view to interpret the view-spec
+        viewModule = await this.kernel.moduleSystem.require('system:generic-view');
         viewSpecItem = view;
       } else {
         viewModule = await this.kernel.moduleSystem.require(view.id);
@@ -402,25 +424,7 @@ export class RenderingSystem {
     }
 
     // Fall back to default view
-    try {
-      return await this.kernel.storage.get(IDS.DEFAULT_VIEW);
-    } catch (e) {
-      // Emergency fallback if default view is missing
-      return {
-        id: '__emergency_view__',
-        name: 'Emergency View',
-        type: IDS.VIEW,
-        content: {
-          for_type: IDS.ATOM,
-          code: `export function render(item, api) {
-            const div = document.createElement('div');
-            div.style.cssText = 'padding: 20px; background: #fff3cd; border: 2px solid #ffc107; border-radius: 8px;';
-            div.innerHTML = '<strong>Emergency View</strong><p>Default view is missing. Import it from src/items/aaaaaaaa-1111-0000-0000-000000000000.json</p><pre style="background:#f5f5f5;padding:10px;overflow:auto;">' + JSON.stringify(item, null, 2).replace(/</g, '&lt;') + '</pre>';
-            return div;
-          }`
-        }
-      };
-    }
+    return await this.kernel.storage.get(IDS.DEFAULT_VIEW);
   }
 
   // Get all views for a type (including inherited from type chain)
@@ -527,6 +531,23 @@ export class RenderingSystem {
       // Create DOM elements
       createElement(tag, props = {}, children = []) {
         const element = document.createElement(tag);
+
+        // Debug attribution
+        const debugActive = context.debug || kernel.debugMode;
+        if (debugActive) {
+          if (context.viewId) {
+            element.setAttribute('data-view-id', context.viewId);
+          }
+          element.setAttribute('data-for-item', containerItem.id);
+          try {
+            const stack = new Error().stack;
+            const location = parseSourceLocation(stack);
+            if (location) {
+              element.setAttribute('data-source', location.itemName);
+              element.setAttribute('data-source-line', String(location.line));
+            }
+          } catch (e) { /* ignore */ }
+        }
 
         for (const [key, value] of Object.entries(props)) {
           if (key.startsWith("on") && typeof value === "function") {
@@ -924,6 +945,9 @@ export class RenderingSystem {
 
       // Instance ID (for nested Hobson instances)
       getInstanceId: () => kernel.storage.instanceId,
+
+      // Debug mode check
+      isDebugMode: () => context.debug || kernel.debugMode,
 
       // Helper functions (same as REPL API)
       helpers: {

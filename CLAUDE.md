@@ -70,6 +70,24 @@ VIEWPORT: "88888888-0000-0000-0000-000000000000"
 - Export utility functions via standard JavaScript exports
 - Loaded via `await api.require('name')`
 
+### Item Naming Conventions
+
+**Namespaces:**
+| Namespace | Meaning | Examples |
+|-----------|---------|----------|
+| `kernel:` | Kernel has hardcoded GUID reference to this item | `kernel:core`, `kernel:item`, `kernel:view` |
+| `system:` | System actively discovers and dispatches to this item | `system:generic-view`, `system:error-view` |
+| *(none)* | Userland items | `markdown-it`, `field-view-text`, `note-view-editable` |
+
+**Case Conventions:**
+- Code items: kebab-case (`field-view-markdown-editable`, `item-search-lib`)
+- Non-code items: Normal prose (`Hobson TODOs`, `My First Note`)
+
+**Key Distinctions:**
+- Views (`kernel:view` type) use `system:` because the rendering system dispatches to them
+- View-specs and field-views are userland (no namespace) - they're config consumed by `system:generic-view`
+- Libraries are userland (no namespace) - loaded via `api.require('name')`
+
 ### Spatial Windowing
 
 Children can be positioned objects for 2D canvas layout:

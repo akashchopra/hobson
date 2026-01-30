@@ -56,8 +56,8 @@ export async function render(browser, api) {
   }, []);
   resultsContainer.appendChild(resultsList);
 
-  // Find compact_card_view for rendering results (default view)
-  const compactViews = await api.query({ name: 'compact_card_view' });
+  // Find compact-card-view for rendering results (default view)
+  const compactViews = await api.query({ name: 'system:compact-card-view' });
   const compactViewId = compactViews[0]?.id || null;
 
   // Cycle handler - returns a clickable card for items in render path
