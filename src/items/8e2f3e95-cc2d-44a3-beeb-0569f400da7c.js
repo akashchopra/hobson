@@ -64,24 +64,24 @@ export async function render(value, options, api) {
   const processCommentLinks = () => {
     const linkRegex = /\[([^\]]+)\]\(item:\/\/([a-f0-9-]+)\)/g;
     const comments = editorContainer.querySelectorAll('.cm-comment:not([data-links-processed])');
-
+    
     comments.forEach(span => {
       span.setAttribute('data-links-processed', 'true');
       const text = span.textContent;
       if (!linkRegex.test(text)) return;
-
+      
       // Reset regex state and process
       linkRegex.lastIndex = 0;
       const parts = [];
       let lastIndex = 0;
       let match;
-
+      
       while ((match = linkRegex.exec(text)) !== null) {
         // Add text before this match
         if (match.index > lastIndex) {
           parts.push(document.createTextNode(text.slice(lastIndex, match.index)));
         }
-
+        
         // Create clickable link
         const linkText = match[1];
         const itemId = match[2];
@@ -99,15 +99,15 @@ export async function render(value, options, api) {
           }
         };
         parts.push(link);
-
+        
         lastIndex = match.index + match[0].length;
       }
-
+      
       // Add remaining text after last match
       if (lastIndex < text.length) {
         parts.push(document.createTextNode(text.slice(lastIndex)));
       }
-
+      
       // Replace span contents
       if (parts.length > 0) {
         span.textContent = '';

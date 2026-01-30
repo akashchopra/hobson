@@ -2,7 +2,6 @@
 // ID: 33333333-1111-0000-0000-000000000000
 // Type: 33333333-0000-0000-0000-000000000000
 
-// kernel-core
 export async function loadKernel(require, storageBackend) {
   // Event system
   class EventBus {
@@ -1175,6 +1174,14 @@ export async function loadKernel(require, storageBackend) {
       // Check exact type match
       if (watch.type && item.type !== watch.type) {
         return false;
+      }
+
+      // Check type chain (typeExtends)
+      if (watch.typeExtends) {
+        const inChain = await this.moduleSystem.typeChainIncludes(item.type, watch.typeExtends);
+        if (!inChain) {
+          return false;
+        }
       }
 
       // Check specific item ID

@@ -407,3 +407,8 @@ body {
   color: #cc0000;
   white-space: pre-wrap;
 }
+
+/* Element Inspector */
+.hobson-inspect-mode { cursor: crosshair !important; }
+.hobson-inspect-mode * { cursor: crosshair !important; }
+.hobson-inspect-highlight { outline: 2px solid #2196f3 !important; outline-offset: 1px; }

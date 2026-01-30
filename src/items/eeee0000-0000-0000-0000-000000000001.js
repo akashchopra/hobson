@@ -1,3 +1,7 @@
+// Item: element-inspector
+// ID: eeee0000-0000-0000-0000-000000000001
+// Type: 66666666-0000-0000-0000-000000000000
+
 // Element Inspector Library
 // Provides tools to inspect which view/item rendered any UI element
 
@@ -87,18 +91,18 @@ export function deactivate() {
       document.removeEventListener('mouseover', inspectorState._handlers.mouseoverHandler, true);
       document.removeEventListener('mouseout', inspectorState._handlers.mouseoutHandler, true);
     }
-
+    
     // Exit inspect mode if active
     if (inspectorState.isActive()) {
       inspectorState.toggle();
     }
-
+    
     // Remove any lingering highlights
     document.querySelectorAll('.hobson-inspect-highlight').forEach(el => {
       el.classList.remove('hobson-inspect-highlight');
     });
     document.body.classList.remove('hobson-inspect-mode');
-
+    
     inspectorState = null;
   }
 }

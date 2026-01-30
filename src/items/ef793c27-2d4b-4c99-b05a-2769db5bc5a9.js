@@ -420,7 +420,6 @@ export async function render(item, api) {
 
     // Helper: Create a window wrapper for a child item
     // This is extracted so addSibling can create windows without full re-render
-    // navigateTo: optional { field, line, region } for scroll-to-line/region
     const createWindowForChild = async (childId, childView = {}, navigateTo = null) => {
       // Get container dimensions for anchor calculations
       const containerRect = container.getBoundingClientRect();
@@ -1182,7 +1181,6 @@ export async function render(item, api) {
     // Sibling container object - passed to children so they can add siblings
     siblingContainer = {
       id: item.id,
-      // navigateTo: optional { field, line, region } for scroll-to-line/region navigation
       addSibling: async (childId, navigateTo = null) => {
         const freshItem = await api.get(item.id);
         const freshChildren = freshItem.children || [];

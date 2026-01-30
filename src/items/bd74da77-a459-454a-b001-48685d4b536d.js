@@ -282,7 +282,7 @@ export async function render(item, api) {
   // This is viewport-specific; users can customize by modifying this function
   const itemDecorator = async (dom, itemId, item) => {
     dom.setAttribute('data-item-id', itemId);
-
+    
     // Add tooltip with item name, type, and tags
     const itemName = item.name || item.content?.title || itemId.slice(0, 8);
     let typeName = item.type.slice(0, 8);
@@ -290,9 +290,9 @@ export async function render(item, api) {
       const typeItem = await api.get(item.type);
       typeName = typeItem.name || typeName;
     } catch {}
-
+    
     let titleText = itemName + ' (' + typeName + ')';
-
+    
     // Add tags to tooltip if present
     if (item.tags?.length) {
       const tagNames = await Promise.all(item.tags.map(async tagId => {
@@ -305,7 +305,7 @@ export async function render(item, api) {
       }));
       titleText += '\nTags: ' + tagNames.join(', ');
     }
-
+    
     dom.setAttribute('title', titleText);
   };
 
