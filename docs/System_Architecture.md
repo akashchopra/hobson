@@ -155,14 +155,18 @@ Renders items to DOM using appropriate views. Key systems:
 
 **Partial Re-render** — `rerenderItem(itemId)` locates the render instance, re-executes the renderer, and replaces DOM content while preserving positioning and siblings.
 
+**Renderer API Creation** — Constructs the `api` object passed to view render functions. This ~300-line API provides storage operations, navigation, child management, and helpers that views use to interact with the system.
+
 ### KERNEL_REPL
 
 Provides the browser-based Read-Eval-Print-Loop for scripting:
 
 - Toggle with Escape key
 - Access to full API via `api` object
+- Command history with up/down arrow navigation
 - Supports async/await and top-level await
 - Captures and displays results with error handling
+- Resizable input/transcript split panel
 
 ### KERNEL_SAFE_MODE
 
@@ -171,6 +175,8 @@ Provides recovery interface when code items are broken. Activated via `?safe=1` 
 - Loads kernel normally but skips user code items
 - Shows minimal UI with item list and raw JSON editor
 - Allows repairing broken code items and reloading normally
+- Export/import data for backup and restoration
+- System reset capability (with confirmation) for complete database clearing
 
 ### KERNEL_STYLES
 
@@ -186,6 +192,9 @@ Main kernel composition and orchestration:
 - **Item lifecycle**: Save with events, delete with cascading parent updates
 - **Declarative watches**: System for code items to subscribe to events
 - **Navigation**: Updates URL and viewport on item selection
+- **System UI**: Help dialog, item list modal, error fallback display
+
+Note: kernel-core is the largest module, handling both orchestration and some UI presentation. The UI responsibilities could be extracted to a separate module for cleaner separation.
 
 ---
 
@@ -332,6 +341,15 @@ Passed to render functions as the second parameter:
 - `navigate(itemId)` — Navigation
 - `IDS` — Well-known GUIDs
 - `viewport` — View state access
+- `siblingContainer` — Parent container context for "open as sibling" operations
+- `setChildView(parentId, childId, viewId)` — Override child's contextual view
+- `updateViewConfig(parentId, childId, config)` — Persist view state in parent's children array
+
+### Runtime View Patterns
+
+**Sibling Container** — Views can request items to open as siblings within the same parent container. The `api.siblingContainer` provides the parent context, enabling "open here" behavior where clicking a link adds the target item as a sibling window rather than navigating away.
+
+**View Config Persistence** — Per-child view state (window position, size, banner settings, collapsed state) is stored in the parent's `children` array. This keeps view-specific layout data with the composition relationship rather than on the items themselves, allowing the same item to appear differently in different contexts.
 
 ---
 
