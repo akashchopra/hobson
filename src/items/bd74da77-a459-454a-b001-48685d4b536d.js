@@ -710,44 +710,6 @@ export async function render(item, api) {
     };
     contextMenu.appendChild(viewSettingsItem);
 
-    // "Debug" submenu with debug views (Raw JSON, etc.)
-    if (debugViews.length > 0) {
-      const debugItem = api.createElement('div', { class: 'context-menu-item context-menu-submenu' }, ['Debug']);
-      const debugSubmenu = api.createElement('div', { class: 'context-menu-submenu-items' }, []);
-
-      const sortedDebugViews = [...debugViews].sort((a, b) => {
-        const nameA = a.view.content?.displayName || a.view.name || a.view.id.slice(0, 8);
-        const nameB = b.view.content?.displayName || b.view.name || b.view.id.slice(0, 8);
-        return nameA.localeCompare(nameB);
-      });
-
-      for (const { view } of sortedDebugViews) {
-        const isActive = currentViewId === view.id;
-        const viewOption = api.createElement('div', {
-          class: 'context-menu-item' + (isActive ? ' selected' : '')
-        }, []);
-
-        let label = view.content?.displayName || view.name || view.id.slice(0, 8);
-        if (isActive) label += ' \u2713';
-        viewOption.textContent = label;
-
-        viewOption.onclick = async () => {
-          hideContextMenu();
-          if (selectedParentId) {
-            await setChildView(selectedParentId, itemId, view.id);
-            await api.rerenderItem(itemId);
-          } else {
-            await setRootView(view.id);
-            await api.navigate(api.viewport.getRoot());
-          }
-        };
-        debugSubmenu.appendChild(viewOption);
-      }
-
-      debugItem.appendChild(debugSubmenu);
-      contextMenu.appendChild(debugItem);
-    }
-
     // Separator
     contextMenu.appendChild(api.createElement('div', { class: 'context-menu-separator' }, []));
 
@@ -826,6 +788,104 @@ export async function render(item, api) {
       }
     };
     contextMenu.appendChild(deleteItem);
+
+    // Debug submenu (at the bottom, after Delete)
+    contextMenu.appendChild(api.createElement('div', { class: 'context-menu-separator' }, []));
+    const debugItem = api.createElement('div', { class: 'context-menu-item context-menu-submenu' }, ['Debug']);
+    const debugSubmenu = api.createElement('div', { class: 'context-menu-submenu-items' }, []);
+
+    // Debug views (Raw JSON, etc.)
+    if (debugViews.length > 0) {
+      const sortedDebugViews = [...debugViews].sort((a, b) => {
+        const nameA = a.view.content?.displayName || a.view.name || a.view.id.slice(0, 8);
+        const nameB = b.view.content?.displayName || b.view.name || b.view.id.slice(0, 8);
+        return nameA.localeCompare(nameB);
+      });
+
+      for (const { view } of sortedDebugViews) {
+        const isActive = currentViewId === view.id;
+        const viewOption = api.createElement('div', {
+          class: 'context-menu-item' + (isActive ? ' selected' : '')
+        }, []);
+
+        let label = view.content?.displayName || view.name || view.id.slice(0, 8);
+        if (isActive) label += ' \u2713';
+        viewOption.textContent = label;
+
+        viewOption.onclick = async () => {
+          hideContextMenu();
+          if (selectedParentId) {
+            await setChildView(selectedParentId, itemId, view.id);
+            await api.rerenderItem(itemId);
+          } else {
+            await setRootView(view.id);
+            await api.navigate(api.viewport.getRoot());
+          }
+        };
+        debugSubmenu.appendChild(viewOption);
+      }
+
+      // Separator between debug views and debug options
+      debugSubmenu.appendChild(api.createElement('div', { class: 'context-menu-separator' }, []));
+    }
+
+    // Enable Debug Mode option
+    const isDebugMode = window.kernel?.debugMode || false;
+    const debugModeOption = api.createElement('div', {
+      class: 'context-menu-item' + (isDebugMode ? ' selected' : '')
+    }, [isDebugMode ? 'Debug Mode \u2713' : 'Enable Debug Mode']);
+    debugModeOption.onclick = async () => {
+      hideContextMenu();
+      const kernel = window.kernel;
+      if (!kernel) return;
+
+      kernel.debugMode = !kernel.debugMode;
+
+      if (kernel.debugMode) {
+        // Activate element inspector if not already active
+        if (!kernel._elementInspector) {
+          try {
+            const inspectorModule = await kernel.moduleSystem.require('element-inspector');
+            const replApi = kernel.createREPLAPI();
+            kernel._elementInspector = inspectorModule.activate(replApi);
+          } catch (e) {
+            console.warn('Could not load element-inspector:', e.message);
+          }
+        }
+        // Re-render to apply debug attributes to elements
+        await api.navigate(api.viewport.getRoot());
+      } else {
+        // Deactivate element inspector
+        if (kernel._elementInspector) {
+          try {
+            const inspectorModule = await kernel.moduleSystem.require('element-inspector');
+            inspectorModule.deactivate();
+            kernel._elementInspector = null;
+          } catch (e) {
+            console.warn('Could not deactivate element-inspector:', e.message);
+          }
+        }
+        // Re-render to remove debug attributes
+        await api.navigate(api.viewport.getRoot());
+      }
+    };
+    debugSubmenu.appendChild(debugModeOption);
+
+    // Toggle Inspector option (only when debug mode is active)
+    if (isDebugMode && window.kernel?._elementInspector) {
+      const inspectorActive = window.kernel._elementInspector.isActive();
+      const inspectorOption = api.createElement('div', {
+        class: 'context-menu-item' + (inspectorActive ? ' selected' : '')
+      }, [inspectorActive ? 'Inspector Mode \u2713' : 'Toggle Inspector (Ctrl+Shift+.)']);
+      inspectorOption.onclick = () => {
+        hideContextMenu();
+        window.kernel._elementInspector.toggle();
+      };
+      debugSubmenu.appendChild(inspectorOption);
+    }
+
+    debugItem.appendChild(debugSubmenu);
+    contextMenu.appendChild(debugItem);
 
     // Position menu
     const menuWidth = 180, menuHeight = 400, submenuWidth = 160;
