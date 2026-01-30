@@ -213,14 +213,18 @@ export async function loadKernel(require, storageBackend) {
     }
 
     async applyStyles() {
+      // Remove existing kernel styles if present (allows hot-reload)
+      const existing = document.getElementById('kernel-styles');
+      if (existing) existing.remove();
+
+      const style = document.createElement('style');
+      style.id = 'kernel-styles';
+
       try {
         const stylesItem = await this.storage.get(IDS.KERNEL_STYLES);
-        const style = document.createElement('style');
         style.textContent = stylesItem.content.code;
-        document.head.appendChild(style);
       } catch (e) {
         // Fallback to minimal styles
-        const style = document.createElement('style');
         style.textContent = `
           * { box-sizing: border-box; }
           html, body { height: 100%; margin: 0; }
@@ -228,8 +232,9 @@ export async function loadKernel(require, storageBackend) {
           #app { height: 100%; display: flex; flex-direction: column; }
           #main-view { flex: 1; background: white; border-radius: 8px; padding: 20px; overflow: auto; }
         `;
-        document.head.appendChild(style);
       }
+
+      document.head.appendChild(style);
     }
 
     async getStartingRoot() {
@@ -784,7 +789,57 @@ export async function loadKernel(require, storageBackend) {
                   }
                 }
 
-                resolve({ created, updated, skipped });
+                // Smart refresh based on what was imported
+                const result = { created, updated, skipped };
+
+                // Check for kernel modules - requires full reload
+                const hasKernelModule = items.some(i => i.type === IDS.KERNEL_MODULE);
+                if (hasKernelModule) {
+                  result.action = 'reload';
+                  resolve(result);
+                  kernel.reloadKernel();
+                  return;
+                }
+
+                // Check for styles - hot-reload CSS
+                const hasStyles = items.some(i => i.id === IDS.KERNEL_STYLES);
+                if (hasStyles) {
+                  await kernel.applyStyles();
+                }
+
+                // Check for libraries - requires full re-render (dependencies not tracked)
+                const hasLibrary = items.some(i => i.type === IDS.LIBRARY);
+                if (hasLibrary && kernel.currentRoot) {
+                  result.action = 'full-rerender';
+                  await kernel.renderRoot(kernel.currentRoot);
+                  resolve(result);
+                  return;
+                }
+
+                // Check for views - partial re-render for each
+                const viewItems = items.filter(i =>
+                  i.type === IDS.VIEW || i.type === IDS.VIEW_SPEC
+                );
+                for (const viewItem of viewItems) {
+                  await kernel.rendering.rerenderByView(viewItem.id);
+                }
+
+                // For data items, re-render if currently visible
+                const codeTypes = [IDS.VIEW, IDS.VIEW_SPEC, IDS.LIBRARY, IDS.KERNEL_MODULE];
+                const dataItems = items.filter(i =>
+                  !codeTypes.includes(i.type) && i.id !== IDS.KERNEL_STYLES
+                );
+                for (const item of dataItems) {
+                  const instances = kernel.rendering.registry.getByItemId(item.id);
+                  if (instances.length > 0) {
+                    await kernel.rendering.rerenderItem(item.id);
+                  }
+                }
+
+                result.action = viewItems.length > 0 || dataItems.length > 0
+                  ? 'partial-rerender'
+                  : (hasStyles ? 'styles-only' : 'none');
+                resolve(result);
               } catch (error) {
                 reject(error);
               }
@@ -994,6 +1049,14 @@ export async function loadKernel(require, storageBackend) {
     }
 
     async deleteItem(itemId) {
+      // Protect seed items from deletion
+      const seedIds = Object.values(IDS);
+      if (seedIds.includes(itemId)) {
+        const error = new Error(`Cannot delete seed item ${itemId}. Seed items are protected.`);
+        await this.captureError(error, { operation: 'delete', itemId });
+        throw error;
+      }
+
       // Get the item before deleting (for event)
       const item = await this.storage.get(itemId);
 

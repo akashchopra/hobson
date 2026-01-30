@@ -404,7 +404,25 @@ export class RenderingSystem {
     }
 
     // Fall back to default view
-    return await this.kernel.storage.get(IDS.DEFAULT_VIEW);
+    try {
+      return await this.kernel.storage.get(IDS.DEFAULT_VIEW);
+    } catch (e) {
+      // Emergency fallback if default view is missing
+      return {
+        id: '__emergency_view__',
+        name: 'Emergency View',
+        type: IDS.VIEW,
+        content: {
+          for_type: IDS.ATOM,
+          code: `export function render(item, api) {
+            const div = document.createElement('div');
+            div.style.cssText = 'padding: 20px; background: #fff3cd; border: 2px solid #ffc107; border-radius: 8px;';
+            div.innerHTML = '<strong>Emergency View</strong><p>Default view is missing. Import it from src/items/aaaaaaaa-1111-0000-0000-000000000000.json</p><pre style="background:#f5f5f5;padding:10px;overflow:auto;">' + JSON.stringify(item, null, 2).replace(/</g, '&lt;') + '</pre>';
+            return div;
+          }`
+        }
+      };
+    }
   }
 
   // Get all views for a type (including inherited from type chain)
