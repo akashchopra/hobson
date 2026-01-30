@@ -1259,7 +1259,8 @@ export async function render(item, api) {
     // Render children using the helper
     for (const child of childrenToRender) {
       try {
-        const wrapper = await createWindowForChild(child.id, child.view || {});
+        // Pass navigateTo from view config if present (used by inspector and other external openers)
+        const wrapper = await createWindowForChild(child.id, child.view || {}, child.view?.navigateTo);
         container.appendChild(wrapper);
       } catch (error) {
         const childView = child.view || {};

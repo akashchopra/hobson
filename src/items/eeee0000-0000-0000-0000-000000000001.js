@@ -222,7 +222,7 @@ async function showInspectorOverlay(info, x, y, api) {
     }
   }
 
-  html += '<div style="margin-top: 8px; font-size: 11px; color: #999;">Click to navigate (with line) | Shift+click to add as sibling | Ctrl+Shift+. to exit</div>';
+  html += '<div style="margin-top: 8px; font-size: 11px; color: #999;">Click to navigate (with line) | Ctrl+Shift+. to exit</div>';
 
   overlay.innerHTML = html;
 
@@ -235,7 +235,6 @@ async function showInspectorOverlay(info, x, y, api) {
       const id = link.dataset.id;
       const name = link.dataset.name;
       const line = link.dataset.line;
-      const openAsSibling = e.shiftKey;
 
       // Resolve target item ID
       let targetId = id;
@@ -261,29 +260,49 @@ async function showInspectorOverlay(info, x, y, api) {
         return;
       }
 
-      if (openAsSibling) {
-        // Add as child of current viewport root (appears as sibling in container views)
-        try {
-          const currentRoot = api.viewport.getRoot();
-          if (currentRoot && currentRoot !== targetId) {
-            // Check if target is already a child
-            const rootItem = await api.get(currentRoot);
-            const alreadyChild = rootItem.children?.some(c => c.id === targetId);
-            if (!alreadyChild) {
-              await api.addChild(currentRoot, targetId);
-            }
-            // Re-render container to show the new sibling
-            // Note: line scroll not supported in sibling mode
-            await api.navigate(currentRoot);
-          } else {
-            await api.navigate(targetId, line ? { line: parseInt(line, 10) } : {});
-          }
-        } catch (err) {
-          console.error('Error opening as sibling:', err);
-          await api.navigate(targetId, line ? { line: parseInt(line, 10) } : {});
-        }
+      // Build navigation params for scroll-to-line support
+      // Inspector links point to code, so field is 'code'
+      const navigateTo = line ? { field: 'code', line: parseInt(line, 10) } : null;
+
+      // Follow same pattern as hobson-markdown: sibling if in container, else root
+      if (api.siblingContainer) {
+        api.siblingContainer.addSibling(targetId, navigateTo);
       } else {
-        await api.navigate(targetId, line ? { line: parseInt(line, 10) } : {});
+        // Check if we're viewing a container - if so, add as sibling with navigateTo in view config
+        const currentRoot = api.viewport.getRoot();
+        if (currentRoot && currentRoot !== targetId) {
+          try {
+            const rootItem = await api.get(currentRoot);
+            // Check if target is already a child
+            const existingChild = rootItem.children?.find(c => c.id === targetId);
+
+            if (existingChild) {
+              // Already a child - update its view.navigateTo and re-render
+              const updatedChildren = rootItem.children.map(c => {
+                if (c.id === targetId) {
+                  return { ...c, view: { ...(c.view || {}), navigateTo, minimized: false } };
+                }
+                return c;
+              });
+              await api.set({ ...rootItem, children: updatedChildren, modified: Date.now() });
+            } else {
+              // Add as new child with navigateTo in view config
+              const newChild = { id: targetId, view: { navigateTo } };
+              await api.set({
+                ...rootItem,
+                children: [...(rootItem.children || []), newChild],
+                modified: Date.now()
+              });
+            }
+            // Re-render to show the sibling with scroll
+            await api.navigate(currentRoot);
+          } catch (err) {
+            console.error('Error opening as sibling:', err);
+            await api.navigate(targetId, navigateTo);
+          }
+        } else {
+          await api.navigate(targetId, navigateTo);
+        }
       }
 
       overlay.remove();
