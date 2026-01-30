@@ -85,28 +85,39 @@ export class ModuleSystem {
     }
   }
   
+  // Capability check: is this item a code item?
+  // Uses bounded type chain walking (stops at type_definition boundary)
   async isCodeItem(item) {
     return await this.typeChainIncludes(item.type, this.kernel.IDS.CODE);
   }
   
+  // Walk type chain for capability/subtype detection.
+  // Stops at type_definition boundary to avoid crossing into meta-level.
+  // e.g., note_view → view → code (stop here, code.type = type_definition)
+  // So "is note_view code?" = yes, but "is note_view type_definition?" = no
   async typeChainIncludes(typeId, targetId) {
     let current = typeId;
     const visited = new Set();
-    
+
     while (current && !visited.has(current)) {
       if (current === targetId) return true;
       visited.add(current);
-      
+
       if (current === this.kernel.IDS.ATOM) break;
-      
+
       try {
         const typeItem = await this.kernel.storage.get(current);
+
+        // Stop at type_definition boundary: if this item IS a type definition
+        // (its type is TYPE_DEFINITION), don't walk further into meta-level
+        if (typeItem.type === this.kernel.IDS.TYPE_DEFINITION) break;
+
         current = typeItem.type;
       } catch {
         break;
       }
     }
-    
+
     return false;
   }
   

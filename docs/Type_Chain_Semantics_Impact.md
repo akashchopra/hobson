@@ -1,7 +1,10 @@
 # Type Chain Semantics Fix - Impact Assessment
 
 **Date:** 2026-01-25
+**Status:** Implemented 2026-01-30 (bounded type chain approach)
 **Related:** [Type_Chain_Semantics_Fix.md](Type_Chain_Semantics_Fix.md)
+
+> **Note:** The original proposal suggested content-based capability checks. After discussion, we implemented a bounded type chain approach instead, which stops walking at the `type_definition` boundary. This is simpler (one rule vs. many) and keeps capabilities expressed in the type hierarchy.
 
 ---
 

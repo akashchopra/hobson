@@ -1177,14 +1177,6 @@ export async function loadKernel(require, storageBackend) {
         return false;
       }
 
-      // Check type chain (typeExtends)
-      if (watch.typeExtends) {
-        const inChain = await this.moduleSystem.typeChainIncludes(item.type, watch.typeExtends);
-        if (!inChain) {
-          return false;
-        }
-      }
-
       // Check specific item ID
       if (watch.id && item.id !== watch.id) {
         return false;
