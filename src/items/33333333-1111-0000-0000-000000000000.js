@@ -175,9 +175,7 @@ export async function loadKernel(require, storageBackend) {
       } else {
         await this.viewport.restore();
 
-        // Add REPL container
-        const replContainer = this.repl.createContainer();
-        this.rootElement.appendChild(replContainer);
+        // REPL container is now created by userland repl-ui library via system:boot-complete
 
         // Global error handlers for uncaught errors and promise rejections
         if (!window._globalErrorHandler) {
@@ -204,19 +202,16 @@ export async function loadKernel(require, storageBackend) {
           window.addEventListener('unhandledrejection', window._unhandledRejectionHandler);
         }
 
-        // Handle keyboard shortcuts (use window.kernel so listener survives reloads)
-        if (!window._replKeyboardHandler) {
-          window._replKeyboardHandler = async (e) => {
-            if (e.key === 'Escape') {
-              await window.kernel?.repl?.toggle();
-            } else if (e.ctrlKey && e.key === '\\') {
-              await window.kernel?.repl?.toggle();
-            } else if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === '?') {
+        // Handle keyboard shortcuts for kernel features (help dialog)
+        // REPL shortcuts are handled by userland repl-ui library
+        if (!window._kernelKeyboardHandler) {
+          window._kernelKeyboardHandler = async (e) => {
+            if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === '?') {
               e.preventDefault();
               window.kernel?.showHelp();
             }
           };
-          document.addEventListener('keydown', window._replKeyboardHandler);
+          document.addEventListener('keydown', window._kernelKeyboardHandler);
         }
 
         // Handle browser back/forward navigation
@@ -1631,6 +1626,10 @@ export async function loadKernel(require, storageBackend) {
       if (window._replKeyboardHandler) {
         document.removeEventListener('keydown', window._replKeyboardHandler);
         delete window._replKeyboardHandler;
+      }
+      if (window._kernelKeyboardHandler) {
+        document.removeEventListener('keydown', window._kernelKeyboardHandler);
+        delete window._kernelKeyboardHandler;
       }
       if (window._popstateHandler) {
         window.removeEventListener('popstate', window._popstateHandler);
