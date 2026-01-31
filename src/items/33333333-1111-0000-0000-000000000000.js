@@ -151,7 +151,6 @@ export async function loadKernel(require, storageBackend) {
     async boot() {
       await this.storage.initialize();
       await this.ensureSeedItems();
-      await this.applyStyles();
 
       // Check for safe mode and debug mode
       const params = new URLSearchParams(window.location.search);
@@ -170,6 +169,8 @@ export async function loadKernel(require, storageBackend) {
       }
 
       if (this._safeMode) {
+        // In safe mode, apply styles directly (userland libraries don't run)
+        await this.applyStyles();
         this.safeMode.render(this.rootElement.querySelector('#main-view'));
       } else {
         await this.viewport.restore();
@@ -1419,8 +1420,10 @@ export async function loadKernel(require, storageBackend) {
       // "item:deleted" -> "onItemDeleted"
       // "item:created" -> "onItemCreated"
       // "system:error" -> "onSystemError"
-      const parts = eventName.split(':');
-      const camelParts = parts.map((part, i) =>
+      // "system:boot-complete" -> "onSystemBootComplete"
+      // Split by : and - then capitalize each part
+      const parts = eventName.split(/[:-]/);
+      const camelParts = parts.map(part =>
         part.charAt(0).toUpperCase() + part.slice(1).toLowerCase()
       );
       return 'on' + camelParts.join('');
