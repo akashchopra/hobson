@@ -490,7 +490,18 @@ export async function loadKernel(require, storageBackend) {
     // -------------------------------------------------------------------------
 
     async showItemList() {
-      // Remove existing modal if present
+      // Try userland library first
+      try {
+        const itemPalette = await this.moduleSystem.require('item-palette');
+        if (itemPalette?.show) {
+          await itemPalette.show();
+          return;
+        }
+      } catch {
+        // Fall back to kernel implementation
+      }
+
+      // Kernel fallback implementation
       this.hideItemList();
 
       const kernel = this;
@@ -617,7 +628,19 @@ export async function loadKernel(require, storageBackend) {
       }
     }
 
-    showHelp() {
+    async showHelp() {
+      // Try userland library first
+      try {
+        const helpDialog = await this.moduleSystem.require('help-dialog');
+        if (helpDialog?.show) {
+          helpDialog.show();
+          return;
+        }
+      } catch {
+        // Fall back to kernel implementation
+      }
+
+      // Kernel fallback implementation
       this.hideHelp();
 
       const overlay = document.createElement("div");

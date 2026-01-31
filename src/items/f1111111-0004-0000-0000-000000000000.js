@@ -18,7 +18,7 @@ export async function onSystemBootComplete({ safeMode }, _api) {
       // Cmd/Ctrl+Shift+? - Help dialog
       if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === '?') {
         e.preventDefault();
-        window.kernel?.showHelp();
+        await window.kernel?.showHelp();
       }
       // Note: Cmd+K (item palette) is handled by system:viewport-view
     };
