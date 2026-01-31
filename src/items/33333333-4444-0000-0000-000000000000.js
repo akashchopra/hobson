@@ -47,12 +47,14 @@ export class ModuleSystem {
 
     // Start loading and track the promise
     callStack.add(itemId);
+    const originalName = nameOrId !== itemId ? nameOrId : item.name;
     const loadPromise = this.evaluateCodeItem(item, callStack)
       .then(module => {
-        // Update cache on success
+        // Update cache on success, including name for getCached lookups
         this.moduleCache.set(itemId, {
           module,
-          timestamp: item.modified
+          timestamp: item.modified,
+          name: originalName
         });
         return module;
       })
@@ -134,6 +136,20 @@ export class ModuleSystem {
     }
 
     return false;
+  }
+
+  // Get a cached module synchronously (returns null if not cached)
+  // Use this for synchronous code paths that can't await require()
+  getCached(nameOrId) {
+    // For name lookups, we can't do async storage query, so only works with IDs
+    // or if we've seen this name before in the cache (stored during require)
+    for (const [itemId, cached] of this.moduleCache) {
+      // Check if this cache entry matches by name (from previous load) or ID
+      if (cached.name === nameOrId || itemId === nameOrId) {
+        return cached.module;
+      }
+    }
+    return null;
   }
 
   clearCache() {

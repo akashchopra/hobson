@@ -1037,17 +1037,79 @@ export async function loadKernel(require, storageBackend) {
           }
         },
 
-        // Viewport
+        // Viewport - delegates to userland libraries when available, falls back to kernel
         viewport: {
-          select: (itemId, parentId) => kernel.viewport.select(itemId, parentId),
-          clearSelection: () => kernel.viewport.clearSelection(),
-          getSelection: () => kernel.viewport.getSelection(),
-          getSelectionParent: () => kernel.viewport.getSelectionParent(),
-          getRoot: () => kernel.viewport.rootId,
-          getRootView: () => kernel.viewport.getRootView(),
+          select: async (itemId, parentId) => {
+            try {
+              const selMgr = await kernel.moduleSystem.require('selection-manager');
+              selMgr.select(itemId, parentId);
+            } catch {
+              // Fallback to kernel viewport
+              kernel.viewport.select(itemId, parentId);
+            }
+          },
+          clearSelection: async () => {
+            try {
+              const selMgr = await kernel.moduleSystem.require('selection-manager');
+              selMgr.clearSelection();
+            } catch {
+              kernel.viewport.clearSelection();
+            }
+          },
+          getSelection: () => {
+            try {
+              const selMgr = kernel.moduleSystem.getCached('selection-manager');
+              if (selMgr) return selMgr.getSelection();
+            } catch {}
+            return kernel.viewport.getSelection();
+          },
+          getSelectionParent: () => {
+            try {
+              const selMgr = kernel.moduleSystem.getCached('selection-manager');
+              if (selMgr) return selMgr.getSelectionParent();
+            } catch {}
+            return kernel.viewport.getSelectionParent();
+          },
+          getRoot: () => kernel.currentRoot,
+          getRootView: () => {
+            try {
+              const vpMgr = kernel.moduleSystem.getCached('viewport-manager');
+              if (vpMgr) return vpMgr.getRootView();
+            } catch {}
+            return kernel.viewport.getRootView();
+          },
           setRootView: async (viewId) => {
-            kernel.viewport.setRootView(viewId);
-            await kernel.viewport.persist();
+            try {
+              const vpMgr = await kernel.moduleSystem.require('viewport-manager');
+              vpMgr.setRootView(viewId);
+              await vpMgr.forcePersist();
+            } catch {
+              kernel.viewport.setRootView(viewId);
+              await kernel.viewport.persist();
+            }
+          },
+          // New: expose additional viewport-manager methods
+          getRootViewConfig: () => {
+            try {
+              const vpMgr = kernel.moduleSystem.getCached('viewport-manager');
+              if (vpMgr) return vpMgr.getRootViewConfig();
+            } catch {}
+            return kernel.viewport.getRootViewConfig?.() || null;
+          },
+          updateRootViewConfig: async (updates) => {
+            try {
+              const vpMgr = await kernel.moduleSystem.require('viewport-manager');
+              vpMgr.updateRootViewConfig(updates);
+            } catch {
+              kernel.viewport.updateRootViewConfig?.(updates);
+            }
+          },
+          restorePreviousRootView: () => {
+            try {
+              const vpMgr = kernel.moduleSystem.getCached('viewport-manager');
+              if (vpMgr) return vpMgr.restorePreviousRootView();
+            } catch {}
+            return kernel.viewport.restorePreviousRootView?.() || false;
           }
         },
 
