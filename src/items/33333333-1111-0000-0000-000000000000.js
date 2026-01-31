@@ -785,6 +785,7 @@ export async function loadKernel(require, storageBackend) {
 
         // Code operations
         require: (name) => kernel.moduleSystem.require(name),
+        typeChainIncludes: (typeId, targetId) => kernel.moduleSystem.typeChainIncludes(typeId, targetId),
 
         // Rendering operations
         renderItem: (itemId, viewId) => kernel.rendering.renderItem(itemId, viewId),
