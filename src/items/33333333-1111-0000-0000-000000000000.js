@@ -90,7 +90,7 @@ export async function loadKernel(require, storageBackend) {
     VIEW: "aaaaaaaa-0000-0000-0000-000000000000",
     DEFAULT_VIEW: "aaaaaaaa-1111-0000-0000-000000000000",
     VIEW_SPEC: "bbbbbbbb-0000-0000-0000-000000000000",
-    FIELD_VIEW: "cccccccc-0000-0000-0000-000000000000",
+    // FIELD_VIEW removed - not used by kernel, userland items use the GUID directly
     // Event definition types
     EVENT_DEFINITION: "e0e00000-0000-0000-0000-000000000000"
   };
