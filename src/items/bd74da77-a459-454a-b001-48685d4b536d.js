@@ -221,7 +221,13 @@ export async function render(item, api) {
     const replItem = api.createElement('div', { class: 'context-menu-item' }, ['Open REPL (Esc)']);
     replItem.onclick = async () => {
       hideContextMenu();
-      await window.kernel?.repl?.toggle();
+      try {
+        const replUi = await api.require('repl-ui');
+        await replUi.toggle();
+      } catch {
+        // Fallback to kernel if repl-ui not available
+        await window.kernel?.repl?.toggle();
+      }
     };
     contextMenu.appendChild(replItem);
 
