@@ -2,7 +2,8 @@
 
 **Status**: Review of `Kernel_Minimization_Plan.md` and `Theming_System_Design.md`
 **Date**: 2026-01-31
-**Verdict**: Philosophically sound, but practical gaps need resolution before implementation
+**Updated**: 2026-01-31 (refined bootstrap solution)
+**Verdict**: Philosophically sound; bootstrap solution identified
 
 ---
 
@@ -19,7 +20,7 @@ This review documents these issues and proposes resolutions.
 
 ---
 
-## Issue 1: The Bootstrap Paradox
+## Issue 1: The Bootstrap Paradox (RESOLVED)
 
 ### Problem
 
@@ -29,88 +30,104 @@ The minimization plan describes three userland initialization patterns:
 2. **Startup script** - Library with `system:boot-complete` watch auto-runs
 3. **Feature pack** - One library that loads all others
 
-None of these solve the first-boot problem:
+The concern was: If REPL moves to userland, how does a new user activate *anything*?
 
-- **Manual** requires REPL, but REPL is being moved to userland
-- **Startup script** requires the library to already exist with registered watches
-- **Feature pack** still requires something to call `api.require()`
-
-If REPL moves to userland, how does a new user activate *anything*?
-
-### Current Watch Mechanics
+### Key Insight: Watches Are Dynamically Discovered
 
 Examining `kernel-core.js`, declarative watches work by:
 
-1. `setupDeclarativeWatches()` registers a wildcard listener on `item:*`
-2. When any item event fires, `dispatchToWatchers()` scans ALL items in storage
+1. `setupDeclarativeWatches()` registers a wildcard listener on `item:*` and `system:*`
+2. When any event fires, `dispatchToWatchers()` scans ALL items in storage
 3. Items with `content.watches` arrays matching the event have their handlers called
 4. The handler is loaded via `require()` on-demand
 
-**Key insight**: Libraries don't need to be "imported" to have their watches work. They just need to *exist in storage* with a `content.watches` declaration. The kernel finds them by scanning.
+**Libraries don't need to be "imported" to have their watches work.** They just need to *exist in storage* with a `content.watches` declaration. The kernel finds them by scanning on every event.
 
-However, this only helps if:
-- The library exists in the initial seed/import
-- An event fires that matches the watch
+### Resolution: system:boot-complete Event
 
-On first boot, `kernel-styles` exists but no `item:updated` event fires for it - the styles are just *there*.
+The solution uses the existing watch mechanism with one kernel addition:
 
-### Proposed Resolution: Auto-Import Mechanism
+**1. Kernel emits `system:boot-complete` at end of boot**
 
-Add a minimal "auto-import" field to the viewport item:
+```javascript
+// End of kernel-core boot()
+this.events.emit('system:boot-complete', {
+  rootId: this.currentRoot,
+  safeMode: this._safeMode,
+  debugMode: this.debugMode
+});
+```
+
+**2. Libraries watch this event for activation**
 
 ```javascript
 {
-  id: "88888888-0000-0000-0000-000000000000",
-  type: "77777777-0000-0000-0000-000000000000",
-  name: "viewport",
+  name: "theme-hot-reload",
   content: {
-    autoActivate: [
-      "theme-hot-reload",
-      "repl-ui",
-      "keyboard-shortcuts"
-    ]
+    watches: [
+      { event: "system:boot-complete" },
+      { event: "item:updated", id: "33333333-8888-0000-0000-000000000000" }
+    ],
+    code: `
+      export function onSystemBootComplete({}, api) {
+        applyStyles(api);
+      }
+
+      export function onItemUpdated({ item }, api) {
+        applyStyles(api);
+      }
+
+      function applyStyles(api) { /* ... */ }
+    `
   }
 }
 ```
 
-During boot, after `setupDeclarativeWatches()`, the kernel does:
+**3. Kernel calls boot handler when saving items that watch boot**
+
+To avoid requiring reload for newly-created libraries:
 
 ```javascript
-// Auto-activate configured libraries
-const viewport = await this.storage.get(IDS.VIEWPORT);
-const toActivate = viewport.content?.autoActivate || [];
-for (const name of toActivate) {
-  try {
-    const lib = await this.moduleSystem.require(name);
-    if (lib.activate) await lib.activate(this.createREPLAPI());
-  } catch (e) {
-    console.warn(`Auto-activate ${name} failed:`, e.message);
+// In kernel-core saveItem()
+async saveItem(item, options = {}) {
+  // ... existing save logic ...
+
+  // If item watches system:boot-complete, call its handler now
+  // (so newly created libraries activate immediately)
+  if (item.content?.watches?.some(w => w.event === 'system:boot-complete')) {
+    await this.callWatchHandler(item, 'system:boot-complete', {
+      rootId: this.currentRoot,
+      lateActivation: true  // handler can distinguish if needed
+    });
   }
 }
 ```
 
-**Why this works**:
-- It's data, not code (configuration in an item)
-- Users can modify it (remove features they don't want)
-- Kernel remains minimal (just reads a list and calls `require`)
-- Fails gracefully (warns but continues)
-- Follows existing patterns (`api.require()` already exists)
+### How It Works
 
-**Alternative**: Emit `system:boot-complete` event and let startup scripts self-register. But this still requires the startup script to exist, and doesn't help with first boot unless we ship it in seeds.
+| Scenario | What happens |
+|----------|--------------|
+| Boot with existing libraries | `system:boot-complete` fires → all watchers run |
+| Create new library post-boot | `saveItem()` detects boot watch → calls handler directly |
+| Edit existing library | Same as create - handler re-runs with fresh code |
 
-### Decision Needed
+### Why This Is Better Than Auto-Activate List
 
-Choose one of:
+- **No separate configuration** - library declares its own needs
+- **Uses existing mechanism** - just events and watches
+- **Self-describing** - look at any library to see when it activates
+- **No reload needed** - post-boot libraries work immediately
+- **Minimal kernel addition** - one event emit + one check in saveItem
 
-1. **Auto-activate list** in viewport (explicit, configurable)
-2. **Boot-complete event** + shipped startup script (implicit, watch-based)
-3. **Both** (belt and suspenders)
+### First Boot Note
 
-Recommendation: Option 1 (auto-activate list) is simpler and more transparent.
+First boot without a starter pack is rare (user typically imports `initial-kernel.json` or similar). The bootstrap.html already provides an import UI for fresh systems. Libraries included in the starter pack have their boot watches triggered automatically.
+
+**Decision**: RESOLVED - Use `system:boot-complete` event pattern.
 
 ---
 
-## Issue 2: applyStyles() Contradiction
+## Issue 2: applyStyles() Contradiction (RESOLVED)
 
 ### Problem
 
@@ -120,79 +137,56 @@ The theming document says:
 The minimization document says:
 > "Remove `applyStyles()` from kernel"
 
-These directly conflict.
+These appeared to conflict.
 
-### Current Behavior
+### Resolution
 
-`kernel-core.applyStyles()` (lines 155-174):
+With the `system:boot-complete` event (Issue 1), the contradiction is resolved:
 
-1. Removes existing `#kernel-styles` element if present
-2. Creates new `<style id="kernel-styles">`
-3. Loads CSS from `kernel-styles` item
-4. Falls back to minimal inline CSS if item missing
-5. Appends to `<head>`
+1. **Remove `applyStyles()` from kernel** - it's no longer needed
+2. **`theme-hot-reload` watches `system:boot-complete`** - applies styles at boot
+3. **`theme-hot-reload` watches `item:updated` for kernel-styles** - handles hot-reload
 
-This runs once during `boot()`, before any userland code.
-
-### Analysis
-
-If `applyStyles()` is removed:
-
-1. No styles are applied on boot
-2. User sees unstyled content until `theme-hot-reload` runs
-3. But `theme-hot-reload` only watches `item:updated` - no event fires on first boot
-4. System remains unstyled
-
-The hot-reload library would need an `activate()` function that applies styles immediately, plus a watch for updates. But who calls `activate()`? Back to Issue 1.
-
-### Proposed Resolution: Two-Phase Approach
-
-**Phase 1 (Theming MVP)**: Keep `applyStyles()` in kernel, add the data attribute
+The library handles both initial application AND updates:
 
 ```javascript
-async applyStyles() {
-  const existing = document.querySelector('style[data-kernel-styles]');
-  if (existing) existing.remove();
+{
+  name: "theme-hot-reload",
+  content: {
+    watches: [
+      { event: "system:boot-complete" },
+      { event: "item:updated", id: "33333333-8888-0000-0000-000000000000" }
+    ],
+    code: `
+      function applyStyles(api) {
+        const existing = document.querySelector('style[data-kernel-styles]');
+        if (existing) existing.remove();
 
-  const style = document.createElement('style');
-  style.setAttribute('data-kernel-styles', 'true');
-  // ... rest unchanged
+        api.get(api.IDS.KERNEL_STYLES).then(stylesItem => {
+          const style = document.createElement('style');
+          style.setAttribute('data-kernel-styles', 'true');
+          style.textContent = stylesItem.content.code;
+          document.head.appendChild(style);
+        });
+      }
+
+      export function onSystemBootComplete({}, api) {
+        applyStyles(api);
+      }
+
+      export function onItemUpdated({ item }, api) {
+        applyStyles(api);
+      }
+    `
+  }
 }
 ```
 
-Create `theme-hot-reload` library that handles updates. The kernel applies initial styles; the library handles hot-reload.
+### Bootstrap Fallback
 
-**Phase 2 (After auto-activate solved)**: Move initial application to `theme-hot-reload.activate()`
+The `bootstrap.html` should include minimal inline CSS for the brief moment before `system:boot-complete` fires. This is already the case - the current bootstrap has basic layout styles.
 
-```javascript
-// theme-hot-reload library
-export async function activate(api) {
-  await applyStyles(api);
-}
-
-export async function onItemUpdated({ item }, api) {
-  await applyStyles(api);
-}
-
-async function applyStyles(api) {
-  const existing = document.querySelector('style[data-kernel-styles]');
-  if (existing) existing.remove();
-
-  const stylesItem = await api.get(api.IDS.KERNEL_STYLES);
-  const style = document.createElement('style');
-  style.setAttribute('data-kernel-styles', 'true');
-  style.textContent = stylesItem.content.code;
-  document.head.appendChild(style);
-}
-```
-
-With auto-activate solving the bootstrap problem, the kernel's `applyStyles()` can be removed.
-
-### Decision Needed
-
-1. Implement Phase 1 first (keep `applyStyles()`, add hot-reload)
-2. Implement Phase 2 after auto-activate mechanism exists
-3. Update both documents to reflect this sequencing
+**Decision**: RESOLVED - Remove `applyStyles()` from kernel; library handles everything via boot-complete event.
 
 ---
 
@@ -318,34 +312,68 @@ Implement all three (A, B, C)? The hardcoded escape hatch (A) is essential; B an
 
 ---
 
-## Issue 5: Missing system:boot-complete Event
+## Issue 5: system:boot-complete Event (RESOLVED - KEY FEATURE)
 
-### Problem
+### Summary
 
-The startup script pattern in the minimization plan assumes a `system:boot-complete` event exists. It doesn't.
+This is the key kernel addition that enables the entire minimization plan. Two changes are needed:
 
-### Proposed Resolution
-
-Add to `kernel-core.boot()`, after all initialization:
+### Change 1: Emit event at end of boot
 
 ```javascript
-async boot() {
-  // ... existing boot code ...
+// End of kernel-core boot()
+this.events.emit('system:boot-complete', {
+  rootId: this.currentRoot,
+  safeMode: this._safeMode,
+  debugMode: this.debugMode
+});
+```
 
-  // Signal that boot is complete (for startup scripts)
-  this.events.emit('system:boot-complete', {
-    safeMode: this._safeMode,
-    debugMode: this.debugMode,
-    rootId: this.currentRoot
-  });
+### Change 2: Call boot handlers when saving items that watch boot
+
+```javascript
+// In kernel-core saveItem()
+async saveItem(item, options = {}) {
+  const { silent = false } = options;
+
+  // ... existing save logic (exists check, timestamps, storage.set, events) ...
+
+  // If item watches system:boot-complete, call its handler now
+  // This enables newly-created libraries to activate without reload
+  if (!silent && item.content?.watches?.some(w => w.event === 'system:boot-complete')) {
+    try {
+      await this.callWatchHandler(item, 'system:boot-complete', {
+        rootId: this.currentRoot,
+        lateActivation: true
+      });
+    } catch (e) {
+      console.warn(`Boot handler for ${item.name || item.id} failed:`, e);
+    }
+  }
+
+  return item;
 }
 ```
 
-This is a one-line addition that enables the startup script pattern.
+### Behavior Matrix
 
-### Decision Needed
+| Scenario | Trigger | `lateActivation` |
+|----------|---------|------------------|
+| Existing library at boot | `system:boot-complete` event | `false` (or undefined) |
+| New library created post-boot | `saveItem()` direct call | `true` |
+| Existing library edited post-boot | `saveItem()` direct call | `true` |
 
-Add this event. It's minimal, useful, and doesn't add complexity.
+The `lateActivation` flag lets handlers distinguish if needed (e.g., skip one-time-only initialization that already happened).
+
+### Why This Works
+
+- Uses existing watch infrastructure (no new mechanisms)
+- Libraries are self-describing (watch declaration shows activation trigger)
+- No reload needed for new libraries
+- No separate "auto-activate list" to maintain
+- Minimal kernel addition (~15 lines total)
+
+**Decision**: RESOLVED - Implement both changes.
 
 ---
 
@@ -448,59 +476,52 @@ Update documentation to clarify:
 
 Based on this review, the recommended implementation sequence is:
 
-### Phase 0: Prerequisites (Before Any Migration)
+### Phase 0: Kernel Prerequisites
 
-1. Add `system:boot-complete` event to kernel
-2. Add hardcoded safe-mode keyboard shortcut (Ctrl+Shift+S)
-3. Implement auto-activate mechanism in viewport
-4. Rename `createREPLAPI()` to `createScriptingAPI()` with alias
+Two small kernel changes enable everything:
 
-### Phase 1: Theming (As Currently Designed)
+1. **Emit `system:boot-complete`** at end of `boot()`
+2. **Call boot handlers in `saveItem()`** for items watching boot-complete
+3. Add hardcoded safe-mode keyboard shortcut (Ctrl+Shift+S)
 
-1. Keep `applyStyles()` in kernel (don't remove yet)
-2. Add `data-kernel-styles` attribute
-3. Define CSS variables in `kernel-styles`
-4. Create `theme-hot-reload` library with:
-   - `activate()` function (for explicit activation)
-   - `onItemUpdated` handler (for hot reload)
-5. Add `theme-hot-reload` to default auto-activate list
-6. Test: fresh boot applies styles, editing updates live
+Optional: Rename `createREPLAPI()` to `createScriptingAPI()` with alias
+
+### Phase 1: Theming
+
+1. Define CSS variables in `kernel-styles`
+2. Create `theme-hot-reload` library with:
+   - `onSystemBootComplete` handler (initial application)
+   - `onItemUpdated` handler (hot reload)
+3. Remove `applyStyles()` from kernel boot
+4. Ensure bootstrap.html has adequate fallback CSS
+5. Test: fresh boot applies styles, editing updates live
 
 ### Phase 2: REPL UI Migration
 
 1. Create `repl-ui` library with:
-   - `activate()` - creates container, registers handlers
+   - `onSystemBootComplete` - creates container, registers handlers
    - Full REPL functionality (toggle, run, history)
 2. Remove REPL container creation from kernel boot
-3. Add `repl-ui` to default auto-activate list
-4. Test: REPL works via Escape key after auto-activation
+3. Test: REPL works via Escape key after boot-complete
 
 ### Phase 3: Keyboard Shortcuts Migration
 
 1. Create `keyboard-shortcuts` library with:
+   - `onSystemBootComplete` - registers document listener
    - Configurable bindings as data
-   - `activate()` - registers document listener
    - Action dispatcher
 2. Remove keyboard handlers from kernel boot (except safe-mode shortcut)
-3. Add `keyboard-shortcuts` to default auto-activate list
-4. Test: all shortcuts work, custom bindings possible
+3. Test: all shortcuts work, custom bindings possible
 
-### Phase 4: Remove applyStyles() from Kernel
-
-1. Move initial style application to `theme-hot-reload.activate()`
-2. Remove `applyStyles()` from kernel boot
-3. Ensure bootstrap.html has adequate fallback CSS
-4. Test: fresh boot still styled (via auto-activate)
-
-### Phase 5: Remaining UI Components
+### Phase 4: Remaining UI Components
 
 1. Item palette (`showItemList()`) → `item-palette` library
 2. Help dialog (`showHelp()`) → `help-browser` library or help item
 3. Raw editor → keep minimal in safe mode, enhance in userland
 
-### Phase 6: Polish
+### Phase 5: Polish
 
-1. Create `standard-features` pack that loads common libraries
+1. Create `standard-features` pack (optional convenience library)
 2. Improve safe mode with library management
 3. Document all patterns
 4. Create "minimal" vs "full" configuration examples
@@ -509,41 +530,88 @@ Based on this review, the recommended implementation sequence is:
 
 ## Open Questions
 
-These need explicit decisions before proceeding:
+Most questions resolved. Remaining decisions:
 
-1. **Auto-activate mechanism**: Use viewport field, or different approach?
-2. **Naming**: Rename `createREPLAPI()` now or later?
-3. **CSS variables**: Use semantic naming from the start?
+1. ~~**Auto-activate mechanism**~~ → RESOLVED: Use `system:boot-complete` event
+2. **Naming**: Rename `createREPLAPI()` now or later? (Low priority)
+3. **CSS variables**: Use semantic naming from the start? (Recommended: yes)
 4. **Safe mode shortcut**: Which key combination? (Proposed: Ctrl+Shift+S)
-5. **Phase 0 scope**: Implement all prerequisites before Phase 1, or interleave?
+5. ~~**Phase 0 scope**~~ → RESOLVED: Minimal kernel changes enable everything
 
 ---
 
 ## Appendix: Code Snippets
 
-### A. Auto-Activate Implementation
+### A. Kernel Changes (Complete)
 
 ```javascript
-// In kernel-core boot(), after setupDeclarativeWatches()
-async autoActivateLibraries() {
-  try {
-    const viewport = await this.storage.get(this.IDS.VIEWPORT);
-    const toActivate = viewport.content?.autoActivate || [];
+// === Change 1: End of kernel-core boot() ===
 
-    for (const name of toActivate) {
+async boot() {
+  // ... existing boot code ...
+
+  // After all initialization, emit boot-complete for userland libraries
+  this.events.emit('system:boot-complete', {
+    rootId: this.currentRoot,
+    safeMode: this._safeMode,
+    debugMode: this.debugMode
+  });
+}
+
+// === Change 2: In kernel-core saveItem() ===
+
+async saveItem(item, options = {}) {
+  const { silent = false } = options;
+
+  const exists = await this.storage.exists(item.id);
+  const previous = exists ? await this.storage.get(item.id) : null;
+
+  item.modified = Date.now();
+  if (!exists && !item.created) {
+    item.created = Date.now();
+  }
+
+  await this.storage.set(item, this);
+
+  // Clear module cache if this is a code item
+  if (await this.isCodeItem(item)) {
+    this.moduleSystem.clearCache();
+  }
+
+  if (!silent) {
+    if (exists) {
+      this.events.emit('item:updated', { id: item.id, item, previous });
+    } else {
+      this.events.emit('item:created', { id: item.id, item });
+    }
+
+    // NEW: If item watches system:boot-complete, call its handler now
+    // This enables newly-created libraries to activate without reload
+    if (item.content?.watches?.some(w => w.event === 'system:boot-complete')) {
       try {
-        const lib = await this.moduleSystem.require(name);
-        if (typeof lib.activate === 'function') {
-          await lib.activate(this.createScriptingAPI());
-        }
+        await this.callWatchHandler(item, 'system:boot-complete', {
+          rootId: this.currentRoot,
+          lateActivation: true
+        });
       } catch (e) {
-        console.warn(`Auto-activate ${name} failed:`, e.message);
-        this.showActivationWarning(name, e);
+        console.warn(`Boot handler for ${item.name || item.id} failed:`, e);
       }
     }
-  } catch (e) {
-    console.warn('Auto-activate failed:', e.message);
   }
+
+  return item;
+}
+
+// === Change 3: Safe mode keyboard shortcut (in boot, unconditionally) ===
+
+if (!window._safeModeShortcut) {
+  window._safeModeShortcut = (e) => {
+    if (e.ctrlKey && e.shiftKey && e.key === 'S') {
+      e.preventDefault();
+      window.location.href = window.location.pathname + '?safe=1';
+    }
+  };
+  document.addEventListener('keydown', window._safeModeShortcut);
 }
 ```
 
@@ -555,12 +623,10 @@ async autoActivateLibraries() {
   name: "theme-hot-reload",
   type: "66666666-0000-0000-0000-000000000000",
   content: {
-    description: "Applies and hot-reloads kernel styles",
+    description: "Applies kernel styles at boot and hot-reloads on edit",
     watches: [
-      {
-        event: "item:updated",
-        id: "33333333-8888-0000-0000-000000000000"
-      }
+      { event: "system:boot-complete" },
+      { event: "item:updated", id: "33333333-8888-0000-0000-000000000000" }
     ],
     code: `
 // Apply styles from kernel-styles item
@@ -574,39 +640,64 @@ async function applyStyles(api) {
     style.setAttribute('data-kernel-styles', 'true');
     style.textContent = stylesItem.content.code;
     document.head.appendChild(style);
-    console.log('✨ Styles applied');
   } catch (e) {
     console.error('Failed to apply styles:', e);
   }
 }
 
-// Called on auto-activate (initial boot)
-export async function activate(api) {
+// Called at boot (or when library is created/edited post-boot)
+export async function onSystemBootComplete({ lateActivation }, api) {
   await applyStyles(api);
+  if (lateActivation) {
+    console.log('✨ Theme library activated');
+  }
 }
 
 // Called when kernel-styles is edited
 export async function onItemUpdated({ item }, api) {
   await applyStyles(api);
-  console.log('✨ Theme hot-reloaded!');
+  console.log('✨ Theme hot-reloaded');
 }
     `
   }
 }
 ```
 
-### C. Safe Mode Keyboard Shortcut
+### C. repl-ui Library (Sketch)
 
 ```javascript
-// In kernel-core boot(), unconditionally
-if (!window._safeModeShortcut) {
-  window._safeModeShortcut = (e) => {
-    if (e.ctrlKey && e.shiftKey && e.key === 'S') {
-      e.preventDefault();
-      window.location.href = window.location.pathname + '?safe=1';
+{
+  name: "repl-ui",
+  type: "66666666-0000-0000-0000-000000000000",
+  content: {
+    description: "REPL user interface",
+    watches: [
+      { event: "system:boot-complete" }
+    ],
+    code: `
+let container = null;
+let visible = false;
+
+export function onSystemBootComplete({ safeMode }, api) {
+  if (safeMode) return;  // Don't create REPL in safe mode
+
+  // Create REPL container (similar to current kernel-repl)
+  container = createContainer();
+  document.getElementById('app').appendChild(container);
+
+  // Register toggle shortcut
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      toggle();
     }
-  };
-  document.addEventListener('keydown', window._safeModeShortcut);
+  });
+}
+
+function createContainer() { /* ... */ }
+function toggle() { visible = !visible; /* ... */ }
+export function run(code) { /* ... */ }
+    `
+  }
 }
 ```
 
@@ -614,8 +705,15 @@ if (!window._safeModeShortcut) {
 
 ## Conclusion
 
-The kernel minimization vision is correct. The theming system is a good first step. But the practical implementation requires solving the bootstrap paradox first.
+The kernel minimization vision is correct, and the bootstrap problem is now solved.
 
-**Recommended next step**: Implement Phase 0 (prerequisites), then Phase 1 (theming with `applyStyles()` still in kernel). This proves the pattern while maintaining a working system.
+**The solution is elegant**: Two small kernel changes (~20 lines total) enable the entire minimization plan:
 
-The full removal of `applyStyles()` and REPL from the kernel should wait until auto-activate is proven reliable.
+1. Emit `system:boot-complete` at end of boot
+2. Call boot handlers when saving items that watch boot-complete
+
+This leverages the existing declarative watch mechanism rather than adding new concepts. Libraries are self-describing - their watch declarations show when they activate. No separate configuration, no reload needed for new libraries.
+
+**Recommended next step**: Implement Phase 0 (kernel changes), then Phase 1 (theming). The theming library will be the proof-of-concept that validates the pattern before migrating REPL and keyboard shortcuts.
+
+**Key insight**: First boot without a starter pack is rare. The system ships with libraries that watch `system:boot-complete`, so activation happens automatically. The `saveItem()` enhancement ensures post-boot library creation also works without reload.
