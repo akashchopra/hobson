@@ -83,7 +83,33 @@ export async function loadKernel(require, storageBackend) {
     VIEW: "aaaaaaaa-0000-0000-0000-000000000000",
     DEFAULT_VIEW: "aaaaaaaa-1111-0000-0000-000000000000",
     VIEW_SPEC: "bbbbbbbb-0000-0000-0000-000000000000",
-    FIELD_VIEW: "cccccccc-0000-0000-0000-000000000000"
+    FIELD_VIEW: "cccccccc-0000-0000-0000-000000000000",
+    // Event definition types
+    EVENT_DEFINITION: "e0e00000-0000-0000-0000-000000000000"
+  };
+
+  // Event IDs - for subscribing and emitting events
+  const EVENT_IDS = {
+    // Base type (subscribe to this for ALL events)
+    EVENT_DEFINITION: "e0e00000-0000-0000-0000-000000000000",
+
+    // Event group types (subscribe to these for categories)
+    ITEM_EVENT:     "e0e00000-0001-0000-0000-000000000000",
+    SYSTEM_EVENT:   "e0e00000-0002-0000-0000-000000000000",
+    VIEWPORT_EVENT: "e0e00000-0003-0000-0000-000000000000",
+
+    // Specific item events
+    ITEM_CREATED: "e0e00000-0001-0001-0000-000000000000",
+    ITEM_UPDATED: "e0e00000-0001-0002-0000-000000000000",
+    ITEM_DELETED: "e0e00000-0001-0003-0000-000000000000",
+
+    // Specific system events
+    SYSTEM_ERROR: "e0e00000-0002-0001-0000-000000000000",
+    SYSTEM_BOOT:  "e0e00000-0002-0002-0000-000000000000",
+
+    // Specific viewport events
+    VIEWPORT_SELECTION_CHANGED: "e0e00000-0003-0001-0000-000000000000",
+    VIEWPORT_ROOT_CHANGED:      "e0e00000-0003-0002-0000-000000000000"
   };
 // [END:SEED_IDS]
 
@@ -97,6 +123,7 @@ export async function loadKernel(require, storageBackend) {
   class Kernel {
     constructor() {
       this.IDS = IDS;
+      this.EVENT_IDS = EVENT_IDS;
       this.storage = new Storage(storageBackend);
       this.viewport = new Viewport(this.storage);
       this.moduleSystem = new ModuleSystem(this);
@@ -189,6 +216,9 @@ export async function loadKernel(require, storageBackend) {
           window.addEventListener('popstate', window._popstateHandler);
         }
 
+        // Build event type cache for hierarchical event dispatch (Phase 1 prep)
+        await this.buildEventTypeCache();
+
         // Setup declarative event watches BEFORE first render
         // so error handlers are active during boot
         this.setupDeclarativeWatches();
@@ -222,6 +252,68 @@ export async function loadKernel(require, storageBackend) {
         // Seeds missing - should have been imported via initial-kernel.json
         console.warn('Seed items not found. Please import initial-kernel.json');
       }
+    }
+
+    // -------------------------------------------------------------------------
+    // Event Type Cache (for hierarchical event dispatch)
+    // -------------------------------------------------------------------------
+
+    async buildEventTypeCache() {
+      // Build a cache mapping each event definition ID to all its ancestor type IDs.
+      // This enables O(1) lookups during emit() to check if a subscribed type
+      // is in the emitted event's type chain.
+      this.eventTypeCache = new Map();
+
+      try {
+        // Find all items that extend event-definition
+        const allItems = await this.storage.getAll();
+        const eventDefs = [];
+
+        for (const item of allItems) {
+          if (await this.moduleSystem.typeChainIncludes(item.type, EVENT_IDS.EVENT_DEFINITION)) {
+            eventDefs.push(item);
+          }
+          // Also include the event-definition type itself
+          if (item.id === EVENT_IDS.EVENT_DEFINITION) {
+            eventDefs.push(item);
+          }
+        }
+
+        // For each event definition, compute its full type chain
+        for (const eventDef of eventDefs) {
+          const ancestors = await this.getTypeChain(eventDef.id);
+          this.eventTypeCache.set(eventDef.id, new Set(ancestors));
+        }
+      } catch (e) {
+        // If event definitions don't exist yet, cache will be empty
+        // This is fine for Phase 1 where we're just setting up
+        console.debug('Event type cache: no event definitions found yet');
+      }
+    }
+
+    async getTypeChain(itemId) {
+      // Returns array of all type IDs from this item up to atom (inclusive)
+      const chain = [itemId];
+      let currentId = itemId;
+      const visited = new Set();
+
+      while (currentId && !visited.has(currentId)) {
+        visited.add(currentId);
+
+        try {
+          const item = await this.storage.get(currentId);
+          if (item.type && item.type !== currentId) {
+            chain.push(item.type);
+            currentId = item.type;
+          } else {
+            break; // Reached atom (self-referential) or no type
+          }
+        } catch {
+          break; // Item not found
+        }
+      }
+
+      return chain;
     }
 
     async applyStyles() {
@@ -862,6 +954,7 @@ export async function loadKernel(require, storageBackend) {
 
         // Well-known IDs
         IDS,
+        EVENT_IDS,
 
         // Helper functions
         helpers: {

@@ -525,6 +525,7 @@ export class RenderingSystem {
   createRendererAPI(containerItem, context = {}) {
     const kernel = this.kernel;
     const IDS = kernel.IDS;
+    const EVENT_IDS = kernel.EVENT_IDS;
     const rendering = this;
 
     const api = {
@@ -942,6 +943,7 @@ export class RenderingSystem {
 
       // Well-known IDs
       IDS,
+      EVENT_IDS,
 
       // Instance ID (for nested Hobson instances)
       getInstanceId: () => kernel.storage.instanceId,
