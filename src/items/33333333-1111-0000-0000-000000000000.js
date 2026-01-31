@@ -89,7 +89,7 @@ export async function loadKernel(require, storageBackend) {
     // Unified view system
     VIEW: "aaaaaaaa-0000-0000-0000-000000000000",
     DEFAULT_VIEW: "aaaaaaaa-1111-0000-0000-000000000000",
-    VIEW_SPEC: "bbbbbbbb-0000-0000-0000-000000000000",
+    // VIEW_SPEC removed - rendering system discovers by name
     // FIELD_VIEW removed - not used by kernel, userland items use the GUID directly
     // Event definition types
     EVENT_DEFINITION: "e0e00000-0000-0000-0000-000000000000"
@@ -989,15 +989,13 @@ export async function loadKernel(require, storageBackend) {
                 }
 
                 // Check for views - partial re-render for each
-                const viewItems = items.filter(i =>
-                  i.type === IDS.VIEW || i.type === IDS.VIEW_SPEC
-                );
+                const viewItems = items.filter(i => i.type === IDS.VIEW);
                 for (const viewItem of viewItems) {
                   await kernel.rendering.rerenderByView(viewItem.id);
                 }
 
                 // For data items, re-render if currently visible
-                const codeTypes = [IDS.VIEW, IDS.VIEW_SPEC, IDS.LIBRARY, IDS.KERNEL_MODULE];
+                const codeTypes = [IDS.VIEW, IDS.LIBRARY, IDS.KERNEL_MODULE];
                 const dataItems = items.filter(i =>
                   !codeTypes.includes(i.type) && i.id !== IDS.KERNEL_STYLES
                 );

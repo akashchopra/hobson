@@ -315,20 +315,9 @@ export class RenderingSystem {
 
     // Load and execute view
     try {
-      // Check if view is actually a view-spec (needs system:generic-view to interpret)
-      const isViewSpec = IDS.VIEW_SPEC && view.type === IDS.VIEW_SPEC;
-
-      let viewModule;
-      let viewSpecItem = null;
-      if (isViewSpec) {
-        // Load system:generic-view to interpret the view-spec
-        viewModule = await this.kernel.moduleSystem.require('system:generic-view');
-        viewSpecItem = view;
-      } else {
-        viewModule = await this.kernel.moduleSystem.require(view.id);
-      }
+      const viewModule = await this.kernel.moduleSystem.require(view.id);
       const api = this.createRendererAPI(item, newContext);
-      const domNode = await viewModule.render(item, isViewSpec ? viewSpecItem : api, isViewSpec ? api : undefined);
+      const domNode = await viewModule.render(item, api);
 
       // Register render instance (Phase 2)
       if (domNode) {
@@ -390,7 +379,6 @@ export class RenderingSystem {
 
     // Query all views once at the beginning (not per type in chain)
     const allViews = await this.kernel.storage.query({ type: IDS.VIEW });
-    const allViewSpecs = await this.kernel.storage.query({ type: IDS.VIEW_SPEC });
 
     let currentType = typeId;
     const visited = new Set();
@@ -398,16 +386,10 @@ export class RenderingSystem {
     while (currentType && !visited.has(currentType)) {
       visited.add(currentType);
 
-      // Look for VIEW items (filter locally)
+      // Look for VIEW items
       const view = allViews.find(v => v.content?.for_type === currentType);
       if (view) {
         return view;
-      }
-
-      // Look for VIEW_SPEC items (declarative views)
-      const viewSpec = allViewSpecs.find(v => v.content?.for_type === currentType);
-      if (viewSpec) {
-        return viewSpec;
       }
 
       // Move up the type chain
@@ -435,7 +417,6 @@ export class RenderingSystem {
 
     // Query all views once at the beginning (not per type in chain)
     const allViews = await this.kernel.storage.query({ type: IDS.VIEW });
-    const allViewSpecs = await this.kernel.storage.query({ type: IDS.VIEW_SPEC });
 
     let currentType = typeId;
     const visited = new Set();
@@ -452,20 +433,6 @@ export class RenderingSystem {
             view,
             forType: currentType,
             inherited: currentType !== typeId
-          });
-        }
-      }
-
-      // Include view-specs (declarative views)
-      const viewSpecsForType = allViewSpecs.filter(v => v.content?.for_type === currentType);
-      for (const viewSpec of viewSpecsForType) {
-        if (!seenIds.has(viewSpec.id)) {
-          seenIds.add(viewSpec.id);
-          result.push({
-            view: viewSpec,
-            forType: currentType,
-            inherited: currentType !== typeId,
-            isViewSpec: true
           });
         }
       }
@@ -657,6 +624,9 @@ export class RenderingSystem {
 
       // Get the parent ID that rendered this item
       getParentId: () => context.parentId || null,
+
+      // Get the ID of the view being used to render this item
+      getViewId: () => context.viewId || null,
 
       // Get navigation params passed from parent (for scroll-to-line/region)
       // Returns { field, line, region } or null

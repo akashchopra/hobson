@@ -68,7 +68,11 @@ async function returnToDefaultView(itemId, api) {
   }
 }
 
-export async function render(item, viewSpec, api) {
+export async function render(item, api) {
+  // Fetch the view item that's using this library to get the spec
+  const viewId = api.getViewId();
+  const viewSpec = viewId ? await api.get(viewId) : null;
+
   // Outer container - full height flex column
   const container = api.createElement('div', { className: 'generic-view' });
   container.style.cssText = 'display: flex; flex-direction: column; height: 100%; min-height: 0;';
@@ -84,7 +88,7 @@ export async function render(item, viewSpec, api) {
   let hasEditableFields = false;
 
   // Get ui_hints from view spec
-  const uiHints = viewSpec.content?.ui_hints || {};
+  const uiHints = viewSpec?.content?.ui_hints || {};
 
   // Get navigation params for scroll-to-line/region support
   // Try context first (sibling navigation), then URL params (root navigation)
