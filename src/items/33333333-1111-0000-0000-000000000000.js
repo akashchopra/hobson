@@ -44,7 +44,7 @@ export async function loadKernel(require, storageBackend) {
 
       // Debug: log item events
       if (emittedType.startsWith('e0e00000-0001')) {
-        console.debug('[EventBus.emit] Item event:', cacheEntry?.name || emittedType, 'typeChain size:', typeChain.size, 'listeners:', this.listeners.size);
+        console.debug('[EventBus.emit] Item event:', cacheEntry?.name || emittedType, 'typeChain:', [...typeChain], 'listeners:', [...this.listeners.keys()]);
       }
 
       // Dispatch to all listeners whose subscribed type is in the emitted event's type chain
@@ -327,6 +327,8 @@ export async function loadKernel(require, storageBackend) {
           }
         }
 
+        console.debug('[buildEventTypeCache] Found', eventDefs.length, 'event definitions:', eventDefs.map(e => e.name || e.id));
+
         // For each event definition, compute its full type chain and cache name
         for (const eventDef of eventDefs) {
           const ancestors = await this.getTypeChain(eventDef.id);
@@ -335,10 +337,19 @@ export async function loadKernel(require, storageBackend) {
             name: eventDef.name  // e.g., "item:created", "system:error"
           });
         }
+
+        console.debug('[buildEventTypeCache] Cache built with', this.eventTypeCache.size, 'entries');
+        // Log ITEM_UPDATED specifically for debugging
+        const itemUpdatedCache = this.eventTypeCache.get(EVENT_IDS.ITEM_UPDATED);
+        if (itemUpdatedCache) {
+          console.debug('[buildEventTypeCache] ITEM_UPDATED ancestors:', [...itemUpdatedCache.ancestors]);
+        } else {
+          console.warn('[buildEventTypeCache] ITEM_UPDATED not in cache!');
+        }
       } catch (e) {
         // If event definitions don't exist yet, cache will be empty
         // This is fine during early boot
-        console.debug('Event type cache: no event definitions found yet');
+        console.debug('Event type cache: no event definitions found yet', e);
       }
     }
 
@@ -1322,6 +1333,7 @@ export async function loadKernel(require, storageBackend) {
     setupDeclarativeWatches() {
       // Register listener for all item events (subscribing to parent type)
       this.events.on(EVENT_IDS.ITEM_EVENT, async (event) => {
+        console.debug('[setupDeclarativeWatches] ITEM_EVENT listener triggered for:', event.type);
         await this.dispatchToWatchers(event);
       });
 
@@ -1340,9 +1352,11 @@ export async function loadKernel(require, storageBackend) {
         const watcherItems = allItems.filter(i =>
           i.content?.watches && Array.isArray(i.content.watches)
         );
+        console.debug('[dispatchToWatchers] Found', watcherItems.length, 'watcher items:', watcherItems.map(w => w.name || w.id));
 
         // Get the emitted event's type chain for matching
         const eventTypeChain = this.eventTypeCache?.get(event.type)?.ancestors || new Set([event.type]);
+        console.debug('[dispatchToWatchers] Event type chain:', [...eventTypeChain]);
 
         // Find watchers for this event type
         for (const watcherItem of watcherItems) {
@@ -1351,11 +1365,17 @@ export async function loadKernel(require, storageBackend) {
             eventTypeChain.has(w.event)
           );
 
+          if (matchingWatches.length > 0) {
+            console.debug('[dispatchToWatchers] Watcher', watcherItem.name, 'has', matchingWatches.length, 'matching watches:', matchingWatches);
+          }
+
           for (const watch of matchingWatches) {
             // Evaluate filter against the event's item (from content)
             const matches = await this.evaluateWatchFilter(watch, event.content?.item);
+            console.debug('[dispatchToWatchers] evaluateWatchFilter result:', matches, 'for watch:', watch, 'item:', event.content?.item?.id);
 
             if (matches) {
+              console.debug('[dispatchToWatchers] Calling handler on', watcherItem.name);
               await this.callWatchHandler(watcherItem, event);
               break; // Only call handler once per watcher item, even if multiple watches match
             } else if (watch.id) {
