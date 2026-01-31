@@ -1,7 +1,7 @@
 # Event Definitions Design
 
 *Draft Date: 2026-01-31*
-*Revised: 2026-01-31*
+*Revised: 2026-01-31 (aligned with Kernel Minimization Review)*
 *Implementation Status: Phase 1 & 2 Complete*
 
 ---
@@ -69,11 +69,13 @@ type-definition
     │   └── item:deleted
     ├── system-event
     │   ├── system:error
-    │   └── system:boot
-    └── viewport-event
+    │   └── system:boot-complete
+    └── viewport-event (userland - defined but emitted by libraries)
         ├── viewport:selection-changed
         └── viewport:root-changed
 ```
+
+**Note on viewport events:** The kernel defines viewport event types for discoverability, but these events are emitted by userland libraries (e.g., `selection-manager`, `viewport-manager`). This supports kernel minimization — the kernel provides the event definitions as vocabulary, but state management is userland policy.
 
 Subscribing to a parent type receives all descendant events:
 
@@ -134,7 +136,7 @@ This uses the existing `typeChainIncludes` machinery — no special wildcard syn
   type: "e0e00000-0000-0000-0000-000000000000",  // EVENT_DEFINITION
   name: "viewport-event",
   content: {
-    description: "Events related to viewport state changes"
+    description: "Events related to viewport state changes. Kernel defines these types for discoverability, but they may be emitted by userland libraries (e.g., selection-manager, viewport-manager)."
   }
 }
 ```
@@ -210,11 +212,14 @@ This uses the existing `typeChainIncludes` machinery — no special wildcard syn
 {
   id: "e0e00000-0002-0002-0000-000000000000",
   type: "e0e00000-0002-0000-0000-000000000000",  // SYSTEM_EVENT
-  name: "system:boot",
+  name: "system:boot-complete",
   content: {
-    description: "Emitted when kernel boot completes successfully",
+    description: "Emitted when kernel boot completes successfully, or when a library with a boot-complete watch is saved post-boot",
     payload: {
-      duration: "Boot time in milliseconds"
+      rootId: "Current root item ID",
+      safeMode: "Whether system booted in safe mode",
+      debugMode: "Whether debug mode is enabled",
+      lateActivation: "True if this is a post-boot activation (library saved after boot)"
     }
   }
 }
@@ -228,11 +233,16 @@ This uses the existing `typeChainIncludes` machinery — no special wildcard syn
   type: "e0e00000-0003-0000-0000-000000000000",  // VIEWPORT_EVENT
   name: "viewport:selection-changed",
   content: {
-    description: "Emitted when the selected item changes",
+    description: "Emitted when the selected item changes. Typically emitted by userland selection-manager library.",
     payload: {
-      itemId: "Newly selected item ID (null if deselected)",
-      parentId: "Parent container of selected item",
-      previous: "Previously selected item ID"
+      current: {
+        itemId: "Newly selected item ID (null if deselected)",
+        parentId: "Parent container of selected item"
+      },
+      previous: {
+        itemId: "Previously selected item ID",
+        parentId: "Previous parent container"
+      }
     }
   }
 }
@@ -242,10 +252,12 @@ This uses the existing `typeChainIncludes` machinery — no special wildcard syn
   type: "e0e00000-0003-0000-0000-000000000000",  // VIEWPORT_EVENT
   name: "viewport:root-changed",
   content: {
-    description: "Emitted when the viewport root item changes",
+    description: "Emitted when the viewport root item changes (by kernel navigation or userland)",
     payload: {
       rootId: "New root item ID",
-      previous: "Previous root item ID"
+      previous: "Previous root item ID",
+      initial: "True if this is the initial navigation at boot",
+      popstate: "True if triggered by browser back/forward"
     }
   }
 }
@@ -311,8 +323,8 @@ const EVENT_IDS = {
   ITEM_DELETED: "e0e00000-0001-0003-0000-000000000000",
 
   // Specific system events
-  SYSTEM_ERROR: "e0e00000-0002-0001-0000-000000000000",
-  SYSTEM_BOOT:  "e0e00000-0002-0002-0000-000000000000",
+  SYSTEM_ERROR:         "e0e00000-0002-0001-0000-000000000000",
+  SYSTEM_BOOT_COMPLETE: "e0e00000-0002-0002-0000-000000000000",
 
   // Specific viewport events
   VIEWPORT_SELECTION_CHANGED: "e0e00000-0003-0001-0000-000000000000",
@@ -546,7 +558,7 @@ After creating event definitions, the EventBus cache must be refreshed. This hap
 | `item:updated` | item-event | `e0e00000-0001-0002-...` |
 | `item:deleted` | item-event | `e0e00000-0001-0003-...` |
 | `system:error` | system-event | `e0e00000-0002-0001-...` |
-| `system:boot` | system-event | `e0e00000-0002-0002-...` |
+| `system:boot-complete` | system-event | `e0e00000-0002-0002-...` |
 | `viewport:selection-changed` | viewport-event | `e0e00000-0003-0001-...` |
 | `viewport:root-changed` | viewport-event | `e0e00000-0003-0002-...` |
 

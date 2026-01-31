@@ -2,8 +2,8 @@
 
 **Status**: Review of `Kernel_Minimization_Plan.md` and `Theming_System_Design.md`
 **Date**: 2026-01-31
-**Updated**: 2026-01-31 (refined bootstrap solution)
-**Verdict**: Philosophically sound; bootstrap solution identified
+**Updated**: 2026-01-31 (aligned with implemented Event Definitions system)
+**Verdict**: Philosophically sound; bootstrap solution identified; event format updated
 
 ---
 
@@ -66,15 +66,15 @@ this.events.emit('system:boot-complete', {
   name: "theme-hot-reload",
   content: {
     watches: [
-      { event: "system:boot-complete" },
-      { event: "item:updated", id: "33333333-8888-0000-0000-000000000000" }
+      { event: "e0e00000-0002-0002-0000-000000000000" },  // SYSTEM_BOOT_COMPLETE
+      { event: "e0e00000-0001-0002-0000-000000000000", id: "33333333-8888-0000-0000-000000000000" }  // ITEM_UPDATED for kernel-styles
     ],
     code: `
-      export function onSystemBootComplete({}, api) {
+      export function onSystemBootComplete({ content }, api) {
         applyStyles(api);
       }
 
-      export function onItemUpdated({ item }, api) {
+      export function onItemUpdated({ content }, api) {
         applyStyles(api);
       }
 
@@ -83,6 +83,8 @@ this.events.emit('system:boot-complete', {
   }
 }
 ```
+
+**Note:** Handler names are derived from the event definition's `name` field: `system:boot-complete` → `onSystemBootComplete`, `item:updated` → `onItemUpdated`.
 
 **3. Kernel calls boot handler when saving items that watch boot**
 
@@ -95,10 +97,15 @@ async saveItem(item, options = {}) {
 
   // If item watches system:boot-complete, call its handler now
   // (so newly created libraries activate immediately)
-  if (item.content?.watches?.some(w => w.event === 'system:boot-complete')) {
-    await this.callWatchHandler(item, 'system:boot-complete', {
-      rootId: this.currentRoot,
-      lateActivation: true  // handler can distinguish if needed
+  const BOOT_COMPLETE = "e0e00000-0002-0002-0000-000000000000";
+  if (item.content?.watches?.some(w => w.event === BOOT_COMPLETE)) {
+    await this.callWatchHandler(item, BOOT_COMPLETE, {
+      type: BOOT_COMPLETE,
+      content: {
+        rootId: this.currentRoot,
+        lateActivation: true  // handler can distinguish if needed
+      },
+      timestamp: Date.now()
     });
   }
 }
@@ -155,8 +162,8 @@ The library handles both initial application AND updates:
   name: "theme-hot-reload",
   content: {
     watches: [
-      { event: "system:boot-complete" },
-      { event: "item:updated", id: "33333333-8888-0000-0000-000000000000" }
+      { event: "e0e00000-0002-0002-0000-000000000000" },  // SYSTEM_BOOT_COMPLETE
+      { event: "e0e00000-0001-0002-0000-000000000000", id: "33333333-8888-0000-0000-000000000000" }  // ITEM_UPDATED
     ],
     code: `
       function applyStyles(api) {
@@ -171,11 +178,11 @@ The library handles both initial application AND updates:
         });
       }
 
-      export function onSystemBootComplete({}, api) {
+      export function onSystemBootComplete({ content }, api) {
         applyStyles(api);
       }
 
-      export function onItemUpdated({ item }, api) {
+      export function onItemUpdated({ content }, api) {
         applyStyles(api);
       }
     `
@@ -323,10 +330,15 @@ This is the key kernel addition that enables the entire minimization plan. Two c
 
 ```javascript
 // End of kernel-core boot()
-this.events.emit('system:boot-complete', {
-  rootId: this.currentRoot,
-  safeMode: this._safeMode,
-  debugMode: this.debugMode
+const BOOT_COMPLETE = this.EVENT_IDS.SYSTEM_BOOT_COMPLETE;
+this.events.emit({
+  type: BOOT_COMPLETE,
+  content: {
+    rootId: this.currentRoot,
+    safeMode: this._safeMode,
+    debugMode: this.debugMode,
+    lateActivation: false
+  }
 });
 ```
 
@@ -336,16 +348,21 @@ this.events.emit('system:boot-complete', {
 // In kernel-core saveItem()
 async saveItem(item, options = {}) {
   const { silent = false } = options;
+  const BOOT_COMPLETE = this.EVENT_IDS.SYSTEM_BOOT_COMPLETE;
 
   // ... existing save logic (exists check, timestamps, storage.set, events) ...
 
   // If item watches system:boot-complete, call its handler now
   // This enables newly-created libraries to activate without reload
-  if (!silent && item.content?.watches?.some(w => w.event === 'system:boot-complete')) {
+  if (!silent && item.content?.watches?.some(w => w.event === BOOT_COMPLETE)) {
     try {
-      await this.callWatchHandler(item, 'system:boot-complete', {
-        rootId: this.currentRoot,
-        lateActivation: true
+      await this.callWatchHandler(item, BOOT_COMPLETE, {
+        type: BOOT_COMPLETE,
+        content: {
+          rootId: this.currentRoot,
+          lateActivation: true
+        },
+        timestamp: Date.now()
       });
     } catch (e) {
       console.warn(`Boot handler for ${item.name || item.id} failed:`, e);
@@ -479,6 +496,8 @@ Update documentation to clarify:
 
 With the `system:boot-complete` event pattern established, the kernel-viewport module (~120 lines) can be significantly reduced. Most viewport logic is application-level policy, not infrastructure.
 
+**Note on viewport events:** The kernel defines `viewport-event` types (VIEWPORT_SELECTION_CHANGED, VIEWPORT_ROOT_CHANGED) for discoverability, but these are emitted by userland libraries. Additional userland events (e.g., `ui:select` for user intent) can be defined by libraries without kernel changes.
+
 ### Current kernel-viewport Responsibilities
 
 1. `rootId` - current root item
@@ -547,10 +566,13 @@ class Kernel {
     }
 
     // Emit navigation event (userland persists, updates selection, etc.)
-    this.events.emit('system:navigate', {
-      rootId: itemId,
-      previous,
-      initial: !!options.initial
+    this.events.emit({
+      type: this.EVENT_IDS.VIEWPORT_ROOT_CHANGED,
+      content: {
+        rootId: itemId,
+        previous,
+        initial: !!options.initial
+      }
     });
 
     await this.renderRoot(itemId);
@@ -561,7 +583,10 @@ class Kernel {
       const rootId = new URLSearchParams(location.search).get('root');
       if (rootId) {
         this.currentRoot = rootId;
-        this.events.emit('system:navigate', { rootId, previous: null, popstate: true });
+        this.events.emit({
+          type: this.EVENT_IDS.VIEWPORT_ROOT_CHANGED,
+          content: { rootId, previous: null, popstate: true }
+        });
         await this.renderRoot(rootId);
       }
     });
@@ -573,17 +598,28 @@ class Kernel {
 
 Instead of imperative `api.viewport.select()`, views use events:
 
+**Userland event definitions:** The `selection-manager` library defines its own events for user intents. These use kernel-defined viewport event types where appropriate:
+
+```javascript
+// Defined by selection-manager library at activation
+const UI_SELECT = crypto.randomUUID();  // userland event for intent
+// Uses kernel's VIEWPORT_SELECTION_CHANGED for state change notifications
+```
+
 **View emits intent:**
 ```javascript
 container.onclick = () => {
-  api.events.emit('ui:select', { itemId: item.id, parentId });
+  api.events.emit({
+    type: UI_SELECT,  // userland event ID
+    content: { itemId: item.id, parentId }
+  });
 };
 ```
 
 **View reacts to state:**
 ```javascript
-api.events.on('ui:selection-changed', ({ current }) => {
-  container.classList.toggle('item-selected', current.itemId === item.id);
+api.events.on(api.EVENT_IDS.VIEWPORT_SELECTION_CHANGED, ({ content }) => {
+  container.classList.toggle('item-selected', content.current.itemId === item.id);
 });
 ```
 
@@ -593,36 +629,51 @@ api.events.on('ui:selection-changed', ({ current }) => {
   name: "selection-manager",
   content: {
     watches: [
-      { event: "system:boot-complete" },
-      { event: "system:navigate" },
-      { event: "ui:select" }
+      { event: "e0e00000-0002-0002-0000-000000000000" }  // SYSTEM_BOOT_COMPLETE
     ],
     code: `
 let selection = { itemId: null, parentId: null };
+let UI_SELECT = null;  // Our userland event type
 
-export function onSystemBootComplete({}, api) {
-  api.events.emit('ui:selection-changed', { current: selection, previous: null });
-}
+export async function onSystemBootComplete({ content }, api) {
+  // Define our userland event type
+  UI_SELECT = crypto.randomUUID();
+  await api.set({
+    id: UI_SELECT,
+    type: api.EVENT_IDS.VIEWPORT_EVENT,  // Extends viewport-event
+    name: "ui:select",
+    content: {
+      description: "User intent to select an item",
+      payload: { itemId: "Item to select", parentId: "Parent container" }
+    }
+  });
 
-export function onSystemNavigate({}, api) {
-  // Clear selection on navigation
-  const previous = { ...selection };
-  selection = { itemId: null, parentId: null };
-  api.events.emit('ui:selection-changed', { current: selection, previous });
-}
+  // Listen for our intent event
+  api.events.on(UI_SELECT, ({ content }) => {
+    const previous = { ...selection };
+    selection = { itemId: content.itemId, parentId: content.parentId };
+    api.events.emit({
+      type: api.EVENT_IDS.VIEWPORT_SELECTION_CHANGED,
+      content: { current: selection, previous }
+    });
+  });
 
-export function onUiSelect({ itemId, parentId }, api) {
-  const previous = { ...selection };
-  selection = { itemId, parentId };
-  api.events.emit('ui:selection-changed', { current: selection, previous });
+  // Emit initial state
+  api.events.emit({
+    type: api.EVENT_IDS.VIEWPORT_SELECTION_CHANGED,
+    content: { current: selection, previous: null }
+  });
 }
 
 export function getSelection() { return selection.itemId; }
 export function getSelectionParent() { return selection.parentId; }
+export function getSelectEventId() { return UI_SELECT; }
     `
   }
 }
 ```
+
+**Note:** The library exports `getSelectEventId()` so views can obtain the userland event ID. Alternatively, views can use `api.require('selection-manager')` and call a `select(itemId, parentId)` method directly.
 
 ### viewport-manager Library
 
@@ -633,15 +684,14 @@ Handles persistence and view preferences:
   name: "viewport-manager",
   content: {
     watches: [
-      { event: "system:boot-complete" },
-      { event: "system:navigate" }
+      { event: "e0e00000-0002-0002-0000-000000000000" }  // SYSTEM_BOOT_COMPLETE
     ],
     code: `
 const VIEWPORT_ID = "88888888-0000-0000-0000-000000000000";
 let rootViewId = null;
 let rootViewConfig = {};
 
-export async function onSystemBootComplete({}, api) {
+export async function onSystemBootComplete({ content }, api) {
   // Restore view preferences
   const viewport = await api.get(VIEWPORT_ID);
   const child = viewport.children?.[0];
@@ -650,26 +700,27 @@ export async function onSystemBootComplete({}, api) {
     const { type, ...config } = child.view;
     rootViewConfig = config;
   }
-}
 
-export async function onSystemNavigate({ rootId, initial }, api) {
-  if (initial) return;
+  // Listen for root changes (emitted by kernel or userland navigation)
+  api.events.on(api.EVENT_IDS.VIEWPORT_ROOT_CHANGED, async ({ content }) => {
+    if (content.initial) return;
 
-  // Persist to viewport item
-  const viewport = await api.get(VIEWPORT_ID);
-  const childSpec = { id: rootId };
-  if (rootViewId || Object.keys(rootViewConfig).length > 0) {
-    childSpec.view = {
-      ...(rootViewId ? { type: rootViewId } : {}),
-      ...rootViewConfig
-    };
-  }
-  viewport.children = rootId ? [childSpec] : [];
-  await api.set(viewport);
+    // Persist to viewport item
+    const viewport = await api.get(VIEWPORT_ID);
+    const childSpec = { id: content.rootId };
+    if (rootViewId || Object.keys(rootViewConfig).length > 0) {
+      childSpec.view = {
+        ...(rootViewId ? { type: rootViewId } : {}),
+        ...rootViewConfig
+      };
+    }
+    viewport.children = content.rootId ? [childSpec] : [];
+    await api.set(viewport);
 
-  // Clear view prefs for new root
-  rootViewId = null;
-  rootViewConfig = {};
+    // Clear view prefs for new root
+    rootViewId = null;
+    rootViewConfig = {};
+  });
 }
 
 export function getRootView() { return rootViewId; }
@@ -690,11 +741,12 @@ export function getRootViewConfig() { return rootViewConfig; }
 
 ### Events Summary
 
-| Event | Emitter | Purpose |
-|-------|---------|---------|
-| `system:navigate` | Kernel | Navigation occurred |
-| `ui:select` | Views | User clicked an item |
-| `ui:selection-changed` | selection-manager | Selection state changed |
+| Event | Type ID | Emitter | Purpose |
+|-------|---------|---------|---------|
+| `system:boot-complete` | `e0e00000-0002-0002-...` | Kernel | Boot finished or library late-activated |
+| `viewport:root-changed` | `e0e00000-0003-0002-...` | Kernel/userland | Navigation occurred |
+| `viewport:selection-changed` | `e0e00000-0003-0001-...` | selection-manager | Selection state changed |
+| `ui:select` | userland GUID | Views | User intent to select (defined by selection-manager) |
 
 ### Migration Considerations
 
@@ -710,15 +762,15 @@ Views checking selection for initial render:
 
 ## Revised Implementation Sequence
 
-Based on this review, the recommended implementation sequence is:
+Based on this review and the implemented event definitions system, the recommended implementation sequence is:
 
 ### Phase 0: Kernel Prerequisites
 
 Small kernel changes that enable everything:
 
-1. **Emit `system:boot-complete`** at end of `boot()`
-2. **Emit `system:navigate`** in `navigateToItem()` and `popstate` handler
-3. **Call boot handlers in `saveItem()`** for items watching boot-complete
+1. **Emit `system:boot-complete`** (EVENT_IDS.SYSTEM_BOOT_COMPLETE) at end of `boot()`
+2. **Emit `viewport:root-changed`** (EVENT_IDS.VIEWPORT_ROOT_CHANGED) in `navigateToItem()` and `popstate` handler
+3. **Call boot handlers in `saveItem()`** for items watching boot-complete (using event GUID)
 4. Add hardcoded safe-mode keyboard shortcut (Ctrl+Shift+S)
 
 Optional: Rename `createREPLAPI()` to `createScriptingAPI()` with alias
@@ -727,6 +779,7 @@ Optional: Rename `createREPLAPI()` to `createScriptingAPI()` with alias
 
 1. Define CSS variables in `kernel-styles`
 2. Create `theme-hot-reload` library with:
+   - Watches SYSTEM_BOOT_COMPLETE and ITEM_UPDATED (filtered to kernel-styles ID)
    - `onSystemBootComplete` handler (initial application)
    - `onItemUpdated` handler (hot reload)
 3. Remove `applyStyles()` from kernel boot
@@ -736,14 +789,16 @@ Optional: Rename `createREPLAPI()` to `createScriptingAPI()` with alias
 ### Phase 2: Viewport Migration
 
 1. Create `selection-manager` library:
-   - Watches `system:boot-complete`, `system:navigate`, `ui:select`
-   - Emits `ui:selection-changed`
+   - Watches SYSTEM_BOOT_COMPLETE
+   - Defines userland `ui:select` event (extends viewport-event)
+   - Emits VIEWPORT_SELECTION_CHANGED
 2. Create `viewport-manager` library:
-   - Watches `system:boot-complete`, `system:navigate`
+   - Watches SYSTEM_BOOT_COMPLETE
+   - Listens for VIEWPORT_ROOT_CHANGED
    - Handles persistence and view preferences
 3. Simplify kernel navigation to ~30 lines
 4. Remove `Viewport` class from kernel
-5. Update views to use event-based selection
+5. Update views to use event-based selection (emit userland events, listen for kernel-defined state events)
 6. Test: selection works, navigation persists, view prefs work
 
 ### Phase 3: REPL UI Migration
@@ -782,11 +837,12 @@ Optional: Rename `createREPLAPI()` to `createScriptingAPI()` with alias
 
 Most questions resolved. Remaining decisions:
 
-1. ~~**Auto-activate mechanism**~~ → RESOLVED: Use `system:boot-complete` event
+1. ~~**Auto-activate mechanism**~~ → RESOLVED: Use `system:boot-complete` event (EVENT_IDS.SYSTEM_BOOT_COMPLETE)
 2. **Naming**: Rename `createREPLAPI()` now or later? (Low priority)
 3. **CSS variables**: Use semantic naming from the start? (Recommended: yes)
 4. **Safe mode shortcut**: Which key combination? (Proposed: Ctrl+Shift+S)
 5. ~~**Phase 0 scope**~~ → RESOLVED: Minimal kernel changes enable everything
+6. ~~**Event format**~~ → RESOLVED: Use implemented event definitions system (GUIDs, type hierarchy, handler name from event definition name)
 
 ---
 
@@ -801,10 +857,14 @@ async boot() {
   // ... existing boot code ...
 
   // After all initialization, emit boot-complete for userland libraries
-  this.events.emit('system:boot-complete', {
-    rootId: this.currentRoot,
-    safeMode: this._safeMode,
-    debugMode: this.debugMode
+  this.events.emit({
+    type: this.EVENT_IDS.SYSTEM_BOOT_COMPLETE,
+    content: {
+      rootId: this.currentRoot,
+      safeMode: this._safeMode,
+      debugMode: this.debugMode,
+      lateActivation: false
+    }
   });
 }
 
@@ -812,6 +872,7 @@ async boot() {
 
 async saveItem(item, options = {}) {
   const { silent = false } = options;
+  const BOOT_COMPLETE = this.EVENT_IDS.SYSTEM_BOOT_COMPLETE;
 
   const exists = await this.storage.exists(item.id);
   const previous = exists ? await this.storage.get(item.id) : null;
@@ -830,18 +891,28 @@ async saveItem(item, options = {}) {
 
   if (!silent) {
     if (exists) {
-      this.events.emit('item:updated', { id: item.id, item, previous });
+      this.events.emit({
+        type: this.EVENT_IDS.ITEM_UPDATED,
+        content: { item, previous }
+      });
     } else {
-      this.events.emit('item:created', { id: item.id, item });
+      this.events.emit({
+        type: this.EVENT_IDS.ITEM_CREATED,
+        content: { item }
+      });
     }
 
     // NEW: If item watches system:boot-complete, call its handler now
     // This enables newly-created libraries to activate without reload
-    if (item.content?.watches?.some(w => w.event === 'system:boot-complete')) {
+    if (item.content?.watches?.some(w => w.event === BOOT_COMPLETE)) {
       try {
-        await this.callWatchHandler(item, 'system:boot-complete', {
-          rootId: this.currentRoot,
-          lateActivation: true
+        await this.callWatchHandler(item, BOOT_COMPLETE, {
+          type: BOOT_COMPLETE,
+          content: {
+            rootId: this.currentRoot,
+            lateActivation: true
+          },
+          timestamp: Date.now()
         });
       } catch (e) {
         console.warn(`Boot handler for ${item.name || item.id} failed:`, e);
@@ -875,8 +946,8 @@ if (!window._safeModeShortcut) {
   content: {
     description: "Applies kernel styles at boot and hot-reloads on edit",
     watches: [
-      { event: "system:boot-complete" },
-      { event: "item:updated", id: "33333333-8888-0000-0000-000000000000" }
+      { event: "e0e00000-0002-0002-0000-000000000000" },  // SYSTEM_BOOT_COMPLETE
+      { event: "e0e00000-0001-0002-0000-000000000000", id: "33333333-8888-0000-0000-000000000000" }  // ITEM_UPDATED for kernel-styles
     ],
     code: `
 // Apply styles from kernel-styles item
@@ -896,15 +967,17 @@ async function applyStyles(api) {
 }
 
 // Called at boot (or when library is created/edited post-boot)
-export async function onSystemBootComplete({ lateActivation }, api) {
+// Handler name derived from event name: "system:boot-complete" → onSystemBootComplete
+export async function onSystemBootComplete({ content }, api) {
   await applyStyles(api);
-  if (lateActivation) {
+  if (content.lateActivation) {
     console.log('✨ Theme library activated');
   }
 }
 
 // Called when kernel-styles is edited
-export async function onItemUpdated({ item }, api) {
+// Handler name derived from event name: "item:updated" → onItemUpdated
+export async function onItemUpdated({ content }, api) {
   await applyStyles(api);
   console.log('✨ Theme hot-reloaded');
 }
@@ -922,14 +995,14 @@ export async function onItemUpdated({ item }, api) {
   content: {
     description: "REPL user interface",
     watches: [
-      { event: "system:boot-complete" }
+      { event: "e0e00000-0002-0002-0000-000000000000" }  // SYSTEM_BOOT_COMPLETE
     ],
     code: `
 let container = null;
 let visible = false;
 
-export function onSystemBootComplete({ safeMode }, api) {
-  if (safeMode) return;  // Don't create REPL in safe mode
+export function onSystemBootComplete({ content }, api) {
+  if (content.safeMode) return;  // Don't create REPL in safe mode
 
   // Create REPL container (similar to current kernel-repl)
   container = createContainer();
@@ -959,13 +1032,19 @@ The kernel minimization vision is correct, and the key problems are solved.
 
 **The solution is elegant**: A few small kernel changes enable the entire minimization plan:
 
-1. Emit `system:boot-complete` at end of boot
-2. Emit `system:navigate` on navigation
+1. Emit `system:boot-complete` (EVENT_IDS.SYSTEM_BOOT_COMPLETE) at end of boot
+2. Emit `viewport:root-changed` (EVENT_IDS.VIEWPORT_ROOT_CHANGED) on navigation
 3. Call boot handlers when saving items that watch boot-complete
 
-This leverages the existing declarative watch mechanism rather than adding new concepts. Libraries are self-describing - their watch declarations show when they activate. No separate configuration, no reload needed for new libraries.
+This leverages the existing declarative watch mechanism and the newly-implemented event definitions system. Libraries are self-describing - their watch declarations (using event type GUIDs) show when they activate. No separate configuration, no reload needed for new libraries.
 
-**Event-based UI state** (selection, view preferences) decouples views from specific APIs. Views emit intents (`ui:select`), react to state changes (`ui:selection-changed`). This enables multiple listeners, graceful degradation, and replaceable implementations.
+**Event-based UI state** (selection, view preferences) decouples views from specific APIs. Views emit intents (userland events), react to state changes (kernel-defined event types emitted by userland libraries). This enables multiple listeners, graceful degradation, and replaceable implementations.
+
+**Integration with Event Definitions**: The implemented event definitions system (phases 1 & 2) provides:
+- Type hierarchy for event grouping (subscribe to `item-event` to receive all item events)
+- Discoverable event definitions as items
+- Handler naming via event definition name lookup (`system:boot-complete` → `onSystemBootComplete`)
+- Userland event definitions using the same mechanism
 
 **Kernel reduction summary:**
 - Remove `applyStyles()` (~20 lines)
@@ -976,9 +1055,9 @@ This leverages the existing declarative watch mechanism rather than adding new c
 - **Net: ~300+ lines removed from kernel**
 
 **Recommended sequence**:
-1. Phase 0: Kernel events (`system:boot-complete`, `system:navigate`)
+1. Phase 0: Kernel events (`system:boot-complete`, `viewport:root-changed`) — now using event definition GUIDs
 2. Phase 1: Theming (proves the pattern)
-3. Phase 2: Viewport (selection-manager, viewport-manager)
+3. Phase 2: Viewport (selection-manager, viewport-manager) — viewport events emitted by userland
 4. Phase 3+: REPL, keyboard shortcuts, remaining UI
 
 **Key insight**: First boot without a starter pack is rare. The system ships with libraries that watch `system:boot-complete`, so activation happens automatically. The `saveItem()` enhancement ensures post-boot library creation also works without reload.
