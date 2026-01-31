@@ -3,47 +3,54 @@
 // Type: 33333333-0000-0000-0000-000000000000
 
 export async function loadKernel(require, storageBackend) {
-  // Event system
+  // Event system - Phase 2: Object-based emit with type hierarchy dispatch
   class EventBus {
-    constructor() {
+    constructor(kernel) {
+      this.kernel = kernel;  // Reference for eventTypeCache access
       this.listeners = new Map();
     }
 
-    on(event, handler) {
-      if (!this.listeners.has(event)) {
-        this.listeners.set(event, new Set());
+    on(eventTypeId, handler) {
+      // Subscribe to an event type GUID
+      // Subscribing to a parent type (e.g., ITEM_EVENT) will receive all child events
+      if (!this.listeners.has(eventTypeId)) {
+        this.listeners.set(eventTypeId, new Set());
       }
-      this.listeners.get(event).add(handler);
-      return () => this.off(event, handler);
+      this.listeners.get(eventTypeId).add(handler);
+      return () => this.off(eventTypeId, handler);
     }
 
-    off(event, handler) {
-      const handlers = this.listeners.get(event);
+    off(eventTypeId, handler) {
+      const handlers = this.listeners.get(eventTypeId);
       if (handlers) {
         handlers.delete(handler);
       }
     }
 
-    emit(event, data) {
-      const handlers = this.listeners.get(event);
-      if (handlers) {
-        for (const handler of handlers) {
-          try {
-            handler(data);
-          } catch (e) {
-            console.error(`Event handler error for ${event}:`, e);
-          }
-        }
-      }
+    emit(event) {
+      // event = { type: eventTypeId, content: {...} }
+      // Add timestamp if not present
+      const eventWithTimestamp = {
+        ...event,
+        timestamp: event.timestamp || Date.now()
+      };
 
-      const [namespace] = event.split(':');
-      const wildcardHandlers = this.listeners.get(`${namespace}:*`);
-      if (wildcardHandlers) {
-        for (const handler of wildcardHandlers) {
-          try {
-            handler({ ...data, event });
-          } catch (e) {
-            console.error(`Wildcard handler error for ${event}:`, e);
+      const emittedType = event.type;
+
+      // Get the type chain for this event (includes ancestors)
+      // If cache not ready yet (during early boot), just dispatch to exact matches
+      const cacheEntry = this.kernel?.eventTypeCache?.get(emittedType);
+      const typeChain = cacheEntry?.ancestors || new Set([emittedType]);
+
+      // Dispatch to all listeners whose subscribed type is in the emitted event's type chain
+      for (const [subscribedType, handlers] of this.listeners) {
+        if (typeChain.has(subscribedType)) {
+          for (const handler of handlers) {
+            try {
+              handler(eventWithTimestamp);
+            } catch (e) {
+              console.error(`Event handler error for ${subscribedType}:`, e);
+            }
           }
         }
       }
@@ -130,7 +137,7 @@ export async function loadKernel(require, storageBackend) {
       this.rendering = new RenderingSystem(this);
       this.repl = new REPL(this);
       this.safeMode = new SafeMode(this);
-      this.events = new EventBus();
+      this.events = new EventBus(this);
 
       this.currentRoot = null;
       this._safeMode = false;
@@ -259,9 +266,10 @@ export async function loadKernel(require, storageBackend) {
     // -------------------------------------------------------------------------
 
     async buildEventTypeCache() {
-      // Build a cache mapping each event definition ID to all its ancestor type IDs.
-      // This enables O(1) lookups during emit() to check if a subscribed type
-      // is in the emitted event's type chain.
+      // Build a cache mapping each event definition ID to:
+      // - ancestors: Set of all type IDs in the chain (for type hierarchy dispatch)
+      // - name: The event's name string (for handler name derivation in declarative watches)
+      // This enables O(1) lookups during emit().
       this.eventTypeCache = new Map();
 
       try {
@@ -279,14 +287,17 @@ export async function loadKernel(require, storageBackend) {
           }
         }
 
-        // For each event definition, compute its full type chain
+        // For each event definition, compute its full type chain and cache name
         for (const eventDef of eventDefs) {
           const ancestors = await this.getTypeChain(eventDef.id);
-          this.eventTypeCache.set(eventDef.id, new Set(ancestors));
+          this.eventTypeCache.set(eventDef.id, {
+            ancestors: new Set(ancestors),
+            name: eventDef.name  // e.g., "item:created", "system:error"
+          });
         }
       } catch (e) {
         // If event definitions don't exist yet, cache will be empty
-        // This is fine for Phase 1 where we're just setting up
+        // This is fine during early boot
         console.debug('Event type cache: no event definitions found yet');
       }
     }
@@ -993,11 +1004,13 @@ export async function loadKernel(require, storageBackend) {
           }
         },
 
-        // Events
+        // Events (Phase 2: object-based emit, type hierarchy dispatch)
+        // on(eventTypeId, handler) - subscribe to event type GUID
+        // emit({ type: eventTypeId, content: {...} }) - emit event object
         events: {
-          on: (event, handler) => kernel.events.on(event, handler),
-          off: (event, handler) => kernel.events.off(event, handler),
-          emit: (event, data) => kernel.events.emit(event, data),
+          on: (eventTypeId, handler) => kernel.events.on(eventTypeId, handler),
+          off: (eventTypeId, handler) => kernel.events.off(eventTypeId, handler),
+          emit: (event) => kernel.events.emit(event),
           list: () => kernel.events.getRegisteredEvents()
         },
 
@@ -1182,7 +1195,7 @@ export async function loadKernel(require, storageBackend) {
       await this.storage.delete(itemId);
 
       // Emit deletion event
-      this.events.emit('item:deleted', { id: itemId, item });
+      this.events.emit({ type: EVENT_IDS.ITEM_DELETED, content: { id: itemId, item } });
 
       // Clear module cache
       this.moduleSystem.clearCache();
@@ -1221,9 +1234,9 @@ export async function loadKernel(require, storageBackend) {
 
       if (!silent) {
         if (exists) {
-          this.events.emit('item:updated', { id: item.id, item, previous });
+          this.events.emit({ type: EVENT_IDS.ITEM_UPDATED, content: { id: item.id, item, previous } });
         } else {
-          this.events.emit('item:created', { id: item.id, item });
+          this.events.emit({ type: EVENT_IDS.ITEM_CREATED, content: { id: item.id, item } });
         }
       }
 
@@ -1231,41 +1244,46 @@ export async function loadKernel(require, storageBackend) {
     }
 
     // -------------------------------------------------------------------------
-    // Declarative Event Watches
+    // Declarative Event Watches (Phase 2: Type hierarchy based)
     // -------------------------------------------------------------------------
 
     setupDeclarativeWatches() {
-      // Register wildcard listener for all item events
-      this.events.on('item:*', async ({ event, ...data }) => {
-        await this.dispatchToWatchers(event, data);
+      // Register listener for all item events (subscribing to parent type)
+      this.events.on(EVENT_IDS.ITEM_EVENT, async (event) => {
+        await this.dispatchToWatchers(event);
       });
 
-      // Register wildcard listener for system events (error handling, etc.)
-      this.events.on('system:*', async ({ event, ...data }) => {
-        await this.dispatchToSystemWatchers(event, data);
+      // Register listener for all system events (error handling, etc.)
+      this.events.on(EVENT_IDS.SYSTEM_EVENT, async (event) => {
+        await this.dispatchToSystemWatchers(event);
       });
     }
 
-    async dispatchToWatchers(eventType, eventData) {
+    async dispatchToWatchers(event) {
+      // event = { type: eventTypeId, content: {...}, timestamp }
       try {
-        // Query all code items that have watches (use getAll to get local items only)
+        // Query all code items that have watches
         const allItems = await this.storage.getAll();
         const watcherItems = allItems.filter(i =>
           i.content?.watches && Array.isArray(i.content.watches)
         );
 
+        // Get the emitted event's type chain for matching
+        const eventTypeChain = this.eventTypeCache?.get(event.type)?.ancestors || new Set([event.type]);
+
         // Find watchers for this event type
         for (const watcherItem of watcherItems) {
+          // A watch matches if the emitted event's type chain includes the watch's event field
           const matchingWatches = watcherItem.content.watches.filter(w =>
-            w.event === eventType
+            eventTypeChain.has(w.event)
           );
 
           for (const watch of matchingWatches) {
-            // Evaluate filter against the event's item
-            const matches = await this.evaluateWatchFilter(watch, eventData.item);
+            // Evaluate filter against the event's item (from content)
+            const matches = await this.evaluateWatchFilter(watch, event.content?.item);
 
             if (matches) {
-              await this.callWatchHandler(watcherItem, eventType, eventData);
+              await this.callWatchHandler(watcherItem, event);
               break; // Only call handler once per watcher item, even if multiple watches match
             }
           }
@@ -1278,7 +1296,7 @@ export async function loadKernel(require, storageBackend) {
     async evaluateWatchFilter(watch, item) {
       if (!item) return false;
 
-      // Check exact type match
+      // Check exact type match (against the item being affected, not the event type)
       if (watch.type && item.type !== watch.type) {
         return false;
       }
@@ -1300,10 +1318,18 @@ export async function loadKernel(require, storageBackend) {
       return true;
     }
 
-    async callWatchHandler(watcherItem, eventType, eventData) {
+    async callWatchHandler(watcherItem, event) {
+      // event = { type: eventTypeId, content: {...}, timestamp }
       try {
-        // Convert event type to handler name: "item:deleted" -> "onItemDeleted"
-        const handlerName = this.eventToHandlerName(eventType);
+        // Get event name from cache for handler name derivation
+        const eventName = this.eventTypeCache?.get(event.type)?.name;
+        if (!eventName) {
+          console.warn(`Unknown event type ${event.type} - no cached name for handler derivation`);
+          return;
+        }
+
+        // Convert event name to handler name: "item:deleted" -> "onItemDeleted"
+        const handlerName = this.eventToHandlerName(eventName);
 
         // Load the watcher module
         const module = await this.moduleSystem.require(watcherItem.id);
@@ -1316,19 +1342,18 @@ export async function loadKernel(require, storageBackend) {
         // Create API for the handler (similar to renderer API)
         const api = this.rendering.createRendererAPI(watcherItem);
 
-        // Call the handler
-        await module[handlerName](eventData, api);
+        // Call the handler with event content (preserves existing handler signatures)
+        await module[handlerName](event.content, api);
       } catch (error) {
         console.error(`Error calling watch handler on ${watcherItem.name || watcherItem.id}:`, error);
       }
     }
 
-    eventToHandlerName(eventType) {
+    eventToHandlerName(eventName) {
       // "item:deleted" -> "onItemDeleted"
       // "item:created" -> "onItemCreated"
-      // "custom:something" -> "onCustomSomething"
       // "system:error" -> "onSystemError"
-      const parts = eventType.split(':');
+      const parts = eventName.split(':');
       const camelParts = parts.map((part, i) =>
         part.charAt(0).toUpperCase() + part.slice(1).toLowerCase()
       );
@@ -1339,20 +1364,21 @@ export async function loadKernel(require, storageBackend) {
     // System Event Dispatching (for error handling, etc.)
     // -------------------------------------------------------------------------
 
-    async dispatchToSystemWatchers(eventType, eventData) {
+    async dispatchToSystemWatchers(event) {
+      // event = { type: eventTypeId, content: {...}, timestamp }
       try {
         // Find all items watching this system event
-        const handlers = await this.findSystemEventHandlers(eventType);
+        const handlers = await this.findSystemEventHandlers(event.type);
 
-        if (handlers.length === 0 && eventType === 'system:error') {
+        if (handlers.length === 0 && event.type === EVENT_IDS.SYSTEM_ERROR) {
           // No handlers for errors - show fallback UI
-          this.showFallbackErrorUI(eventData.error, eventData.context);
+          this.showFallbackErrorUI(event.content?.error, event.content?.context);
           return;
         }
 
         // Call ALL matching handlers (unlike item events which call first match)
         const results = await Promise.allSettled(
-          handlers.map(handler => this.callWatchHandler(handler, eventType, eventData))
+          handlers.map(handler => this.callWatchHandler(handler, event))
         );
 
         // Log any handler failures (but don't re-emit as errors to avoid loops)
@@ -1364,19 +1390,23 @@ export async function loadKernel(require, storageBackend) {
       } catch (error) {
         console.error('Error dispatching system event:', error);
         // If this was an error event and dispatch failed, show fallback
-        if (eventType === 'system:error') {
-          this.showFallbackErrorUI(eventData.error, eventData.context);
+        if (event.type === EVENT_IDS.SYSTEM_ERROR) {
+          this.showFallbackErrorUI(event.content?.error, event.content?.context);
         }
       }
     }
 
-    async findSystemEventHandlers(eventType) {
+    async findSystemEventHandlers(eventTypeId) {
       const allItems = await this.storage.getAll();
+      // Get the event's type chain for matching (allows subscribing to parent types)
+      const eventTypeChain = this.eventTypeCache?.get(eventTypeId)?.ancestors || new Set([eventTypeId]);
+
       return allItems.filter(item => {
         if (!item.content?.watches || !Array.isArray(item.content.watches)) {
           return false;
         }
-        return item.content.watches.some(w => w.event === eventType);
+        // Match if any watch's event field is in the emitted event's type chain
+        return item.content.watches.some(w => eventTypeChain.has(w.event));
       });
     }
 
@@ -1393,20 +1423,22 @@ export async function loadKernel(require, storageBackend) {
 
       try {
         // Emit system:error event - user handlers will process
-        this.events.emit('system:error', {
-          error: {
-            name: error.name || 'Error',
-            message: error.message || String(error),
-            stack: error.stack || ''
-          },
-          context: {
-            operation: context.operation || 'unknown',
-            itemId: context.itemId,
-            itemName: context.itemName,
-            rendererId: context.rendererId,
-            ...context
-          },
-          timestamp: Date.now()
+        this.events.emit({
+          type: EVENT_IDS.SYSTEM_ERROR,
+          content: {
+            error: {
+              name: error.name || 'Error',
+              message: error.message || String(error),
+              stack: error.stack || ''
+            },
+            context: {
+              operation: context.operation || 'unknown',
+              itemId: context.itemId,
+              itemName: context.itemName,
+              rendererId: context.rendererId,
+              ...context
+            }
+          }
         });
       } catch (eventError) {
         // Ultimate fallback if event system fails

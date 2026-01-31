@@ -1,6 +1,7 @@
 // Item: hobson-instance-lifecycle
 // ID: f939abc4-2e9e-4d6a-a049-c9361fb3590d
 // Type: 66666666-0000-0000-0000-000000000000
+// Watches: e0e00000-0001-0003-0000-000000000000 (item:deleted) for type 99999999-0000-0000-0000-000000000000 (hobson-instance)
 
 // hobson-instance-lifecycle
 // Handles cascade delete when a hobson-instance is deleted
