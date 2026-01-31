@@ -202,17 +202,8 @@ export async function loadKernel(require, storageBackend) {
           window.addEventListener('unhandledrejection', window._unhandledRejectionHandler);
         }
 
-        // Handle keyboard shortcuts for kernel features (help dialog)
-        // REPL shortcuts are handled by userland repl-ui library
-        if (!window._kernelKeyboardHandler) {
-          window._kernelKeyboardHandler = async (e) => {
-            if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === '?') {
-              e.preventDefault();
-              window.kernel?.showHelp();
-            }
-          };
-          document.addEventListener('keydown', window._kernelKeyboardHandler);
-        }
+        // Keyboard shortcuts are handled by userland keyboard-shortcuts library
+        // Only safe-mode shortcut (Ctrl+Shift+S) remains hardcoded in kernel
 
         // Handle browser back/forward navigation
         if (!window._popstateHandler) {
@@ -1463,8 +1454,9 @@ export async function loadKernel(require, storageBackend) {
           return;
         }
 
-        // Create API for the handler (similar to renderer API)
-        const api = this.rendering.createRendererAPI(watcherItem);
+        // Use full REPL API for watch handlers (libraries need full access)
+        // Renderer API is too limited - it lacks import, export, etc.
+        const api = this.createREPLAPI();
 
         // Call the handler with event content (preserves existing handler signatures)
         await module[handlerName](event.content, api);
@@ -1627,9 +1619,9 @@ export async function loadKernel(require, storageBackend) {
         document.removeEventListener('keydown', window._replKeyboardHandler);
         delete window._replKeyboardHandler;
       }
-      if (window._kernelKeyboardHandler) {
-        document.removeEventListener('keydown', window._kernelKeyboardHandler);
-        delete window._kernelKeyboardHandler;
+      if (window._userKeyboardHandler) {
+        document.removeEventListener('keydown', window._userKeyboardHandler);
+        delete window._userKeyboardHandler;
       }
       if (window._popstateHandler) {
         window.removeEventListener('popstate', window._popstateHandler);
