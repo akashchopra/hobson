@@ -1,4 +1,4 @@
-// Item: kernel-core
+// Item: kernel:core
 // ID: 33333333-1111-0000-0000-000000000000
 // Type: 33333333-0000-0000-0000-000000000000
 
@@ -111,8 +111,8 @@ export async function loadKernel(require, storageBackend) {
     ITEM_DELETED: "e0e00000-0001-0003-0000-000000000000",
 
     // Specific system events
-    SYSTEM_ERROR: "e0e00000-0002-0001-0000-000000000000",
-    SYSTEM_BOOT:  "e0e00000-0002-0002-0000-000000000000",
+    SYSTEM_ERROR:         "e0e00000-0002-0001-0000-000000000000",
+    SYSTEM_BOOT_COMPLETE: "e0e00000-0002-0002-0000-000000000000",
 
     // Specific viewport events
     VIEWPORT_SELECTION_CHANGED: "e0e00000-0003-0001-0000-000000000000",
@@ -157,6 +157,17 @@ export async function loadKernel(require, storageBackend) {
       const params = new URLSearchParams(window.location.search);
       this._safeMode = params.get('safe') === '1';
       this.debugMode = params.has('debug');
+
+      // Hardcoded safe-mode escape hatch (Ctrl+Shift+S) - always works even if userland is broken
+      if (!window._safeModeShortcut) {
+        window._safeModeShortcut = (e) => {
+          if (e.ctrlKey && e.shiftKey && e.key === 'S') {
+            e.preventDefault();
+            window.location.href = window.location.pathname + '?safe=1';
+          }
+        };
+        document.addEventListener('keydown', window._safeModeShortcut);
+      }
 
       if (this._safeMode) {
         this.safeMode.render(this.rootElement.querySelector('#main-view'));
@@ -213,9 +224,21 @@ export async function loadKernel(require, storageBackend) {
             const params = new URLSearchParams(window.location.search);
             const rootId = params.get('root');
             if (rootId && window.kernel) {
+              const previous = window.kernel.currentRoot;
               // Update viewport without pushing new history entry
               window.kernel.currentRoot = rootId;
               window.kernel.viewport.setRoot(rootId);
+
+              // Emit viewport:root-changed for userland listeners
+              window.kernel.events.emit({
+                type: EVENT_IDS.VIEWPORT_ROOT_CHANGED,
+                content: {
+                  rootId,
+                  previous,
+                  popstate: true
+                }
+              });
+
               await window.kernel.viewport.persist();
               await window.kernel.renderRoot(rootId);
             }
@@ -248,6 +271,17 @@ export async function loadKernel(require, storageBackend) {
             console.warn('Could not load element-inspector:', e.message);
           }
         }
+
+        // Emit system:boot-complete for userland libraries to activate
+        this.events.emit({
+          type: EVENT_IDS.SYSTEM_BOOT_COMPLETE,
+          content: {
+            rootId: this.currentRoot,
+            safeMode: this._safeMode,
+            debugMode: this.debugMode,
+            lateActivation: false
+          }
+        });
       }
     }
 
@@ -372,6 +406,8 @@ export async function loadKernel(require, storageBackend) {
     }
 
     async navigateToItem(itemId, params = {}) {
+      const previous = this.currentRoot;
+
       // Clear view override and view config when navigating to a different item
       // (but not on initial load when currentRoot is null)
       if (this.currentRoot && this.currentRoot !== itemId) {
@@ -397,6 +433,16 @@ export async function loadKernel(require, storageBackend) {
       if (params.col) url.searchParams.set('col', params.col);
 
       window.history.pushState({ itemId, ...params }, '', url);
+
+      // Emit viewport:root-changed for userland listeners
+      this.events.emit({
+        type: EVENT_IDS.VIEWPORT_ROOT_CHANGED,
+        content: {
+          rootId: itemId,
+          previous,
+          initial: previous === null
+        }
+      });
 
       await this.viewport.persist();
       await this.renderRoot(itemId);
@@ -1238,6 +1284,26 @@ export async function loadKernel(require, storageBackend) {
         } else {
           this.events.emit({ type: EVENT_IDS.ITEM_CREATED, content: { id: item.id, item } });
         }
+
+        // If item watches system:boot-complete, call its handler now
+        // This enables newly-created/edited libraries to activate without reload
+        if (item.content?.watches?.some(w => w.event === EVENT_IDS.SYSTEM_BOOT_COMPLETE)) {
+          try {
+            const bootEvent = {
+              type: EVENT_IDS.SYSTEM_BOOT_COMPLETE,
+              content: {
+                rootId: this.currentRoot,
+                safeMode: this._safeMode,
+                debugMode: this.debugMode,
+                lateActivation: true
+              },
+              timestamp: Date.now()
+            };
+            await this.callWatchHandler(item, bootEvent);
+          } catch (e) {
+            console.warn(`Boot handler for ${item.name || item.id} failed:`, e);
+          }
+        }
       }
 
       return item;
@@ -1504,6 +1570,10 @@ export async function loadKernel(require, storageBackend) {
       if (window._popstateHandler) {
         window.removeEventListener('popstate', window._popstateHandler);
         delete window._popstateHandler;
+      }
+      if (window._safeModeShortcut) {
+        document.removeEventListener('keydown', window._safeModeShortcut);
+        delete window._safeModeShortcut;
       }
       
       window.postMessage({type: 'reload-kernel'}, '*');
