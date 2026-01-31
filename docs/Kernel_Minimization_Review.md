@@ -9,14 +9,15 @@
 
 ## Executive Summary
 
-The kernel minimization proposal correctly identifies the separation of "mechanisms vs policies" as the right architectural principle. The theming system design demonstrates the pattern well. However, both documents have gaps around:
+The kernel minimization proposal correctly identifies the separation of "mechanisms vs policies" as the right architectural principle. The theming system design demonstrates the pattern well.
 
-1. **First-boot experience** - How does a fresh system activate userland features?
-2. **Bootstrap ordering** - Contradictions between the two documents on `applyStyles()`
-3. **Error recovery** - Safe mode becomes more critical but isn't enhanced to match
-4. **Watch mechanics** - The documents don't clearly explain how declarative watches actually work
+**Key solutions identified:**
 
-This review documents these issues and proposes resolutions.
+1. **Bootstrap solved** - `system:boot-complete` event + boot handler call in `saveItem()`
+2. **Viewport minimization** - Selection and persistence move to userland via events
+3. **Event-based UI state** - Views emit intents, react to state changes
+
+This review documents the issues, solutions, and implementation sequence.
 
 ---
 
@@ -472,17 +473,253 @@ Update documentation to clarify:
 
 ---
 
+## Issue 8: Viewport Minimization
+
+### Opportunity
+
+With the `system:boot-complete` event pattern established, the kernel-viewport module (~120 lines) can be significantly reduced. Most viewport logic is application-level policy, not infrastructure.
+
+### Current kernel-viewport Responsibilities
+
+1. `rootId` - current root item
+2. `rootViewId`, `rootViewConfig` - view preferences for root
+3. `previousRootViewId`, `previousRootViewConfig` - for view switching back
+4. `selectedItemId`, `selectedParentId` - selection state
+5. `persist()` - save state to viewport item
+6. `restore()` - load state from viewport item
+
+### What Kernel Truly Needs
+
+- Know what to render at boot (read URL, fall back to persisted root)
+- Handle `popstate` for browser back/forward
+- `navigateToItem()` - update URL, emit event, render
+
+### Proposed Split
+
+**Kernel keeps (~30 lines):**
+- `currentRoot` property
+- `getStartingRoot()` - reads URL or viewport item
+- `navigateToItem()` - updates URL, emits `system:navigate`, renders
+- `popstate` handler
+
+**Moves to userland:**
+- Selection state → event-based (`ui:select` / `ui:selection-changed`)
+- View preferences → `viewport-manager` library
+- Persistence → `viewport-manager` watches `system:navigate`
+
+### Minimal Kernel Navigation
+
+```javascript
+class Kernel {
+  constructor() {
+    this.currentRoot = null;
+    // Remove: this.viewport = new Viewport(this.storage);
+  }
+
+  async getStartingRoot() {
+    // 1. Check URL
+    const urlRoot = new URLSearchParams(location.search).get('root');
+    if (urlRoot) {
+      try {
+        await this.storage.get(urlRoot);
+        return urlRoot;
+      } catch { /* invalid */ }
+    }
+
+    // 2. Check persisted viewport
+    try {
+      const viewport = await this.storage.get(this.IDS.VIEWPORT);
+      return viewport.children?.[0]?.id || null;
+    } catch {
+      return null;
+    }
+  }
+
+  async navigateToItem(itemId, options = {}) {
+    const previous = this.currentRoot;
+    this.currentRoot = itemId;
+
+    // Update URL (unless initial load)
+    if (!options.initial) {
+      const url = new URL(window.location);
+      url.searchParams.set('root', itemId);
+      window.history.pushState({ itemId }, '', url);
+    }
+
+    // Emit navigation event (userland persists, updates selection, etc.)
+    this.events.emit('system:navigate', {
+      rootId: itemId,
+      previous,
+      initial: !!options.initial
+    });
+
+    await this.renderRoot(itemId);
+  }
+
+  setupBrowserNavigation() {
+    window.addEventListener('popstate', async (e) => {
+      const rootId = new URLSearchParams(location.search).get('root');
+      if (rootId) {
+        this.currentRoot = rootId;
+        this.events.emit('system:navigate', { rootId, previous: null, popstate: true });
+        await this.renderRoot(rootId);
+      }
+    });
+  }
+}
+```
+
+### Event-Based Selection
+
+Instead of imperative `api.viewport.select()`, views use events:
+
+**View emits intent:**
+```javascript
+container.onclick = () => {
+  api.events.emit('ui:select', { itemId: item.id, parentId });
+};
+```
+
+**View reacts to state:**
+```javascript
+api.events.on('ui:selection-changed', ({ current }) => {
+  container.classList.toggle('item-selected', current.itemId === item.id);
+});
+```
+
+**selection-manager library:**
+```javascript
+{
+  name: "selection-manager",
+  content: {
+    watches: [
+      { event: "system:boot-complete" },
+      { event: "system:navigate" },
+      { event: "ui:select" }
+    ],
+    code: `
+let selection = { itemId: null, parentId: null };
+
+export function onSystemBootComplete({}, api) {
+  api.events.emit('ui:selection-changed', { current: selection, previous: null });
+}
+
+export function onSystemNavigate({}, api) {
+  // Clear selection on navigation
+  const previous = { ...selection };
+  selection = { itemId: null, parentId: null };
+  api.events.emit('ui:selection-changed', { current: selection, previous });
+}
+
+export function onUiSelect({ itemId, parentId }, api) {
+  const previous = { ...selection };
+  selection = { itemId, parentId };
+  api.events.emit('ui:selection-changed', { current: selection, previous });
+}
+
+export function getSelection() { return selection.itemId; }
+export function getSelectionParent() { return selection.parentId; }
+    `
+  }
+}
+```
+
+### viewport-manager Library
+
+Handles persistence and view preferences:
+
+```javascript
+{
+  name: "viewport-manager",
+  content: {
+    watches: [
+      { event: "system:boot-complete" },
+      { event: "system:navigate" }
+    ],
+    code: `
+const VIEWPORT_ID = "88888888-0000-0000-0000-000000000000";
+let rootViewId = null;
+let rootViewConfig = {};
+
+export async function onSystemBootComplete({}, api) {
+  // Restore view preferences
+  const viewport = await api.get(VIEWPORT_ID);
+  const child = viewport.children?.[0];
+  if (child?.view) {
+    rootViewId = child.view.type || null;
+    const { type, ...config } = child.view;
+    rootViewConfig = config;
+  }
+}
+
+export async function onSystemNavigate({ rootId, initial }, api) {
+  if (initial) return;
+
+  // Persist to viewport item
+  const viewport = await api.get(VIEWPORT_ID);
+  const childSpec = { id: rootId };
+  if (rootViewId || Object.keys(rootViewConfig).length > 0) {
+    childSpec.view = {
+      ...(rootViewId ? { type: rootViewId } : {}),
+      ...rootViewConfig
+    };
+  }
+  viewport.children = rootId ? [childSpec] : [];
+  await api.set(viewport);
+
+  // Clear view prefs for new root
+  rootViewId = null;
+  rootViewConfig = {};
+}
+
+export function getRootView() { return rootViewId; }
+export function setRootView(viewId) { rootViewId = viewId; }
+export function getRootViewConfig() { return rootViewConfig; }
+    `
+  }
+}
+```
+
+### Benefits
+
+1. **Decoupled views** - Views emit/listen to events, don't depend on specific APIs
+2. **Multiple reactors** - Breadcrumbs, status bar, inspector can all listen to `ui:selection-changed`
+3. **Graceful degradation** - If selection-manager not loaded, clicks do nothing but system works
+4. **Replaceable** - Swap in multi-select manager, same events
+5. **Smaller kernel** - ~100 lines removed, ~10 added
+
+### Events Summary
+
+| Event | Emitter | Purpose |
+|-------|---------|---------|
+| `system:navigate` | Kernel | Navigation occurred |
+| `ui:select` | Views | User clicked an item |
+| `ui:selection-changed` | selection-manager | Selection state changed |
+
+### Migration Considerations
+
+Views using `api.viewport.select()` need updates:
+- Option A: Views `await api.require('selection-manager')` to call methods
+- Option B: Views just emit `ui:select` event (preferred - more decoupled)
+
+Views checking selection for initial render:
+- Listen for `ui:selection-changed` which fires at boot with initial state
+- Or query via `await api.require('selection-manager').getSelection()`
+
+---
+
 ## Revised Implementation Sequence
 
 Based on this review, the recommended implementation sequence is:
 
 ### Phase 0: Kernel Prerequisites
 
-Two small kernel changes enable everything:
+Small kernel changes that enable everything:
 
 1. **Emit `system:boot-complete`** at end of `boot()`
-2. **Call boot handlers in `saveItem()`** for items watching boot-complete
-3. Add hardcoded safe-mode keyboard shortcut (Ctrl+Shift+S)
+2. **Emit `system:navigate`** in `navigateToItem()` and `popstate` handler
+3. **Call boot handlers in `saveItem()`** for items watching boot-complete
+4. Add hardcoded safe-mode keyboard shortcut (Ctrl+Shift+S)
 
 Optional: Rename `createREPLAPI()` to `createScriptingAPI()` with alias
 
@@ -496,7 +733,20 @@ Optional: Rename `createREPLAPI()` to `createScriptingAPI()` with alias
 4. Ensure bootstrap.html has adequate fallback CSS
 5. Test: fresh boot applies styles, editing updates live
 
-### Phase 2: REPL UI Migration
+### Phase 2: Viewport Migration
+
+1. Create `selection-manager` library:
+   - Watches `system:boot-complete`, `system:navigate`, `ui:select`
+   - Emits `ui:selection-changed`
+2. Create `viewport-manager` library:
+   - Watches `system:boot-complete`, `system:navigate`
+   - Handles persistence and view preferences
+3. Simplify kernel navigation to ~30 lines
+4. Remove `Viewport` class from kernel
+5. Update views to use event-based selection
+6. Test: selection works, navigation persists, view prefs work
+
+### Phase 3: REPL UI Migration
 
 1. Create `repl-ui` library with:
    - `onSystemBootComplete` - creates container, registers handlers
@@ -504,7 +754,7 @@ Optional: Rename `createREPLAPI()` to `createScriptingAPI()` with alias
 2. Remove REPL container creation from kernel boot
 3. Test: REPL works via Escape key after boot-complete
 
-### Phase 3: Keyboard Shortcuts Migration
+### Phase 4: Keyboard Shortcuts Migration
 
 1. Create `keyboard-shortcuts` library with:
    - `onSystemBootComplete` - registers document listener
@@ -513,13 +763,13 @@ Optional: Rename `createREPLAPI()` to `createScriptingAPI()` with alias
 2. Remove keyboard handlers from kernel boot (except safe-mode shortcut)
 3. Test: all shortcuts work, custom bindings possible
 
-### Phase 4: Remaining UI Components
+### Phase 5: Remaining UI Components
 
 1. Item palette (`showItemList()`) → `item-palette` library
 2. Help dialog (`showHelp()`) → `help-browser` library or help item
 3. Raw editor → keep minimal in safe mode, enhance in userland
 
-### Phase 5: Polish
+### Phase 6: Polish
 
 1. Create `standard-features` pack (optional convenience library)
 2. Improve safe mode with library management
@@ -705,15 +955,30 @@ export function run(code) { /* ... */ }
 
 ## Conclusion
 
-The kernel minimization vision is correct, and the bootstrap problem is now solved.
+The kernel minimization vision is correct, and the key problems are solved.
 
-**The solution is elegant**: Two small kernel changes (~20 lines total) enable the entire minimization plan:
+**The solution is elegant**: A few small kernel changes enable the entire minimization plan:
 
 1. Emit `system:boot-complete` at end of boot
-2. Call boot handlers when saving items that watch boot-complete
+2. Emit `system:navigate` on navigation
+3. Call boot handlers when saving items that watch boot-complete
 
 This leverages the existing declarative watch mechanism rather than adding new concepts. Libraries are self-describing - their watch declarations show when they activate. No separate configuration, no reload needed for new libraries.
 
-**Recommended next step**: Implement Phase 0 (kernel changes), then Phase 1 (theming). The theming library will be the proof-of-concept that validates the pattern before migrating REPL and keyboard shortcuts.
+**Event-based UI state** (selection, view preferences) decouples views from specific APIs. Views emit intents (`ui:select`), react to state changes (`ui:selection-changed`). This enables multiple listeners, graceful degradation, and replaceable implementations.
+
+**Kernel reduction summary:**
+- Remove `applyStyles()` (~20 lines)
+- Remove `Viewport` class (~120 lines)
+- Remove REPL UI code (~150 lines)
+- Remove keyboard handlers (~30 lines)
+- Add event emissions (~10 lines)
+- **Net: ~300+ lines removed from kernel**
+
+**Recommended sequence**:
+1. Phase 0: Kernel events (`system:boot-complete`, `system:navigate`)
+2. Phase 1: Theming (proves the pattern)
+3. Phase 2: Viewport (selection-manager, viewport-manager)
+4. Phase 3+: REPL, keyboard shortcuts, remaining UI
 
 **Key insight**: First boot without a starter pack is rare. The system ships with libraries that watch `system:boot-complete`, so activation happens automatically. The `saveItem()` enhancement ensures post-boot library creation also works without reload.
