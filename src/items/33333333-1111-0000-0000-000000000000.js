@@ -42,6 +42,11 @@ export async function loadKernel(require, storageBackend) {
       const cacheEntry = this.kernel?.eventTypeCache?.get(emittedType);
       const typeChain = cacheEntry?.ancestors || new Set([emittedType]);
 
+      // Debug: log item events
+      if (emittedType.startsWith('e0e00000-0001')) {
+        console.debug('[EventBus.emit] Item event:', cacheEntry?.name || emittedType, 'typeChain size:', typeChain.size, 'listeners:', this.listeners.size);
+      }
+
       // Dispatch to all listeners whose subscribed type is in the emitted event's type chain
       for (const [subscribedType, handlers] of this.listeners) {
         if (typeChain.has(subscribedType)) {
@@ -1328,6 +1333,7 @@ export async function loadKernel(require, storageBackend) {
 
     async dispatchToWatchers(event) {
       // event = { type: eventTypeId, content: {...}, timestamp }
+      console.debug('[dispatchToWatchers] Called with event type:', event.type, 'item:', event.content?.item?.id || event.content?.id);
       try {
         // Query all code items that have watches
         const allItems = await this.storage.getAll();
@@ -1352,6 +1358,14 @@ export async function loadKernel(require, storageBackend) {
             if (matches) {
               await this.callWatchHandler(watcherItem, event);
               break; // Only call handler once per watcher item, even if multiple watches match
+            } else if (watch.id) {
+              // Debug: log when a watch with id filter doesn't match
+              console.debug(`[dispatchToWatchers] Watch filter didn't match:`, {
+                watcher: watcherItem.name,
+                watchId: watch.id,
+                itemId: event.content?.item?.id,
+                hasItem: !!event.content?.item
+              });
             }
           }
         }
