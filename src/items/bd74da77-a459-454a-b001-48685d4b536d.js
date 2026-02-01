@@ -1,7 +1,3 @@
-// Item: viewport_view
-// ID: bd74da77-a459-454a-b001-48685d4b536d
-// Type: aaaaaaaa-0000-0000-0000-000000000000
-
 
 export async function render(item, api) {
   // Load dependencies
@@ -10,9 +6,36 @@ export async function render(item, api) {
   const typePicker = await api.require('type-picker-lib');
   const searchLib = await api.require('item-search-lib');
 
+  // Determine root: URL takes precedence over viewport item
+  // This allows direct linking and avoids flash on initial load
+  const urlParams = new URLSearchParams(window.location.search);
+  const urlRoot = urlParams.get('root');
+  
   // The viewport item stores rootId in children[0]
-  const rootSpec = item.children?.[0];
-  const rootId = rootSpec?.id || rootSpec;
+  const storedSpec = item.children?.[0];
+  const storedRootId = storedSpec?.id || storedSpec;
+  
+  // Use URL root if present and valid, otherwise use stored root
+  let rootId = storedRootId;
+  let rootSpec = storedSpec;
+  
+  if (urlRoot && urlRoot !== storedRootId) {
+    // URL has different root - verify it exists
+    try {
+      await api.get(urlRoot);
+      rootId = urlRoot;
+      rootSpec = { id: urlRoot };  // No view config from URL
+      
+      // Update viewport item to match URL (for consistency on next render)
+      // Do this silently via api.set to avoid re-render loop
+      const updatedViewport = { ...item, children: [{ id: urlRoot }], modified: Date.now() };
+      await api.set(updatedViewport);
+    } catch {
+      // URL root doesn't exist - fall back to stored root
+      console.warn('[viewport-view] URL root not found:', urlRoot);
+    }
+  }
+  
   // Read view type from new schema (view.type) or fall back to old flat format
   const rootViewId = rootSpec?.view?.type || rootSpec?.view || rootSpec?.renderer || null;
 

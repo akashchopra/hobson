@@ -1,7 +1,3 @@
-// Item: kernel:rendering
-// ID: 33333333-5555-0000-0000-000000000000
-// Type: 33333333-0000-0000-0000-000000000000
-
 
 // Parse stack trace to extract source item name and line number
 function parseSourceLocation(stack) {
@@ -615,9 +611,12 @@ export class RenderingSystem {
         if (context.viewConfig) {
           return context.viewConfig;
         }
-        // For viewport root items (parent is the viewport itself), get config from viewport
-        if (context.parentId === IDS.VIEWPORT && kernel.viewport.rootId === containerItem.id) {
-          return kernel.viewport.getRootViewConfig();
+        // For viewport root items (parent is the viewport itself), get config from viewport-manager
+        if (context.parentId === IDS.VIEWPORT) {
+          const vpMgr = kernel.moduleSystem.getCached('viewport-manager');
+          if (vpMgr && vpMgr.getRoot() === containerItem.id) {
+            return vpMgr.getRootViewConfig();
+          }
         }
         return null;
       },
@@ -638,11 +637,14 @@ export class RenderingSystem {
       updateViewConfig: async (updates) => {
         const parentId = context.parentId;
 
-        // For viewport root items (parent is the viewport itself), update viewport's root view config
-        if (parentId === IDS.VIEWPORT && kernel.viewport.rootId === containerItem.id) {
-          kernel.viewport.updateRootViewConfig(updates);
-          await kernel.viewport.persist();
-          return true;
+        // For viewport root items (parent is the viewport itself), update viewport-manager's root view config
+        if (parentId === IDS.VIEWPORT) {
+          const vpMgr = kernel.moduleSystem.getCached('viewport-manager');
+          if (vpMgr && vpMgr.getRoot() === containerItem.id) {
+            vpMgr.updateRootViewConfig(updates);
+            await vpMgr.forcePersist();
+            return true;
+          }
         }
 
         if (!parentId) {
@@ -746,8 +748,14 @@ export class RenderingSystem {
       },
 
       // Navigation (params: { field, line, col } for line highlighting)
-      navigate: (itemId, params) => kernel.navigateToItem(itemId, params),
-      getCurrentRoot: () => kernel.currentRoot,
+      navigate: async (itemId, params) => {
+        const vpMgr = await kernel.moduleSystem.require('viewport-manager');
+        return vpMgr.navigate(itemId, params);
+      },
+      getCurrentRoot: () => {
+        const vpMgr = kernel.moduleSystem.getCached('viewport-manager');
+        return vpMgr?.getRoot() || null;
+      },
 
       // Sibling container object (provided by container views like container_view)
       // Use api.siblingContainer.addSibling(itemId) to add items to the current container
@@ -780,8 +788,8 @@ export class RenderingSystem {
           children: []
         };
         const id = await api.create(newItem, true);
-        // Trigger re-render to show the new child (re-render the root, not necessarily this container)
-        await kernel.renderRoot(kernel.currentRoot);
+        // Trigger re-render to show the new child
+        await kernel.renderViewport();
         return id;
       },
 
@@ -794,7 +802,7 @@ export class RenderingSystem {
       // Save and trigger re-render
       update: async (item) => {
         await kernel.saveItem(item);
-        await kernel.renderRoot(kernel.currentRoot);
+        await kernel.renderViewport();
         return item.id;
       },
 
@@ -829,23 +837,24 @@ export class RenderingSystem {
       // Restore previous view for an item
       restorePreviousView: async (itemId) => {
         // Check if item is the viewport root FIRST (regardless of data hierarchy)
-        const isViewportRoot = kernel.viewport.rootId === itemId;
+        const vpMgr = kernel.moduleSystem.getCached('viewport-manager');
+        const isViewportRoot = vpMgr && vpMgr.getRoot() === itemId;
 
         if (isViewportRoot) {
-          // It's the viewport root - restore from viewport
-          if (kernel.viewport.restorePreviousRootView) {
-            const restored = kernel.viewport.restorePreviousRootView();
+          // It's the viewport root - restore from viewport-manager
+          if (vpMgr.restorePreviousRootView) {
+            const restored = vpMgr.restorePreviousRootView();
             if (restored) {
-              await kernel.viewport.persist();
-              await kernel.renderRoot(kernel.currentRoot);
+              await vpMgr.forcePersist();
+              await kernel.renderViewport();
               return true;
             }
           }
           // No previous view, but we can still clear the current view override
-          if (kernel.viewport.rootViewId) {
-            kernel.viewport.setRootView(null, false);  // Don't store previous
-            await kernel.viewport.persist();
-            await kernel.renderRoot(kernel.currentRoot);
+          if (vpMgr.getRootView()) {
+            vpMgr.setRootView(null, false);  // Don't store previous
+            await vpMgr.forcePersist();
+            await kernel.renderViewport();
             return true;
           }
           return false;
@@ -886,7 +895,7 @@ export class RenderingSystem {
           return false;
         }
         await kernel.saveItem(parent);
-        await kernel.renderRoot(kernel.currentRoot);
+        await kernel.renderViewport();
         return true;
       },
 
@@ -944,33 +953,53 @@ export class RenderingSystem {
         }
       },
 
-      // Viewport API for view state management
+      // Viewport API for view state management - delegates to userland managers
       viewport: {
-        select: (itemId, parentId) => kernel.viewport.select(itemId, parentId),
-        clearSelection: () => kernel.viewport.clearSelection(),
-        getSelection: () => kernel.viewport.getSelection(),
-        getSelectionParent: () => kernel.viewport.getSelectionParent(),
-        getRoot: () => kernel.viewport.rootId,
-
-        // New naming
-        getRootView: () => kernel.viewport.getRootView(),
+        select: async (itemId, parentId) => {
+          const selMgr = await kernel.moduleSystem.require('selection-manager');
+          selMgr.select(itemId, parentId);
+        },
+        clearSelection: async () => {
+          const selMgr = await kernel.moduleSystem.require('selection-manager');
+          selMgr.clearSelection();
+        },
+        getSelection: () => {
+          const selMgr = kernel.moduleSystem.getCached('selection-manager');
+          return selMgr?.getSelection() || null;
+        },
+        getSelectionParent: () => {
+          const selMgr = kernel.moduleSystem.getCached('selection-manager');
+          return selMgr?.getSelectionParent() || null;
+        },
+        getRoot: () => {
+          const vpMgr = kernel.moduleSystem.getCached('viewport-manager');
+          return vpMgr?.getRoot() || null;
+        },
+        getRootView: () => {
+          const vpMgr = kernel.moduleSystem.getCached('viewport-manager');
+          return vpMgr?.getRootView() || null;
+        },
         setRootView: async (viewId) => {
-          kernel.viewport.setRootView(viewId);
-          await kernel.viewport.persist();
+          const vpMgr = await kernel.moduleSystem.require('viewport-manager');
+          vpMgr.setRootView(viewId);
+          await vpMgr.forcePersist();
         },
         restorePreviousRootView: async () => {
-          const restored = kernel.viewport.restorePreviousRootView();
+          const vpMgr = await kernel.moduleSystem.require('viewport-manager');
+          const restored = vpMgr.restorePreviousRootView();
           if (restored) {
-            await kernel.viewport.persist();
+            await vpMgr.forcePersist();
           }
           return restored;
         },
-        // Get full view config for root (type + additional config)
-        getRootViewConfig: () => kernel.viewport.getRootViewConfig(),
-        // Update root view config (for banner position, etc.)
+        getRootViewConfig: () => {
+          const vpMgr = kernel.moduleSystem.getCached('viewport-manager');
+          return vpMgr?.getRootViewConfig() || null;
+        },
         updateRootViewConfig: async (updates) => {
-          kernel.viewport.updateRootViewConfig(updates);
-          await kernel.viewport.persist();
+          const vpMgr = await kernel.moduleSystem.require('viewport-manager');
+          vpMgr.updateRootViewConfig(updates);
+          await vpMgr.forcePersist();
         }
       },
 

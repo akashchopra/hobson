@@ -1,7 +1,3 @@
-// Item: kernel:core
-// ID: 33333333-1111-0000-0000-000000000000
-// Type: 33333333-0000-0000-0000-000000000000
-
 export async function loadKernel(require, storageBackend) {
   // Event system - Phase 2: Object-based emit with type hierarchy dispatch
   class EventBus {
@@ -101,9 +97,9 @@ export async function loadKernel(require, storageBackend) {
     EVENT_DEFINITION: "e0e00000-0000-0000-0000-000000000000",
 
     // Event group types (subscribe to these for categories)
-    ITEM_EVENT:     "e0e00000-0001-0000-0000-000000000000",
-    SYSTEM_EVENT:   "e0e00000-0002-0000-0000-000000000000",
-    VIEWPORT_EVENT: "e0e00000-0003-0000-0000-000000000000",
+    ITEM_EVENT:   "e0e00000-0001-0000-0000-000000000000",
+    SYSTEM_EVENT: "e0e00000-0002-0000-0000-000000000000",
+    // VIEWPORT_EVENT removed - defined by userland viewport-manager
 
     // Specific item events
     ITEM_CREATED: "e0e00000-0001-0001-0000-000000000000",
@@ -112,16 +108,13 @@ export async function loadKernel(require, storageBackend) {
 
     // Specific system events
     SYSTEM_ERROR:         "e0e00000-0002-0001-0000-000000000000",
-    SYSTEM_BOOT_COMPLETE: "e0e00000-0002-0002-0000-000000000000",
-
-    // Specific viewport events
-    VIEWPORT_SELECTION_CHANGED: "e0e00000-0003-0001-0000-000000000000",
-    VIEWPORT_ROOT_CHANGED:      "e0e00000-0003-0002-0000-000000000000"
+    SYSTEM_BOOT_COMPLETE: "e0e00000-0002-0002-0000-000000000000"
+    // VIEWPORT_* events removed - defined by userland viewport-manager
   };
 // [END:SEED_IDS]
 
   const { Storage } = await require(IDS.KERNEL_STORAGE);
-  const { Viewport } = await require(IDS.KERNEL_VIEWPORT);
+  // KERNEL_VIEWPORT removed - viewport state now managed by userland viewport-manager
   const { ModuleSystem } = await require(IDS.KERNEL_MODULE_SYSTEM);
   const { RenderingSystem } = await require(IDS.KERNEL_RENDERING_SYSTEM);
   const { REPL } = await require(IDS.KERNEL_REPL);
@@ -132,14 +125,14 @@ export async function loadKernel(require, storageBackend) {
       this.IDS = IDS;
       this.EVENT_IDS = EVENT_IDS;
       this.storage = new Storage(storageBackend);
-      this.viewport = new Viewport(this.storage);
+      // viewport instance removed - state managed by userland viewport-manager
       this.moduleSystem = new ModuleSystem(this);
       this.rendering = new RenderingSystem(this);
       this.repl = new REPL(this);
       this.safeMode = new SafeMode(this);
       this.events = new EventBus(this);
 
-      this.currentRoot = null;
+      // currentRoot removed - managed by userland viewport-manager
       this._safeMode = false;
       this.debugMode = false;
 
@@ -173,8 +166,6 @@ export async function loadKernel(require, storageBackend) {
         await this.applyStyles();
         this.safeMode.render(this.rootElement.querySelector('#main-view'));
       } else {
-        await this.viewport.restore();
-
         // REPL container is now created by userland repl-ui library via system:boot-complete
 
         // Global error handlers for uncaught errors and promise rejections
@@ -205,33 +196,7 @@ export async function loadKernel(require, storageBackend) {
         // Keyboard shortcuts are handled by userland keyboard-shortcuts library
         // Only safe-mode shortcut (Ctrl+Shift+S) remains hardcoded in kernel
 
-        // Handle browser back/forward navigation
-        if (!window._popstateHandler) {
-          window._popstateHandler = async (e) => {
-            const params = new URLSearchParams(window.location.search);
-            const rootId = params.get('root');
-            if (rootId && window.kernel) {
-              const previous = window.kernel.currentRoot;
-              // Update viewport without pushing new history entry
-              window.kernel.currentRoot = rootId;
-              window.kernel.viewport.setRoot(rootId);
-
-              // Emit viewport:root-changed for userland listeners
-              window.kernel.events.emit({
-                type: EVENT_IDS.VIEWPORT_ROOT_CHANGED,
-                content: {
-                  rootId,
-                  previous,
-                  popstate: true
-                }
-              });
-
-              await window.kernel.viewport.persist();
-              await window.kernel.renderRoot(rootId);
-            }
-          };
-          window.addEventListener('popstate', window._popstateHandler);
-        }
+        // Popstate handler removed - managed by userland viewport-manager
 
         // Build event type cache for hierarchical event dispatch (Phase 1 prep)
         await this.buildEventTypeCache();
@@ -240,13 +205,8 @@ export async function loadKernel(require, storageBackend) {
         // so error handlers are active during boot
         this.setupDeclarativeWatches();
 
-        const rootId = await this.getStartingRoot();
-        if (rootId) {
-          await this.navigateToItem(rootId);
-        } else {
-          // No root - render the viewport anyway, it will show empty state
-          await this.renderViewport();
-        }
+        // Render the viewport - viewport-view handles URL reading and root display
+        await this.renderViewport();
 
         // Auto-activate element inspector in debug mode
         if (this.debugMode) {
@@ -263,7 +223,7 @@ export async function loadKernel(require, storageBackend) {
         this.events.emit({
           type: EVENT_IDS.SYSTEM_BOOT_COMPLETE,
           content: {
-            rootId: this.currentRoot,
+            // rootId removed - userland reads from viewport item or URL
             safeMode: this._safeMode,
             debugMode: this.debugMode,
             lateActivation: false
@@ -373,67 +333,8 @@ export async function loadKernel(require, storageBackend) {
       document.head.appendChild(style);
     }
 
-    async getStartingRoot() {
-      const params = new URLSearchParams(window.location.search);
-      const urlRoot = params.get("root");
-      if (urlRoot) {
-        try {
-          await this.storage.get(urlRoot);
-          return urlRoot;
-        } catch {
-          return null;
-        }
-      }
-
-      if (this.viewport.rootId) {
-        return this.viewport.rootId;
-      }
-
-      return null;
-    }
-
-    async navigateToItem(itemId, params = {}) {
-      const previous = this.currentRoot;
-
-      // Clear view override and view config when navigating to a different item
-      // (but not on initial load when currentRoot is null)
-      if (this.currentRoot && this.currentRoot !== itemId) {
-        this.viewport.setRootView(null);
-        this.viewport.rootViewConfig = {};  // Clear view config for new root
-      }
-
-      this.currentRoot = itemId;
-      this.viewport.setRoot(itemId);
-
-      // Update URL for browser back/forward navigation
-      const url = new URL(window.location);
-      url.searchParams.set('root', itemId);
-
-      // Clear previous navigation params
-      url.searchParams.delete('field');
-      url.searchParams.delete('line');
-      url.searchParams.delete('col');
-
-      // Add optional navigation params (for line highlighting, etc.)
-      if (params.field) url.searchParams.set('field', params.field);
-      if (params.line) url.searchParams.set('line', params.line);
-      if (params.col) url.searchParams.set('col', params.col);
-
-      window.history.pushState({ itemId, ...params }, '', url);
-
-      // Emit viewport:root-changed for userland listeners
-      this.events.emit({
-        type: EVENT_IDS.VIEWPORT_ROOT_CHANGED,
-        content: {
-          rootId: itemId,
-          previous,
-          initial: previous === null
-        }
-      });
-
-      await this.viewport.persist();
-      await this.renderRoot(itemId);
-    }
+    // getStartingRoot() removed - viewport-view reads URL directly
+    // navigateToItem() removed - use userland viewport-manager.navigate()
 
     async renderViewport() {
       const mainView = this.rootElement.querySelector('#main-view');
@@ -456,34 +357,8 @@ export async function loadKernel(require, storageBackend) {
       }
     }
 
-    async renderRoot(itemId) {
-      // If no itemId, just render the viewport (which will show empty state)
-      if (!itemId) {
-        return this.renderViewport();
-      }
-
-      const mainView = this.rootElement.querySelector('#main-view');
-      if (!mainView) return;
-
-      try {
-        // Clear render instance registry before full re-render (Phase 2)
-        this.rendering.clearInstances();
-
-        // Render the viewport item itself (not the root directly)
-        // The viewport renderer will create navigation and render the root inside
-        const dom = await this.rendering.renderItem(IDS.VIEWPORT);
-        mainView.innerHTML = '';
-        mainView.appendChild(dom);
-      } catch (error) {
-        mainView.innerHTML = `
-          <div class="render-error">
-            <h3>Render Error</h3>
-            <pre>${error.message}</pre>
-            <pre>${error.stack}</pre>
-          </div>
-        `;
-      }
-    }
+    // renderRoot() removed - renderViewport() handles everything
+    // Userland calls api.renderViewport() to trigger re-render
 
     // -------------------------------------------------------------------------
     // Item List and Raw Editor
@@ -579,9 +454,14 @@ export async function loadKernel(require, storageBackend) {
           row.appendChild(info);
 
           // Click to navigate
-          row.onclick = () => {
+          row.onclick = async () => {
             kernel.hideItemList();
-            kernel.navigateToItem(item.id);
+            try {
+              const vpMgr = await kernel.moduleSystem.require('viewport-manager');
+              await vpMgr.navigate(item.id);
+            } catch (e) {
+              console.error('Navigation failed:', e);
+            }
           };
 
           listContainer.appendChild(row);
@@ -756,11 +636,7 @@ export async function loadKernel(require, storageBackend) {
           }
 
           // Return to previous view
-          if (kernel.viewport.rootId) {
-            await kernel.renderRoot(kernel.viewport.rootId);
-          } else {
-            await kernel.showItemList();
-          }
+          await kernel.renderViewport();
         } catch (error) {
           alert(`Error: ${error.message}`);
         }
@@ -772,11 +648,7 @@ export async function loadKernel(require, storageBackend) {
       cancelBtn.style.cssText = "padding: 8px 16px; cursor: pointer;";
       cancelBtn.onclick = async () => {
         // Return to previous view
-        if (kernel.viewport.rootId) {
-          await kernel.renderRoot(kernel.viewport.rootId);
-        } else {
-          await kernel.showItemList();
-        }
+        await kernel.renderViewport();
       };
       actions.appendChild(cancelBtn);
 
@@ -838,11 +710,9 @@ export async function loadKernel(require, storageBackend) {
           return item.id;
         },
         update: async (item) => {
-          // Save and trigger re-render if there's a current root
+          // Save and trigger re-render
           await kernel.saveItem(item);
-          if (kernel.currentRoot) {
-            await kernel.renderRoot(kernel.currentRoot);
-          }
+          await kernel.renderViewport();
           return item.id;
         },
         delete: (id) => kernel.deleteItem(id),
@@ -874,9 +744,7 @@ export async function loadKernel(require, storageBackend) {
           }
           item.modified = Date.now();
           await kernel.saveItem(item);
-          if (kernel.currentRoot) {
-            await kernel.renderRoot(kernel.currentRoot);
-          }
+          await kernel.renderViewport();
           return item.preferredView || null;
         },
 
@@ -896,7 +764,14 @@ export async function loadKernel(require, storageBackend) {
         hasCycle: (itemId) => kernel.hasCycle(itemId),
 
         // Navigation (params: { field, line, col } for line highlighting)
-        navigate: (id, params) => kernel.navigateToItem(id, params),
+        // Delegates to userland viewport-manager
+        navigate: async (id, params) => {
+          const vpMgr = await kernel.moduleSystem.require('viewport-manager');
+          return vpMgr.navigate(id, params);
+        },
+
+        // Render viewport (for userland to trigger re-renders)
+        renderViewport: () => kernel.renderViewport(),
 
         // Export
         export: async (singleFile = true) => {
@@ -981,9 +856,9 @@ export async function loadKernel(require, storageBackend) {
 
                 // Check for libraries - requires full re-render (dependencies not tracked)
                 const hasLibrary = items.some(i => i.type === IDS.LIBRARY);
-                if (hasLibrary && kernel.currentRoot) {
+                if (hasLibrary) {
                   result.action = 'full-rerender';
-                  await kernel.renderRoot(kernel.currentRoot);
+                  await kernel.renderViewport();
                   resolve(result);
                   return;
                 }
@@ -1044,79 +919,48 @@ export async function loadKernel(require, storageBackend) {
           }
         },
 
-        // Viewport - delegates to userland libraries when available, falls back to kernel
+        // Viewport - fully delegates to userland libraries (no kernel fallback)
         viewport: {
           select: async (itemId, parentId) => {
-            try {
-              const selMgr = await kernel.moduleSystem.require('selection-manager');
-              selMgr.select(itemId, parentId);
-            } catch {
-              // Fallback to kernel viewport
-              kernel.viewport.select(itemId, parentId);
-            }
+            const selMgr = await kernel.moduleSystem.require('selection-manager');
+            selMgr.select(itemId, parentId);
           },
           clearSelection: async () => {
-            try {
-              const selMgr = await kernel.moduleSystem.require('selection-manager');
-              selMgr.clearSelection();
-            } catch {
-              kernel.viewport.clearSelection();
-            }
+            const selMgr = await kernel.moduleSystem.require('selection-manager');
+            selMgr.clearSelection();
           },
           getSelection: () => {
-            try {
-              const selMgr = kernel.moduleSystem.getCached('selection-manager');
-              if (selMgr) return selMgr.getSelection();
-            } catch {}
-            return kernel.viewport.getSelection();
+            const selMgr = kernel.moduleSystem.getCached('selection-manager');
+            return selMgr?.getSelection() || null;
           },
           getSelectionParent: () => {
-            try {
-              const selMgr = kernel.moduleSystem.getCached('selection-manager');
-              if (selMgr) return selMgr.getSelectionParent();
-            } catch {}
-            return kernel.viewport.getSelectionParent();
+            const selMgr = kernel.moduleSystem.getCached('selection-manager');
+            return selMgr?.getSelectionParent() || null;
           },
-          getRoot: () => kernel.currentRoot,
+          getRoot: () => {
+            const vpMgr = kernel.moduleSystem.getCached('viewport-manager');
+            return vpMgr?.getRoot() || null;
+          },
           getRootView: () => {
-            try {
-              const vpMgr = kernel.moduleSystem.getCached('viewport-manager');
-              if (vpMgr) return vpMgr.getRootView();
-            } catch {}
-            return kernel.viewport.getRootView();
+            const vpMgr = kernel.moduleSystem.getCached('viewport-manager');
+            return vpMgr?.getRootView() || null;
           },
           setRootView: async (viewId) => {
-            try {
-              const vpMgr = await kernel.moduleSystem.require('viewport-manager');
-              vpMgr.setRootView(viewId);
-              await vpMgr.forcePersist();
-            } catch {
-              kernel.viewport.setRootView(viewId);
-              await kernel.viewport.persist();
-            }
+            const vpMgr = await kernel.moduleSystem.require('viewport-manager');
+            vpMgr.setRootView(viewId);
+            await vpMgr.forcePersist();
           },
-          // New: expose additional viewport-manager methods
           getRootViewConfig: () => {
-            try {
-              const vpMgr = kernel.moduleSystem.getCached('viewport-manager');
-              if (vpMgr) return vpMgr.getRootViewConfig();
-            } catch {}
-            return kernel.viewport.getRootViewConfig?.() || null;
+            const vpMgr = kernel.moduleSystem.getCached('viewport-manager');
+            return vpMgr?.getRootViewConfig() || null;
           },
           updateRootViewConfig: async (updates) => {
-            try {
-              const vpMgr = await kernel.moduleSystem.require('viewport-manager');
-              vpMgr.updateRootViewConfig(updates);
-            } catch {
-              kernel.viewport.updateRootViewConfig?.(updates);
-            }
+            const vpMgr = await kernel.moduleSystem.require('viewport-manager');
+            vpMgr.updateRootViewConfig(updates);
           },
           restorePreviousRootView: () => {
-            try {
-              const vpMgr = kernel.moduleSystem.getCached('viewport-manager');
-              if (vpMgr) return vpMgr.restorePreviousRootView();
-            } catch {}
-            return kernel.viewport.restorePreviousRootView?.() || false;
+            const vpMgr = kernel.moduleSystem.getCached('viewport-manager');
+            return vpMgr?.restorePreviousRootView() || false;
           }
         },
 
@@ -1316,10 +1160,8 @@ export async function loadKernel(require, storageBackend) {
       // Clear module cache
       this.moduleSystem.clearCache();
 
-      // Re-render if we deleted from current root
-      if (parents.some(p => p.id === this.currentRoot)) {
-        await this.renderRoot(this.currentRoot);
-      }
+      // Re-render viewport (userland will handle navigation if needed)
+      await this.renderViewport();
     }
 
     async isCodeItem(item) {
@@ -1362,7 +1204,7 @@ export async function loadKernel(require, storageBackend) {
             const bootEvent = {
               type: EVENT_IDS.SYSTEM_BOOT_COMPLETE,
               content: {
-                rootId: this.currentRoot,
+                // rootId removed - userland reads from viewport item or URL
                 safeMode: this._safeMode,
                 debugMode: this.debugMode,
                 lateActivation: true
@@ -1644,10 +1486,7 @@ export async function loadKernel(require, storageBackend) {
         document.removeEventListener('keydown', window._userKeyboardHandler);
         delete window._userKeyboardHandler;
       }
-      if (window._popstateHandler) {
-        window.removeEventListener('popstate', window._popstateHandler);
-        delete window._popstateHandler;
-      }
+      // _popstateHandler removed - now managed by userland viewport-manager
       if (window._safeModeShortcut) {
         document.removeEventListener('keydown', window._safeModeShortcut);
         delete window._safeModeShortcut;
