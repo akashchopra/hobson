@@ -1,6 +1,9 @@
-// Item: container_view
+// Item: spatial-canvas-view
 // ID: ef793c27-2d4b-4c99-b05a-2769db5bc5a9
 // Type: aaaaaaaa-0000-0000-0000-000000000000
+//
+// A "wrapper view" that provides spatial layout for any item type.
+// Renders an optional inner view as the background, with children as floating windows above.
 
 
 
@@ -26,144 +29,84 @@ export async function render(item, api) {
     style: 'position: relative; width: 100%; height: 100%; overflow: auto;'
   }, []);
 
-  // Get view config for banner state (persisted in parent's child entry)
+  // Get view config for inner view (persisted in parent's child entry or viewport root)
   const viewConfig = api.getViewConfig() || {};
-  let bannerPosition = viewConfig.bannerPosition || 'left';
-  let bannerSize = viewConfig.bannerSize || 200;
-  const minBannerSize = 20;
+  const innerViewConfig = viewConfig.innerView || null;
 
-  // Calculate banner styles based on position
-  const getBannerStyles = (pos, size) => {
-    const base = 'position: absolute; z-index: 0; background: #f5f5f5; overflow: auto; display: flex; flex-direction: column;';
-    switch (pos) {
-      case 'left':
-        return base + ` left: 0; top: 0; bottom: 0; width: ${size}px; border-right: 1px solid #ddd;`;
-      case 'right':
-        return base + ` right: 0; top: 0; bottom: 0; width: ${size}px; border-left: 1px solid #ddd;`;
-      case 'top':
-        return base + ` left: 0; right: 0; top: 0; height: ${size}px; border-bottom: 1px solid #ddd;`;
-      case 'bottom':
-        return base + ` left: 0; right: 0; bottom: 0; height: ${size}px; border-top: 1px solid #ddd;`;
-      default:
-        return base + ` left: 0; top: 0; bottom: 0; width: ${size}px; border-right: 1px solid #ddd;`;
-    }
-  };
-
-  // Get resize handle styles based on position
-  const getResizeHandleStyles = (pos) => {
-    const base = 'position: absolute; background: transparent;';
-    switch (pos) {
-      case 'left':
-        return base + ' right: 0; top: 0; bottom: 0; width: 6px; cursor: ew-resize;';
-      case 'right':
-        return base + ' left: 0; top: 0; bottom: 0; width: 6px; cursor: ew-resize;';
-      case 'top':
-        return base + ' left: 0; right: 0; bottom: 0; height: 6px; cursor: ns-resize;';
-      case 'bottom':
-        return base + ' left: 0; right: 0; top: 0; height: 6px; cursor: ns-resize;';
-      default:
-        return base + ' right: 0; top: 0; bottom: 0; width: 6px; cursor: ew-resize;';
-    }
-  };
-
-  // Banner element
-  const banner = api.createElement('div', {
-    class: 'container-banner',
-    style: getBannerStyles(bannerPosition, bannerSize)
+  // === BACKGROUND LAYER ===
+  // Renders an optional inner view as full-bleed background at z-index 0
+  const background = api.createElement('div', {
+    class: 'spatial-background',
+    style: 'position: absolute; inset: 0; z-index: 0; overflow: auto; display: flex; flex-direction: column;'
   }, []);
 
-  // Banner content
-  const bannerContent = api.createElement('div', {
-    style: 'flex: 1; padding: 16px; overflow: auto;'
-  }, []);
+  if (innerViewConfig && innerViewConfig.type) {
+    try {
+      // BYPASS api.renderItem() to avoid cycle detection
+      // The wrapper pattern intentionally renders the same item with a different view.
+      // This is NOT a cycle - it's a deliberate composition pattern.
+      // We directly load and call the inner view's render function.
 
-  const description = item.content?.description;
-  if (description) {
-    // Render description as markdown with Hobson extensions (links, transclusions)
-    const hobsonMarkdown = await api.require('hobson-markdown');
-    const descDiv = await hobsonMarkdown.render(description, api);
-    descDiv.style.lineHeight = '1.6';
-    descDiv.style.color = '#333';
-    bannerContent.appendChild(descDiv);
-  } else {
-    const placeholder = api.createElement('div', {
-      style: 'color: #999; font-style: italic;'
-    }, ['No description - consider adding one']);
-    bannerContent.appendChild(placeholder);
+      const innerViewId = innerViewConfig.type;
+
+      // Load the inner view module
+      const innerViewModule = await api.require(innerViewId);
+
+      if (innerViewModule && typeof innerViewModule.render === 'function') {
+        // Create a modified api for the inner view
+        // The inner view's config is stored inside innerViewConfig (minus the 'type' field which is for spatial-canvas)
+        const { type: _viewType, ...innerViewOwnConfig } = innerViewConfig;
+        const hasOwnConfig = Object.keys(innerViewOwnConfig).length > 0;
+
+        const innerApi = Object.create(api);
+        // Return the inner view's own config (if any), not the wrapper config
+        innerApi.getViewConfig = () => hasOwnConfig ? innerViewOwnConfig : null;
+        innerApi.updateViewConfig = async (updates) => {
+          const currentConfig = api.getViewConfig() || {};
+          await api.updateViewConfig({
+            innerView: { ...(currentConfig.innerView || {}), ...updates }
+          });
+        };
+        // Override getCurrentItem to return the item being rendered, not the spatial container
+        innerApi.getCurrentItem = () => item;
+        // Override getViewId to return the inner view's ID
+        innerApi.getViewId = () => innerViewId;
+
+        // Call the inner view's render function directly
+        const innerDom = await innerViewModule.render(item, innerApi);
+
+        if (innerDom) {
+          // Ensure inner content fills the background
+          innerDom.style.flex = '1';
+          innerDom.style.minHeight = '0';
+          background.appendChild(innerDom);
+        }
+      } else {
+        throw new Error(`Inner view ${innerViewId} has no render function`);
+      }
+    } catch (error) {
+      const errorDiv = api.createElement('div', {
+        style: 'padding: 20px; color: #c00; background: #fff0f0; border: 1px solid #fcc; margin: 10px;'
+      }, ['Error rendering inner view: ' + error.message]);
+      background.appendChild(errorDiv);
+    }
   }
 
-  banner.appendChild(bannerContent);
+  container.appendChild(background);
 
-  // Resize handle
-  const resizeHandle = api.createElement('div', {
-    style: getResizeHandleStyles(bannerPosition)
-  }, []);
-
-  // Resize handle hover effect
-  resizeHandle.addEventListener('mouseenter', () => {
-    resizeHandle.style.background = 'rgba(0, 0, 0, 0.1)';
-  });
-  resizeHandle.addEventListener('mouseleave', () => {
-    resizeHandle.style.background = 'transparent';
-  });
-
-  // Resize drag handler
-  resizeHandle.addEventListener('mousedown', (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-
-    const startX = e.clientX;
-    const startY = e.clientY;
-    const startSize = bannerSize;
-    const containerRect = container.getBoundingClientRect();
-    const isHorizontal = bannerPosition === 'left' || bannerPosition === 'right';
-    const maxSize = isHorizontal ? containerRect.width * 0.5 : containerRect.height * 0.5;
-
-    const onMouseMove = (moveEvent) => {
-      let delta;
-      if (bannerPosition === 'left') {
-        delta = moveEvent.clientX - startX;
-      } else if (bannerPosition === 'right') {
-        delta = startX - moveEvent.clientX;
-      } else if (bannerPosition === 'top') {
-        delta = moveEvent.clientY - startY;
-      } else {
-        delta = startY - moveEvent.clientY;
-      }
-      const newSize = Math.max(minBannerSize, Math.min(maxSize, startSize + delta));
-      bannerSize = newSize;
-      if (isHorizontal) {
-        banner.style.width = newSize + 'px';
-      } else {
-        banner.style.height = newSize + 'px';
-      }
-    };
-
-    const onMouseUp = async () => {
-      document.removeEventListener('mousemove', onMouseMove);
-      document.removeEventListener('mouseup', onMouseUp);
-      // Persist the new banner size
-      await api.updateViewConfig({ bannerSize });
-    };
-
-    document.addEventListener('mousemove', onMouseMove);
-    document.addEventListener('mouseup', onMouseUp);
-  });
-
-  banner.appendChild(resizeHandle);
-
-  // Context menu for banner position
-  banner.addEventListener('contextmenu', async (e) => {
+  // === BACKGROUND CONTEXT MENU ===
+  // Right-click on background shows menu to set/clear inner view
+  const showBackgroundContextMenu = async (e) => {
     if (e.shiftKey) return;
     e.preventDefault();
     e.stopPropagation();
 
     // Remove any existing context menu
-    const existingMenu = document.querySelector('.banner-context-menu');
+    const existingMenu = document.querySelector('.background-context-menu');
     if (existingMenu) existingMenu.remove();
 
     const menu = api.createElement('div', {
-      class: 'banner-context-menu',
+      class: 'background-context-menu',
       style: `
         position: fixed;
         left: ${e.clientX}px;
@@ -173,31 +116,79 @@ export async function render(item, api) {
         border-radius: 4px;
         box-shadow: 0 2px 8px rgba(0,0,0,0.15);
         z-index: 100000;
-        min-width: 120px;
+        min-width: 180px;
       `
     }, []);
 
-    const positions = ['left', 'right', 'top', 'bottom'];
-    for (const pos of positions) {
-      const isActive = pos === bannerPosition;
-      const menuItem = api.createElement('div', {
-        style: `
-          padding: 8px 16px;
-          cursor: pointer;
-          font-size: 13px;
-          ${isActive ? 'font-weight: bold; background: #f0f0f0;' : ''}
-        `
-      }, [pos.charAt(0).toUpperCase() + pos.slice(1) + (isActive ? ' \u2713' : '')]);
-      menuItem.addEventListener('mouseenter', () => { if (!isActive) menuItem.style.background = '#f5f5f5'; });
-      menuItem.addEventListener('mouseleave', () => { if (!isActive) menuItem.style.background = 'transparent'; });
-      menuItem.addEventListener('click', async () => {
-        menu.remove();
-        if (pos !== bannerPosition) {
-          await api.updateViewConfig({ bannerPosition: pos });
-          await api.navigate(api.getCurrentRoot());
-        }
+    // Get available views for this item's type
+    const views = await api.getViews(item.type);
+    const currentInnerViewId = innerViewConfig?.type || null;
+
+    // "Set Background View..." submenu header
+    const headerItem = api.createElement('div', {
+      style: 'padding: 8px 16px; font-size: 12px; color: #666; border-bottom: 1px solid #eee;'
+    }, ['Set Background View']);
+    menu.appendChild(headerItem);
+
+    // Filter out this view itself and debug views
+    const availableViews = views.filter(v =>
+      v.view.id !== 'ef793c27-2d4b-4c99-b05a-2769db5bc5a9' && // Not this view
+      v.view.content?.category !== 'debug'
+    );
+
+    if (availableViews.length === 0) {
+      const noViews = api.createElement('div', {
+        style: 'padding: 8px 16px; color: #999; font-style: italic;'
+      }, ['(No views available)']);
+      menu.appendChild(noViews);
+    } else {
+      // Sort views alphabetically
+      const sortedViews = [...availableViews].sort((a, b) => {
+        const nameA = a.view.content?.displayName || a.view.name || a.view.id.slice(0, 8);
+        const nameB = b.view.content?.displayName || b.view.name || b.view.id.slice(0, 8);
+        return nameA.localeCompare(nameB);
       });
-      menu.appendChild(menuItem);
+
+      for (const { view } of sortedViews) {
+        const isActive = view.id === currentInnerViewId;
+        const viewItem = api.createElement('div', {
+          style: `
+            padding: 8px 16px;
+            cursor: pointer;
+            font-size: 13px;
+            ${isActive ? 'font-weight: bold; background: #f0f0f0;' : ''}
+          `
+        }, [(view.content?.displayName || view.name || view.id.slice(0, 8)) + (isActive ? ' ✓' : '')]);
+
+        viewItem.addEventListener('mouseenter', () => { if (!isActive) viewItem.style.background = '#f5f5f5'; });
+        viewItem.addEventListener('mouseleave', () => { if (!isActive) viewItem.style.background = 'transparent'; });
+        viewItem.addEventListener('click', async () => {
+          menu.remove();
+          await api.updateViewConfig({ innerView: { type: view.id } });
+          await api.navigate(api.getCurrentRoot());
+        });
+        menu.appendChild(viewItem);
+      }
+    }
+
+    // Clear Background option (only if inner view is set)
+    if (currentInnerViewId) {
+      const separator = api.createElement('div', {
+        style: 'height: 1px; background: #ddd; margin: 4px 0;'
+      }, []);
+      menu.appendChild(separator);
+
+      const clearItem = api.createElement('div', {
+        style: 'padding: 8px 16px; cursor: pointer; font-size: 13px;'
+      }, ['Clear Background']);
+      clearItem.addEventListener('mouseenter', () => { clearItem.style.background = '#f5f5f5'; });
+      clearItem.addEventListener('mouseleave', () => { clearItem.style.background = 'transparent'; });
+      clearItem.addEventListener('click', async () => {
+        menu.remove();
+        await api.updateViewConfig({ innerView: null });
+        await api.navigate(api.getCurrentRoot());
+      });
+      menu.appendChild(clearItem);
     }
 
     document.body.appendChild(menu);
@@ -211,9 +202,10 @@ export async function render(item, api) {
       if (!menu.contains(evt.target)) closeMenu();
     };
     setTimeout(() => document.addEventListener('mousedown', onMouseDown, true), 0);
-  });
+  };
 
-  container.appendChild(banner);
+  // Attach context menu to background
+  background.addEventListener('contextmenu', showBackgroundContextMenu);
 
   // === ANCHOR-BASED POSITIONING HELPERS ===
 
@@ -302,18 +294,15 @@ export async function render(item, api) {
   // Children (windows)
   const children = item.children || [];
 
-  if (children.length === 0) {
-    // Position empty message based on banner position
-    let emptyStyle = 'position: absolute; color: #999; font-style: italic;';
-    if (bannerPosition === 'left') emptyStyle += ` left: ${bannerSize + 40}px; top: 40px;`;
-    else if (bannerPosition === 'right') emptyStyle += ' left: 40px; top: 40px;';
-    else if (bannerPosition === 'top') emptyStyle += ` left: 40px; top: ${bannerSize + 40}px;`;
-    else emptyStyle += ' left: 40px; top: 40px;';
-    const empty = api.createElement('div', { style: emptyStyle }, [
-      'No items yet. Use the REPL to add children.'
+  if (children.length === 0 && !innerViewConfig) {
+    // Show empty message only when no children AND no background view
+    const empty = api.createElement('div', {
+      style: 'position: absolute; left: 40px; top: 40px; color: #999; font-style: italic; z-index: 1;'
+    }, [
+      'No items yet. Right-click to set a background view, or use the REPL to add children.'
     ]);
     container.appendChild(empty);
-  } else {
+  } else if (children.length > 0) {
     // Function to update child view properties (silent - no re-render)
     const updateChild = async (childId, viewUpdates) => {
       // Get fresh children from database (not stale closure)
@@ -347,8 +336,8 @@ export async function render(item, api) {
 
     // Render normal and maximized children
     const childrenToRender = [...normalChildren, ...maximizedChildren];
-    // Base z-index is now 2 (banner is 0, windows start at 2+)
-    const baseZ = 2;
+    // Base z-index: background is 0, windows start at 1+
+    const baseZ = 1;
 
     // Helper: Get current max z-index from both database and DOM
     const getMaxZ = async () => {
@@ -469,9 +458,9 @@ export async function render(item, api) {
         height = effectiveView.height || 400;
       }
 
-      // Anchored windows get z=1 (behind regular windows but above banner at z=0)
+      // Anchored windows get z=1 (same as baseZ, above background at z=0)
       const z = windowIsAnchored || effectiveView.anchor
-        ? 1
+        ? baseZ
         : (effectiveView.z !== undefined ? effectiveView.z + baseZ : (await getMaxZ()) + 1);
       const isMaximized = effectiveView.maximized || false;
 
