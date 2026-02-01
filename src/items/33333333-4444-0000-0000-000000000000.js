@@ -1,8 +1,3 @@
-// Item: kernel:module-system
-// ID: 33333333-4444-0000-0000-000000000000
-// Type: 33333333-0000-0000-0000-000000000000
-
-// kernel-module-system module
 export class ModuleSystem {
   constructor(kernel) {
     this.kernel = kernel;
@@ -103,39 +98,53 @@ export class ModuleSystem {
   }
 
   // Capability check: is this item a code item?
-  // Uses bounded type chain walking (stops at type_definition boundary)
+  // Walks the extends chain of the item's type
   async isCodeItem(item) {
     return await this.typeChainIncludes(item.type, this.kernel.IDS.CODE);
   }
 
-  // Walk type chain for capability/subtype detection.
-  // Stops at type_definition boundary to avoid crossing into meta-level.
-  // e.g., note_view → view → code (stop here, code.type = type_definition)
-  // So "is note_view code?" = yes, but "is note_view type_definition?" = no
-  async typeChainIncludes(typeId, targetId) {
+  // Build the extends chain for a type (for inheritance/capability checking)
+  // Returns array of type IDs from the given type up to ITEM (root)
+  // Falls back to walking 'type' field if 'extends' is not present (backwards compat)
+  async buildExtendsChain(typeId) {
+    const chain = [];
     let current = typeId;
     const visited = new Set();
 
     while (current && !visited.has(current)) {
-      if (current === targetId) return true;
+      chain.push(current);
       visited.add(current);
 
-      if (current === this.kernel.IDS.ATOM) break;
+      // Stop at ITEM (root)
+      if (current === this.kernel.IDS.ITEM) break;
 
       try {
         const typeItem = await this.kernel.storage.get(current);
-
-        // Stop at type_definition boundary: if this item IS a type definition
-        // (its type is TYPE_DEFINITION), don't walk further into meta-level
-        if (typeItem.type === this.kernel.IDS.TYPE_DEFINITION) break;
-
-        current = typeItem.type;
+        
+        // Prefer 'extends' field (new model)
+        if (typeItem.extends !== undefined) {
+          // null means root reached
+          if (typeItem.extends === null) break;
+          current = typeItem.extends;
+        } else {
+          // Fallback to 'type' field (old model) for backwards compatibility
+          // Stop at TYPE_DEFINITION boundary to avoid meta-level (old heuristic)
+          if (typeItem.type === this.kernel.IDS.TYPE_DEFINITION) break;
+          current = typeItem.type;
+        }
       } catch {
         break;
       }
     }
 
-    return false;
+    return chain;
+  }
+
+  // Check if a type's extends chain includes the target type
+  // Used for capability detection (e.g., "is this item's type a code type?")
+  async typeChainIncludes(typeId, targetId) {
+    const chain = await this.buildExtendsChain(typeId);
+    return chain.includes(targetId);
   }
 
   // Get a cached module synchronously (returns null if not cached)

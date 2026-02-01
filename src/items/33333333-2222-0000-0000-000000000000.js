@@ -1,7 +1,3 @@
-// Item: kernel-storage
-// ID: 33333333-2222-0000-0000-000000000000
-// Type: 33333333-0000-0000-0000-000000000000
-
 // kernel-storage module
 // Delegates all storage operations to the backend provided by the bootloader.
 // The backend handles IndexedDB access and ID prefixing for nested instances.
@@ -71,10 +67,11 @@ export class Storage {
 
   async _validateItem(item, kernel) {
     // See [item/atom](item://00000000-0000-0000-0000-000000000000)
-    const ATOM_ID = kernel?.IDS?.ATOM || "00000000-0000-0000-0000-000000000000";
+    const ITEM_ID = kernel?.IDS?.ITEM || "00000000-0000-0000-0000-000000000000";
+    const TYPE_DEFINITION_ID = kernel?.IDS?.TYPE_DEFINITION || "11111111-0000-0000-0000-000000000000";
 
-    // Validate type chain (must reach atom, no cycles)
-    await this._validateTypeChain(item.type, new Set(), ATOM_ID);
+    // Validate type chain (must reach a valid root, no unexpected cycles)
+    await this._validateTypeChain(item.type, new Set(), ITEM_ID, TYPE_DEFINITION_ID);
 
     // If code item, validate name uniqueness within the same namespace
     if (kernel && await kernel.isCodeItem(item)) {
@@ -96,20 +93,23 @@ export class Storage {
     }
   }
 
-  async _validateTypeChain(typeId, visited, ATOM_ID) {
+  async _validateTypeChain(typeId, visited, ITEM_ID, TYPE_DEFINITION_ID) {
+    // Valid termination points:
+    // - ITEM (old model: atom.type = atom)
+    // - TYPE_DEFINITION (new model: type-definition.type = type-definition)
+    if (typeId === ITEM_ID || typeId === TYPE_DEFINITION_ID) {
+      return;
+    }
+
     if (visited.has(typeId)) {
       throw new Error(`Circular type chain detected at: ${typeId}`);
     }
 
     visited.add(typeId);
 
-    if (typeId === ATOM_ID) {
-      return;
-    }
-
     try {
       const typeItem = await this.get(typeId);
-      await this._validateTypeChain(typeItem.type, visited, ATOM_ID);
+      await this._validateTypeChain(typeItem.type, visited, ITEM_ID, TYPE_DEFINITION_ID);
     } catch (error) {
       if (error.message.includes("not found")) {
         throw new Error(`Type chain broken - item '${typeId}' not found`);

@@ -27,7 +27,7 @@ class RenderInstanceRegistry {
     this.nextId = 1;
   }
 
-  register(domNode, itemId, viewId, parentId) {
+  register(domNode, itemId, viewId, parentId, siblingContainer = null) {
     const instanceId = this.nextId++;
 
     const info = {
@@ -36,6 +36,7 @@ class RenderInstanceRegistry {
       itemId,
       viewId,
       parentId,
+      siblingContainer,
       timestamp: Date.now()
     };
 
@@ -191,9 +192,10 @@ export class RenderingSystem {
           }
         }
 
-        // Re-render with current view and parent context
+        // Re-render with current view and parent context (restore siblingContainer for proper context)
         const newDom = await this.renderItem(itemId, currentViewId, {}, {
-          parentId: instance.parentId
+          parentId: instance.parentId,
+          siblingContainer: instance.siblingContainer
         });
 
         // Replace content in existing container
@@ -318,7 +320,8 @@ export class RenderingSystem {
       // Register render instance (Phase 2)
       if (domNode) {
         const parentId = context.parentId || null;
-        this.registry.register(domNode, itemId, view.id, parentId);
+        const siblingContainer = context.siblingContainer || null;
+        this.registry.register(domNode, itemId, view.id, parentId, siblingContainer);
       }
 
       return domNode;
@@ -365,11 +368,11 @@ export class RenderingSystem {
       // Type not found - fall through to type chain lookup
     }
 
-    // 3. Fall back to type chain lookup
+    // 3. Fall back to extends chain lookup
     return await this.findView(item.type);
   }
 
-  // Find view for a type (walks up type chain)
+  // Find view for a type (walks up extends chain, falls back to type chain for backwards compat)
   async findView(typeId) {
     const IDS = this.kernel.IDS;
 
@@ -388,14 +391,26 @@ export class RenderingSystem {
         return view;
       }
 
-      // Move up the type chain
-      if (currentType === IDS.ATOM) {
+      // Stop at ITEM (root)
+      if (currentType === IDS.ITEM || currentType === IDS.ATOM) {
         break;
       }
 
+      // Move up the extends chain (or fall back to type chain)
       try {
         const typeItem = await this.kernel.storage.get(currentType);
-        currentType = typeItem.type;
+        
+        // Prefer 'extends' field (new model)
+        if (typeItem.extends !== undefined) {
+          // null means root reached
+          if (typeItem.extends === null) break;
+          currentType = typeItem.extends;
+        } else {
+          // Fallback to 'type' field (old model) for backwards compatibility
+          // Stop at TYPE_DEFINITION boundary to avoid meta-level (old heuristic)
+          if (typeItem.type === IDS.TYPE_DEFINITION) break;
+          currentType = typeItem.type;
+        }
       } catch {
         break;
       }
@@ -405,7 +420,7 @@ export class RenderingSystem {
     return await this.kernel.storage.get(IDS.DEFAULT_VIEW);
   }
 
-  // Get all views for a type (including inherited from type chain)
+  // Get all views for a type (including inherited from extends chain)
   async getViews(typeId) {
     const IDS = this.kernel.IDS;
     const result = [];
@@ -433,14 +448,26 @@ export class RenderingSystem {
         }
       }
 
-      // Move up the type chain
-      if (currentType === IDS.ATOM) {
+      // Stop at ITEM (root)
+      if (currentType === IDS.ITEM || currentType === IDS.ATOM) {
         break;
       }
 
+      // Move up the extends chain (or fall back to type chain)
       try {
         const typeItem = await this.kernel.storage.get(currentType);
-        currentType = typeItem.type;
+        
+        // Prefer 'extends' field (new model)
+        if (typeItem.extends !== undefined) {
+          // null means root reached
+          if (typeItem.extends === null) break;
+          currentType = typeItem.extends;
+        } else {
+          // Fallback to 'type' field (old model) for backwards compatibility
+          // Stop at TYPE_DEFINITION boundary to avoid meta-level (old heuristic)
+          if (typeItem.type === IDS.TYPE_DEFINITION) break;
+          currentType = typeItem.type;
+        }
       } catch {
         break;
       }
@@ -451,7 +478,7 @@ export class RenderingSystem {
     if (defaultView && !seenIds.has(defaultView.id)) {
       result.push({
         view: defaultView,
-        forType: IDS.ATOM,
+        forType: IDS.ITEM,
         inherited: true,
         isDefault: true
       });
@@ -910,7 +937,7 @@ export class RenderingSystem {
       // Get the current container item
       getCurrentItem: () => containerItem,
 
-      // Type chain utilities
+      // Type chain utilities (uses extends chain with fallback)
       typeChainIncludes: (typeId, targetId) => kernel.moduleSystem.typeChainIncludes(typeId, targetId),
 
       // UI operations
