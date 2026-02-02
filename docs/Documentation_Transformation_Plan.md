@@ -40,11 +40,13 @@ The "Core Concepts" note covers Items, Types, Code as Data, Views all in one pla
 
 ---
 
-## Phase 1: Atomic Concept Items
+## Phase 1: Atomic Concept Items ✓
 
 Create individual items for each fundamental concept. Use `concept:` prefix for pure documentation items that don't represent types or code.
 
-### 1.1 Enhance Existing Type Definitions
+### 1.1 Enhance Existing Type Definitions ✓
+
+**Status:** Complete (2026-02-02)
 
 These items already exist but need richer descriptions:
 
@@ -58,7 +60,9 @@ These items already exist but need richer descriptions:
 | `view-spec` | "Declarative specification..." | ui_hints, when to use vs imperative |
 | `field-view` | - | Field-level components, creating custom ones |
 
-### 1.2 Create New Concept Items
+### 1.2 Create New Concept Items ✓
+
+**Status:** Complete (2026-02-02) - Created 7 concept items with GUID pattern `c0c0c0c0-000X-0000-0000-000000000000`
 
 System-level concepts that aren't types:
 
@@ -72,13 +76,15 @@ System-level concepts that aren't types:
 | `concept:event-system` | EventBus, declarative watches, event types |
 | `concept:safe-mode` | Recovery, when to use, what's available |
 
-### 1.3 Enhance Kernel Module Descriptions
+### 1.3 Enhance Kernel Module Descriptions ✓
+
+**Status:** Complete (2026-02-02) - Enhanced kernel:module type and kernel:storage. Other modules (kernel:core, kernel:module-system, kernel:rendering, kernel:safe-mode, kernel:styles) already had comprehensive descriptions from prior work. Note: kernel:viewport was moved to userland.
 
 Each kernel module item exists but descriptions are terse:
 
 - `kernel:core` - Orchestration, boot sequence, item lifecycle
 - `kernel:storage` - Validation, type chain checking, IndexedDB
-- `kernel:viewport` - View state, root item, selection
+- ~~`kernel:viewport`~~ - *(moved to userland)*
 - `kernel:module-system` - Code loading, caching, require()
 - `kernel:rendering-system` - View dispatch, instance registry, re-render
 - `kernel:repl` - Interactive scripting, API access
@@ -87,11 +93,13 @@ Each kernel module item exists but descriptions are terse:
 
 ---
 
-## Phase 2: Aggregator Documents
+## Phase 2: Aggregator Documents ✓
 
 Transform monolithic docs into aggregators that transclude atomic pieces.
 
-### 2.1 Core Concepts (Rework)
+### 2.1 Core Concepts (Rework) ✓
+
+**Status:** Complete (2026-02-02) - Transcludes Items, Types, Code, Libraries, Views, View Specs, Field Views
 
 Current: One large document explaining Items, Types, Code, Views inline.
 
@@ -119,7 +127,9 @@ Benefits:
 - Each concept is independently linkable
 - No content duplication
 
-### 2.2 Architecture Overview (Rework)
+### 2.2 Architecture Overview (Rework) ✓
+
+**Status:** Complete (2026-02-02) - Transcludes concept:kernel, concept:bootstrap, concept:safe-mode, kernel:storage, and uses query block for kernel modules
 
 Use query blocks to dynamically list kernel modules:
 
@@ -138,11 +148,13 @@ return transcludeEach(modules, m =>
 ```
 ```
 
-### 2.3 Other Aggregators
+### 2.3 Other Aggregators ✓
 
-- "Views & Rendering" → transclude view, view-spec, field-view descriptions
-- "Events System" → transclude concept:event-system plus event type definitions
-- "Getting Started" → transclude key concepts with beginner framing
+**Status:** Partially complete (2026-02-02) - Events System transformed to aggregator with concept:event-system transclusion
+
+- "Views & Rendering" → transclude view, view-spec, field-view descriptions *(not yet created)*
+- "Events System" → transclude concept:event-system plus event type definitions ✓
+- "Getting Started" → transclude key concepts with beginner framing *(not yet created)*
 
 ---
 
@@ -272,11 +284,11 @@ Implementation: Enhance generic editor to fetch and display type documentation.
 
 ## Implementation Order
 
-1. **Phase 1.1** - Enhance existing type definitions (atom, type-definition, code, view, etc.)
-2. **Phase 1.2** - Create concept: items for system concepts
-3. **Phase 1.3** - Enhance kernel module descriptions
-4. **Phase 2.1** - Rework Core Concepts as aggregator
-5. **Phase 2.2** - Rework Architecture Overview as aggregator
+1. ✓ **Phase 1.1** - Enhance existing type definitions (atom, type-definition, code, view, etc.)
+2. ✓ **Phase 1.2** - Create concept: items for system concepts
+3. ✓ **Phase 1.3** - Enhance kernel module descriptions
+4. ✓ **Phase 2.1** - Rework Core Concepts as aggregator
+5. ✓ **Phase 2.2** - Rework Architecture Overview as aggregator
 6. **Phase 3** - Build backlinks library and display
 7. **Phase 4** - Create concept index
 8. **Phase 5** - User journey enhancements (type/item creation guidance)
