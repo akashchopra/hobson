@@ -7,14 +7,15 @@
 // Supports both sync and async field views
 
 // Helper: Parse navigation params from URL (for root context)
+// Supports: ?field=code&region=X&lines=10-20
 function getNavigateToFromURL() {
   const params = new URLSearchParams(window.location.search);
   const field = params.get('field');
   if (!field) return null;
   return {
     field,
-    line: params.get('line') ? parseInt(params.get('line')) : null,
-    region: params.get('region') || null
+    region: params.get('region') || null,
+    lines: params.get('lines') || null  // "5" or "10-20"
   };
 }
 
@@ -148,8 +149,8 @@ export async function render(item, api) {
         label: hint.label,
         placeholder: hint.placeholder,
         // Pass scroll params if this is the navigation target
-        scrollToLine: isNavigationTarget ? navigateTo.line : null,
         scrollToRegion: isNavigationTarget ? navigateTo.region : null,
+        scrollToLines: isNavigationTarget ? navigateTo.lines : null,  // "5" or "10-20"
         ...hint
       }, api);
     } catch (renderError) {

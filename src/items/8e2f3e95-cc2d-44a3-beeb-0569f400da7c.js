@@ -21,7 +21,7 @@ function findRegionStartLine(text, regionName) {
 
 // Code readonly field view (CodeMirror)
 export async function render(value, options, api) {
-  const { label, language = 'javascript', scrollToLine, scrollToRegion } = options;
+  const { label, language = 'javascript', scrollToLines, scrollToRegion } = options;
   const code = value || '';
 
   const wrapper = api.createElement('div', { className: 'field-code-readonly' });
@@ -62,7 +62,8 @@ export async function render(value, options, api) {
 
   // Process comment spans to make item:// links clickable
   const processCommentLinks = () => {
-    const linkRegex = /\[([^\]]+)\]\(item:\/\/([a-f0-9-]+)\)/g;
+    // Match [text](item://guid) or [text](item://guid#fragment)
+    const linkRegex = /\[([^\]]+)\]\(item:\/\/([a-f0-9-]+)(#[^\)]+)?\)/g;
     const comments = editorContainer.querySelectorAll('.cm-comment:not([data-links-processed])');
     
     comments.forEach(span => {
@@ -81,10 +82,11 @@ export async function render(value, options, api) {
         if (match.index > lastIndex) {
           parts.push(document.createTextNode(text.slice(lastIndex, match.index)));
         }
-        
+
         // Create clickable link
         const linkText = match[1];
         const itemId = match[2];
+        const fragment = match[3]; // e.g., "#Code-as-Data" or undefined
         const link = document.createElement('a');
         link.textContent = linkText;
         link.href = '#';
@@ -92,10 +94,25 @@ export async function render(value, options, api) {
         link.onclick = (e) => {
           e.preventDefault();
           e.stopPropagation();
+          // Parse fragment using documented syntax: #field?region=X&lines=Y
+          // Examples: #code?region=ModuleSystem -> field='code', region='ModuleSystem'
+          //           #description -> field='description'
+          //           #code?lines=10-20 -> field='code', lines='10-20'
+          let navigateTo = null;
+          if (fragment) {
+            const fragContent = fragment.slice(1); // Remove leading #
+            const [field, queryString] = fragContent.split('?', 2);
+            navigateTo = { field: field || null };
+            if (queryString) {
+              const params = new URLSearchParams(queryString);
+              if (params.has('region')) navigateTo.region = params.get('region');
+              if (params.has('lines')) navigateTo.lines = params.get('lines');
+            }
+          }
           if (api.siblingContainer) {
-            api.siblingContainer.addSibling(itemId);
+            api.siblingContainer.addSibling(itemId, navigateTo);
           } else {
-            api.navigate(itemId);
+            api.navigate(itemId, navigateTo);
           }
         };
         parts.push(link);
@@ -116,36 +133,46 @@ export async function render(value, options, api) {
     });
   };
 
+  // Helper: Parse lines param ("5" or "10-20") into { start, end }
+  const parseLines = (linesStr) => {
+    if (!linesStr) return null;
+    if (linesStr.includes('-')) {
+      const [start, end] = linesStr.split('-').map(n => parseInt(n, 10));
+      return { start, end };
+    }
+    const line = parseInt(linesStr, 10);
+    return { start: line, end: line };
+  };
+
   // Function to handle line/region navigation
   const navigateToTarget = () => {
-    // First try options (passed from generic_view), then fall back to URL params
-    let targetLine = scrollToLine;
-    let col = 0;
+    // Parse scrollToLines ("5" or "10-20")
+    let lineRange = parseLines(scrollToLines);
 
-    // If scrollToRegion is specified but no line, find the region
-    if (scrollToRegion && !targetLine) {
-      targetLine = findRegionStartLine(code, scrollToRegion);
-    }
-
-    // Fallback to URL params for backward compatibility
-    if (!targetLine) {
-      const urlParams = new URLSearchParams(window.location.search);
-      const urlLine = parseInt(urlParams.get('line'), 10);
-      col = parseInt(urlParams.get('col'), 10) || 0;
-      if (!isNaN(urlLine) && urlLine > 0) {
-        targetLine = urlLine;
+    // If scrollToRegion is specified but no lines, find the region
+    if (scrollToRegion && !lineRange) {
+      const regionStart = findRegionStartLine(code, scrollToRegion);
+      if (regionStart) {
+        lineRange = { start: regionStart, end: regionStart };
       }
     }
 
-    if (targetLine) {
+    // Fallback to URL params for backward compatibility
+    if (!lineRange) {
+      const urlParams = new URLSearchParams(window.location.search);
+      const urlLines = urlParams.get('lines');
+      if (urlLines) {
+        lineRange = parseLines(urlLines);
+      }
+    }
+
+    if (lineRange) {
       // CodeMirror uses 0-based line numbers
-      const cmLine = targetLine - 1;
+      const startLine = lineRange.start - 1;
+      const endLine = lineRange.end - 1;
 
-      // Scroll line into view
-      cm.scrollIntoView({ line: cmLine, ch: col }, 100);
-
-      // Add highlight class to the line
-      cm.addLineClass(cmLine, 'background', 'line-highlight');
+      // Scroll first line into view
+      cm.scrollIntoView({ line: startLine, ch: 0 }, 100);
 
       // Add CSS for highlight if not present
       if (!document.getElementById('line-highlight-css')) {
@@ -153,6 +180,11 @@ export async function render(value, options, api) {
         style.id = 'line-highlight-css';
         style.textContent = '.line-highlight { background: #fff3cd !important; }';
         document.head.appendChild(style);
+      }
+
+      // Highlight all lines in range
+      for (let i = startLine; i <= endLine; i++) {
+        cm.addLineClass(i, 'background', 'line-highlight');
       }
     }
   };

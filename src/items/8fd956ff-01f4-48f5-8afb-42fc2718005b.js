@@ -25,24 +25,45 @@ export async function render(value, options, api) {
   wrapper.appendChild(content);
 
   // Handle scroll-to-region navigation
-  // hobson-markdown emits <span data-region-start="name"> anchors for region markers
+  // Supports both region markers ([BEGIN:name]) and heading navigation (## Name)
   if (scrollToRegion) {
     // Use setTimeout to ensure DOM is ready after append
     setTimeout(() => {
+      let target = null;
+
+      // First try: region marker (hobson-markdown emits <span data-region-start="name">)
       const anchor = wrapper.querySelector(`[data-region-start="${scrollToRegion}"]`);
       if (anchor) {
         // Find the next visible sibling to scroll to (the anchor itself is display:none)
-        let target = anchor.nextElementSibling;
+        target = anchor.nextElementSibling;
         if (!target) target = anchor.parentElement;
-        if (target) {
-          target.scrollIntoView({ behavior: 'smooth', block: 'start' });
-          // Add brief highlight effect
-          target.style.transition = 'background 0.3s';
-          target.style.background = '#fff3cd';
-          setTimeout(() => {
-            target.style.background = '';
-          }, 2000);
+      }
+
+      // Second try: heading with matching text or id
+      if (!target) {
+        const headings = wrapper.querySelectorAll('h1, h2, h3, h4, h5, h6');
+        for (const h of headings) {
+          // Match by id (kebab-case) or text content
+          const headingId = h.id || '';
+          const headingText = h.textContent.trim();
+          if (headingId === scrollToRegion ||
+              headingId === scrollToRegion.toLowerCase().replace(/\s+/g, '-') ||
+              headingText === scrollToRegion ||
+              headingText.toLowerCase() === scrollToRegion.toLowerCase()) {
+            target = h;
+            break;
+          }
         }
+      }
+
+      if (target) {
+        target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        // Add brief highlight effect
+        target.style.transition = 'background 0.3s';
+        target.style.background = '#fff3cd';
+        setTimeout(() => {
+          target.style.background = '';
+        }, 2000);
       }
     }, 100);
   }
