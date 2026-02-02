@@ -1,9 +1,10 @@
 
 export async function render(item, api) {
   // Load dependencies
+  // Note: Libraries under active development should be required where used, not here.
+  // See docs/Hot-Reloading Libraries.md for the pattern.
   const cssLoader = await api.require('css-loader-lib');
   await cssLoader.loadCSS('context-menu-css', api);
-  const typePicker = await api.require('type-picker-lib');
   const searchLib = await api.require('item-search-lib');
 
   // Determine root: URL takes precedence over viewport item
@@ -61,6 +62,8 @@ export async function render(item, api) {
   // parentId: the item to add a child to
   // clickCoords: {x, y} if adding from a spatial context, null otherwise
   const addChildToItem = async (parentId, clickCoords) => {
+    // Re-require to pick up any edits (see docs/Hot-Reloading Libraries.md)
+    const typePicker = await api.require('type-picker-lib');
     const selectedType = await typePicker.showTypePicker(api);
     if (!selectedType) return;
 
