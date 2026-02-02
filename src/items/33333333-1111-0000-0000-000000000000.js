@@ -701,6 +701,80 @@ export async function loadKernel(require, storageBackend) {
     createREPLAPI() {
       const kernel = this;
 
+      // Sort items in dependency order for import (types before their instances)
+      // Uses topological sort based on type and extends fields
+      function sortItemsForImport(items) {
+        const itemMap = new Map(items.map(i => [i.id, i]));
+        const itemIds = new Set(items.map(i => i.id));
+
+        // Build dependency graph
+        // dependsOn[A] = [B, C] means A depends on B and C (they must be saved first)
+        const dependsOn = new Map();
+
+        for (const item of items) {
+          const deps = [];
+
+          // Type dependency (required for validation)
+          if (item.type && itemIds.has(item.type) && item.type !== item.id) {
+            deps.push(item.type);
+          }
+
+          // Extends dependency (for completeness)
+          if (item.extends && itemIds.has(item.extends) && item.extends !== item.id) {
+            deps.push(item.extends);
+          }
+
+          dependsOn.set(item.id, deps);
+        }
+
+        // Topological sort using Kahn's algorithm
+        // Build reverse graph: mustComeBefore[B] = [A, D] means B must come before A and D
+        const mustComeBefore = new Map();
+        const inDegree = new Map();
+
+        for (const item of items) {
+          inDegree.set(item.id, dependsOn.get(item.id).length);
+
+          for (const dep of dependsOn.get(item.id)) {
+            if (!mustComeBefore.has(dep)) mustComeBefore.set(dep, []);
+            mustComeBefore.get(dep).push(item.id);
+          }
+        }
+
+        // Start with items that have no dependencies in the import set
+        const queue = [];
+        for (const [id, degree] of inDegree) {
+          if (degree === 0) queue.push(id);
+        }
+
+        const result = [];
+        while (queue.length > 0) {
+          const id = queue.shift();
+          result.push(itemMap.get(id));
+
+          for (const dependent of (mustComeBefore.get(id) || [])) {
+            const newDegree = inDegree.get(dependent) - 1;
+            inDegree.set(dependent, newDegree);
+            if (newDegree === 0) {
+              queue.push(dependent);
+            }
+          }
+        }
+
+        // Handle cycles: append remaining items (they may fail validation)
+        if (result.length < items.length) {
+          const resultIds = new Set(result.map(i => i.id));
+          for (const item of items) {
+            if (!resultIds.has(item.id)) {
+              result.push(item);
+            }
+          }
+          console.warn(`[import] Circular dependencies detected - some items may fail validation`);
+        }
+
+        return result;
+      }
+
       return {
         // Storage operations
         get: (id) => kernel.storage.get(id),
@@ -802,6 +876,9 @@ export async function loadKernel(require, storageBackend) {
                   const fileItems = Array.isArray(data) ? data : [data];
                   items = items.concat(fileItems);
                 }
+
+                // Sort items in dependency order (types/extends before their dependents)
+                items = sortItemsForImport(items);
 
                 let created = 0;
                 let updated = 0;
