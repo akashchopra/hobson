@@ -181,77 +181,89 @@ body {
   background: #f0f0f0;
 }
 
-/* REPL - Separate Screen */
-#repl-container {
-  display: none;
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
+/* REPL Bottom Panel */
+#repl-panel {
+  display: flex;
   flex-direction: column;
-  overflow: hidden;
   background: white;
+  border-top: 1px solid #ccc;
+  min-height: 36px;
 }
 
-#repl-container.visible {
+#repl-panel.collapsed {
+  flex: 0 0 36px;
+}
+
+#repl-panel.expanded {
+  flex: 0 0 300px;
+}
+
+/* Collapse bar - always visible */
+.repl-collapse-bar {
+  height: 36px;
   display: flex;
-}
-
-#main-view.repl-active {
-  display: none;
-}
-
-.repl-header {
-  display: flex;
-  justify-content: space-between;
   align-items: center;
-  padding: 15px 20px;
-  background: white;
-  border-bottom: 1px solid #eee;
-  flex-shrink: 0;
-}
-
-.repl-header h3 {
-  margin: 0;
-}
-
-.repl-controls {
-  display: flex;
-  gap: 10px;
-}
-
-.repl-controls button {
-  padding: 6px 12px;
-  font-size: 13px;
+  padding: 0 16px;
+  background: #f5f5f5;
   cursor: pointer;
-  border: 1px solid #ccc;
-  background: white;
-  border-radius: 4px;
+  flex-shrink: 0;
+  border-bottom: 1px solid #eee;
+  gap: 12px;
 }
 
-.repl-controls button:hover {
-  background: #f0f0f0;
+.repl-collapse-bar:hover {
+  background: #eee;
 }
 
-.repl-input-panel {
+.repl-collapse-bar .repl-title {
+  font-weight: 600;
+  font-size: 13px;
+  color: #333;
+}
+
+.repl-collapse-bar .repl-hint {
+  font-size: 12px;
+  color: #999;
+}
+
+.repl-collapse-bar .repl-expand-icon {
+  margin-left: auto;
+  font-size: 12px;
+  color: #666;
+}
+
+/* Panel content - horizontal layout */
+#repl-panel.collapsed .repl-panel-content {
+  display: none;
+}
+
+.repl-panel-content {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   flex: 1;
   min-height: 0;
   overflow: hidden;
 }
 
+/* Input section (left) */
+.repl-input-section {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 200px;
+  border-right: 1px solid #eee;
+}
+
 .repl-input-scroll {
   flex: 1;
   overflow-y: auto;
-  padding: 20px;
+  padding: 12px;
 }
 
 #repl-input {
   width: 100%;
   height: 100%;
-  min-height: 150px;
+  min-height: 80px;
   font-family: 'SF Mono', Monaco, Menlo, 'Courier New', monospace;
   font-size: 13px;
   line-height: 1.5;
@@ -267,7 +279,7 @@ body {
 .repl-actions {
   display: flex;
   gap: 10px;
-  padding: 15px 20px;
+  padding: 10px 12px;
   align-items: center;
   background: white;
   border-top: 1px solid #eee;
@@ -275,8 +287,8 @@ body {
 }
 
 .repl-actions button {
-  padding: 8px 16px;
-  font-size: 14px;
+  padding: 6px 14px;
+  font-size: 13px;
   cursor: pointer;
   border: 1px solid #ccc;
   background: white;
@@ -297,60 +309,39 @@ body {
   background: #0056b3;
 }
 
-.repl-hint {
-  margin-left: auto;
-  font-size: 12px;
-  color: #999;
-}
-
-.repl-splitter {
-  height: 6px;
+/* Vertical splitter between input and output */
+.repl-vertical-splitter {
+  width: 6px;
   background: #e0e0e0;
-  cursor: row-resize;
+  cursor: col-resize;
   flex-shrink: 0;
-  position: relative;
 }
 
-.repl-splitter:hover {
+.repl-vertical-splitter:hover {
   background: #d0d0d0;
 }
 
-.repl-splitter::after {
-  content: '';
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  width: 40px;
-  height: 3px;
-  background: #999;
-  border-radius: 2px;
-}
-
-.repl-transcript-panel {
+/* Output section (right) */
+.repl-output-section {
+  flex: 1;
   display: flex;
   flex-direction: column;
-  flex: 1;
-  min-height: 0;
+  min-width: 200px;
   overflow: hidden;
-}
-
-#repl-transcript {
-  flex: 1;
-  overflow-y: auto;
-  padding: 20px;
 }
 
 .repl-transcript-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 15px;
+  padding: 8px 12px;
+  border-bottom: 1px solid #eee;
+  flex-shrink: 0;
 }
 
 .repl-transcript-header h4 {
   margin: 0;
-  font-size: 14px;
+  font-size: 13px;
   color: #666;
 }
 
@@ -367,8 +358,14 @@ body {
   background: #f0f0f0;
 }
 
+#repl-transcript-entries {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px;
+}
+
 .repl-entry {
-  margin-bottom: 15px;
+  margin-bottom: 12px;
   padding: 10px;
   background: #f8f8f8;
   border-radius: 4px;
@@ -406,6 +403,22 @@ body {
   font-size: 12px;
   color: #cc0000;
   white-space: pre-wrap;
+}
+
+/* Panel height resize handle */
+#repl-panel-splitter {
+  height: 6px;
+  background: #e0e0e0;
+  cursor: row-resize;
+  flex-shrink: 0;
+}
+
+#repl-panel-splitter:hover {
+  background: #d0d0d0;
+}
+
+#repl-panel.collapsed ~ #repl-panel-splitter {
+  display: none;
 }
 
 /* Element Inspector */
