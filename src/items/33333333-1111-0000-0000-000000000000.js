@@ -205,6 +205,18 @@ export async function loadKernel(require, storageBackend) {
         // so error handlers are active during boot
         this.setupDeclarativeWatches();
 
+        // Emit system:boot-complete BEFORE rendering so userland libraries
+        // (especially viewport-manager) are initialized before any code tries
+        // to call navigate() during render
+        this.events.emit({
+          type: EVENT_IDS.SYSTEM_BOOT_COMPLETE,
+          content: {
+            safeMode: this._safeMode,
+            debugMode: this.debugMode,
+            lateActivation: false
+          }
+        });
+
         // Render the viewport - viewport-view handles URL reading and root display
         await this.renderViewport();
 
@@ -218,17 +230,6 @@ export async function loadKernel(require, storageBackend) {
             console.warn('Could not load element-inspector:', e.message);
           }
         }
-
-        // Emit system:boot-complete for userland libraries to activate
-        this.events.emit({
-          type: EVENT_IDS.SYSTEM_BOOT_COMPLETE,
-          content: {
-            // rootId removed - userland reads from viewport item or URL
-            safeMode: this._safeMode,
-            debugMode: this.debugMode,
-            lateActivation: false
-          }
-        });
       }
     }
 
