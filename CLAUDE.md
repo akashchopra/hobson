@@ -8,9 +8,9 @@ Hobson is a personal information management system inspired by Conway's Humane D
 
 ## Development Commands
 
-No traditional build system - the project is a single HTML file (`src/bootstrap.html`) with embedded CSS that runs directly in the browser.
+No traditional build system - the project is a single HTML file (`src/bootloader.html`) with embedded CSS that runs directly in the browser.
 
-- **Run:** Open `src/bootstrap.html` in a browser (Chrome, Firefox, Safari)
+- **Run:** Open `src/bootloader.html` in a browser (Chrome, Firefox, Safari)
 - **Safe Mode:** Add `?safe=1` to URL to boot kernel only (no user code items) - useful for recovery
 - **Testing:** Manual testing via the built-in REPL
 
@@ -103,7 +103,7 @@ children: [{ id: "item-1", x: 20, y: 20, width: 400, height: 300, z: 0 }]
 
 ## Key Source Files
 
-- `src\bootstrap.html` - The application code.
+- `src\bootloader.html` - The application code.
 - `src\items\{guid}.json` - The most recent export of item with id {guid}. Use these as the reference implementation for all items.
 - `src\items\backup.json` - The most recent dump of all the items in the database. Do not read this file! Use the individual item exports.
 
