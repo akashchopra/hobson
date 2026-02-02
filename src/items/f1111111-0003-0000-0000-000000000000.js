@@ -4,6 +4,9 @@
 
 // REPL UI Library
 // Provides the REPL interface as a collapsible bottom panel
+// State persisted to viewport item
+
+const VIEWPORT_ID = '88888888-0000-0000-0000-000000000000';
 
 let api = null;
 let panelElement = null;
@@ -23,26 +26,37 @@ let _panelSplitterUpHandler = null;
 let _verticalSplitterMoveHandler = null;
 let _verticalSplitterUpHandler = null;
 
-const STORAGE_KEY = 'hobson-repl-panel-state';
+// Debounce timer for persisting state
+let persistTimer = null;
 
-function loadPanelState() {
+async function loadPanelState() {
+  if (!api) return;
   try {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    if (saved) {
-      const parsed = JSON.parse(saved);
-      panelState = { ...panelState, ...parsed };
+    const viewport = await api.get(VIEWPORT_ID);
+    if (viewport.content?.replPanelState) {
+      panelState = { ...panelState, ...viewport.content.replPanelState };
     }
   } catch (e) {
-    console.warn('Failed to load REPL panel state:', e);
+    console.warn('[repl-ui] Failed to load panel state:', e);
   }
 }
 
-function savePanelState() {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(panelState));
-  } catch (e) {
-    console.warn('Failed to save REPL panel state:', e);
-  }
+async function savePanelState() {
+  if (!api) return;
+
+  // Debounce: wait 500ms after last change before persisting
+  if (persistTimer) clearTimeout(persistTimer);
+  persistTimer = setTimeout(async () => {
+    try {
+      const viewport = await api.get(VIEWPORT_ID);
+      viewport.content = viewport.content || {};
+      viewport.content.replPanelState = { ...panelState };
+      viewport.modified = Date.now();
+      await api.set(viewport);
+    } catch (e) {
+      console.warn('[repl-ui] Failed to save panel state:', e);
+    }
+  }, 500);
 }
 
 export async function onSystemBootComplete({ safeMode }, _api) {
@@ -50,8 +64,8 @@ export async function onSystemBootComplete({ safeMode }, _api) {
 
   api = _api;
 
-  // Load saved state
-  loadPanelState();
+  // Load saved state from viewport
+  await loadPanelState();
 
   // Create panel splitter (between main-view and panel)
   const panelSplitter = document.createElement('div');
