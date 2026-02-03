@@ -398,8 +398,8 @@ export async function render(item, api) {
     await api.viewport.setRootView(viewId);
   };
 
-  // Helper: get root view ID
-  const getRootView = () => {
+  // Helper: get root view ID (async - reads from viewport item)
+  const getRootView = async () => {
     return api.viewport.getRootView();
   };
 
@@ -687,7 +687,7 @@ export async function render(item, api) {
       const childSpec = parent.children?.find(c => c.id === itemId);
       currentViewId = childSpec?.view?.type || null;
     } else {
-      currentViewId = getRootView();
+      currentViewId = await getRootView();
     }
 
     // Separate normal views from debug views

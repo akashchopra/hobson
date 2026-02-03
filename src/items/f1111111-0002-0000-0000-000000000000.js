@@ -1,5 +1,6 @@
 // Viewport Manager Library
-// Owns all viewport state: root, view preferences, URL sync, navigation
+// Stateless - reads from URL (root) and viewport item (view config)
+// No module-level caching; sources of truth are URL + viewport item
 
 const VIEWPORT_ID = "88888888-0000-0000-0000-000000000000";
 const EVENT_IDS = {
@@ -7,73 +8,76 @@ const EVENT_IDS = {
   VIEWPORT_SELECTION_CHANGED: "e0e00000-0003-0001-0000-000000000000"
 };
 
-// State
-let currentRoot = null;
-let rootViewId = null;
-let rootViewConfig = {};
-let previousRootViewId = null;
-let previousRootViewConfig = {};
-let hasPreviousRootView = false;
+// Only state: whether we've registered the popstate handler
 let popstateHandlerRegistered = false;
 
 // Called at boot
-export async function onSystemBootComplete({ safeMode, rootId }, _api) {
+export async function onSystemBootComplete({ safeMode }, _api) {
   if (safeMode) return;
-
-  // Restore state from viewport item
-  await restoreState();
-
-  // Sync with URL if present (URL takes precedence)
-  const urlRoot = getUrlRoot();
-  if (urlRoot && urlRoot !== currentRoot) {
-    // URL has different root - navigate to it (silently, no pushState)
-    await navigateInternal(urlRoot, {}, { pushState: false, initial: true });
-  }
 
   // Register popstate handler for browser back/forward
   if (!popstateHandlerRegistered) {
     window.addEventListener('popstate', handlePopstate);
     popstateHandlerRegistered = true;
   }
-}
 
-// Restore state from viewport item
-async function restoreState() {
-  try {
+  // If URL has a root, ensure viewport item is in sync
+  const urlRoot = getRoot();
+  if (urlRoot) {
     const viewport = await window.kernel.storage.get(VIEWPORT_ID);
-    const child = viewport.children?.[0];
-    if (child) {
-      currentRoot = child.id;
-      // Support new view.type format and old flat format
-      rootViewId = child.view?.type || child.view || child.renderer || null;
+    const currentChild = viewport.children?.[0];
 
-      // Extract additional view config (everything except type)
-      if (child.view && typeof child.view === 'object') {
-        const { type, ...config } = child.view;
-        rootViewConfig = config;
-      } else {
-        rootViewConfig = {};
-      }
-
-      // Restore previous view state
-      previousRootViewId = child.previousView?.type || child.previousView || null;
-      if (child.previousView && typeof child.previousView === 'object') {
-        const { type, ...prevConfig } = child.previousView;
-        previousRootViewConfig = prevConfig;
-      } else {
-        previousRootViewConfig = {};
-      }
-      hasPreviousRootView = !!child.previousView;
+    // If URL root differs from viewport item, update viewport item
+    // (URL is authoritative for root)
+    if (currentChild?.id !== urlRoot) {
+      await persistRootChange(urlRoot, currentChild?.id);
+      await window.kernel.renderViewport();
     }
-  } catch (e) {
-    console.warn('[viewport-manager] Failed to restore state:', e);
   }
 }
 
-// Get root from URL
-function getUrlRoot() {
-  const params = new URLSearchParams(window.location.search);
-  return params.get('root');
+// Handle browser back/forward
+async function handlePopstate(e) {
+  const urlRoot = getRoot();
+  if (urlRoot) {
+    // Get previous root from viewport item for event
+    const viewport = await window.kernel.storage.get(VIEWPORT_ID);
+    const previous = viewport.children?.[0]?.id;
+
+    // Update viewport item (clear view override when navigating to different item)
+    if (previous !== urlRoot) {
+      await persistRootChange(urlRoot, previous);
+    }
+
+    // Emit event
+    window.kernel.events.emit({
+      type: EVENT_IDS.VIEWPORT_ROOT_CHANGED,
+      content: {
+        rootId: urlRoot,
+        previous,
+        initial: false,
+        popstate: true
+      }
+    });
+
+    await window.kernel.renderViewport();
+  }
+}
+
+// Persist a root change to viewport item
+// Clears view config when changing roots
+async function persistRootChange(newRootId, previousRootId) {
+  const viewport = await window.kernel.storage.get(VIEWPORT_ID);
+
+  if (newRootId === previousRootId) {
+    // Same root - preserve view config
+    return;
+  }
+
+  // Different root - clear view config
+  viewport.children = newRootId ? [{ id: newRootId }] : [];
+  viewport.modified = Date.now();
+  await window.kernel.saveItem(viewport);
 }
 
 // Get navigation params from URL
@@ -86,94 +90,40 @@ function getUrlParams() {
   };
 }
 
-// Handle browser back/forward
-async function handlePopstate(e) {
-  const urlRoot = getUrlRoot();
-  if (urlRoot) {
-    await navigateInternal(urlRoot, getUrlParams(), { pushState: false, popstate: true });
-  }
-}
+// ============================================================================
+// Helper: read child spec from viewport item
+// ============================================================================
 
-// Internal navigation (used by navigate and popstate)
-async function navigateInternal(itemId, params = {}, options = {}) {
-  const { pushState: doPushState = true, initial = false, popstate = false } = options;
-  const previous = currentRoot;
-
-  // Clear view override when navigating to different item
-  if (currentRoot && currentRoot !== itemId) {
-    rootViewId = null;
-    rootViewConfig = {};
-    previousRootViewId = null;
-    previousRootViewConfig = {};
-    hasPreviousRootView = false;
-  }
-
-  currentRoot = itemId;
-
-  // Update URL
-  if (doPushState) {
-    const url = new URL(window.location);
-    url.searchParams.set('root', itemId);
-
-    // Clear previous navigation params
-    url.searchParams.delete('field');
-    url.searchParams.delete('line');
-    url.searchParams.delete('col');
-
-    // Add optional navigation params
-    if (params.field) url.searchParams.set('field', params.field);
-    if (params.line) url.searchParams.set('line', params.line);
-    if (params.col) url.searchParams.set('col', params.col);
-
-    window.history.pushState({ itemId, ...params }, '', url);
-  }
-
-  // Emit viewport:root-changed event
-  window.kernel.events.emit({
-    type: EVENT_IDS.VIEWPORT_ROOT_CHANGED,
-    content: {
-      rootId: itemId,
-      previous,
-      initial,
-      popstate
-    }
-  });
-
-  // Persist to viewport item
-  await persist();
-
-  // Trigger re-render
-  await window.kernel.renderViewport();
-}
-
-// Persist viewport state to viewport item
-async function persist() {
+async function getChildSpec() {
   try {
     const viewport = await window.kernel.storage.get(VIEWPORT_ID);
-    const childSpec = { id: currentRoot };
+    return viewport.children?.[0] || null;
+  } catch (e) {
+    console.warn('[viewport-manager] Failed to read viewport item:', e);
+    return null;
+  }
+}
 
-    // Store full view config (type + additional properties)
-    const viewConfig = getRootViewConfig();
-    if (viewConfig) {
-      childSpec.view = viewConfig;
+async function updateChildSpec(updater) {
+  try {
+    const viewport = await window.kernel.storage.get(VIEWPORT_ID);
+    const root = getRoot();
+    if (!root) return;
+
+    let childSpec = viewport.children?.[0];
+    if (!childSpec || childSpec.id !== root) {
+      // Child spec doesn't exist or is for different root
+      childSpec = { id: root };
     }
 
-    // Store previous view for restore functionality
-    if (hasPreviousRootView) {
-      const prevConfig = {
-        ...(previousRootViewId ? { type: previousRootViewId } : {}),
-        ...previousRootViewConfig
-      };
-      if (Object.keys(prevConfig).length > 0) {
-        childSpec.previousView = prevConfig;
-      }
-    }
+    // Apply the update
+    const updated = updater(childSpec);
 
-    viewport.children = currentRoot ? [childSpec] : [];
+    viewport.children = [updated];
     viewport.modified = Date.now();
     await window.kernel.saveItem(viewport);
   } catch (e) {
-    console.warn('[viewport-manager] Failed to persist:', e);
+    console.warn('[viewport-manager] Failed to update viewport item:', e);
   }
 }
 
@@ -183,69 +133,125 @@ async function persist() {
 
 // Navigate to an item
 export async function navigate(itemId, params = {}) {
-  await navigateInternal(itemId, params);
+  // Get previous root for event
+  const viewport = await window.kernel.storage.get(VIEWPORT_ID);
+  const previous = viewport.children?.[0]?.id;
+
+  // Update URL
+  const url = new URL(window.location);
+  url.searchParams.set('root', itemId);
+
+  // Clear previous navigation params
+  url.searchParams.delete('field');
+  url.searchParams.delete('line');
+  url.searchParams.delete('col');
+
+  // Add optional navigation params
+  if (params.field) url.searchParams.set('field', params.field);
+  if (params.line) url.searchParams.set('line', params.line);
+  if (params.col) url.searchParams.set('col', params.col);
+
+  window.history.pushState({ itemId, ...params }, '', url);
+
+  // Persist to viewport item (clears view config if root changed)
+  await persistRootChange(itemId, previous);
+
+  // Emit viewport:root-changed event
+  window.kernel.events.emit({
+    type: EVENT_IDS.VIEWPORT_ROOT_CHANGED,
+    content: {
+      rootId: itemId,
+      previous,
+      initial: false,
+      popstate: false
+    }
+  });
+
+  // Trigger re-render
+  await window.kernel.renderViewport();
 }
 
-// Get current root
+// Get current root (sync - reads from URL)
 export function getRoot() {
-  if (!currentRoot) {
-    // Module may have been reloaded after cache clear - restore from URL
-    const params = new URLSearchParams(window.location.search);
-    currentRoot = params.get('root');
+  const params = new URLSearchParams(window.location.search);
+  return params.get('root');
+}
+
+// Get root view ID (async - reads from viewport item)
+export async function getRootView() {
+  const child = await getChildSpec();
+  if (!child) return null;
+  // Support view.type format and legacy flat format
+  return child.view?.type || child.view || child.renderer || null;
+}
+
+// Set root view (async - writes to viewport item)
+export async function setRootView(viewId, storePrevious = true) {
+  await updateChildSpec(child => {
+    const newChild = { ...child };
+
+    if (storePrevious && child.view) {
+      // Store current view as previous
+      newChild.previousView = { ...child.view };
+    }
+
+    if (viewId) {
+      newChild.view = { ...(child.view || {}), type: viewId };
+    } else {
+      delete newChild.view;
+    }
+
+    return newChild;
+  });
+}
+
+// Get the full view config for root (async - reads from viewport item)
+export async function getRootViewConfig() {
+  const child = await getChildSpec();
+  if (!child?.view) return null;
+
+  if (typeof child.view === 'object') {
+    return child.view;
   }
-  return currentRoot;
+
+  // Legacy: view is just a string ID
+  return { type: child.view };
 }
 
-// Get root view ID
-export function getRootView() {
-  return rootViewId;
+// Update root view config (async - merges with existing config)
+export async function updateRootViewConfig(updates) {
+  await updateChildSpec(child => {
+    const currentView = child.view || {};
+    return {
+      ...child,
+      view: { ...currentView, ...updates }
+    };
+  });
 }
 
-// Set root view
-export function setRootView(viewId, storePrevious = true) {
-  if (storePrevious) {
-    previousRootViewId = rootViewId;
-    previousRootViewConfig = { ...rootViewConfig };
-    hasPreviousRootView = true;
-  }
-  rootViewId = viewId;
+// Restore previous root view (async)
+export async function restorePreviousRootView() {
+  const child = await getChildSpec();
+  if (!child?.previousView) return false;
+
+  await updateChildSpec(child => {
+    const newChild = { ...child };
+    newChild.view = { ...child.previousView };
+    delete newChild.previousView;
+    return newChild;
+  });
+
+  return true;
 }
 
-// Get the full view config for root (type + additional config)
-export function getRootViewConfig() {
-  if (!rootViewId && Object.keys(rootViewConfig).length === 0) {
-    return null;
-  }
-  return {
-    ...(rootViewId ? { type: rootViewId } : {}),
-    ...rootViewConfig
-  };
+// Check if there's a previous view to restore (async)
+export async function hasPreviousView() {
+  const child = await getChildSpec();
+  return !!child?.previousView;
 }
 
-// Update root view config (merges with existing config)
-export function updateRootViewConfig(updates) {
-  rootViewConfig = { ...rootViewConfig, ...updates };
-}
-
-// Restore previous root view
-export function restorePreviousRootView() {
-  if (hasPreviousRootView) {
-    rootViewId = previousRootViewId;
-    rootViewConfig = { ...previousRootViewConfig };
-    previousRootViewId = null;
-    previousRootViewConfig = {};
-    hasPreviousRootView = false;
-    return true;
-  }
-  return false;
-}
-
-// Check if there's a previous view to restore
-export function hasPreviousView() {
-  return hasPreviousRootView;
-}
-
-// Force persist (for manual save)
+// Force persist - no longer needed (writes happen immediately)
+// Kept for API compatibility
 export async function forcePersist() {
-  await persist();
+  // No-op: state is always persisted immediately now
 }

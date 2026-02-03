@@ -30,7 +30,7 @@ export async function render(item, api) {
   }, []);
 
   // Get view config for inner view (persisted in parent's child entry or viewport root)
-  const viewConfig = api.getViewConfig() || {};
+  const viewConfig = await api.getViewConfig() || {};
   const innerViewConfig = viewConfig.innerView || null;
 
   // === BACKGROUND LAYER ===
@@ -62,7 +62,7 @@ export async function render(item, api) {
         // Return the inner view's own config (if any), not the wrapper config
         innerApi.getViewConfig = () => hasOwnConfig ? innerViewOwnConfig : null;
         innerApi.updateViewConfig = async (updates) => {
-          const currentConfig = api.getViewConfig() || {};
+          const currentConfig = await api.getViewConfig() || {};
           await api.updateViewConfig({
             innerView: { ...(currentConfig.innerView || {}), ...updates }
           });

@@ -1022,33 +1022,29 @@ export async function loadKernel(require, storageBackend) {
             return selMgr?.getSelectionParent() || null;
           },
           getRoot: () => {
-            const vpMgr = kernel.moduleSystem.getCached('viewport-manager');
-            const root = vpMgr?.getRoot();
-            if (root) return root;
-            // Fallback: read from URL when module not cached (e.g., after cache clear)
+            // Sync: reads from URL (authoritative source for root)
             const params = new URLSearchParams(window.location.search);
             return params.get('root');
           },
-          getRootView: () => {
-            const vpMgr = kernel.moduleSystem.getCached('viewport-manager');
-            return vpMgr?.getRootView() || null;
+          getRootView: async () => {
+            const vpMgr = await kernel.moduleSystem.require('viewport-manager');
+            return await vpMgr.getRootView();
           },
           setRootView: async (viewId) => {
             const vpMgr = await kernel.moduleSystem.require('viewport-manager');
-            vpMgr.setRootView(viewId);
-            await vpMgr.forcePersist();
+            await vpMgr.setRootView(viewId);
           },
-          getRootViewConfig: () => {
-            const vpMgr = kernel.moduleSystem.getCached('viewport-manager');
-            return vpMgr?.getRootViewConfig() || null;
+          getRootViewConfig: async () => {
+            const vpMgr = await kernel.moduleSystem.require('viewport-manager');
+            return await vpMgr.getRootViewConfig();
           },
           updateRootViewConfig: async (updates) => {
             const vpMgr = await kernel.moduleSystem.require('viewport-manager');
-            vpMgr.updateRootViewConfig(updates);
+            await vpMgr.updateRootViewConfig(updates);
           },
-          restorePreviousRootView: () => {
-            const vpMgr = kernel.moduleSystem.getCached('viewport-manager');
-            return vpMgr?.restorePreviousRootView() || false;
+          restorePreviousRootView: async () => {
+            const vpMgr = await kernel.moduleSystem.require('viewport-manager');
+            return await vpMgr.restorePreviousRootView();
           }
         },
 
