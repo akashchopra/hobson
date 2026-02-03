@@ -778,7 +778,7 @@ export async function render(item, api) {
         if (Object.keys(otherConfig).length > 0 && api.viewport.updateRootViewConfig) {
           await api.viewport.updateRootViewConfig(otherConfig);
         }
-        await api.navigate(itemId);  // Re-render with the view
+        await window.kernel.renderViewport();  // Re-render with the view config
       }
     };
     contextMenu.appendChild(makeRootItem);

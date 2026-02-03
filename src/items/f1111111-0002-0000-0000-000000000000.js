@@ -137,7 +137,7 @@ export async function navigate(itemId, params = {}) {
   const viewport = await window.kernel.storage.get(VIEWPORT_ID);
   const previous = viewport.children?.[0]?.id;
 
-  // Update URL
+  // Build new URL
   const url = new URL(window.location);
   url.searchParams.set('root', itemId);
 
@@ -151,7 +151,10 @@ export async function navigate(itemId, params = {}) {
   if (params.line) url.searchParams.set('line', params.line);
   if (params.col) url.searchParams.set('col', params.col);
 
-  window.history.pushState({ itemId, ...params }, '', url);
+  // Only push to history if URL is actually changing
+  if (url.href !== window.location.href) {
+    window.history.pushState({ itemId, ...params }, '', url);
+  }
 
   // Persist to viewport item (clears view config if root changed)
   await persistRootChange(itemId, previous);
