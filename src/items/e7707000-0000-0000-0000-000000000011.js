@@ -18,7 +18,7 @@ export async function render(errorList, api) {
 
   // Header with title and clear all button
   const header = api.createElement('div', {
-    style: 'display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; padding-bottom: 15px; border-bottom: 2px solid #e0e0e0;'
+    style: 'display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; padding-bottom: 15px; border-bottom: 2px solid var(--color-border-light);'
   }, []);
 
   const titleSection = api.createElement('div', {}, []);
@@ -29,7 +29,7 @@ export async function render(errorList, api) {
   titleSection.appendChild(title);
 
   const countLabel = api.createElement('div', {
-    style: 'font-size: 14px; color: #666; margin-top: 4px;'
+    style: 'font-size: 14px; color: var(--color-text-secondary); margin-top: 4px;'
   }, []);
   titleSection.appendChild(countLabel);
 
@@ -40,17 +40,17 @@ export async function render(errorList, api) {
   }, []);
 
   const refreshBtn = api.createElement('button', {
-    style: 'padding: 8px 16px; background: #e5e7eb; color: #374151; border: none; border-radius: 6px; cursor: pointer; font-size: 14px;'
+    style: 'padding: 8px 16px; background: var(--color-bg-hover); color: var(--color-text); border: none; border-radius: var(--border-radius); cursor: pointer; font-size: 14px;'
   }, ['Refresh']);
-  refreshBtn.onmouseover = () => { refreshBtn.style.background = '#d1d5db'; };
-  refreshBtn.onmouseout = () => { refreshBtn.style.background = '#e5e7eb'; };
+  refreshBtn.onmouseover = () => { refreshBtn.style.background = 'var(--color-border-light)'; };
+  refreshBtn.onmouseout = () => { refreshBtn.style.background = 'var(--color-bg-hover)'; };
   buttonGroup.appendChild(refreshBtn);
 
   const clearAllBtn = api.createElement('button', {
-    style: 'padding: 8px 16px; background: #dc2626; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 14px;'
+    style: 'padding: 8px 16px; background: var(--color-danger); color: white; border: none; border-radius: var(--border-radius); cursor: pointer; font-size: 14px;'
   }, ['Clear All']);
   clearAllBtn.onmouseover = () => { clearAllBtn.style.background = '#b91c1c'; };
-  clearAllBtn.onmouseout = () => { clearAllBtn.style.background = '#dc2626'; };
+  clearAllBtn.onmouseout = () => { clearAllBtn.style.background = 'var(--color-danger)'; };
   buttonGroup.appendChild(clearAllBtn);
 
   header.appendChild(buttonGroup);
@@ -65,17 +65,17 @@ export async function render(errorList, api) {
   const onCycle = (cycleItem) => {
     const card = api.createElement('div', {
       'data-item-id': cycleItem.id,
-      style: 'padding: 12px; margin-bottom: 8px; background: #fffbeb; border: 1px dashed #f59e0b; border-radius: 6px; cursor: pointer;'
+      style: 'padding: 12px; margin-bottom: 8px; background: var(--color-warning-light); border: 1px dashed var(--color-warning); border-radius: var(--border-radius); cursor: pointer;'
     }, []);
 
     const titleRow = api.createElement('div', {
       style: 'display: flex; align-items: center; gap: 8px;'
     }, []);
 
-    titleRow.appendChild(api.createElement('span', { style: 'color: #f59e0b;' }, ['↻']));
+    titleRow.appendChild(api.createElement('span', { style: 'color: var(--color-warning);' }, ['\u21bb']));
     titleRow.appendChild(api.createElement('span', { style: 'font-weight: 500;' }, [cycleItem.name || cycleItem.id.substring(0, 8)]));
     titleRow.appendChild(api.createElement('span', {
-      style: 'font-size: 11px; color: #92400e; background: #fef3c7; padding: 2px 6px; border-radius: 4px;'
+      style: 'font-size: 11px; color: #92400e; background: #fef3c7; padding: 2px 6px; border-radius: var(--border-radius);'
     }, ['in current view']));
 
     card.appendChild(titleRow);
@@ -140,7 +140,7 @@ export async function render(errorList, api) {
 
     if (renderedCount === 0) {
       const emptyMsg = api.createElement('div', {
-        style: 'padding: 40px; text-align: center; color: #666; font-style: italic;'
+        style: 'padding: 40px; text-align: center; color: var(--color-text-secondary); font-style: italic;'
       }, ['No errors']);
       resultsArea.appendChild(emptyMsg);
     }

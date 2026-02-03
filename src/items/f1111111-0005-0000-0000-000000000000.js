@@ -41,7 +41,7 @@ export async function show() {
 
   const modal = document.createElement("div");
   modal.style.cssText = `
-    background: white;
+    background: var(--color-bg-surface);
     border-radius: 8px;
     width: 600px;
     max-width: 90vw;
@@ -53,12 +53,12 @@ export async function show() {
 
   // Search input
   const searchContainer = document.createElement("div");
-  searchContainer.style.cssText = "padding: 16px; border-bottom: 1px solid #ddd;";
+  searchContainer.style.cssText = "padding: 16px; border-bottom: 1px solid var(--color-border-light);";
 
   const searchInput = document.createElement("input");
   searchInput.type = "text";
   searchInput.placeholder = "Search items...";
-  searchInput.style.cssText = "width: 100%; padding: 8px 12px; font-size: 16px; border: 1px solid #ddd; border-radius: 4px; outline: none;";
+  searchInput.style.cssText = "width: 100%; padding: 8px 12px; font-size: 16px; border: 1px solid var(--color-border-light); border-radius: var(--border-radius); outline: none;";
   searchContainer.appendChild(searchInput);
   modal.appendChild(searchContainer);
 
@@ -78,8 +78,8 @@ export async function show() {
 
     for (const item of filtered) {
       const row = document.createElement("div");
-      row.style.cssText = "padding: 8px 12px; cursor: pointer; border-radius: 4px; display: flex; justify-content: space-between; align-items: center;";
-      row.onmouseenter = () => row.style.background = "#f0f0f0";
+      row.style.cssText = "padding: 8px 12px; cursor: pointer; border-radius: var(--border-radius); display: flex; justify-content: space-between; align-items: center;";
+      row.onmouseenter = () => row.style.background = "var(--color-bg-hover)";
       row.onmouseleave = () => row.style.background = "";
 
       const info = document.createElement("div");
@@ -89,7 +89,7 @@ export async function show() {
       info.appendChild(name);
 
       const typeLine = document.createElement("div");
-      typeLine.style.cssText = "font-size: 12px; color: #666;";
+      typeLine.style.cssText = "font-size: 12px; color: var(--color-text-secondary);";
       typeLine.textContent = item.type.slice(0, 8);
       info.appendChild(typeLine);
 
@@ -106,7 +106,7 @@ export async function show() {
 
     if (filtered.length === 0) {
       const empty = document.createElement("div");
-      empty.style.cssText = "padding: 20px; text-align: center; color: #666;";
+      empty.style.cssText = "padding: 20px; text-align: center; color: var(--color-text-secondary);";
       empty.textContent = "No items found";
       listContainer.appendChild(empty);
     }

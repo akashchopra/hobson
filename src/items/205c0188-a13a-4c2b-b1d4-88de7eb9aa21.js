@@ -14,12 +14,12 @@ export async function render(value, options, api) {
   if (label) {
     const labelEl = api.createElement('div');
     labelEl.textContent = label;
-    labelEl.style.cssText = 'font-weight: 600; font-size: 14px; color: #333; margin-bottom: 4px;';
+    labelEl.style.cssText = 'font-weight: 600; font-size: 14px; color: var(--color-text); margin-bottom: 4px;';
     wrapper.appendChild(labelEl);
   }
 
   const propsContainer = api.createElement('div');
-  propsContainer.style.cssText = 'display: flex; flex-direction: column; gap: 12px; padding-left: ' + (indent > 0 ? '16px' : '0') + '; border-left: ' + (indent > 0 ? '2px solid #e0e0e0' : 'none') + ';';
+  propsContainer.style.cssText = 'display: flex; flex-direction: column; gap: 12px; padding-left: ' + (indent > 0 ? '16px' : '0') + '; border-left: ' + (indent > 0 ? '2px solid var(--color-border)' : 'none') + ';';
 
   // Helper to update a property
   const updateProp = (key, newValue) => {
@@ -63,7 +63,7 @@ export async function render(value, options, api) {
       // Editable key name
       const keyInput = api.createElement('input', { type: 'text' });
       keyInput.value = key;
-      keyInput.style.cssText = 'font-weight: 500; font-size: 13px; color: #555; background: transparent; border: 1px solid transparent; border-radius: 3px; padding: 2px 4px; width: auto; min-width: 80px;';
+      keyInput.style.cssText = 'font-weight: 500; font-size: 13px; color: var(--color-text-secondary); background: transparent; border: 1px solid transparent; border-radius: 3px; padding: 2px 4px; width: auto; min-width: 80px;';
       keyInput.onblur = () => renameProp(key, keyInput.value.trim());
       keyInput.onkeydown = (e) => { if (e.key === 'Enter') keyInput.blur(); };
       propHeader.appendChild(keyInput);
@@ -71,14 +71,14 @@ export async function render(value, options, api) {
       // Delete button
       const deleteBtn = api.createElement('button');
       deleteBtn.textContent = '\u00d7';
-      deleteBtn.style.cssText = 'background: none; border: none; color: #999; cursor: pointer; font-size: 16px; padding: 0 4px; line-height: 1;';
+      deleteBtn.style.cssText = 'background: none; border: none; color: var(--color-text-tertiary); cursor: pointer; font-size: 16px; padding: 0 4px; line-height: 1;';
       deleteBtn.onclick = () => deleteProp(key);
       deleteBtn.title = 'Remove property';
       propHeader.appendChild(deleteBtn);
     } else {
       const keyLabel = api.createElement('span');
       keyLabel.textContent = key;
-      keyLabel.style.cssText = 'font-weight: 500; font-size: 13px; color: #555;';
+      keyLabel.style.cssText = 'font-weight: 500; font-size: 13px; color: var(--color-text-secondary);';
       propHeader.appendChild(keyLabel);
     }
 
@@ -159,7 +159,7 @@ export async function render(value, options, api) {
 
     const addBtn = api.createElement('button');
     addBtn.textContent = '+ Add Property';
-    addBtn.style.cssText = 'padding: 4px 12px; font-size: 12px; cursor: pointer; background: #f5f5f5; border: 1px solid #ddd; border-radius: 4px; color: #555;';
+    addBtn.style.cssText = 'padding: 4px 12px; font-size: 12px; cursor: pointer; background: var(--color-bg-surface-alt); border: 1px solid var(--color-border-light); border-radius: var(--border-radius); color: var(--color-text-secondary);';
     addBtn.onclick = () => {
       // Generate unique key name
       let newKey = 'newProperty';
@@ -177,7 +177,7 @@ export async function render(value, options, api) {
   if (keys.length === 0 && !isEditable) {
     const emptyEl = api.createElement('div');
     emptyEl.textContent = '(empty object)';
-    emptyEl.style.cssText = 'color: #999; font-style: italic; font-size: 13px;';
+    emptyEl.style.cssText = 'color: var(--color-text-tertiary); font-style: italic; font-size: 13px;';
     propsContainer.appendChild(emptyEl);
   }
 

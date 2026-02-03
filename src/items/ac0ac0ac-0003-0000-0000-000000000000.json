@@ -3,10 +3,296 @@
   "name": "symbol-extractor-lib",
   "type": "66666666-0000-0000-0000-000000000000",
   "created": 1738540800000,
-  "modified": 1770147611888,
+  "modified": 1770147642145,
   "children": [],
   "content": {
     "description": "Extracts symbol definitions (functions, variables, classes, methods, properties) from JavaScript code using Acorn.\n\n## Usage\n\n```javascript\nconst extractor = await api.require('symbol-extractor-lib');\nconst symbols = await extractor.extractSymbols(code, api);\n// symbols = { 'createAPI': { name, line, col, kind, scope }, 'createAPI.get': { ... }, ... }\n```\n\n## Symbol Schema\n\nEach symbol has:\n- `name` - Unqualified name\n- `line` / `col` - 1-based line, 0-based column of start\n- `endLine` / `endCol` - End position\n- `kind` - One of: function, variable, class, method, field, field-function, property, property-function\n- `scope` - Parent scope (e.g., 'createAPI' for 'createAPI.get'), or null for top-level\n\n## See Also\n\n- [Symbol Indexing System](item://docs) — Design document\n- [acorn](item://ac0ac0ac-0001-0000-0000-000000000000) — JavaScript parser",
-    "code": "// symbol-extractor-lib\n// Extracts symbol definitions from JavaScript code using Acorn\n\nexport async function extractSymbols(code, api) {\n  await api.require('acorn');\n  const acorn = await api.require('acorn-wrapper');\n\n  let ast;\n  try {\n    ast = acorn.parse(code, {\n      ecmaVersion: 'latest',\n      sourceType: 'module',\n      locations: true,\n      allowReturnOutsideFunction: true,\n    });\n  } catch (e) {\n    console.warn('Symbol extraction parse error:', e.message);\n    return {};\n  }\n\n  const symbols = {};\n  walkNode(ast, null, symbols);\n  return symbols;\n}\n\n// Helper: Extract function signature from params\nfunction extractSignature(params) {\n  if (!params || params.length === 0) return '()';\n  const parts = params.map(p => {\n    switch (p.type) {\n      case 'Identifier': return p.name;\n      case 'AssignmentPattern':\n        // foo = default\n        const name = p.left.type === 'Identifier' ? p.left.name : '?';\n        return name + ' = ...';\n      case 'RestElement':\n        // ...args\n        const restName = p.argument.type === 'Identifier' ? p.argument.name : 'args';\n        return '...' + restName;\n      case 'ObjectPattern': return '{ ... }';\n      case 'ArrayPattern': return '[ ... ]';\n      default: return '?';\n    }\n  });\n  return '(' + parts.join(', ') + ')';\n}\n\n// Helper: Get params from a function node (works for FunctionDeclaration, FunctionExpression, ArrowFunctionExpression)\nfunction getFunctionParams(node) {\n  if (!node) return null;\n  if (node.params) return node.params;\n  if (node.value?.params) return node.value.params;  // MethodDefinition\n  return null;\n}\n\nfunction walkNode(node, scope, symbols) {\n  if (!node || typeof node !== 'object') return;\n\n  switch (node.type) {\n    case 'FunctionDeclaration':\n      if (node.id?.name) {\n        const sig = extractSignature(node.params);\n        addSymbol(symbols, node.id.name, node.loc, 'function', scope, sig);\n        walkNode(node.body, node.id.name, symbols);\n      }\n      break;\n\n    case 'VariableDeclaration':\n      for (const decl of node.declarations) {\n        if (decl.id?.name) {\n          const isFunc = decl.init?.type === 'ArrowFunctionExpression' ||\n                         decl.init?.type === 'FunctionExpression';\n          const kind = isFunc ? 'function' : 'variable';\n          const sig = isFunc ? extractSignature(decl.init.params) : null;\n          addSymbol(symbols, decl.id.name, decl.loc, kind, scope, sig);\n\n          if (decl.init) {\n            const initScope = decl.id.name;\n            if (decl.init.body) {\n              walkNode(decl.init.body, initScope, symbols);\n            } else if (decl.init.type === 'ObjectExpression') {\n              walkNode(decl.init, initScope, symbols);\n            }\n          }\n        }\n      }\n      break;\n\n    case 'ClassDeclaration':\n      if (node.id?.name) {\n        addSymbol(symbols, node.id.name, node.loc, 'class', scope);\n        walkNode(node.body, node.id.name, symbols);\n      }\n      break;\n\n    case 'MethodDefinition':\n      if (node.key?.name) {\n        const sig = extractSignature(node.value?.params);\n        addSymbol(symbols, node.key.name, node.loc, 'method', scope, sig);\n        walkNode(node.value?.body, `${scope}.${node.key.name}`, symbols);\n      }\n      break;\n\n    case 'PropertyDefinition':\n      if (node.key?.name) {\n        const isFunc = node.value?.type === 'FunctionExpression' ||\n                       node.value?.type === 'ArrowFunctionExpression';\n        const kind = isFunc ? 'field-function' : 'field';\n        const sig = isFunc ? extractSignature(node.value.params) : null;\n        addSymbol(symbols, node.key.name, node.loc, kind, scope, sig);\n\n        if (node.value?.body) {\n          const newScope = scope ? `${scope}.${node.key.name}` : node.key.name;\n          walkNode(node.value.body, newScope, symbols);\n        }\n      }\n      break;\n\n    case 'Property':\n      if (node.key?.name) {\n        const isFunc = node.value?.type === 'FunctionExpression' ||\n                       node.value?.type === 'ArrowFunctionExpression' ||\n                       node.method;\n        const kind = isFunc ? 'property-function' : 'property';\n        const sig = isFunc ? extractSignature(node.value?.params) : null;\n        addSymbol(symbols, node.key.name, node.loc, kind, scope, sig);\n\n        const newScope = scope ? `${scope}.${node.key.name}` : node.key.name;\n\n        if (node.value?.body) {\n          walkNode(node.value.body, newScope, symbols);\n        } else if (node.value?.type === 'ObjectExpression') {\n          walkNode(node.value, newScope, symbols);\n        }\n      }\n      break;\n\n    case 'ExportNamedDeclaration':\n      if (node.declaration) {\n        walkNode(node.declaration, scope, symbols);\n      }\n      break;\n\n    case 'ExportDefaultDeclaration':\n      if (node.declaration) {\n        walkNode(node.declaration, scope, symbols);\n      }\n      break;\n\n    default:\n      for (const key of Object.keys(node)) {\n        if (key === 'loc' || key === 'range') continue;\n        const child = node[key];\n        if (Array.isArray(child)) {\n          for (const c of child) {\n            walkNode(c, scope, symbols);\n          }\n        } else if (child && typeof child === 'object' && child.type) {\n          walkNode(child, scope, symbols);\n        }\n      }\n  }\n}\n\nfunction addSymbol(symbols, name, loc, kind, scope, signature = null) {\n  const key = scope ? `${scope}.${name}` : name;\n  const info = {\n    name,\n    line: loc.start.line,\n    col: loc.start.column,\n    endLine: loc.end.line,\n    endCol: loc.end.column,\n    kind,\n    scope: scope || null\n  };\n  if (signature) info.signature = signature;\n  symbols[key] = info;\n}"
+    "code": "// symbol-extractor-lib\n// Extracts symbol definitions from JavaScript code using Acorn\n\nexport async function extractSymbols(code, api) {\n  await api.require('acorn');\n  const acorn = await api.require('acorn-wrapper');\n\n  let ast;\n  try {\n    ast = acorn.parse(code, {\n      ecmaVersion: 'latest',\n      sourceType: 'module',\n      locations: true,\n      allowReturnOutsideFunction: true,\n    });\n  } catch (e) {\n    console.warn('Symbol extraction parse error:', e.message);\n    return {};\n  }\n\n  const symbols = {};\n  walkNode(ast, null, symbols);\n  return symbols;\n}\n\n// Helper: Extract function signature from params\nfunction extractSignature(params) {\n  if (!params || params.length === 0) return '()';\n  const parts = params.map(p => {\n    switch (p.type) {\n      case 'Identifier': return p.name;\n      case 'AssignmentPattern':\n        // foo = default\n        const name = p.left.type === 'Identifier' ? p.left.name : '?';\n        return name + ' = ...';\n      case 'RestElement':\n        // ...args\n        const restName = p.argument.type === 'Identifier' ? p.argument.name : 'args';\n        return '...' + restName;\n      case 'ObjectPattern': return '{ ... }';\n      case 'ArrayPattern': return '[ ... ]';\n      default: return '?';\n    }\n  });\n  return '(' + parts.join(', ') + ')';\n}\n\n// Helper: Get params from a function node (works for FunctionDeclaration, FunctionExpression, ArrowFunctionExpression)\nfunction getFunctionParams(node) {\n  if (!node) return null;\n  if (node.params) return node.params;\n  if (node.value?.params) return node.value.params;  // MethodDefinition\n  return null;\n}\n\nfunction walkNode(node, scope, symbols) {\n  if (!node || typeof node !== 'object') return;\n\n  switch (node.type) {\n    case 'FunctionDeclaration':\n      if (node.id?.name) {\n        const sig = extractSignature(node.params);\n        addSymbol(symbols, node.id.name, node.loc, 'function', scope, sig);\n        walkNode(node.body, node.id.name, symbols);\n      }\n      break;\n\n    case 'VariableDeclaration':\n      for (const decl of node.declarations) {\n        if (decl.id?.name) {\n          const isFunc = decl.init?.type === 'ArrowFunctionExpression' ||\n                         decl.init?.type === 'FunctionExpression';\n          const kind = isFunc ? 'function' : 'variable';\n          const sig = isFunc ? extractSignature(decl.init.params) : null;\n          addSymbol(symbols, decl.id.name, decl.loc, kind, scope, sig);\n\n          if (decl.init) {\n            const initScope = decl.id.name;\n            if (decl.init.body) {\n              walkNode(decl.init.body, initScope, symbols);\n            } else if (decl.init.type === 'ObjectExpression') {\n              walkNode(decl.init, initScope, symbols);\n            }\n          }\n        }\n      }\n      break;\n\n    case 'ClassDeclaration':\n      if (node.id?.name) {\n        addSymbol(symbols, node.id.name, node.loc, 'class', scope);\n        walkNode(node.body, node.id.name, symbols);\n      }\n      break;\n\n    case 'MethodDefinition':\n      if (node.key?.name) {\n        const sig = extractSignature(node.value?.params);\n        addSymbol(symbols, node.key.name, node.loc, 'method', scope, sig);\n        walkNode(node.value?.body, `${scope}.${node.key.name}`, symbols);\n      }\n      break;\n\n    case 'PropertyDefinition':\n      if (node.key?.name) {\n        const isFunc = node.value?.type === 'FunctionExpression' ||\n                       node.value?.type === 'ArrowFunctionExpression';\n        const kind = isFunc ? 'field-function' : 'field';\n        const sig = isFunc ? extractSignature(node.value.params) : null;\n        addSymbol(symbols, node.key.name, node.loc, kind, scope, sig);\n\n        if (node.value?.body) {\n          const newScope = scope ? `${scope}.${node.key.name}` : node.key.name;\n          walkNode(node.value.body, newScope, symbols);\n        }\n      }\n      break;\n\n    case 'Property':\n      if (node.key?.name) {\n        const isFunc = node.value?.type === 'FunctionExpression' ||\n                       node.value?.type === 'ArrowFunctionExpression' ||\n                       node.method;\n        const kind = isFunc ? 'property-function' : 'property';\n        const sig = isFunc ? extractSignature(node.value?.params) : null;\n        addSymbol(symbols, node.key.name, node.loc, kind, scope, sig);\n\n        const newScope = scope ? `${scope}.${node.key.name}` : node.key.name;\n\n        if (node.value?.body) {\n          walkNode(node.value.body, newScope, symbols);\n        } else if (node.value?.type === 'ObjectExpression') {\n          walkNode(node.value, newScope, symbols);\n        }\n      }\n      break;\n\n    case 'ExportNamedDeclaration':\n      if (node.declaration) {\n        walkNode(node.declaration, scope, symbols);\n      }\n      break;\n\n    case 'ExportDefaultDeclaration':\n      if (node.declaration) {\n        walkNode(node.declaration, scope, symbols);\n      }\n      break;\n\n    default:\n      for (const key of Object.keys(node)) {\n        if (key === 'loc' || key === 'range') continue;\n        const child = node[key];\n        if (Array.isArray(child)) {\n          for (const c of child) {\n            walkNode(c, scope, symbols);\n          }\n        } else if (child && typeof child === 'object' && child.type) {\n          walkNode(child, scope, symbols);\n        }\n      }\n  }\n}\n\nfunction addSymbol(symbols, name, loc, kind, scope, signature = null) {\n  const key = scope ? `${scope}.${name}` : name;\n  const info = {\n    name,\n    line: loc.start.line,\n    col: loc.start.column,\n    endLine: loc.end.line,\n    endCol: loc.end.column,\n    kind,\n    scope: scope || null\n  };\n  if (signature) info.signature = signature;\n  symbols[key] = info;\n}",
+    "_symbols": {
+      "extractSymbols": {
+        "name": "extractSymbols",
+        "line": 4,
+        "col": 7,
+        "endLine": 24,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(code, api)"
+      },
+      "extractSymbols.acorn": {
+        "name": "acorn",
+        "line": 6,
+        "col": 8,
+        "endLine": 6,
+        "endCol": 50,
+        "kind": "variable",
+        "scope": "extractSymbols"
+      },
+      "extractSymbols.ast": {
+        "name": "ast",
+        "line": 8,
+        "col": 6,
+        "endLine": 8,
+        "endCol": 9,
+        "kind": "variable",
+        "scope": "extractSymbols"
+      },
+      "extractSymbols.ecmaVersion": {
+        "name": "ecmaVersion",
+        "line": 11,
+        "col": 6,
+        "endLine": 11,
+        "endCol": 27,
+        "kind": "property",
+        "scope": "extractSymbols"
+      },
+      "extractSymbols.sourceType": {
+        "name": "sourceType",
+        "line": 12,
+        "col": 6,
+        "endLine": 12,
+        "endCol": 26,
+        "kind": "property",
+        "scope": "extractSymbols"
+      },
+      "extractSymbols.locations": {
+        "name": "locations",
+        "line": 13,
+        "col": 6,
+        "endLine": 13,
+        "endCol": 21,
+        "kind": "property",
+        "scope": "extractSymbols"
+      },
+      "extractSymbols.allowReturnOutsideFunction": {
+        "name": "allowReturnOutsideFunction",
+        "line": 14,
+        "col": 6,
+        "endLine": 14,
+        "endCol": 38,
+        "kind": "property",
+        "scope": "extractSymbols"
+      },
+      "extractSymbols.symbols": {
+        "name": "symbols",
+        "line": 21,
+        "col": 8,
+        "endLine": 21,
+        "endCol": 20,
+        "kind": "variable",
+        "scope": "extractSymbols"
+      },
+      "extractSignature": {
+        "name": "extractSignature",
+        "line": 27,
+        "col": 0,
+        "endLine": 46,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(params)"
+      },
+      "extractSignature.parts": {
+        "name": "parts",
+        "line": 29,
+        "col": 8,
+        "endLine": 44,
+        "endCol": 4,
+        "kind": "variable",
+        "scope": "extractSignature"
+      },
+      "getFunctionParams": {
+        "name": "getFunctionParams",
+        "line": 49,
+        "col": 0,
+        "endLine": 54,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(node)"
+      },
+      "walkNode": {
+        "name": "walkNode",
+        "line": 56,
+        "col": 0,
+        "endLine": 163,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(node, scope, symbols)"
+      },
+      "walkNode.sig": {
+        "name": "sig",
+        "line": 125,
+        "col": 14,
+        "endLine": 125,
+        "endCol": 72,
+        "kind": "variable",
+        "scope": "walkNode"
+      },
+      "walkNode.decl": {
+        "name": "decl",
+        "line": 69,
+        "col": 17,
+        "endLine": 69,
+        "endCol": 21,
+        "kind": "variable",
+        "scope": "walkNode"
+      },
+      "walkNode.isFunc": {
+        "name": "isFunc",
+        "line": 121,
+        "col": 14,
+        "endLine": 123,
+        "endCol": 34,
+        "kind": "variable",
+        "scope": "walkNode"
+      },
+      "walkNode.kind": {
+        "name": "kind",
+        "line": 124,
+        "col": 14,
+        "endLine": 124,
+        "endCol": 62,
+        "kind": "variable",
+        "scope": "walkNode"
+      },
+      "walkNode.initScope": {
+        "name": "initScope",
+        "line": 78,
+        "col": 18,
+        "endLine": 78,
+        "endCol": 42,
+        "kind": "variable",
+        "scope": "walkNode"
+      },
+      "walkNode.newScope": {
+        "name": "newScope",
+        "line": 128,
+        "col": 14,
+        "endLine": 128,
+        "endCol": 76,
+        "kind": "variable",
+        "scope": "walkNode"
+      },
+      "walkNode.key": {
+        "name": "key",
+        "line": 151,
+        "col": 17,
+        "endLine": 151,
+        "endCol": 20,
+        "kind": "variable",
+        "scope": "walkNode"
+      },
+      "walkNode.child": {
+        "name": "child",
+        "line": 153,
+        "col": 14,
+        "endLine": 153,
+        "endCol": 31,
+        "kind": "variable",
+        "scope": "walkNode"
+      },
+      "walkNode.c": {
+        "name": "c",
+        "line": 155,
+        "col": 21,
+        "endLine": 155,
+        "endCol": 22,
+        "kind": "variable",
+        "scope": "walkNode"
+      },
+      "addSymbol": {
+        "name": "addSymbol",
+        "line": 165,
+        "col": 0,
+        "endLine": 178,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(symbols, name, loc, kind, scope, signature = ...)"
+      },
+      "addSymbol.key": {
+        "name": "key",
+        "line": 166,
+        "col": 8,
+        "endLine": 166,
+        "endCol": 47,
+        "kind": "variable",
+        "scope": "addSymbol"
+      },
+      "addSymbol.info": {
+        "name": "info",
+        "line": 167,
+        "col": 8,
+        "endLine": 175,
+        "endCol": 3,
+        "kind": "variable",
+        "scope": "addSymbol"
+      },
+      "info.name": {
+        "name": "name",
+        "line": 168,
+        "col": 4,
+        "endLine": 168,
+        "endCol": 8,
+        "kind": "property",
+        "scope": "info"
+      },
+      "info.line": {
+        "name": "line",
+        "line": 169,
+        "col": 4,
+        "endLine": 169,
+        "endCol": 24,
+        "kind": "property",
+        "scope": "info"
+      },
+      "info.col": {
+        "name": "col",
+        "line": 170,
+        "col": 4,
+        "endLine": 170,
+        "endCol": 25,
+        "kind": "property",
+        "scope": "info"
+      },
+      "info.endLine": {
+        "name": "endLine",
+        "line": 171,
+        "col": 4,
+        "endLine": 171,
+        "endCol": 25,
+        "kind": "property",
+        "scope": "info"
+      },
+      "info.endCol": {
+        "name": "endCol",
+        "line": 172,
+        "col": 4,
+        "endLine": 172,
+        "endCol": 26,
+        "kind": "property",
+        "scope": "info"
+      },
+      "info.kind": {
+        "name": "kind",
+        "line": 173,
+        "col": 4,
+        "endLine": 173,
+        "endCol": 8,
+        "kind": "property",
+        "scope": "info"
+      },
+      "info.scope": {
+        "name": "scope",
+        "line": 174,
+        "col": 4,
+        "endLine": 174,
+        "endCol": 24,
+        "kind": "property",
+        "scope": "info"
+      }
+    }
   }
 }

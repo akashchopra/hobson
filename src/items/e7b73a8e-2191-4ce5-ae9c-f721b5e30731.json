@@ -3,10 +3,237 @@
   "name": "field-view-code-editable",
   "type": "cccccccc-0000-0000-0000-000000000000",
   "created": 1769400000000,
-  "modified": 1770020876101,
+  "modified": 1770144891820,
   "children": [],
   "content": {
     "description": "CodeMirror-based code editor with JavaScript syntax highlighting.",
-    "code": "// Code Editable Field View - CodeMirror-based code editor\n// See [field-view-code-editable documentation](item://e7b73a8e-2191-4ce5-ae9c-f721b5e30731)\n\n// [BEGIN:findRegionStartLine]\n// Helper: Find the line number where a region starts\nfunction findRegionStartLine(text, regionName) {\n  const lines = text.split('\\n');\n  const marker = '[BEGIN:' + regionName + ']';\n  for (let i = 0; i < lines.length; i++) {\n    const cleaned = lines[i].trim()\n      .replace(/^\\/\\/\\s*/, '')\n      .replace(/^#\\s*/, '')\n      .replace(/^<!--\\s*/, '')\n      .replace(/\\s*-->$/, '')\n      .trim();\n    if (cleaned === marker) return i + 2; // Line after marker (1-indexed)\n  }\n  return null;\n}\n// [END:findRegionStartLine]\n\n// [BEGIN:render]\n// Code editable field view\nexport async function render(value, options, api) {\n  const { onChange, label, language = 'javascript', scrollToLine, scrollToRegion } = options;\n  const code = value || '';\n\n  const wrapper = api.createElement('div', { className: 'field-code-editable' });\n  wrapper.style.cssText = 'display: flex; flex-direction: column; gap: 8px;';\n\n  if (label) {\n    const labelEl = api.createElement('label');\n    labelEl.textContent = label;\n    labelEl.style.cssText = 'font-weight: 500; font-size: 14px; color: var(--color-text);';\n    wrapper.appendChild(labelEl);\n  }\n\n  // Load CSS and CodeMirror\n  const cssLoader = await api.require('css-loader-lib');\n  await cssLoader.loadCSS('codemirror-css', api);\n  await api.require('codemirror');\n  await api.require('codemirror-javascript');\n  const CodeMirror = window.CodeMirror;\n\n  // Editor container\n  const editorContainer = api.createElement('div');\n  editorContainer.style.cssText = 'border: 1px solid var(--color-border); border-radius: var(--border-radius); overflow: hidden; min-height: 300px;';\n  wrapper.appendChild(editorContainer);\n\n  // Create CodeMirror instance\n  const cm = CodeMirror(editorContainer, {\n    value: code,\n    mode: language,\n    lineNumbers: true,\n    lineWrapping: true,\n    theme: 'default',\n    indentUnit: 2,\n    tabSize: 2,\n    indentWithTabs: false,\n    viewportMargin: 2000,\n    extraKeys: {\n      'Tab': (editor) => {\n        if (editor.somethingSelected()) {\n          editor.indentSelection('add');\n        } else {\n          editor.replaceSelection('  ');\n        }\n      }\n    }\n  });\n\n  cm.setSize('100%', '400px');\n\n  // Function to handle line/region navigation\n  const navigateToTarget = () => {\n    // First try options (passed from generic_view), then fall back to URL params\n    let targetLine = scrollToLine;\n    let col = 0;\n\n    // If scrollToRegion is specified but no line, find the region\n    if (scrollToRegion && !targetLine) {\n      targetLine = findRegionStartLine(code, scrollToRegion);\n    }\n\n    // Fallback to URL params for backward compatibility\n    if (!targetLine) {\n      const urlParams = new URLSearchParams(window.location.search);\n      const urlLine = parseInt(urlParams.get('line'), 10);\n      col = parseInt(urlParams.get('col'), 10) || 0;\n      if (!isNaN(urlLine) && urlLine > 0) {\n        targetLine = urlLine;\n      }\n    }\n\n    if (targetLine) {\n      // CodeMirror uses 0-based line numbers\n      const cmLine = targetLine - 1;\n\n      // Scroll line into view and set cursor\n      cm.scrollIntoView({ line: cmLine, ch: col }, 100);\n      cm.setCursor({ line: cmLine, ch: col });\n      cm.focus();\n\n      // Add highlight class to the line\n      cm.addLineClass(cmLine, 'background', 'line-highlight');\n\n      // Add CSS for highlight if not present\n      if (!document.getElementById('line-highlight-css')) {\n        const style = document.createElement('style');\n        style.id = 'line-highlight-css';\n        style.textContent = '.line-highlight { background: var(--color-warning-light) !important; }';\n        document.head.appendChild(style);\n      }\n    }\n  };\n\n  // Use IntersectionObserver to refresh CodeMirror when visible\n  const observer = new IntersectionObserver((entries) => {\n    for (const entry of entries) {\n      if (entry.isIntersecting) {\n        cm.refresh();\n        navigateToTarget();\n        observer.disconnect();\n        break;\n      }\n    }\n  }, { threshold: 0.1 });\n  observer.observe(editorContainer);\n\n  // Also refresh on first focus as fallback\n  const focusHandler = () => {\n    cm.refresh();\n    navigateToTarget();\n    editorContainer.removeEventListener('click', focusHandler);\n  };\n  editorContainer.addEventListener('click', focusHandler);\n\n  // Call onChange on edits\n  if (onChange) {\n    cm.on('change', () => {\n      onChange(cm.getValue());\n    });\n  }\n\n  // Keyboard shortcut hint\n  const hint = api.createElement('div');\n  hint.style.cssText = 'font-size: 12px; color: var(--color-text-tertiary);';\n  hint.textContent = 'Tip: Tab for indent, Shift+Tab to dedent';\n  wrapper.appendChild(hint);\n\n  return wrapper;\n}\n// [END:render]\n"
+    "code": "// Code Editable Field View - CodeMirror-based code editor\n// See [field-view-code-editable documentation](item://e7b73a8e-2191-4ce5-ae9c-f721b5e30731)\n\n// [BEGIN:findRegionStartLine]\n// Helper: Find the line number where a region starts\nfunction findRegionStartLine(text, regionName) {\n  const lines = text.split('\\n');\n  const marker = '[BEGIN:' + regionName + ']';\n  for (let i = 0; i < lines.length; i++) {\n    const cleaned = lines[i].trim()\n      .replace(/^\\/\\/\\s*/, '')\n      .replace(/^#\\s*/, '')\n      .replace(/^<!--\\s*/, '')\n      .replace(/\\s*-->$/, '')\n      .trim();\n    if (cleaned === marker) return i + 2; // Line after marker (1-indexed)\n  }\n  return null;\n}\n// [END:findRegionStartLine]\n\n// [BEGIN:render]\n// Code editable field view\nexport async function render(value, options, api) {\n  const { onChange, label, language = 'javascript', scrollToLine, scrollToRegion } = options;\n  const code = value || '';\n\n  const wrapper = api.createElement('div', { className: 'field-code-editable' });\n  wrapper.style.cssText = 'display: flex; flex-direction: column; gap: 8px;';\n\n  if (label) {\n    const labelEl = api.createElement('label');\n    labelEl.textContent = label;\n    labelEl.style.cssText = 'font-weight: 500; font-size: 14px; color: var(--color-text);';\n    wrapper.appendChild(labelEl);\n  }\n\n  // Load CSS and CodeMirror\n  const cssLoader = await api.require('css-loader-lib');\n  await cssLoader.loadCSS('codemirror-css', api);\n  await api.require('codemirror');\n  await api.require('codemirror-javascript');\n  const CodeMirror = window.CodeMirror;\n\n  // Editor container\n  const editorContainer = api.createElement('div');\n  editorContainer.style.cssText = 'border: 1px solid var(--color-border); border-radius: var(--border-radius); overflow: hidden; min-height: 300px;';\n  wrapper.appendChild(editorContainer);\n\n  // Create CodeMirror instance\n  const cm = CodeMirror(editorContainer, {\n    value: code,\n    mode: language,\n    lineNumbers: true,\n    lineWrapping: true,\n    theme: 'default',\n    indentUnit: 2,\n    tabSize: 2,\n    indentWithTabs: false,\n    viewportMargin: 2000,\n    extraKeys: {\n      'Tab': (editor) => {\n        if (editor.somethingSelected()) {\n          editor.indentSelection('add');\n        } else {\n          editor.replaceSelection('  ');\n        }\n      }\n    }\n  });\n\n  cm.setSize('100%', '400px');\n\n  // Function to handle line/region navigation\n  const navigateToTarget = () => {\n    // First try options (passed from generic_view), then fall back to URL params\n    let targetLine = scrollToLine;\n    let col = 0;\n\n    // If scrollToRegion is specified but no line, find the region\n    if (scrollToRegion && !targetLine) {\n      targetLine = findRegionStartLine(code, scrollToRegion);\n    }\n\n    // Fallback to URL params for backward compatibility\n    if (!targetLine) {\n      const urlParams = new URLSearchParams(window.location.search);\n      const urlLine = parseInt(urlParams.get('line'), 10);\n      col = parseInt(urlParams.get('col'), 10) || 0;\n      if (!isNaN(urlLine) && urlLine > 0) {\n        targetLine = urlLine;\n      }\n    }\n\n    if (targetLine) {\n      // CodeMirror uses 0-based line numbers\n      const cmLine = targetLine - 1;\n\n      // Scroll line into view and set cursor\n      cm.scrollIntoView({ line: cmLine, ch: col }, 100);\n      cm.setCursor({ line: cmLine, ch: col });\n      cm.focus();\n\n      // Add highlight class to the line\n      cm.addLineClass(cmLine, 'background', 'line-highlight');\n\n      // Add CSS for highlight if not present\n      if (!document.getElementById('line-highlight-css')) {\n        const style = document.createElement('style');\n        style.id = 'line-highlight-css';\n        style.textContent = '.line-highlight { background: var(--color-warning-light) !important; }';\n        document.head.appendChild(style);\n      }\n    }\n  };\n\n  // Use IntersectionObserver to refresh CodeMirror when visible\n  const observer = new IntersectionObserver((entries) => {\n    for (const entry of entries) {\n      if (entry.isIntersecting) {\n        cm.refresh();\n        navigateToTarget();\n        observer.disconnect();\n        break;\n      }\n    }\n  }, { threshold: 0.1 });\n  observer.observe(editorContainer);\n\n  // Also refresh on first focus as fallback\n  const focusHandler = () => {\n    cm.refresh();\n    navigateToTarget();\n    editorContainer.removeEventListener('click', focusHandler);\n  };\n  editorContainer.addEventListener('click', focusHandler);\n\n  // Call onChange on edits\n  if (onChange) {\n    cm.on('change', () => {\n      onChange(cm.getValue());\n    });\n  }\n\n  // Keyboard shortcut hint\n  const hint = api.createElement('div');\n  hint.style.cssText = 'font-size: 12px; color: var(--color-text-tertiary);';\n  hint.textContent = 'Tip: Tab for indent, Shift+Tab to dedent';\n  wrapper.appendChild(hint);\n\n  return wrapper;\n}\n// [END:render]\n",
+    "_symbols": {
+      "findRegionStartLine": {
+        "name": "findRegionStartLine",
+        "line": 6,
+        "col": 0,
+        "endLine": 19,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null
+      },
+      "findRegionStartLine.lines": {
+        "name": "lines",
+        "line": 7,
+        "col": 8,
+        "endLine": 7,
+        "endCol": 32,
+        "kind": "variable",
+        "scope": "findRegionStartLine"
+      },
+      "findRegionStartLine.marker": {
+        "name": "marker",
+        "line": 8,
+        "col": 8,
+        "endLine": 8,
+        "endCol": 45,
+        "kind": "variable",
+        "scope": "findRegionStartLine"
+      },
+      "findRegionStartLine.i": {
+        "name": "i",
+        "line": 9,
+        "col": 11,
+        "endLine": 9,
+        "endCol": 16,
+        "kind": "variable",
+        "scope": "findRegionStartLine"
+      },
+      "findRegionStartLine.cleaned": {
+        "name": "cleaned",
+        "line": 10,
+        "col": 10,
+        "endLine": 15,
+        "endCol": 13,
+        "kind": "variable",
+        "scope": "findRegionStartLine"
+      },
+      "render": {
+        "name": "render",
+        "line": 24,
+        "col": 7,
+        "endLine": 152,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null
+      },
+      "render.code": {
+        "name": "code",
+        "line": 26,
+        "col": 8,
+        "endLine": 26,
+        "endCol": 26,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.wrapper": {
+        "name": "wrapper",
+        "line": 28,
+        "col": 8,
+        "endLine": 28,
+        "endCol": 80,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.labelEl": {
+        "name": "labelEl",
+        "line": 32,
+        "col": 10,
+        "endLine": 32,
+        "endCol": 46,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.cssLoader": {
+        "name": "cssLoader",
+        "line": 39,
+        "col": 8,
+        "endLine": 39,
+        "endCol": 55,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.CodeMirror": {
+        "name": "CodeMirror",
+        "line": 43,
+        "col": 8,
+        "endLine": 43,
+        "endCol": 38,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.editorContainer": {
+        "name": "editorContainer",
+        "line": 46,
+        "col": 8,
+        "endLine": 46,
+        "endCol": 50,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.cm": {
+        "name": "cm",
+        "line": 51,
+        "col": 8,
+        "endLine": 70,
+        "endCol": 4,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.navigateToTarget": {
+        "name": "navigateToTarget",
+        "line": 75,
+        "col": 8,
+        "endLine": 115,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "render"
+      },
+      "navigateToTarget.targetLine": {
+        "name": "targetLine",
+        "line": 77,
+        "col": 8,
+        "endLine": 77,
+        "endCol": 33,
+        "kind": "variable",
+        "scope": "navigateToTarget"
+      },
+      "navigateToTarget.col": {
+        "name": "col",
+        "line": 78,
+        "col": 8,
+        "endLine": 78,
+        "endCol": 15,
+        "kind": "variable",
+        "scope": "navigateToTarget"
+      },
+      "navigateToTarget.urlParams": {
+        "name": "urlParams",
+        "line": 87,
+        "col": 12,
+        "endLine": 87,
+        "endCol": 67,
+        "kind": "variable",
+        "scope": "navigateToTarget"
+      },
+      "navigateToTarget.urlLine": {
+        "name": "urlLine",
+        "line": 88,
+        "col": 12,
+        "endLine": 88,
+        "endCol": 57,
+        "kind": "variable",
+        "scope": "navigateToTarget"
+      },
+      "navigateToTarget.cmLine": {
+        "name": "cmLine",
+        "line": 97,
+        "col": 12,
+        "endLine": 97,
+        "endCol": 35,
+        "kind": "variable",
+        "scope": "navigateToTarget"
+      },
+      "navigateToTarget.line": {
+        "name": "line",
+        "line": 101,
+        "col": 21,
+        "endLine": 101,
+        "endCol": 33,
+        "kind": "property",
+        "scope": "navigateToTarget"
+      },
+      "navigateToTarget.ch": {
+        "name": "ch",
+        "line": 101,
+        "col": 35,
+        "endLine": 101,
+        "endCol": 42,
+        "kind": "property",
+        "scope": "navigateToTarget"
+      },
+      "navigateToTarget.style": {
+        "name": "style",
+        "line": 109,
+        "col": 14,
+        "endLine": 109,
+        "endCol": 53,
+        "kind": "variable",
+        "scope": "navigateToTarget"
+      },
+      "render.observer": {
+        "name": "observer",
+        "line": 118,
+        "col": 8,
+        "endLine": 127,
+        "endCol": 24,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.focusHandler": {
+        "name": "focusHandler",
+        "line": 131,
+        "col": 8,
+        "endLine": 135,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "render"
+      },
+      "render.hint": {
+        "name": "hint",
+        "line": 146,
+        "col": 8,
+        "endLine": 146,
+        "endCol": 39,
+        "kind": "variable",
+        "scope": "render"
+      }
+    }
   }
 }

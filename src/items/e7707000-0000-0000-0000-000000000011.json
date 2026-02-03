@@ -3,7 +3,7 @@
   "type": "aaaaaaaa-0000-0000-0000-000000000000",
   "name": "system:error-list-view",
   "created": 1737849600000,
-  "modified": 1770105096353,
+  "modified": 1770144891677,
   "children": [],
   "content": {
     "for_type": "e7707000-0000-0000-0000-000000000010",
@@ -13,6 +13,314 @@
       "write"
     ],
     "description": "Renders error-list items showing all errors in chronological order with a clear all option.",
-    "code": "\n// Error List View - displays all errors newest first with clear all option\n\nconst ERROR_TYPE_ID = 'e7707000-0000-0000-0000-000000000001';\n\nexport async function render(errorList, api) {\n  // Find compact_card_view for rendering errors\n  const compactViews = await api.query({ name: 'system:compact-card-view' });\n  const compactViewId = compactViews[0]?.id || null;\n  const container = api.createElement('div', {\n    class: 'error-list-view',\n    style: 'max-width: 800px; margin: 0 auto; padding: 20px;'\n  }, []);\n\n  // Header with title and clear all button\n  const header = api.createElement('div', {\n    style: 'display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; padding-bottom: 15px; border-bottom: 2px solid var(--color-border-light);'\n  }, []);\n\n  const titleSection = api.createElement('div', {}, []);\n\n  const title = api.createElement('h2', {\n    style: 'margin: 0; font-size: 20px;'\n  }, [errorList.name || 'Error List']);\n  titleSection.appendChild(title);\n\n  const countLabel = api.createElement('div', {\n    style: 'font-size: 14px; color: var(--color-text-secondary); margin-top: 4px;'\n  }, []);\n  titleSection.appendChild(countLabel);\n\n  header.appendChild(titleSection);\n\n  const buttonGroup = api.createElement('div', {\n    style: 'display: flex; gap: 8px;'\n  }, []);\n\n  const refreshBtn = api.createElement('button', {\n    style: 'padding: 8px 16px; background: var(--color-bg-hover); color: var(--color-text); border: none; border-radius: var(--border-radius); cursor: pointer; font-size: 14px;'\n  }, ['Refresh']);\n  refreshBtn.onmouseover = () => { refreshBtn.style.background = 'var(--color-border-light)'; };\n  refreshBtn.onmouseout = () => { refreshBtn.style.background = 'var(--color-bg-hover)'; };\n  buttonGroup.appendChild(refreshBtn);\n\n  const clearAllBtn = api.createElement('button', {\n    style: 'padding: 8px 16px; background: var(--color-danger); color: white; border: none; border-radius: var(--border-radius); cursor: pointer; font-size: 14px;'\n  }, ['Clear All']);\n  clearAllBtn.onmouseover = () => { clearAllBtn.style.background = '#b91c1c'; };\n  clearAllBtn.onmouseout = () => { clearAllBtn.style.background = 'var(--color-danger)'; };\n  buttonGroup.appendChild(clearAllBtn);\n\n  header.appendChild(buttonGroup);\n\n  container.appendChild(header);\n\n  // Results area\n  const resultsArea = api.createElement('div', {}, []);\n  container.appendChild(resultsArea);\n\n  // Cycle handler for items in render path\n  const onCycle = (cycleItem) => {\n    const card = api.createElement('div', {\n      'data-item-id': cycleItem.id,\n      style: 'padding: 12px; margin-bottom: 8px; background: var(--color-warning-light); border: 1px dashed var(--color-warning); border-radius: var(--border-radius); cursor: pointer;'\n    }, []);\n\n    const titleRow = api.createElement('div', {\n      style: 'display: flex; align-items: center; gap: 8px;'\n    }, []);\n\n    titleRow.appendChild(api.createElement('span', { style: 'color: var(--color-warning);' }, ['\\u21bb']));\n    titleRow.appendChild(api.createElement('span', { style: 'font-weight: 500;' }, [cycleItem.name || cycleItem.id.substring(0, 8)]));\n    titleRow.appendChild(api.createElement('span', {\n      style: 'font-size: 11px; color: #92400e; background: #fef3c7; padding: 2px 6px; border-radius: var(--border-radius);'\n    }, ['in current view']));\n\n    card.appendChild(titleRow);\n    card.onclick = (e) => { e.stopPropagation(); api.siblingContainer?.addSibling(cycleItem.id); };\n    return card;\n  };\n\n  // Refresh errors from database\n  const refreshErrors = async () => {\n    const allItems = await api.getAll();\n\n    // Filter to error items and sort by timestamp descending (newest first)\n    const errors = allItems\n      .filter(item => item.type === ERROR_TYPE_ID)\n      .sort((a, b) => (b.content?.timestamp || 0) - (a.content?.timestamp || 0));\n\n    // Store as children\n    const updated = {\n      ...errorList,\n      children: errors.map(e => ({ id: e.id }))\n    };\n    await api.set(updated);\n\n    // Update local reference\n    errorList.children = updated.children;\n\n    return errors;\n  };\n\n  // Render the results\n  const renderResults = async () => {\n    resultsArea.innerHTML = '';\n    const children = errorList.children || [];\n    let renderedCount = 0;\n\n    // Render each error, skipping deleted items\n    for (const childSpec of children) {\n      const childId = typeof childSpec === 'string' ? childSpec : childSpec.id;\n      const childViewId = (typeof childSpec === 'object' && childSpec.view) ? childSpec.view : compactViewId;\n\n      // Check if item still exists before rendering\n      const item = await api.get(childId);\n      if (!item) continue;\n\n      try {\n        const childNode = await api.renderItem(childId, childViewId, { onCycle });\n        childNode.setAttribute('data-parent-id', errorList.id);\n        resultsArea.appendChild(childNode);\n        renderedCount++;\n      } catch (err) {\n        // Skip items that fail to render\n      }\n    }\n\n    // Update count label based on actually rendered items\n    countLabel.textContent = renderedCount === 0\n      ? 'No errors'\n      : renderedCount + ' error' + (renderedCount === 1 ? '' : 's');\n\n    // Show/hide clear all button\n    clearAllBtn.style.display = renderedCount === 0 ? 'none' : 'block';\n\n    if (renderedCount === 0) {\n      const emptyMsg = api.createElement('div', {\n        style: 'padding: 40px; text-align: center; color: var(--color-text-secondary); font-style: italic;'\n      }, ['No errors']);\n      resultsArea.appendChild(emptyMsg);\n    }\n  };\n\n  // Clear all handler\n  clearAllBtn.onclick = async () => {\n    const count = errorList.children?.length || 0;\n    if (count === 0) return;\n\n    if (!confirm('Delete ' + count + ' error' + (count === 1 ? '' : 's') + '?')) {\n      return;\n    }\n\n    // Delete all error items\n    for (const childSpec of errorList.children) {\n      const childId = typeof childSpec === 'string' ? childSpec : childSpec.id;\n      try {\n        await api.delete(childId);\n      } catch (err) {\n        console.error('Failed to delete error:', childId, err);\n      }\n    }\n\n    // Clear children and save\n    errorList.children = [];\n    await api.set(errorList);\n\n    // Refresh from database to ensure consistent state after deletions\n    await refreshErrors();\n    await renderResults();\n  };\n\n  // Refresh button handler\n  refreshBtn.onclick = async () => {\n    await refreshErrors();\n    await renderResults();\n  };\n\n  // Always refresh from database to get latest errors (including on re-render)\n  await refreshErrors();\n  await renderResults();\n\n  return container;\n}\n"
+    "code": "\n// Error List View - displays all errors newest first with clear all option\n\nconst ERROR_TYPE_ID = 'e7707000-0000-0000-0000-000000000001';\n\nexport async function render(errorList, api) {\n  // Find compact_card_view for rendering errors\n  const compactViews = await api.query({ name: 'system:compact-card-view' });\n  const compactViewId = compactViews[0]?.id || null;\n  const container = api.createElement('div', {\n    class: 'error-list-view',\n    style: 'max-width: 800px; margin: 0 auto; padding: 20px;'\n  }, []);\n\n  // Header with title and clear all button\n  const header = api.createElement('div', {\n    style: 'display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; padding-bottom: 15px; border-bottom: 2px solid var(--color-border-light);'\n  }, []);\n\n  const titleSection = api.createElement('div', {}, []);\n\n  const title = api.createElement('h2', {\n    style: 'margin: 0; font-size: 20px;'\n  }, [errorList.name || 'Error List']);\n  titleSection.appendChild(title);\n\n  const countLabel = api.createElement('div', {\n    style: 'font-size: 14px; color: var(--color-text-secondary); margin-top: 4px;'\n  }, []);\n  titleSection.appendChild(countLabel);\n\n  header.appendChild(titleSection);\n\n  const buttonGroup = api.createElement('div', {\n    style: 'display: flex; gap: 8px;'\n  }, []);\n\n  const refreshBtn = api.createElement('button', {\n    style: 'padding: 8px 16px; background: var(--color-bg-hover); color: var(--color-text); border: none; border-radius: var(--border-radius); cursor: pointer; font-size: 14px;'\n  }, ['Refresh']);\n  refreshBtn.onmouseover = () => { refreshBtn.style.background = 'var(--color-border-light)'; };\n  refreshBtn.onmouseout = () => { refreshBtn.style.background = 'var(--color-bg-hover)'; };\n  buttonGroup.appendChild(refreshBtn);\n\n  const clearAllBtn = api.createElement('button', {\n    style: 'padding: 8px 16px; background: var(--color-danger); color: white; border: none; border-radius: var(--border-radius); cursor: pointer; font-size: 14px;'\n  }, ['Clear All']);\n  clearAllBtn.onmouseover = () => { clearAllBtn.style.background = '#b91c1c'; };\n  clearAllBtn.onmouseout = () => { clearAllBtn.style.background = 'var(--color-danger)'; };\n  buttonGroup.appendChild(clearAllBtn);\n\n  header.appendChild(buttonGroup);\n\n  container.appendChild(header);\n\n  // Results area\n  const resultsArea = api.createElement('div', {}, []);\n  container.appendChild(resultsArea);\n\n  // Cycle handler for items in render path\n  const onCycle = (cycleItem) => {\n    const card = api.createElement('div', {\n      'data-item-id': cycleItem.id,\n      style: 'padding: 12px; margin-bottom: 8px; background: var(--color-warning-light); border: 1px dashed var(--color-warning); border-radius: var(--border-radius); cursor: pointer;'\n    }, []);\n\n    const titleRow = api.createElement('div', {\n      style: 'display: flex; align-items: center; gap: 8px;'\n    }, []);\n\n    titleRow.appendChild(api.createElement('span', { style: 'color: var(--color-warning);' }, ['\\u21bb']));\n    titleRow.appendChild(api.createElement('span', { style: 'font-weight: 500;' }, [cycleItem.name || cycleItem.id.substring(0, 8)]));\n    titleRow.appendChild(api.createElement('span', {\n      style: 'font-size: 11px; color: #92400e; background: #fef3c7; padding: 2px 6px; border-radius: var(--border-radius);'\n    }, ['in current view']));\n\n    card.appendChild(titleRow);\n    card.onclick = (e) => { e.stopPropagation(); api.siblingContainer?.addSibling(cycleItem.id); };\n    return card;\n  };\n\n  // Refresh errors from database\n  const refreshErrors = async () => {\n    const allItems = await api.getAll();\n\n    // Filter to error items and sort by timestamp descending (newest first)\n    const errors = allItems\n      .filter(item => item.type === ERROR_TYPE_ID)\n      .sort((a, b) => (b.content?.timestamp || 0) - (a.content?.timestamp || 0));\n\n    // Store as children\n    const updated = {\n      ...errorList,\n      children: errors.map(e => ({ id: e.id }))\n    };\n    await api.set(updated);\n\n    // Update local reference\n    errorList.children = updated.children;\n\n    return errors;\n  };\n\n  // Render the results\n  const renderResults = async () => {\n    resultsArea.innerHTML = '';\n    const children = errorList.children || [];\n    let renderedCount = 0;\n\n    // Render each error, skipping deleted items\n    for (const childSpec of children) {\n      const childId = typeof childSpec === 'string' ? childSpec : childSpec.id;\n      const childViewId = (typeof childSpec === 'object' && childSpec.view) ? childSpec.view : compactViewId;\n\n      // Check if item still exists before rendering\n      const item = await api.get(childId);\n      if (!item) continue;\n\n      try {\n        const childNode = await api.renderItem(childId, childViewId, { onCycle });\n        childNode.setAttribute('data-parent-id', errorList.id);\n        resultsArea.appendChild(childNode);\n        renderedCount++;\n      } catch (err) {\n        // Skip items that fail to render\n      }\n    }\n\n    // Update count label based on actually rendered items\n    countLabel.textContent = renderedCount === 0\n      ? 'No errors'\n      : renderedCount + ' error' + (renderedCount === 1 ? '' : 's');\n\n    // Show/hide clear all button\n    clearAllBtn.style.display = renderedCount === 0 ? 'none' : 'block';\n\n    if (renderedCount === 0) {\n      const emptyMsg = api.createElement('div', {\n        style: 'padding: 40px; text-align: center; color: var(--color-text-secondary); font-style: italic;'\n      }, ['No errors']);\n      resultsArea.appendChild(emptyMsg);\n    }\n  };\n\n  // Clear all handler\n  clearAllBtn.onclick = async () => {\n    const count = errorList.children?.length || 0;\n    if (count === 0) return;\n\n    if (!confirm('Delete ' + count + ' error' + (count === 1 ? '' : 's') + '?')) {\n      return;\n    }\n\n    // Delete all error items\n    for (const childSpec of errorList.children) {\n      const childId = typeof childSpec === 'string' ? childSpec : childSpec.id;\n      try {\n        await api.delete(childId);\n      } catch (err) {\n        console.error('Failed to delete error:', childId, err);\n      }\n    }\n\n    // Clear children and save\n    errorList.children = [];\n    await api.set(errorList);\n\n    // Refresh from database to ensure consistent state after deletions\n    await refreshErrors();\n    await renderResults();\n  };\n\n  // Refresh button handler\n  refreshBtn.onclick = async () => {\n    await refreshErrors();\n    await renderResults();\n  };\n\n  // Always refresh from database to get latest errors (including on re-render)\n  await refreshErrors();\n  await renderResults();\n\n  return container;\n}\n",
+    "_symbols": {
+      "ERROR_TYPE_ID": {
+        "name": "ERROR_TYPE_ID",
+        "line": 4,
+        "col": 6,
+        "endLine": 4,
+        "endCol": 60,
+        "kind": "variable",
+        "scope": null
+      },
+      "render": {
+        "name": "render",
+        "line": 6,
+        "col": 7,
+        "endLine": 184,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null
+      },
+      "render.compactViews": {
+        "name": "compactViews",
+        "line": 8,
+        "col": 8,
+        "endLine": 8,
+        "endCol": 76,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.compactViewId": {
+        "name": "compactViewId",
+        "line": 9,
+        "col": 8,
+        "endLine": 9,
+        "endCol": 51,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.container": {
+        "name": "container",
+        "line": 10,
+        "col": 8,
+        "endLine": 13,
+        "endCol": 8,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.header": {
+        "name": "header",
+        "line": 16,
+        "col": 8,
+        "endLine": 18,
+        "endCol": 8,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.titleSection": {
+        "name": "titleSection",
+        "line": 20,
+        "col": 8,
+        "endLine": 20,
+        "endCol": 55,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.title": {
+        "name": "title",
+        "line": 22,
+        "col": 8,
+        "endLine": 24,
+        "endCol": 38,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.countLabel": {
+        "name": "countLabel",
+        "line": 27,
+        "col": 8,
+        "endLine": 29,
+        "endCol": 8,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.buttonGroup": {
+        "name": "buttonGroup",
+        "line": 34,
+        "col": 8,
+        "endLine": 36,
+        "endCol": 8,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.refreshBtn": {
+        "name": "refreshBtn",
+        "line": 38,
+        "col": 8,
+        "endLine": 40,
+        "endCol": 17,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.clearAllBtn": {
+        "name": "clearAllBtn",
+        "line": 45,
+        "col": 8,
+        "endLine": 47,
+        "endCol": 19,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.resultsArea": {
+        "name": "resultsArea",
+        "line": 57,
+        "col": 8,
+        "endLine": 57,
+        "endCol": 54,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.onCycle": {
+        "name": "onCycle",
+        "line": 61,
+        "col": 8,
+        "endLine": 80,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "render"
+      },
+      "onCycle.card": {
+        "name": "card",
+        "line": 62,
+        "col": 10,
+        "endLine": 65,
+        "endCol": 10,
+        "kind": "variable",
+        "scope": "onCycle"
+      },
+      "onCycle.titleRow": {
+        "name": "titleRow",
+        "line": 67,
+        "col": 10,
+        "endLine": 69,
+        "endCol": 10,
+        "kind": "variable",
+        "scope": "onCycle"
+      },
+      "onCycle.style": {
+        "name": "style",
+        "line": 74,
+        "col": 6,
+        "endLine": 74,
+        "endCol": 123,
+        "kind": "property",
+        "scope": "onCycle"
+      },
+      "render.refreshErrors": {
+        "name": "refreshErrors",
+        "line": 83,
+        "col": 8,
+        "endLine": 102,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "render"
+      },
+      "refreshErrors.allItems": {
+        "name": "allItems",
+        "line": 84,
+        "col": 10,
+        "endLine": 84,
+        "endCol": 39,
+        "kind": "variable",
+        "scope": "refreshErrors"
+      },
+      "refreshErrors.errors": {
+        "name": "errors",
+        "line": 87,
+        "col": 10,
+        "endLine": 89,
+        "endCol": 80,
+        "kind": "variable",
+        "scope": "refreshErrors"
+      },
+      "refreshErrors.updated": {
+        "name": "updated",
+        "line": 92,
+        "col": 10,
+        "endLine": 95,
+        "endCol": 5,
+        "kind": "variable",
+        "scope": "refreshErrors"
+      },
+      "updated.children": {
+        "name": "children",
+        "line": 94,
+        "col": 6,
+        "endLine": 94,
+        "endCol": 47,
+        "kind": "property",
+        "scope": "updated"
+      },
+      "render.renderResults": {
+        "name": "renderResults",
+        "line": 105,
+        "col": 8,
+        "endLine": 143,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "render"
+      },
+      "renderResults.children": {
+        "name": "children",
+        "line": 107,
+        "col": 10,
+        "endLine": 107,
+        "endCol": 45,
+        "kind": "variable",
+        "scope": "renderResults"
+      },
+      "renderResults.renderedCount": {
+        "name": "renderedCount",
+        "line": 108,
+        "col": 8,
+        "endLine": 108,
+        "endCol": 25,
+        "kind": "variable",
+        "scope": "renderResults"
+      },
+      "renderResults.childSpec": {
+        "name": "childSpec",
+        "line": 111,
+        "col": 15,
+        "endLine": 111,
+        "endCol": 24,
+        "kind": "variable",
+        "scope": "renderResults"
+      },
+      "renderResults.childId": {
+        "name": "childId",
+        "line": 112,
+        "col": 12,
+        "endLine": 112,
+        "endCol": 78,
+        "kind": "variable",
+        "scope": "renderResults"
+      },
+      "renderResults.childViewId": {
+        "name": "childViewId",
+        "line": 113,
+        "col": 12,
+        "endLine": 113,
+        "endCol": 108,
+        "kind": "variable",
+        "scope": "renderResults"
+      },
+      "renderResults.item": {
+        "name": "item",
+        "line": 116,
+        "col": 12,
+        "endLine": 116,
+        "endCol": 41,
+        "kind": "variable",
+        "scope": "renderResults"
+      },
+      "renderResults.childNode": {
+        "name": "childNode",
+        "line": 120,
+        "col": 14,
+        "endLine": 120,
+        "endCol": 81,
+        "kind": "variable",
+        "scope": "renderResults"
+      },
+      "renderResults.emptyMsg": {
+        "name": "emptyMsg",
+        "line": 138,
+        "col": 12,
+        "endLine": 140,
+        "endCol": 23,
+        "kind": "variable",
+        "scope": "renderResults"
+      },
+      "render.count": {
+        "name": "count",
+        "line": 147,
+        "col": 10,
+        "endLine": 147,
+        "endCol": 49,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.childSpec": {
+        "name": "childSpec",
+        "line": 155,
+        "col": 15,
+        "endLine": 155,
+        "endCol": 24,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.childId": {
+        "name": "childId",
+        "line": 156,
+        "col": 12,
+        "endLine": 156,
+        "endCol": 78,
+        "kind": "variable",
+        "scope": "render"
+      }
+    }
   }
 }

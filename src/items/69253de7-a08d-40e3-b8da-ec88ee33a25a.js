@@ -9,7 +9,7 @@ const COMPACT_CARD_VIEW_ID = 'd4e5f6a7-b8c9-4d0e-a1b2-c3d4e5f6a7b8';
 export async function render(item, api) {
   const container = api.createElement('div', {
     class: 'sortable-list-view',
-    style: 'display: flex; flex-direction: column; height: 100%; background: #fafafa;'
+    style: 'display: flex; flex-direction: column; height: 100%; background: var(--color-bg-surface-alt);'
   }, []);
 
   // List container (created first so header can reference it)
@@ -31,7 +31,7 @@ export async function render(item, api) {
 
 function createHeader(item, api, listContainer) {
   const header = api.createElement('div', {
-    style: 'padding: 16px; border-bottom: 2px solid #e0e0e0; background: white;'
+    style: 'padding: 16px; border-bottom: 2px solid var(--color-border-light); background: var(--color-bg-surface);'
   }, []);
 
   const titleRow = api.createElement('div', {
@@ -43,11 +43,11 @@ function createHeader(item, api, listContainer) {
   }, [item.name || 'Untitled List']);
 
   //const addButton = api.createElement('button', {
-  //  style: 'padding: 8px 16px; background: #3498db; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 14px;',
+  //  style: 'padding: 8px 16px; background: var(--color-primary); color: white; border: none; border-radius: var(--border-radius); cursor: pointer; font-size: 14px;',
   //  onclick: () => showItemPicker(item, api, listContainer)
   //}, ['+ Add Item']);
-  //addButton.onmouseover = () => { addButton.style.background = '#2980b9'; };
-  //addButton.onmouseout = () => { addButton.style.background = '#3498db'; };
+  //addButton.onmouseover = () => { addButton.style.background = 'var(--color-primary-hover)'; };
+  //addButton.onmouseout = () => { addButton.style.background = 'var(--color-primary)'; };
 
   titleRow.appendChild(title);
   //titleRow.appendChild(addButton);
@@ -62,7 +62,7 @@ async function renderChildren(listContainer, parentItem, api) {
 
   if (children.length === 0) {
     const empty = api.createElement('div', {
-      style: 'text-align: center; color: #999; padding: 60px 20px; font-style: italic;'
+      style: 'text-align: center; color: var(--color-border-dark); padding: 60px 20px; font-style: italic;'
     }, ['This list is empty. Click "+ Add Item" to add items.']);
     listContainer.appendChild(empty);
     return;
@@ -93,16 +93,16 @@ async function createListItem(childId, index, viewId, parentItem, api, listConta
     'data-parent-id': parentItem.id,
     'data-index': index,
     class: 'sortable-list-item',
-    style: 'display: flex; align-items: stretch; background: white; border: 1px solid #ddd; border-radius: 4px; margin-bottom: 8px; overflow: hidden;'
+    style: 'display: flex; align-items: stretch; background: var(--color-bg-surface); border: 1px solid var(--color-border-light); border-radius: var(--border-radius); margin-bottom: 8px; overflow: hidden;'
   }, []);
 
   const dragHandle = api.createElement('div', {
     class: 'drag-handle',
-    style: 'width: 32px; background: #f5f5f5; border-right: 1px solid #ddd; display: flex; align-items: center; justify-content: center; cursor: grab; user-select: none; flex-shrink: 0; color: #999;',
+    style: 'width: 32px; background: var(--color-bg-body); border-right: 1px solid var(--color-border-light); display: flex; align-items: center; justify-content: center; cursor: grab; user-select: none; flex-shrink: 0; color: var(--color-border-dark);',
     title: 'Drag to reorder'
   }, ['\u2261']);
-  dragHandle.onmouseover = () => { dragHandle.style.background = '#e8e8e8'; };
-  dragHandle.onmouseout = () => { dragHandle.style.background = '#f5f5f5'; };
+  dragHandle.onmouseover = () => { dragHandle.style.background = 'var(--color-bg-hover)'; };
+  dragHandle.onmouseout = () => { dragHandle.style.background = 'var(--color-bg-body)'; };
 
   const contentArea = api.createElement('div', {
     style: 'flex: 1; padding: 12px; min-width: 0;'
@@ -113,25 +113,25 @@ async function createListItem(childId, index, viewId, parentItem, api, listConta
     contentArea.appendChild(childNode);
   } catch (error) {
     const errorMsg = api.createElement('div', {
-      style: 'color: #c00; font-style: italic;'
+      style: 'color: var(--color-danger); font-style: italic;'
     }, ['Error rendering item']);
     contentArea.appendChild(errorMsg);
   }
 
   const actions = api.createElement('div', {
-    style: 'width: 32px; border-left: 1px solid #ddd; display: flex; align-items: center; justify-content: center; flex-shrink: 0;'
+    style: 'width: 32px; border-left: 1px solid var(--color-border-light); display: flex; align-items: center; justify-content: center; flex-shrink: 0;'
   }, []);
 
   const removeButton = api.createElement('button', {
-    style: 'background: none; border: none; color: #999; cursor: pointer; font-size: 18px; padding: 4px;',
+    style: 'background: none; border: none; color: var(--color-border-dark); cursor: pointer; font-size: 18px; padding: 4px;',
     onclick: async (e) => {
       e.stopPropagation();
       await removeItemFromList(parentItem, childId, api, listContainer);
     },
     title: 'Remove from list'
   }, ['\u00d7']);
-  removeButton.onmouseover = () => { removeButton.style.color = '#c00'; };
-  removeButton.onmouseout = () => { removeButton.style.color = '#999'; };
+  removeButton.onmouseover = () => { removeButton.style.color = 'var(--color-danger)'; };
+  removeButton.onmouseout = () => { removeButton.style.color = 'var(--color-border-dark)'; };
 
   actions.appendChild(removeButton);
   listItem.appendChild(dragHandle);
@@ -148,17 +148,17 @@ async function showItemPicker(parentItem, api, listContainer) {
   }, []);
 
   const modal = api.createElement('div', {
-    style: 'background: white; border-radius: 8px; width: 90%; max-width: 600px; max-height: 80vh; display: flex; flex-direction: column; box-shadow: 0 4px 20px rgba(0,0,0,0.3);'
+    style: 'background: var(--color-bg-surface); border-radius: 8px; width: 90%; max-width: 600px; max-height: 80vh; display: flex; flex-direction: column; box-shadow: var(--shadow-md);'
   }, []);
 
   const modalHeader = api.createElement('div', {
-    style: 'display: flex; justify-content: space-between; align-items: center; padding: 20px; border-bottom: 1px solid #ddd;'
+    style: 'display: flex; justify-content: space-between; align-items: center; padding: 20px; border-bottom: 1px solid var(--color-border-light);'
   }, []);
 
   const modalTitle = api.createElement('h3', { style: 'margin: 0;' }, ['Add Item to List']);
 
   const closeBtn = api.createElement('button', {
-    style: 'padding: 4px 10px; cursor: pointer; background: transparent; border: none; font-size: 24px; color: #666;',
+    style: 'padding: 4px 10px; cursor: pointer; background: transparent; border: none; font-size: 24px; color: var(--color-text-secondary);',
     onclick: () => document.body.removeChild(overlay)
   }, ['\u00d7']);
 
@@ -235,7 +235,7 @@ async function removeItemFromList(parentItem, childId, api, listContainer) {
   if (children.length === 0) {
     listContainer.innerHTML = '';
     const empty = api.createElement('div', {
-      style: 'text-align: center; color: #999; padding: 60px 20px; font-style: italic;'
+      style: 'text-align: center; color: var(--color-border-dark); padding: 60px 20px; font-style: italic;'
     }, ['This list is empty. Click "+ Add Item" to add items.']);
     listContainer.appendChild(empty);
   }
@@ -249,7 +249,7 @@ function setupDragAndDrop(listContainer, parentItem, api) {
 
   dropIndicator = api.createElement('div', {
     class: 'drop-indicator',
-    style: 'height: 3px; background: #3498db; margin: 4px 0; border-radius: 2px; display: none;'
+    style: 'height: 3px; background: var(--color-primary); margin: 4px 0; border-radius: 2px; display: none;'
   }, []);
 
   const items = listContainer.querySelectorAll('.sortable-list-item');

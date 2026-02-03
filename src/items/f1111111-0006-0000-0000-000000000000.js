@@ -32,7 +32,7 @@ export function show() {
 
   const modal = document.createElement("div");
   modal.style.cssText = `
-    background: white;
+    background: var(--color-bg-surface);
     border-radius: 8px;
     padding: 24px;
     max-width: 400px;
@@ -42,9 +42,9 @@ export function show() {
   modal.innerHTML = `
     <h2 style="margin-top: 0; margin-bottom: 16px;">Keyboard Shortcuts</h2>
     <table style="width: 100%; border-collapse: collapse;">
-      <tr><td style="padding: 8px 16px 8px 0;"><kbd style="background: #f0f0f0; padding: 2px 8px; border-radius: 3px; border: 1px solid #ccc;">Esc</kbd></td><td>Toggle REPL</td></tr>
-      <tr><td style="padding: 8px 16px 8px 0;"><kbd style="background: #f0f0f0; padding: 2px 8px; border-radius: 3px; border: 1px solid #ccc;">Cmd+K</kbd></td><td>Search items</td></tr>
-      <tr><td style="padding: 8px 16px 8px 0;"><kbd style="background: #f0f0f0; padding: 2px 8px; border-radius: 3px; border: 1px solid #ccc;">Cmd+?</kbd></td><td>Show this help</td></tr>
+      <tr><td style="padding: 8px 16px 8px 0;"><kbd style="background: var(--color-bg-hover); padding: 2px 8px; border-radius: var(--border-radius); border: 1px solid var(--color-border);">Esc</kbd></td><td>Toggle REPL</td></tr>
+      <tr><td style="padding: 8px 16px 8px 0;"><kbd style="background: var(--color-bg-hover); padding: 2px 8px; border-radius: var(--border-radius); border: 1px solid var(--color-border);">Cmd+K</kbd></td><td>Search items</td></tr>
+      <tr><td style="padding: 8px 16px 8px 0;"><kbd style="background: var(--color-bg-hover); padding: 2px 8px; border-radius: var(--border-radius); border: 1px solid var(--color-border);">Cmd+?</kbd></td><td>Show this help</td></tr>
     </table>
     <h3 style="margin-top: 20px; margin-bottom: 12px;">Mouse</h3>
     <table style="width: 100%; border-collapse: collapse;">
@@ -53,7 +53,7 @@ export function show() {
     </table>
     <h3 style="margin-top: 20px; margin-bottom: 12px;">Recovery</h3>
     <table style="width: 100%; border-collapse: collapse;">
-      <tr><td style="padding: 8px 16px 8px 0;"><kbd style="background: #f0f0f0; padding: 2px 8px; border-radius: 3px; border: 1px solid #ccc;">Ctrl+Shift+S</kbd></td><td>Safe mode</td></tr>
+      <tr><td style="padding: 8px 16px 8px 0;"><kbd style="background: var(--color-bg-hover); padding: 2px 8px; border-radius: var(--border-radius); border: 1px solid var(--color-border);">Ctrl+Shift+S</kbd></td><td>Safe mode</td></tr>
     </table>
     <div style="margin-top: 20px; text-align: right;">
       <button id="help-close-btn" style="padding: 8px 16px; cursor: pointer;">Close</button>

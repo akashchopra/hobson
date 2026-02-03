@@ -28,10 +28,28 @@ const parseItemUrl = (url) => {
   if (queryString) {
     queryString.split('&').forEach(pair => {
       const [key, val] = pair.split('=');
-      queryParams[key] = val;
+      queryParams[decodeURIComponent(key)] = decodeURIComponent(val || '');
     });
   }
   return { itemId, fragment, queryParams };
+};
+
+// Helper: Resolve symbol name to line range
+const resolveSymbol = (item, symbolName) => {
+  const symbols = item.content?._symbols || {};
+  // Try exact match first (qualified name like 'createAPI.get')
+  let symbolInfo = symbols[symbolName];
+  // If not found, try unqualified match (first symbol with that name)
+  if (!symbolInfo) {
+    for (const [key, info] of Object.entries(symbols)) {
+      if (info.name === symbolName) {
+        symbolInfo = info;
+        break;
+      }
+    }
+  }
+  if (!symbolInfo) return null;
+  return { startLine: symbolInfo.line, endLine: symbolInfo.endLine };
 };
 
 // Helper: Get field value from item
@@ -138,9 +156,10 @@ export async function render(markdown, api) {
         const navigateTo = {
           field: parsed.fragment,
           line: parsed.queryParams.lines ? parseInt(parsed.queryParams.lines) : null,
-          region: parsed.queryParams.region || null
+          region: parsed.queryParams.region || null,
+          symbol: parsed.queryParams.symbol || null
         };
-        const hasNavigation = navigateTo.field || navigateTo.line || navigateTo.region;
+        const hasNavigation = navigateTo.field || navigateTo.line || navigateTo.region || navigateTo.symbol;
 
         if (api.siblingContainer) {
           api.siblingContainer.addSibling(parsed.itemId, hasNavigation ? navigateTo : null);
@@ -176,15 +195,25 @@ export async function render(markdown, api) {
 
       if (isPartial) {
         // Partial transclusion
-        const fieldName = parsed.fragment || 'content';
+        // Default to 'code' field when symbol is specified, otherwise 'content'
+        const fieldName = parsed.fragment || (parsed.queryParams.symbol ? 'code' : 'content');
         let fieldValue = getFieldValue(transcludedItem, fieldName);
         if (!fieldValue) throw new Error('Field not found: ' + fieldName);
 
-        let text, startLine = 1;
+        let text, startLine = 1, endLine = null;
         if (parsed.queryParams.region) {
           const regionResult = extractRegion(fieldValue, parsed.queryParams.region);
           text = regionResult.text;
           startLine = regionResult.startLine;
+        } else if (parsed.queryParams.symbol) {
+          const symbolRange = resolveSymbol(transcludedItem, parsed.queryParams.symbol);
+          if (!symbolRange) throw new Error('Symbol not found: ' + parsed.queryParams.symbol);
+          text = fieldValue;
+          startLine = symbolRange.startLine;
+          endLine = symbolRange.endLine;
+          // Apply symbol range as line range
+          const lines = text.split('\n');
+          text = lines.slice(startLine - 1, endLine).join('\n');
         } else {
           text = fieldValue;
         }
@@ -198,6 +227,7 @@ export async function render(markdown, api) {
         let headerDesc = transcludedItem.name || transcludedItem.id;
         if (parsed.fragment) {
           headerDesc += ' (#' + parsed.fragment;
+          if (parsed.queryParams.symbol) headerDesc += ', symbol=' + parsed.queryParams.symbol;
           if (parsed.queryParams.region) headerDesc += ', region=' + parsed.queryParams.region;
           if (parsed.queryParams.lines) headerDesc += ', lines=' + parsed.queryParams.lines;
           headerDesc += ')';
@@ -305,9 +335,10 @@ export async function render(markdown, api) {
             const navigateTo = {
               field: parsed.fragment,
               line: parsed.queryParams.lines ? parseInt(parsed.queryParams.lines) : null,
-              region: parsed.queryParams.region || null
+              region: parsed.queryParams.region || null,
+              symbol: parsed.queryParams.symbol || null
             };
-            const hasNavigation = navigateTo.field || navigateTo.line || navigateTo.region;
+            const hasNavigation = navigateTo.field || navigateTo.line || navigateTo.region || navigateTo.symbol;
 
             if (api.siblingContainer) {
               api.siblingContainer.addSibling(parsed.itemId, hasNavigation ? navigateTo : null);

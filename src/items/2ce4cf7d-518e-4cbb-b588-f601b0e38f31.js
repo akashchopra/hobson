@@ -14,7 +14,7 @@ export function render(value, options, api) {
   if (label) {
     const labelEl = api.createElement('label');
     labelEl.textContent = label;
-    labelEl.style.cssText = 'font-weight: 500; font-size: 14px; color: #333;';
+    labelEl.style.cssText = 'font-weight: 500; font-size: 14px; color: var(--color-text);';
     wrapper.appendChild(labelEl);
   }
 
@@ -56,7 +56,7 @@ export function render(value, options, api) {
       try {
         const tag = await api.get(tagId);
         const tagPath = await getTagPath(tag);
-        const tagColor = tag.content?.color || '#3b82f6';
+        const tagColor = tag.content?.color || 'var(--color-primary)';
 
         const pill = api.createElement('span');
         pill.style.cssText = 'display: inline-flex; align-items: center; gap: 6px; padding: 4px ' +
@@ -86,7 +86,7 @@ export function render(value, options, api) {
       } catch (err) {
         // Tag not found
         const pill = api.createElement('span');
-        pill.style.cssText = 'display: inline-block; padding: 4px 12px; background: #fee; border: 1px solid #f88; border-radius: 12px; font-size: 12px; color: #c44; font-family: monospace;';
+        pill.style.cssText = 'display: inline-block; padding: 4px 12px; background: var(--color-danger-light); border: 1px solid var(--color-danger); border-radius: 12px; font-size: 12px; color: var(--color-danger); font-family: monospace;';
         pill.title = 'Tag not found: ' + tagId;
         pill.textContent = tagId.substring(0, 8) + '...';
         pillsContainer.appendChild(pill);
@@ -97,7 +97,7 @@ export function render(value, options, api) {
     if (mode === 'editable' && onChange) {
       const addBtn = api.createElement('button');
       addBtn.textContent = '+ Add Tag';
-      addBtn.style.cssText = 'padding: 4px 12px; background: #3b82f6; color: white; border: none; border-radius: 12px; font-size: 12px; font-weight: 500; cursor: pointer;';
+      addBtn.style.cssText = 'padding: 4px 12px; background: var(--color-primary); color: var(--color-bg-surface); border: none; border-radius: 12px; font-size: 12px; font-weight: 500; cursor: pointer;';
       addBtn.onclick = () => togglePicker();
       pillsContainer.appendChild(addBtn);
     }
@@ -117,19 +117,19 @@ export function render(value, options, api) {
     if (pickerPanel) pickerPanel.remove();
 
     pickerPanel = api.createElement('div');
-    pickerPanel.style.cssText = 'margin-top: 12px; padding: 15px; background: #f9f9f9; border: 1px solid #d0d0d0; border-radius: 6px; max-height: 300px; overflow-y: auto;';
+    pickerPanel.style.cssText = 'margin-top: 12px; padding: 15px; background: var(--color-bg-surface-alt); border: 1px solid var(--color-border); border-radius: var(--border-radius); max-height: 300px; overflow-y: auto;';
 
     const header = api.createElement('div');
     header.style.cssText = 'display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;';
 
     const title = api.createElement('div');
     title.textContent = 'Select tags';
-    title.style.cssText = 'font-weight: 500; color: #333;';
+    title.style.cssText = 'font-weight: 500; color: var(--color-text);';
     header.appendChild(title);
 
     const closeBtn = api.createElement('button');
     closeBtn.textContent = '×';
-    closeBtn.style.cssText = 'background: none; border: none; font-size: 18px; cursor: pointer; color: #666;';
+    closeBtn.style.cssText = 'background: none; border: none; font-size: 18px; cursor: pointer; color: var(--color-text-secondary);';
     closeBtn.onclick = () => { isPickerOpen = false; hidePicker(); };
     header.appendChild(closeBtn);
 

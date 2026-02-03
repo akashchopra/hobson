@@ -9,26 +9,26 @@ export function render(value, onChange, api, options = {}) {
 
   // Display area for current selection
   const displayArea = document.createElement('div');
-  displayArea.style.cssText = 'flex: 1; padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 14px; background: #f9f9f9; min-height: 36px; display: flex; align-items: center;';
+  displayArea.style.cssText = 'flex: 1; padding: 8px; border: 1px solid var(--color-border); border-radius: var(--border-radius); font-size: 14px; background: var(--color-bg-surface-alt); min-height: 36px; display: flex; align-items: center;';
 
   const updateDisplay = async () => {
     if (!value || value === '') {
       displayArea.textContent = '(no item selected)';
-      displayArea.style.color = '#999';
+      displayArea.style.color = 'var(--color-border-dark)';
       displayArea.style.fontStyle = 'italic';
     } else {
       displayArea.textContent = 'Loading...';
-      displayArea.style.color = '#666';
+      displayArea.style.color = 'var(--color-text-secondary)';
       displayArea.style.fontStyle = 'italic';
 
       try {
         const item = await api.get(value);
         displayArea.textContent = item.name || item.content?.title || item.id.substring(0, 8) + '...';
-        displayArea.style.color = '#333';
+        displayArea.style.color = 'var(--color-text)';
         displayArea.style.fontStyle = 'normal';
       } catch (e) {
         displayArea.textContent = '(invalid reference: ' + value.substring(0, 8) + '...)';
-        displayArea.style.color = '#c00';
+        displayArea.style.color = 'var(--color-danger)';
         displayArea.style.fontStyle = 'italic';
       }
     }
@@ -41,7 +41,7 @@ export function render(value, onChange, api, options = {}) {
     // Select button
     const selectBtn = document.createElement('button');
     selectBtn.textContent = 'Select...';
-    selectBtn.style.cssText = 'padding: 8px 16px; cursor: pointer; background: #007bff; color: white; border: none; border-radius: 4px; font-size: 14px;';
+    selectBtn.style.cssText = 'padding: 8px 16px; cursor: pointer; background: var(--color-primary); color: white; border: none; border-radius: var(--border-radius); font-size: 14px;';
     selectBtn.onclick = () => openModal();
     container.appendChild(selectBtn);
 
@@ -49,7 +49,7 @@ export function render(value, onChange, api, options = {}) {
     const clearBtn = document.createElement('button');
     clearBtn.textContent = '\u00d7';
     clearBtn.title = 'Clear selection';
-    clearBtn.style.cssText = 'padding: 8px 12px; cursor: pointer; background: #dc3545; color: white; border: none; border-radius: 4px; font-size: 16px; font-weight: bold;';
+    clearBtn.style.cssText = 'padding: 8px 12px; cursor: pointer; background: var(--color-danger); color: white; border: none; border-radius: var(--border-radius); font-size: 16px; font-weight: bold;';
     clearBtn.onclick = () => {
       onChange('');
       value = '';

@@ -26,7 +26,7 @@ function findRegionStartLine(text, regionName) {
 // [BEGIN:render]
 // Code readonly field view (CodeMirror)
 export async function render(value, options, api) {
-  const { label, language = 'javascript', scrollToLines, scrollToRegion } = options;
+  const { label, language = 'javascript', scrollToLines, scrollToRegion, scrollToSymbol } = options;
   const code = value || '';
 
   const wrapper = api.createElement('div', { className: 'field-code-readonly' });
@@ -112,6 +112,7 @@ export async function render(value, options, api) {
               const params = new URLSearchParams(queryString);
               if (params.has('region')) navigateTo.region = params.get('region');
               if (params.has('lines')) navigateTo.lines = params.get('lines');
+              if (params.has('symbol')) navigateTo.symbol = params.get('symbol');
             }
           }
           if (api.siblingContainer) {
@@ -159,6 +160,25 @@ export async function render(value, options, api) {
       const regionStart = findRegionStartLine(code, scrollToRegion);
       if (regionStart) {
         lineRange = { start: regionStart, end: regionStart };
+      }
+    }
+
+    // If scrollToSymbol is specified, look up in item's _symbols
+    if (scrollToSymbol && !lineRange) {
+      const currentItem = api.getCurrentItem();
+      const symbols = currentItem?.content?._symbols || {};
+      // Try exact match first, then unqualified match
+      let symbolInfo = symbols[scrollToSymbol];
+      if (!symbolInfo) {
+        for (const [key, info] of Object.entries(symbols)) {
+          if (info.name === scrollToSymbol) {
+            symbolInfo = info;
+            break;
+          }
+        }
+      }
+      if (symbolInfo) {
+        lineRange = { start: symbolInfo.line, end: symbolInfo.endLine };
       }
     }
 

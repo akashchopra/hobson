@@ -18,8 +18,8 @@ export function render(item, api) {
   // Header with error info
   const header = document.createElement('div');
   header.style.cssText = `
-    background: ${content.resolved ? '#e8f5e9' : '#ffebee'};
-    border-left: 4px solid ${content.resolved ? '#4caf50' : '#d32f2f'};
+    background: ${content.resolved ? 'var(--color-success-light, #e8f5e9)' : 'var(--color-danger-light)'};
+    border-left: 4px solid ${content.resolved ? 'var(--color-success)' : 'var(--color-danger)'};
     padding: 16px;
     margin-bottom: 16px;
   `;
@@ -28,13 +28,13 @@ export function render(item, api) {
     <div style="display: flex; align-items: start; gap: 12px;">
       <span style="font-size: 32px;">${content.resolved ? '&#10004;' : '&#9888;'}</span>
       <div style="flex: 1;">
-        <div style="font-size: 12px; color: #666; margin-bottom: 4px;">
+        <div style="font-size: 12px; color: var(--color-text-secondary); margin-bottom: 4px;">
           ${content.errorType || 'Error'}${content.resolved ? ' (Resolved)' : ''}
         </div>
         <div style="font-size: 18px; font-weight: 600; margin-bottom: 8px;">
           ${escapeHtml(content.message || 'Unknown error')}
         </div>
-        <div style="font-size: 12px; color: #666;">
+        <div style="font-size: 12px; color: var(--color-text-secondary);">
           ${new Date(content.timestamp).toLocaleString()}
         </div>
       </div>
@@ -56,9 +56,9 @@ export function render(item, api) {
     contextBox.style.cssText = `
       font-family: monospace;
       font-size: 12px;
-      background: #f5f5f5;
+      background: var(--color-bg-body);
       padding: 12px;
-      border-radius: 4px;
+      border-radius: var(--border-radius);
     `;
     
     let contextHtml = '';
@@ -69,11 +69,11 @@ export function render(item, api) {
       contextHtml += `<div>Item: ${escapeHtml(context.itemName)}</div>`;
     }
     if (context.itemId) {
-      contextHtml += `<div>Item ID: <a href="#" class="context-item-link" data-item-id="${context.itemId}" style="color: #1976d2;">${context.itemId}</a></div>`;
+      contextHtml += `<div>Item ID: <a href="#" class="context-item-link" data-item-id="${context.itemId}" style="color: var(--color-primary);">${context.itemId}</a></div>`;
     }
     if (context.rendererId) {
       const rendererLabel = context.rendererName || context.rendererId;
-      contextHtml += `<div>Renderer: <a href="#" class="context-item-link" data-item-id="${context.rendererId}" style="color: #1976d2;">${rendererLabel}</a></div>`;
+      contextHtml += `<div>Renderer: <a href="#" class="context-item-link" data-item-id="${context.rendererId}" style="color: var(--color-primary);">${rendererLabel}</a></div>`;
     }
     contextBox.innerHTML = contextHtml;
     
@@ -100,8 +100,8 @@ export function render(item, api) {
       margin-bottom: 16px;
       padding: 12px;
       background: #e3f2fd;
-      border: 1px solid #2196f3;
-      border-radius: 4px;
+      border: 1px solid var(--color-primary);
+      border-radius: var(--border-radius);
     `;
     const message = frames.length === 0 
       ? 'No stack trace available (syntax/parse error).'
@@ -111,7 +111,7 @@ export function render(item, api) {
     `;
     const viewSourceBtn = document.createElement('button');
     viewSourceBtn.textContent = 'View ' + (context.rendererName || 'Source Code');
-    viewSourceBtn.style.cssText = 'padding: 8px 16px; cursor: pointer; background: #2196f3; color: white; border: none; border-radius: 4px; font-weight: 500;';
+    viewSourceBtn.style.cssText = 'padding: 8px 16px; cursor: pointer; background: var(--color-primary); color: white; border: none; border-radius: var(--border-radius); font-weight: 500;';
     viewSourceBtn.onclick = () => api.navigate(sourceId);
     sourceSection.appendChild(viewSourceBtn);
     container.appendChild(sourceSection);
@@ -131,9 +131,9 @@ export function render(item, api) {
     stackBox.style.cssText = `
       font-family: monospace;
       font-size: 12px;
-      background: #f5f5f5;
+      background: var(--color-bg-body);
       padding: 12px;
-      border-radius: 4px;
+      border-radius: var(--border-radius);
       overflow: auto;
       max-height: 300px;
     `;
@@ -143,7 +143,7 @@ export function render(item, api) {
       frameLine.style.cssText = 'padding: 2px 0; white-space: nowrap;';
       
       if (frame.navigable && frame.itemId) {
-        frameLine.style.cssText += 'cursor: pointer; color: #1976d2;';
+        frameLine.style.cssText += 'cursor: pointer; color: var(--color-primary);';
         frameLine.innerHTML = `&#8594; ${escapeHtml(frame.raw)}`;
         frameLine.onclick = () => api.navigate(frame.itemId, {
           field: frame.field,
@@ -152,7 +152,7 @@ export function render(item, api) {
         });
         frameLine.title = `Click to navigate to ${frame.sourceName}:${frame.line}`;
       } else {
-        frameLine.style.color = '#666';
+        frameLine.style.color = 'var(--color-text-secondary)';
         frameLine.textContent = frame.raw;
       }
       
@@ -187,7 +187,7 @@ export function render(item, api) {
   // Delete button
   const deleteBtn = document.createElement('button');
   deleteBtn.textContent = 'Delete';
-  deleteBtn.style.cssText = 'padding: 8px 16px; cursor: pointer; color: #c62828;';
+  deleteBtn.style.cssText = 'padding: 8px 16px; cursor: pointer; color: var(--color-danger);';
   deleteBtn.onclick = async () => {
     if (confirm('Delete this error?')) {
       await api.delete(item.id);

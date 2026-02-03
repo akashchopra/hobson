@@ -3,10 +3,480 @@
   "name": "kernel-export",
   "type": "66666666-0000-0000-0000-000000000000",
   "created": 1738368000000,
-  "modified": 1770043037595,
+  "modified": 1770144887853,
   "children": [],
   "content": {
     "description": "Export starter packs for new Hobson instances. Items are tagged with starter-pack/bare, starter-pack/basic, or starter-pack/all to control which tier they appear in.\n\nUsage:\n```javascript\nconst ke = await api.require('kernel-export');\n\n// Preview what would be exported\nconst items = await ke.collect('basic');\nconsole.log(`Would export ${items.length} items`);\n\n// Download a starter pack\nawait ke.download('bare');   // initial-kernel.json\nawait ke.download('basic');  // starter-basic.json\nawait ke.download('all');    // starter-all.json\n```\n\nTier hierarchy:\n- bare: Minimal kernel (seed types, kernel modules, default view)\n- basic: Usable system (bare + essential views, libraries, common types)\n- all: Complete system (basic + sample content, documentation)",
-    "code": "// Kernel Export Library\n// Exports starter packs based on starter-pack/* tags\n\nconst TAG_IDS = {\n  BARE: 'aaaa0001-0001-0000-0000-000000000000',\n  BASIC: 'aaaa0001-0002-0000-0000-000000000000',\n  ALL: 'aaaa0001-0003-0000-0000-000000000000'\n};\n\nconst TIER_TAGS = {\n  bare: [TAG_IDS.BARE],\n  basic: [TAG_IDS.BARE, TAG_IDS.BASIC],\n  all: [TAG_IDS.BARE, TAG_IDS.BASIC, TAG_IDS.ALL]\n};\n\nconst FILENAMES = {\n  bare: 'initial-kernel.json',\n  basic: 'starter-basic.json',\n  all: 'starter-all.json'\n};\n\n/**\n * Collect items for a given tier\n * @param {'bare'|'basic'|'all'} tier - The tier to collect\n * @param {object} api - The Hobson API object\n * @returns {Promise<Array>} Array of items to export\n */\nexport async function collect(tier, api) {\n  if (!api) {\n    // Allow calling from REPL where api is global\n    api = window.kernel?.createREPLAPI();\n  }\n  \n  if (!TIER_TAGS[tier]) {\n    throw new Error(`Unknown tier: ${tier}. Use 'bare', 'basic', or 'all'.`);\n  }\n  \n  const tagIds = TIER_TAGS[tier];\n  const allItems = await api.getAll();\n  \n  // Filter items that have any of the tier's tags\n  const items = allItems.filter(item => {\n    const itemTags = item.tags || [];\n    return tagIds.some(tagId => itemTags.includes(tagId));\n  });\n  \n  // Always include the starter-pack tags themselves so importing works\n  const tagTypeId = 'd1da8525-b0dc-4a79-8bef-0cbed1ed003d';\n  const starterPackParentId = 'aaaa0001-0000-0000-0000-000000000000';\n  \n  // Add parent tag and tier tags if not already included\n  const idsToInclude = new Set(items.map(i => i.id));\n  idsToInclude.add(starterPackParentId);\n  tagIds.forEach(id => idsToInclude.add(id));\n  \n  // Also include the tag type definition itself\n  idsToInclude.add(tagTypeId);\n  \n  // Re-filter to get the complete set\n  const result = allItems.filter(item => idsToInclude.has(item.id));\n  \n  // Sort by type chain order (types before instances) for clean import\n  return sortForExport(result);\n}\n\n/**\n * Sort items so types come before their instances\n */\nfunction sortForExport(items) {\n  const itemMap = new Map(items.map(i => [i.id, i]));\n  const itemIds = new Set(items.map(i => i.id));\n  \n  // Build dependency graph\n  const dependsOn = new Map();\n  \n  for (const item of items) {\n    const deps = [];\n    \n    // Type dependency\n    if (item.type && itemIds.has(item.type) && item.type !== item.id) {\n      deps.push(item.type);\n    }\n    \n    // Extends dependency\n    if (item.extends && itemIds.has(item.extends) && item.extends !== item.id) {\n      deps.push(item.extends);\n    }\n    \n    dependsOn.set(item.id, deps);\n  }\n  \n  // Topological sort (Kahn's algorithm)\n  const mustComeBefore = new Map();\n  const inDegree = new Map();\n  \n  for (const item of items) {\n    inDegree.set(item.id, dependsOn.get(item.id).length);\n    \n    for (const dep of dependsOn.get(item.id)) {\n      if (!mustComeBefore.has(dep)) mustComeBefore.set(dep, []);\n      mustComeBefore.get(dep).push(item.id);\n    }\n  }\n  \n  const queue = [];\n  for (const [id, degree] of inDegree) {\n    if (degree === 0) queue.push(id);\n  }\n  \n  const result = [];\n  while (queue.length > 0) {\n    const id = queue.shift();\n    result.push(itemMap.get(id));\n    \n    for (const dependent of (mustComeBefore.get(id) || [])) {\n      const newDegree = inDegree.get(dependent) - 1;\n      inDegree.set(dependent, newDegree);\n      if (newDegree === 0) {\n        queue.push(dependent);\n      }\n    }\n  }\n  \n  // Handle cycles: append remaining\n  if (result.length < items.length) {\n    const resultIds = new Set(result.map(i => i.id));\n    for (const item of items) {\n      if (!resultIds.has(item.id)) {\n        result.push(item);\n      }\n    }\n  }\n  \n  return result;\n}\n\n/**\n * Download a starter pack as a JSON file\n * @param {'bare'|'basic'|'all'} tier - The tier to export\n * @param {object} api - The Hobson API object\n */\nexport async function download(tier, api) {\n  if (!api) {\n    api = window.kernel?.createREPLAPI();\n  }\n  \n  const items = await collect(tier, api);\n  const filename = FILENAMES[tier];\n  \n  const json = JSON.stringify(items, null, 2);\n  const blob = new Blob([json], { type: 'application/json' });\n  const url = URL.createObjectURL(blob);\n  const a = document.createElement('a');\n  a.href = url;\n  a.download = filename;\n  a.click();\n  URL.revokeObjectURL(url);\n  \n  console.log(`Downloaded ${filename} with ${items.length} items`);\n  return { filename, count: items.length };\n}\n\n/**\n * List items in each tier with counts\n * @param {object} api - The Hobson API object\n */\nexport async function summary(api) {\n  if (!api) {\n    api = window.kernel?.createREPLAPI();\n  }\n  \n  const result = {};\n  \n  for (const tier of ['bare', 'basic', 'all']) {\n    const items = await collect(tier, api);\n    result[tier] = {\n      count: items.length,\n      items: items.map(i => i.name || i.id)\n    };\n  }\n  \n  return result;\n}\n\n/**\n * Check which tier(s) an item is tagged for\n * @param {string} itemId - The item ID to check\n * @param {object} api - The Hobson API object\n */\nexport async function tierOf(itemId, api) {\n  if (!api) {\n    api = window.kernel?.createREPLAPI();\n  }\n  \n  const item = await api.get(itemId);\n  const itemTags = item.tags || [];\n  \n  const tiers = [];\n  if (itemTags.includes(TAG_IDS.BARE)) tiers.push('bare');\n  if (itemTags.includes(TAG_IDS.BASIC)) tiers.push('basic');\n  if (itemTags.includes(TAG_IDS.ALL)) tiers.push('all');\n  \n  return tiers;\n}\n"
+    "code": "// Kernel Export Library\n// Exports starter packs based on starter-pack/* tags\n\nconst TAG_IDS = {\n  BARE: 'aaaa0001-0001-0000-0000-000000000000',\n  BASIC: 'aaaa0001-0002-0000-0000-000000000000',\n  ALL: 'aaaa0001-0003-0000-0000-000000000000'\n};\n\nconst TIER_TAGS = {\n  bare: [TAG_IDS.BARE],\n  basic: [TAG_IDS.BARE, TAG_IDS.BASIC],\n  all: [TAG_IDS.BARE, TAG_IDS.BASIC, TAG_IDS.ALL]\n};\n\nconst FILENAMES = {\n  bare: 'initial-kernel.json',\n  basic: 'starter-basic.json',\n  all: 'starter-all.json'\n};\n\n/**\n * Collect items for a given tier\n * @param {'bare'|'basic'|'all'} tier - The tier to collect\n * @param {object} api - The Hobson API object\n * @returns {Promise<Array>} Array of items to export\n */\nexport async function collect(tier, api) {\n  if (!api) {\n    // Allow calling from REPL where api is global\n    api = window.kernel?.createREPLAPI();\n  }\n  \n  if (!TIER_TAGS[tier]) {\n    throw new Error(`Unknown tier: ${tier}. Use 'bare', 'basic', or 'all'.`);\n  }\n  \n  const tagIds = TIER_TAGS[tier];\n  const allItems = await api.getAll();\n  \n  // Filter items that have any of the tier's tags\n  const items = allItems.filter(item => {\n    const itemTags = item.tags || [];\n    return tagIds.some(tagId => itemTags.includes(tagId));\n  });\n  \n  // Always include the starter-pack tags themselves so importing works\n  const tagTypeId = 'd1da8525-b0dc-4a79-8bef-0cbed1ed003d';\n  const starterPackParentId = 'aaaa0001-0000-0000-0000-000000000000';\n  \n  // Add parent tag and tier tags if not already included\n  const idsToInclude = new Set(items.map(i => i.id));\n  idsToInclude.add(starterPackParentId);\n  tagIds.forEach(id => idsToInclude.add(id));\n  \n  // Also include the tag type definition itself\n  idsToInclude.add(tagTypeId);\n  \n  // Re-filter to get the complete set\n  const result = allItems.filter(item => idsToInclude.has(item.id));\n  \n  // Sort by type chain order (types before instances) for clean import\n  return sortForExport(result);\n}\n\n/**\n * Sort items so types come before their instances\n */\nfunction sortForExport(items) {\n  const itemMap = new Map(items.map(i => [i.id, i]));\n  const itemIds = new Set(items.map(i => i.id));\n  \n  // Build dependency graph\n  const dependsOn = new Map();\n  \n  for (const item of items) {\n    const deps = [];\n    \n    // Type dependency\n    if (item.type && itemIds.has(item.type) && item.type !== item.id) {\n      deps.push(item.type);\n    }\n    \n    // Extends dependency\n    if (item.extends && itemIds.has(item.extends) && item.extends !== item.id) {\n      deps.push(item.extends);\n    }\n    \n    dependsOn.set(item.id, deps);\n  }\n  \n  // Topological sort (Kahn's algorithm)\n  const mustComeBefore = new Map();\n  const inDegree = new Map();\n  \n  for (const item of items) {\n    inDegree.set(item.id, dependsOn.get(item.id).length);\n    \n    for (const dep of dependsOn.get(item.id)) {\n      if (!mustComeBefore.has(dep)) mustComeBefore.set(dep, []);\n      mustComeBefore.get(dep).push(item.id);\n    }\n  }\n  \n  const queue = [];\n  for (const [id, degree] of inDegree) {\n    if (degree === 0) queue.push(id);\n  }\n  \n  const result = [];\n  while (queue.length > 0) {\n    const id = queue.shift();\n    result.push(itemMap.get(id));\n    \n    for (const dependent of (mustComeBefore.get(id) || [])) {\n      const newDegree = inDegree.get(dependent) - 1;\n      inDegree.set(dependent, newDegree);\n      if (newDegree === 0) {\n        queue.push(dependent);\n      }\n    }\n  }\n  \n  // Handle cycles: append remaining\n  if (result.length < items.length) {\n    const resultIds = new Set(result.map(i => i.id));\n    for (const item of items) {\n      if (!resultIds.has(item.id)) {\n        result.push(item);\n      }\n    }\n  }\n  \n  return result;\n}\n\n/**\n * Download a starter pack as a JSON file\n * @param {'bare'|'basic'|'all'} tier - The tier to export\n * @param {object} api - The Hobson API object\n */\nexport async function download(tier, api) {\n  if (!api) {\n    api = window.kernel?.createREPLAPI();\n  }\n  \n  const items = await collect(tier, api);\n  const filename = FILENAMES[tier];\n  \n  const json = JSON.stringify(items, null, 2);\n  const blob = new Blob([json], { type: 'application/json' });\n  const url = URL.createObjectURL(blob);\n  const a = document.createElement('a');\n  a.href = url;\n  a.download = filename;\n  a.click();\n  URL.revokeObjectURL(url);\n  \n  console.log(`Downloaded ${filename} with ${items.length} items`);\n  return { filename, count: items.length };\n}\n\n/**\n * List items in each tier with counts\n * @param {object} api - The Hobson API object\n */\nexport async function summary(api) {\n  if (!api) {\n    api = window.kernel?.createREPLAPI();\n  }\n  \n  const result = {};\n  \n  for (const tier of ['bare', 'basic', 'all']) {\n    const items = await collect(tier, api);\n    result[tier] = {\n      count: items.length,\n      items: items.map(i => i.name || i.id)\n    };\n  }\n  \n  return result;\n}\n\n/**\n * Check which tier(s) an item is tagged for\n * @param {string} itemId - The item ID to check\n * @param {object} api - The Hobson API object\n */\nexport async function tierOf(itemId, api) {\n  if (!api) {\n    api = window.kernel?.createREPLAPI();\n  }\n  \n  const item = await api.get(itemId);\n  const itemTags = item.tags || [];\n  \n  const tiers = [];\n  if (itemTags.includes(TAG_IDS.BARE)) tiers.push('bare');\n  if (itemTags.includes(TAG_IDS.BASIC)) tiers.push('basic');\n  if (itemTags.includes(TAG_IDS.ALL)) tiers.push('all');\n  \n  return tiers;\n}\n",
+    "_symbols": {
+      "TAG_IDS": {
+        "name": "TAG_IDS",
+        "line": 4,
+        "col": 6,
+        "endLine": 8,
+        "endCol": 1,
+        "kind": "variable",
+        "scope": null
+      },
+      "TAG_IDS.BARE": {
+        "name": "BARE",
+        "line": 5,
+        "col": 2,
+        "endLine": 5,
+        "endCol": 46,
+        "kind": "property",
+        "scope": "TAG_IDS"
+      },
+      "TAG_IDS.BASIC": {
+        "name": "BASIC",
+        "line": 6,
+        "col": 2,
+        "endLine": 6,
+        "endCol": 47,
+        "kind": "property",
+        "scope": "TAG_IDS"
+      },
+      "TAG_IDS.ALL": {
+        "name": "ALL",
+        "line": 7,
+        "col": 2,
+        "endLine": 7,
+        "endCol": 45,
+        "kind": "property",
+        "scope": "TAG_IDS"
+      },
+      "TIER_TAGS": {
+        "name": "TIER_TAGS",
+        "line": 10,
+        "col": 6,
+        "endLine": 14,
+        "endCol": 1,
+        "kind": "variable",
+        "scope": null
+      },
+      "TIER_TAGS.bare": {
+        "name": "bare",
+        "line": 11,
+        "col": 2,
+        "endLine": 11,
+        "endCol": 22,
+        "kind": "property",
+        "scope": "TIER_TAGS"
+      },
+      "TIER_TAGS.basic": {
+        "name": "basic",
+        "line": 12,
+        "col": 2,
+        "endLine": 12,
+        "endCol": 38,
+        "kind": "property",
+        "scope": "TIER_TAGS"
+      },
+      "TIER_TAGS.all": {
+        "name": "all",
+        "line": 13,
+        "col": 2,
+        "endLine": 13,
+        "endCol": 49,
+        "kind": "property",
+        "scope": "TIER_TAGS"
+      },
+      "FILENAMES": {
+        "name": "FILENAMES",
+        "line": 16,
+        "col": 6,
+        "endLine": 20,
+        "endCol": 1,
+        "kind": "variable",
+        "scope": null
+      },
+      "FILENAMES.bare": {
+        "name": "bare",
+        "line": 17,
+        "col": 2,
+        "endLine": 17,
+        "endCol": 29,
+        "kind": "property",
+        "scope": "FILENAMES"
+      },
+      "FILENAMES.basic": {
+        "name": "basic",
+        "line": 18,
+        "col": 2,
+        "endLine": 18,
+        "endCol": 29,
+        "kind": "property",
+        "scope": "FILENAMES"
+      },
+      "FILENAMES.all": {
+        "name": "all",
+        "line": 19,
+        "col": 2,
+        "endLine": 19,
+        "endCol": 25,
+        "kind": "property",
+        "scope": "FILENAMES"
+      },
+      "collect": {
+        "name": "collect",
+        "line": 28,
+        "col": 7,
+        "endLine": 64,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null
+      },
+      "collect.tagIds": {
+        "name": "tagIds",
+        "line": 38,
+        "col": 8,
+        "endLine": 38,
+        "endCol": 32,
+        "kind": "variable",
+        "scope": "collect"
+      },
+      "collect.allItems": {
+        "name": "allItems",
+        "line": 39,
+        "col": 8,
+        "endLine": 39,
+        "endCol": 37,
+        "kind": "variable",
+        "scope": "collect"
+      },
+      "collect.items": {
+        "name": "items",
+        "line": 42,
+        "col": 8,
+        "endLine": 45,
+        "endCol": 4,
+        "kind": "variable",
+        "scope": "collect"
+      },
+      "collect.tagTypeId": {
+        "name": "tagTypeId",
+        "line": 48,
+        "col": 8,
+        "endLine": 48,
+        "endCol": 58,
+        "kind": "variable",
+        "scope": "collect"
+      },
+      "collect.starterPackParentId": {
+        "name": "starterPackParentId",
+        "line": 49,
+        "col": 8,
+        "endLine": 49,
+        "endCol": 68,
+        "kind": "variable",
+        "scope": "collect"
+      },
+      "collect.idsToInclude": {
+        "name": "idsToInclude",
+        "line": 52,
+        "col": 8,
+        "endLine": 52,
+        "endCol": 52,
+        "kind": "variable",
+        "scope": "collect"
+      },
+      "collect.result": {
+        "name": "result",
+        "line": 60,
+        "col": 8,
+        "endLine": 60,
+        "endCol": 67,
+        "kind": "variable",
+        "scope": "collect"
+      },
+      "sortForExport": {
+        "name": "sortForExport",
+        "line": 69,
+        "col": 0,
+        "endLine": 135,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null
+      },
+      "sortForExport.itemMap": {
+        "name": "itemMap",
+        "line": 70,
+        "col": 8,
+        "endLine": 70,
+        "endCol": 52,
+        "kind": "variable",
+        "scope": "sortForExport"
+      },
+      "sortForExport.itemIds": {
+        "name": "itemIds",
+        "line": 71,
+        "col": 8,
+        "endLine": 71,
+        "endCol": 47,
+        "kind": "variable",
+        "scope": "sortForExport"
+      },
+      "sortForExport.dependsOn": {
+        "name": "dependsOn",
+        "line": 74,
+        "col": 8,
+        "endLine": 74,
+        "endCol": 29,
+        "kind": "variable",
+        "scope": "sortForExport"
+      },
+      "sortForExport.item": {
+        "name": "item",
+        "line": 127,
+        "col": 15,
+        "endLine": 127,
+        "endCol": 19,
+        "kind": "variable",
+        "scope": "sortForExport"
+      },
+      "sortForExport.deps": {
+        "name": "deps",
+        "line": 77,
+        "col": 10,
+        "endLine": 77,
+        "endCol": 19,
+        "kind": "variable",
+        "scope": "sortForExport"
+      },
+      "sortForExport.mustComeBefore": {
+        "name": "mustComeBefore",
+        "line": 93,
+        "col": 8,
+        "endLine": 93,
+        "endCol": 34,
+        "kind": "variable",
+        "scope": "sortForExport"
+      },
+      "sortForExport.inDegree": {
+        "name": "inDegree",
+        "line": 94,
+        "col": 8,
+        "endLine": 94,
+        "endCol": 28,
+        "kind": "variable",
+        "scope": "sortForExport"
+      },
+      "sortForExport.dep": {
+        "name": "dep",
+        "line": 99,
+        "col": 15,
+        "endLine": 99,
+        "endCol": 18,
+        "kind": "variable",
+        "scope": "sortForExport"
+      },
+      "sortForExport.queue": {
+        "name": "queue",
+        "line": 105,
+        "col": 8,
+        "endLine": 105,
+        "endCol": 18,
+        "kind": "variable",
+        "scope": "sortForExport"
+      },
+      "sortForExport.result": {
+        "name": "result",
+        "line": 110,
+        "col": 8,
+        "endLine": 110,
+        "endCol": 19,
+        "kind": "variable",
+        "scope": "sortForExport"
+      },
+      "sortForExport.id": {
+        "name": "id",
+        "line": 112,
+        "col": 10,
+        "endLine": 112,
+        "endCol": 28,
+        "kind": "variable",
+        "scope": "sortForExport"
+      },
+      "sortForExport.dependent": {
+        "name": "dependent",
+        "line": 115,
+        "col": 15,
+        "endLine": 115,
+        "endCol": 24,
+        "kind": "variable",
+        "scope": "sortForExport"
+      },
+      "sortForExport.newDegree": {
+        "name": "newDegree",
+        "line": 116,
+        "col": 12,
+        "endLine": 116,
+        "endCol": 51,
+        "kind": "variable",
+        "scope": "sortForExport"
+      },
+      "sortForExport.resultIds": {
+        "name": "resultIds",
+        "line": 126,
+        "col": 10,
+        "endLine": 126,
+        "endCol": 52,
+        "kind": "variable",
+        "scope": "sortForExport"
+      },
+      "download": {
+        "name": "download",
+        "line": 142,
+        "col": 7,
+        "endLine": 161,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null
+      },
+      "download.items": {
+        "name": "items",
+        "line": 147,
+        "col": 8,
+        "endLine": 147,
+        "endCol": 40,
+        "kind": "variable",
+        "scope": "download"
+      },
+      "download.filename": {
+        "name": "filename",
+        "line": 160,
+        "col": 11,
+        "endLine": 160,
+        "endCol": 19,
+        "kind": "property",
+        "scope": "download"
+      },
+      "download.json": {
+        "name": "json",
+        "line": 150,
+        "col": 8,
+        "endLine": 150,
+        "endCol": 45,
+        "kind": "variable",
+        "scope": "download"
+      },
+      "download.blob": {
+        "name": "blob",
+        "line": 151,
+        "col": 8,
+        "endLine": 151,
+        "endCol": 61,
+        "kind": "variable",
+        "scope": "download"
+      },
+      "download.url": {
+        "name": "url",
+        "line": 152,
+        "col": 8,
+        "endLine": 152,
+        "endCol": 39,
+        "kind": "variable",
+        "scope": "download"
+      },
+      "download.a": {
+        "name": "a",
+        "line": 153,
+        "col": 8,
+        "endLine": 153,
+        "endCol": 39,
+        "kind": "variable",
+        "scope": "download"
+      },
+      "download.count": {
+        "name": "count",
+        "line": 160,
+        "col": 21,
+        "endLine": 160,
+        "endCol": 40,
+        "kind": "property",
+        "scope": "download"
+      },
+      "summary": {
+        "name": "summary",
+        "line": 167,
+        "col": 7,
+        "endLine": 183,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null
+      },
+      "summary.result": {
+        "name": "result",
+        "line": 172,
+        "col": 8,
+        "endLine": 172,
+        "endCol": 19,
+        "kind": "variable",
+        "scope": "summary"
+      },
+      "summary.tier": {
+        "name": "tier",
+        "line": 174,
+        "col": 13,
+        "endLine": 174,
+        "endCol": 17,
+        "kind": "variable",
+        "scope": "summary"
+      },
+      "summary.items": {
+        "name": "items",
+        "line": 178,
+        "col": 6,
+        "endLine": 178,
+        "endCol": 43,
+        "kind": "property",
+        "scope": "summary"
+      },
+      "summary.count": {
+        "name": "count",
+        "line": 177,
+        "col": 6,
+        "endLine": 177,
+        "endCol": 25,
+        "kind": "property",
+        "scope": "summary"
+      },
+      "tierOf": {
+        "name": "tierOf",
+        "line": 190,
+        "col": 7,
+        "endLine": 204,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null
+      },
+      "tierOf.item": {
+        "name": "item",
+        "line": 195,
+        "col": 8,
+        "endLine": 195,
+        "endCol": 36,
+        "kind": "variable",
+        "scope": "tierOf"
+      },
+      "tierOf.itemTags": {
+        "name": "itemTags",
+        "line": 196,
+        "col": 8,
+        "endLine": 196,
+        "endCol": 34,
+        "kind": "variable",
+        "scope": "tierOf"
+      },
+      "tierOf.tiers": {
+        "name": "tiers",
+        "line": 198,
+        "col": 8,
+        "endLine": 198,
+        "endCol": 18,
+        "kind": "variable",
+        "scope": "tierOf"
+      }
+    }
   }
 }

@@ -3,7 +3,7 @@
   "type": "aaaaaaaa-0000-0000-0000-000000000000",
   "name": "system:sortable-list-view",
   "created": 1737849600000,
-  "modified": 1769454270255,
+  "modified": 1770144886130,
   "children": [],
   "content": {
     "for_type": "00000000-0000-0000-0000-000000000000",
@@ -13,6 +13,737 @@
       "write"
     ],
     "description": "Displays any item's children as a sortable list with drag-and-drop reordering, item picker for adding items, and remove buttons.",
-    "code": "// Sortable List View - Phases 1-3: Display, Item Picker, Drag-and-Drop\n\nconst COMPACT_CARD_VIEW_ID = 'd4e5f6a7-b8c9-4d0e-a1b2-c3d4e5f6a7b8';\n\nexport async function render(item, api) {\n  const container = api.createElement('div', {\n    class: 'sortable-list-view',\n    style: 'display: flex; flex-direction: column; height: 100%; background: var(--color-bg-surface-alt);'\n  }, []);\n\n  // List container (created first so header can reference it)\n  const listContainer = api.createElement('div', {\n    class: 'sortable-list-items',\n    style: 'flex: 1; overflow-y: auto; padding: 16px;'\n  }, []);\n\n  // Header section\n  const header = createHeader(item, api, listContainer);\n  container.appendChild(header);\n  container.appendChild(listContainer);\n\n  // Initial render\n  await renderChildren(listContainer, item, api);\n\n  return container;\n}\n\nfunction createHeader(item, api, listContainer) {\n  const header = api.createElement('div', {\n    style: 'padding: 16px; border-bottom: 2px solid var(--color-border-light); background: var(--color-bg-surface);'\n  }, []);\n\n  const titleRow = api.createElement('div', {\n    style: 'display: flex; justify-content: space-between; align-items: center;'\n  }, []);\n\n  const title = api.createElement('h2', {\n    style: 'margin: 0; font-size: 20px;'\n  }, [item.name || 'Untitled List']);\n\n  //const addButton = api.createElement('button', {\n  //  style: 'padding: 8px 16px; background: var(--color-primary); color: white; border: none; border-radius: var(--border-radius); cursor: pointer; font-size: 14px;',\n  //  onclick: () => showItemPicker(item, api, listContainer)\n  //}, ['+ Add Item']);\n  //addButton.onmouseover = () => { addButton.style.background = 'var(--color-primary-hover)'; };\n  //addButton.onmouseout = () => { addButton.style.background = 'var(--color-primary)'; };\n\n  titleRow.appendChild(title);\n  //titleRow.appendChild(addButton);\n  header.appendChild(titleRow);\n\n  return header;\n}\n\nasync function renderChildren(listContainer, parentItem, api) {\n  listContainer.innerHTML = '';\n  const children = parentItem.children || [];\n\n  if (children.length === 0) {\n    const empty = api.createElement('div', {\n      style: 'text-align: center; color: var(--color-border-dark); padding: 60px 20px; font-style: italic;'\n    }, ['This list is empty. Click \"+ Add Item\" to add items.']);\n    listContainer.appendChild(empty);\n    return;\n  }\n\n  const compactViews = await api.query({ name: 'system:compact-card-view' });\n  const defaultViewId = compactViews[0]?.id || COMPACT_CARD_VIEW_ID;\n\n  for (let i = 0; i < children.length; i++) {\n    const childSpec = children[i];\n    const childId = typeof childSpec === 'string' ? childSpec : childSpec.id;\n    const childViewId = typeof childSpec === 'string' ? defaultViewId : (childSpec.view?.type || defaultViewId);\n\n    const childItem = await api.get(childId);\n    if (!childItem) continue;\n\n    const listItem = await createListItem(childId, i, childViewId, parentItem, api, listContainer);\n    listContainer.appendChild(listItem);\n  }\n\n  // Setup drag-and-drop\n  setupDragAndDrop(listContainer, parentItem, api);\n}\n\nasync function createListItem(childId, index, viewId, parentItem, api, listContainer) {\n  const listItem = api.createElement('div', {\n    'data-item-id': childId,\n    'data-parent-id': parentItem.id,\n    'data-index': index,\n    class: 'sortable-list-item',\n    style: 'display: flex; align-items: stretch; background: var(--color-bg-surface); border: 1px solid var(--color-border-light); border-radius: var(--border-radius); margin-bottom: 8px; overflow: hidden;'\n  }, []);\n\n  const dragHandle = api.createElement('div', {\n    class: 'drag-handle',\n    style: 'width: 32px; background: var(--color-bg-body); border-right: 1px solid var(--color-border-light); display: flex; align-items: center; justify-content: center; cursor: grab; user-select: none; flex-shrink: 0; color: var(--color-border-dark);',\n    title: 'Drag to reorder'\n  }, ['\\u2261']);\n  dragHandle.onmouseover = () => { dragHandle.style.background = 'var(--color-bg-hover)'; };\n  dragHandle.onmouseout = () => { dragHandle.style.background = 'var(--color-bg-body)'; };\n\n  const contentArea = api.createElement('div', {\n    style: 'flex: 1; padding: 12px; min-width: 0;'\n  }, []);\n\n  try {\n    const childNode = await api.renderItem(childId, viewId);\n    contentArea.appendChild(childNode);\n  } catch (error) {\n    const errorMsg = api.createElement('div', {\n      style: 'color: var(--color-danger); font-style: italic;'\n    }, ['Error rendering item']);\n    contentArea.appendChild(errorMsg);\n  }\n\n  const actions = api.createElement('div', {\n    style: 'width: 32px; border-left: 1px solid var(--color-border-light); display: flex; align-items: center; justify-content: center; flex-shrink: 0;'\n  }, []);\n\n  const removeButton = api.createElement('button', {\n    style: 'background: none; border: none; color: var(--color-border-dark); cursor: pointer; font-size: 18px; padding: 4px;',\n    onclick: async (e) => {\n      e.stopPropagation();\n      await removeItemFromList(parentItem, childId, api, listContainer);\n    },\n    title: 'Remove from list'\n  }, ['\\u00d7']);\n  removeButton.onmouseover = () => { removeButton.style.color = 'var(--color-danger)'; };\n  removeButton.onmouseout = () => { removeButton.style.color = 'var(--color-border-dark)'; };\n\n  actions.appendChild(removeButton);\n  listItem.appendChild(dragHandle);\n  listItem.appendChild(contentArea);\n  listItem.appendChild(actions);\n\n  return listItem;\n}\n\n// Phase 2: Item Picker\nasync function showItemPicker(parentItem, api, listContainer) {\n  const overlay = api.createElement('div', {\n    style: 'position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 10000;'\n  }, []);\n\n  const modal = api.createElement('div', {\n    style: 'background: var(--color-bg-surface); border-radius: 8px; width: 90%; max-width: 600px; max-height: 80vh; display: flex; flex-direction: column; box-shadow: var(--shadow-md);'\n  }, []);\n\n  const modalHeader = api.createElement('div', {\n    style: 'display: flex; justify-content: space-between; align-items: center; padding: 20px; border-bottom: 1px solid var(--color-border-light);'\n  }, []);\n\n  const modalTitle = api.createElement('h3', { style: 'margin: 0;' }, ['Add Item to List']);\n\n  const closeBtn = api.createElement('button', {\n    style: 'padding: 4px 10px; cursor: pointer; background: transparent; border: none; font-size: 24px; color: var(--color-text-secondary);',\n    onclick: () => document.body.removeChild(overlay)\n  }, ['\\u00d7']);\n\n  modalHeader.appendChild(modalTitle);\n  modalHeader.appendChild(closeBtn);\n  modal.appendChild(modalHeader);\n\n  const searchContainer = api.createElement('div', {\n    style: 'padding: 20px; flex: 1; overflow: auto;'\n  }, []);\n  modal.appendChild(searchContainer);\n\n  overlay.appendChild(modal);\n  document.body.appendChild(overlay);\n\n  const searchLib = await api.require('item-search-lib');\n\n  const existingIds = new Set(\n    (parentItem.children || []).map(c => typeof c === 'string' ? c : c.id)\n  );\n  existingIds.add(parentItem.id);\n\n  searchLib.createSearchUI(\n    searchContainer,\n    async (selectedItem) => {\n      if (existingIds.has(selectedItem.id)) {\n        alert('This item is already in the list.');\n        return;\n      }\n      await addItemToList(parentItem, selectedItem.id, api, listContainer);\n      document.body.removeChild(overlay);\n    },\n    api,\n    { placeholder: 'Search for items to add...', autoFocus: true }\n  );\n\n  overlay.onclick = (e) => {\n    if (e.target === overlay) document.body.removeChild(overlay);\n  };\n  modal.onclick = (e) => e.stopPropagation();\n}\n\nasync function addItemToList(parentItem, itemId, api, listContainer) {\n  const fresh = await api.get(parentItem.id);\n  const children = (fresh.children || []).map(c => typeof c === 'string' ? { id: c } : c);\n  children.push({ id: itemId });\n\n  const updated = { ...fresh, children, modified: Date.now() };\n  await api.set(updated);\n  parentItem.children = updated.children;\n\n  // Re-render list\n  await renderChildren(listContainer, parentItem, api);\n}\n\nasync function removeItemFromList(parentItem, childId, api, listContainer) {\n  const fresh = await api.get(parentItem.id);\n  const children = (fresh.children || []).filter(c => {\n    const id = typeof c === 'string' ? c : c.id;\n    return id !== childId;\n  });\n\n  const updated = { ...fresh, children, modified: Date.now() };\n  await api.set(updated);\n  parentItem.children = updated.children;\n\n  const itemElement = listContainer.querySelector(`[data-item-id=\"${childId}\"]`);\n  if (itemElement) itemElement.remove();\n\n  listContainer.querySelectorAll('.sortable-list-item').forEach((el, i) => {\n    el.setAttribute('data-index', i);\n  });\n\n  if (children.length === 0) {\n    listContainer.innerHTML = '';\n    const empty = api.createElement('div', {\n      style: 'text-align: center; color: var(--color-border-dark); padding: 60px 20px; font-style: italic;'\n    }, ['This list is empty. Click \"+ Add Item\" to add items.']);\n    listContainer.appendChild(empty);\n  }\n}\n\n// Phase 3: Drag-and-Drop\nfunction setupDragAndDrop(listContainer, parentItem, api) {\n  let draggedItem = null;\n  let draggedIndex = null;\n  let dropIndicator = null;\n\n  dropIndicator = api.createElement('div', {\n    class: 'drop-indicator',\n    style: 'height: 3px; background: var(--color-primary); margin: 4px 0; border-radius: 2px; display: none;'\n  }, []);\n\n  const items = listContainer.querySelectorAll('.sortable-list-item');\n\n  items.forEach((item, index) => {\n    const dragHandle = item.querySelector('.drag-handle');\n\n    dragHandle.onmousedown = (e) => {\n      e.preventDefault();\n      draggedItem = item;\n      draggedIndex = parseInt(item.getAttribute('data-index'), 10);\n\n      item.style.opacity = '0.5';\n      dragHandle.style.cursor = 'grabbing';\n\n      item.parentNode.insertBefore(dropIndicator, item.nextSibling);\n\n      document.onmousemove = handleDrag;\n      document.onmouseup = endDrag;\n    };\n  });\n\n  function handleDrag(e) {\n    if (!draggedItem) return;\n\n    const items = Array.from(listContainer.querySelectorAll('.sortable-list-item'));\n    const mouseY = e.clientY;\n    let targetIndex = items.length;\n\n    for (let i = 0; i < items.length; i++) {\n      const item = items[i];\n      if (item === draggedItem) continue;\n      const rect = item.getBoundingClientRect();\n      if (mouseY < rect.top + rect.height / 2) {\n        targetIndex = i;\n        break;\n      }\n    }\n\n    dropIndicator.style.display = 'block';\n\n    if (targetIndex < items.length) {\n      listContainer.insertBefore(dropIndicator, items[targetIndex]);\n    } else {\n      listContainer.appendChild(dropIndicator);\n    }\n  }\n\n  async function endDrag(e) {\n    if (!draggedItem) return;\n\n    const items = Array.from(listContainer.querySelectorAll('.sortable-list-item'));\n    const mouseY = e.clientY;\n    let newIndex = items.length;  // Position after last item\n\n    for (let i = 0; i < items.length; i++) {\n      const item = items[i];\n      if (item === draggedItem) continue;\n      const rect = item.getBoundingClientRect();\n      if (mouseY < rect.top + rect.height / 2) {\n        newIndex = i;\n        break;\n      }\n    }\n\n    // Adjust for the dragged item being removed before insertion\n    if (newIndex > draggedIndex) newIndex--;\n\n    if (newIndex !== draggedIndex) {\n      await updateChildOrder(parentItem, draggedIndex, newIndex, api, listContainer);\n    }\n\n    draggedItem.style.opacity = '1';\n    draggedItem.querySelector('.drag-handle').style.cursor = 'grab';\n    dropIndicator.style.display = 'none';\n    if (dropIndicator.parentNode) dropIndicator.parentNode.removeChild(dropIndicator);\n\n    draggedItem = null;\n    draggedIndex = null;\n    document.onmousemove = null;\n    document.onmouseup = null;\n  }\n}\n\nasync function updateChildOrder(parentItem, fromIndex, toIndex, api, listContainer) {\n  const fresh = await api.get(parentItem.id);\n  let children = (fresh.children || []).map(c => typeof c === 'string' ? { id: c } : c);\n\n  const [movedItem] = children.splice(fromIndex, 1);\n  children.splice(toIndex, 0, movedItem);\n\n  const updated = { ...fresh, children, modified: Date.now() };\n  await api.set(updated);\n  parentItem.children = updated.children;\n\n  // Move element in DOM\n  const items = Array.from(listContainer.querySelectorAll('.sortable-list-item'));\n  const movedElement = items[fromIndex];\n\n  if (toIndex >= items.length - 1) {\n    listContainer.appendChild(movedElement);\n  } else {\n    const targetElement = toIndex > fromIndex ? items[toIndex + 1] : items[toIndex];\n    listContainer.insertBefore(movedElement, targetElement);\n  }\n\n  listContainer.querySelectorAll('.sortable-list-item').forEach((el, i) => {\n    el.setAttribute('data-index', i);\n  });\n}\n"
+    "code": "// Sortable List View - Phases 1-3: Display, Item Picker, Drag-and-Drop\n\nconst COMPACT_CARD_VIEW_ID = 'd4e5f6a7-b8c9-4d0e-a1b2-c3d4e5f6a7b8';\n\nexport async function render(item, api) {\n  const container = api.createElement('div', {\n    class: 'sortable-list-view',\n    style: 'display: flex; flex-direction: column; height: 100%; background: var(--color-bg-surface-alt);'\n  }, []);\n\n  // List container (created first so header can reference it)\n  const listContainer = api.createElement('div', {\n    class: 'sortable-list-items',\n    style: 'flex: 1; overflow-y: auto; padding: 16px;'\n  }, []);\n\n  // Header section\n  const header = createHeader(item, api, listContainer);\n  container.appendChild(header);\n  container.appendChild(listContainer);\n\n  // Initial render\n  await renderChildren(listContainer, item, api);\n\n  return container;\n}\n\nfunction createHeader(item, api, listContainer) {\n  const header = api.createElement('div', {\n    style: 'padding: 16px; border-bottom: 2px solid var(--color-border-light); background: var(--color-bg-surface);'\n  }, []);\n\n  const titleRow = api.createElement('div', {\n    style: 'display: flex; justify-content: space-between; align-items: center;'\n  }, []);\n\n  const title = api.createElement('h2', {\n    style: 'margin: 0; font-size: 20px;'\n  }, [item.name || 'Untitled List']);\n\n  //const addButton = api.createElement('button', {\n  //  style: 'padding: 8px 16px; background: var(--color-primary); color: white; border: none; border-radius: var(--border-radius); cursor: pointer; font-size: 14px;',\n  //  onclick: () => showItemPicker(item, api, listContainer)\n  //}, ['+ Add Item']);\n  //addButton.onmouseover = () => { addButton.style.background = 'var(--color-primary-hover)'; };\n  //addButton.onmouseout = () => { addButton.style.background = 'var(--color-primary)'; };\n\n  titleRow.appendChild(title);\n  //titleRow.appendChild(addButton);\n  header.appendChild(titleRow);\n\n  return header;\n}\n\nasync function renderChildren(listContainer, parentItem, api) {\n  listContainer.innerHTML = '';\n  const children = parentItem.children || [];\n\n  if (children.length === 0) {\n    const empty = api.createElement('div', {\n      style: 'text-align: center; color: var(--color-border-dark); padding: 60px 20px; font-style: italic;'\n    }, ['This list is empty. Click \"+ Add Item\" to add items.']);\n    listContainer.appendChild(empty);\n    return;\n  }\n\n  const compactViews = await api.query({ name: 'system:compact-card-view' });\n  const defaultViewId = compactViews[0]?.id || COMPACT_CARD_VIEW_ID;\n\n  for (let i = 0; i < children.length; i++) {\n    const childSpec = children[i];\n    const childId = typeof childSpec === 'string' ? childSpec : childSpec.id;\n    const childViewId = typeof childSpec === 'string' ? defaultViewId : (childSpec.view?.type || defaultViewId);\n\n    const childItem = await api.get(childId);\n    if (!childItem) continue;\n\n    const listItem = await createListItem(childId, i, childViewId, parentItem, api, listContainer);\n    listContainer.appendChild(listItem);\n  }\n\n  // Setup drag-and-drop\n  setupDragAndDrop(listContainer, parentItem, api);\n}\n\nasync function createListItem(childId, index, viewId, parentItem, api, listContainer) {\n  const listItem = api.createElement('div', {\n    'data-item-id': childId,\n    'data-parent-id': parentItem.id,\n    'data-index': index,\n    class: 'sortable-list-item',\n    style: 'display: flex; align-items: stretch; background: var(--color-bg-surface); border: 1px solid var(--color-border-light); border-radius: var(--border-radius); margin-bottom: 8px; overflow: hidden;'\n  }, []);\n\n  const dragHandle = api.createElement('div', {\n    class: 'drag-handle',\n    style: 'width: 32px; background: var(--color-bg-body); border-right: 1px solid var(--color-border-light); display: flex; align-items: center; justify-content: center; cursor: grab; user-select: none; flex-shrink: 0; color: var(--color-border-dark);',\n    title: 'Drag to reorder'\n  }, ['\\u2261']);\n  dragHandle.onmouseover = () => { dragHandle.style.background = 'var(--color-bg-hover)'; };\n  dragHandle.onmouseout = () => { dragHandle.style.background = 'var(--color-bg-body)'; };\n\n  const contentArea = api.createElement('div', {\n    style: 'flex: 1; padding: 12px; min-width: 0;'\n  }, []);\n\n  try {\n    const childNode = await api.renderItem(childId, viewId);\n    contentArea.appendChild(childNode);\n  } catch (error) {\n    const errorMsg = api.createElement('div', {\n      style: 'color: var(--color-danger); font-style: italic;'\n    }, ['Error rendering item']);\n    contentArea.appendChild(errorMsg);\n  }\n\n  const actions = api.createElement('div', {\n    style: 'width: 32px; border-left: 1px solid var(--color-border-light); display: flex; align-items: center; justify-content: center; flex-shrink: 0;'\n  }, []);\n\n  const removeButton = api.createElement('button', {\n    style: 'background: none; border: none; color: var(--color-border-dark); cursor: pointer; font-size: 18px; padding: 4px;',\n    onclick: async (e) => {\n      e.stopPropagation();\n      await removeItemFromList(parentItem, childId, api, listContainer);\n    },\n    title: 'Remove from list'\n  }, ['\\u00d7']);\n  removeButton.onmouseover = () => { removeButton.style.color = 'var(--color-danger)'; };\n  removeButton.onmouseout = () => { removeButton.style.color = 'var(--color-border-dark)'; };\n\n  actions.appendChild(removeButton);\n  listItem.appendChild(dragHandle);\n  listItem.appendChild(contentArea);\n  listItem.appendChild(actions);\n\n  return listItem;\n}\n\n// Phase 2: Item Picker\nasync function showItemPicker(parentItem, api, listContainer) {\n  const overlay = api.createElement('div', {\n    style: 'position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 10000;'\n  }, []);\n\n  const modal = api.createElement('div', {\n    style: 'background: var(--color-bg-surface); border-radius: 8px; width: 90%; max-width: 600px; max-height: 80vh; display: flex; flex-direction: column; box-shadow: var(--shadow-md);'\n  }, []);\n\n  const modalHeader = api.createElement('div', {\n    style: 'display: flex; justify-content: space-between; align-items: center; padding: 20px; border-bottom: 1px solid var(--color-border-light);'\n  }, []);\n\n  const modalTitle = api.createElement('h3', { style: 'margin: 0;' }, ['Add Item to List']);\n\n  const closeBtn = api.createElement('button', {\n    style: 'padding: 4px 10px; cursor: pointer; background: transparent; border: none; font-size: 24px; color: var(--color-text-secondary);',\n    onclick: () => document.body.removeChild(overlay)\n  }, ['\\u00d7']);\n\n  modalHeader.appendChild(modalTitle);\n  modalHeader.appendChild(closeBtn);\n  modal.appendChild(modalHeader);\n\n  const searchContainer = api.createElement('div', {\n    style: 'padding: 20px; flex: 1; overflow: auto;'\n  }, []);\n  modal.appendChild(searchContainer);\n\n  overlay.appendChild(modal);\n  document.body.appendChild(overlay);\n\n  const searchLib = await api.require('item-search-lib');\n\n  const existingIds = new Set(\n    (parentItem.children || []).map(c => typeof c === 'string' ? c : c.id)\n  );\n  existingIds.add(parentItem.id);\n\n  searchLib.createSearchUI(\n    searchContainer,\n    async (selectedItem) => {\n      if (existingIds.has(selectedItem.id)) {\n        alert('This item is already in the list.');\n        return;\n      }\n      await addItemToList(parentItem, selectedItem.id, api, listContainer);\n      document.body.removeChild(overlay);\n    },\n    api,\n    { placeholder: 'Search for items to add...', autoFocus: true }\n  );\n\n  overlay.onclick = (e) => {\n    if (e.target === overlay) document.body.removeChild(overlay);\n  };\n  modal.onclick = (e) => e.stopPropagation();\n}\n\nasync function addItemToList(parentItem, itemId, api, listContainer) {\n  const fresh = await api.get(parentItem.id);\n  const children = (fresh.children || []).map(c => typeof c === 'string' ? { id: c } : c);\n  children.push({ id: itemId });\n\n  const updated = { ...fresh, children, modified: Date.now() };\n  await api.set(updated);\n  parentItem.children = updated.children;\n\n  // Re-render list\n  await renderChildren(listContainer, parentItem, api);\n}\n\nasync function removeItemFromList(parentItem, childId, api, listContainer) {\n  const fresh = await api.get(parentItem.id);\n  const children = (fresh.children || []).filter(c => {\n    const id = typeof c === 'string' ? c : c.id;\n    return id !== childId;\n  });\n\n  const updated = { ...fresh, children, modified: Date.now() };\n  await api.set(updated);\n  parentItem.children = updated.children;\n\n  const itemElement = listContainer.querySelector(`[data-item-id=\"${childId}\"]`);\n  if (itemElement) itemElement.remove();\n\n  listContainer.querySelectorAll('.sortable-list-item').forEach((el, i) => {\n    el.setAttribute('data-index', i);\n  });\n\n  if (children.length === 0) {\n    listContainer.innerHTML = '';\n    const empty = api.createElement('div', {\n      style: 'text-align: center; color: var(--color-border-dark); padding: 60px 20px; font-style: italic;'\n    }, ['This list is empty. Click \"+ Add Item\" to add items.']);\n    listContainer.appendChild(empty);\n  }\n}\n\n// Phase 3: Drag-and-Drop\nfunction setupDragAndDrop(listContainer, parentItem, api) {\n  let draggedItem = null;\n  let draggedIndex = null;\n  let dropIndicator = null;\n\n  dropIndicator = api.createElement('div', {\n    class: 'drop-indicator',\n    style: 'height: 3px; background: var(--color-primary); margin: 4px 0; border-radius: 2px; display: none;'\n  }, []);\n\n  const items = listContainer.querySelectorAll('.sortable-list-item');\n\n  items.forEach((item, index) => {\n    const dragHandle = item.querySelector('.drag-handle');\n\n    dragHandle.onmousedown = (e) => {\n      e.preventDefault();\n      draggedItem = item;\n      draggedIndex = parseInt(item.getAttribute('data-index'), 10);\n\n      item.style.opacity = '0.5';\n      dragHandle.style.cursor = 'grabbing';\n\n      item.parentNode.insertBefore(dropIndicator, item.nextSibling);\n\n      document.onmousemove = handleDrag;\n      document.onmouseup = endDrag;\n    };\n  });\n\n  function handleDrag(e) {\n    if (!draggedItem) return;\n\n    const items = Array.from(listContainer.querySelectorAll('.sortable-list-item'));\n    const mouseY = e.clientY;\n    let targetIndex = items.length;\n\n    for (let i = 0; i < items.length; i++) {\n      const item = items[i];\n      if (item === draggedItem) continue;\n      const rect = item.getBoundingClientRect();\n      if (mouseY < rect.top + rect.height / 2) {\n        targetIndex = i;\n        break;\n      }\n    }\n\n    dropIndicator.style.display = 'block';\n\n    if (targetIndex < items.length) {\n      listContainer.insertBefore(dropIndicator, items[targetIndex]);\n    } else {\n      listContainer.appendChild(dropIndicator);\n    }\n  }\n\n  async function endDrag(e) {\n    if (!draggedItem) return;\n\n    const items = Array.from(listContainer.querySelectorAll('.sortable-list-item'));\n    const mouseY = e.clientY;\n    let newIndex = items.length;  // Position after last item\n\n    for (let i = 0; i < items.length; i++) {\n      const item = items[i];\n      if (item === draggedItem) continue;\n      const rect = item.getBoundingClientRect();\n      if (mouseY < rect.top + rect.height / 2) {\n        newIndex = i;\n        break;\n      }\n    }\n\n    // Adjust for the dragged item being removed before insertion\n    if (newIndex > draggedIndex) newIndex--;\n\n    if (newIndex !== draggedIndex) {\n      await updateChildOrder(parentItem, draggedIndex, newIndex, api, listContainer);\n    }\n\n    draggedItem.style.opacity = '1';\n    draggedItem.querySelector('.drag-handle').style.cursor = 'grab';\n    dropIndicator.style.display = 'none';\n    if (dropIndicator.parentNode) dropIndicator.parentNode.removeChild(dropIndicator);\n\n    draggedItem = null;\n    draggedIndex = null;\n    document.onmousemove = null;\n    document.onmouseup = null;\n  }\n}\n\nasync function updateChildOrder(parentItem, fromIndex, toIndex, api, listContainer) {\n  const fresh = await api.get(parentItem.id);\n  let children = (fresh.children || []).map(c => typeof c === 'string' ? { id: c } : c);\n\n  const [movedItem] = children.splice(fromIndex, 1);\n  children.splice(toIndex, 0, movedItem);\n\n  const updated = { ...fresh, children, modified: Date.now() };\n  await api.set(updated);\n  parentItem.children = updated.children;\n\n  // Move element in DOM\n  const items = Array.from(listContainer.querySelectorAll('.sortable-list-item'));\n  const movedElement = items[fromIndex];\n\n  if (toIndex >= items.length - 1) {\n    listContainer.appendChild(movedElement);\n  } else {\n    const targetElement = toIndex > fromIndex ? items[toIndex + 1] : items[toIndex];\n    listContainer.insertBefore(movedElement, targetElement);\n  }\n\n  listContainer.querySelectorAll('.sortable-list-item').forEach((el, i) => {\n    el.setAttribute('data-index', i);\n  });\n}\n",
+    "_symbols": {
+      "COMPACT_CARD_VIEW_ID": {
+        "name": "COMPACT_CARD_VIEW_ID",
+        "line": 3,
+        "col": 6,
+        "endLine": 3,
+        "endCol": 67,
+        "kind": "variable",
+        "scope": null
+      },
+      "render": {
+        "name": "render",
+        "line": 5,
+        "col": 7,
+        "endLine": 26,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null
+      },
+      "render.container": {
+        "name": "container",
+        "line": 6,
+        "col": 8,
+        "endLine": 9,
+        "endCol": 8,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.listContainer": {
+        "name": "listContainer",
+        "line": 12,
+        "col": 8,
+        "endLine": 15,
+        "endCol": 8,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.header": {
+        "name": "header",
+        "line": 18,
+        "col": 8,
+        "endLine": 18,
+        "endCol": 55,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "createHeader": {
+        "name": "createHeader",
+        "line": 28,
+        "col": 0,
+        "endLine": 53,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null
+      },
+      "createHeader.header": {
+        "name": "header",
+        "line": 29,
+        "col": 8,
+        "endLine": 31,
+        "endCol": 8,
+        "kind": "variable",
+        "scope": "createHeader"
+      },
+      "createHeader.titleRow": {
+        "name": "titleRow",
+        "line": 33,
+        "col": 8,
+        "endLine": 35,
+        "endCol": 8,
+        "kind": "variable",
+        "scope": "createHeader"
+      },
+      "createHeader.title": {
+        "name": "title",
+        "line": 37,
+        "col": 8,
+        "endLine": 39,
+        "endCol": 36,
+        "kind": "variable",
+        "scope": "createHeader"
+      },
+      "renderChildren": {
+        "name": "renderChildren",
+        "line": 55,
+        "col": 0,
+        "endLine": 84,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null
+      },
+      "renderChildren.children": {
+        "name": "children",
+        "line": 57,
+        "col": 8,
+        "endLine": 57,
+        "endCol": 44,
+        "kind": "variable",
+        "scope": "renderChildren"
+      },
+      "renderChildren.empty": {
+        "name": "empty",
+        "line": 60,
+        "col": 10,
+        "endLine": 62,
+        "endCol": 64,
+        "kind": "variable",
+        "scope": "renderChildren"
+      },
+      "renderChildren.compactViews": {
+        "name": "compactViews",
+        "line": 67,
+        "col": 8,
+        "endLine": 67,
+        "endCol": 76,
+        "kind": "variable",
+        "scope": "renderChildren"
+      },
+      "renderChildren.defaultViewId": {
+        "name": "defaultViewId",
+        "line": 68,
+        "col": 8,
+        "endLine": 68,
+        "endCol": 67,
+        "kind": "variable",
+        "scope": "renderChildren"
+      },
+      "renderChildren.i": {
+        "name": "i",
+        "line": 70,
+        "col": 11,
+        "endLine": 70,
+        "endCol": 16,
+        "kind": "variable",
+        "scope": "renderChildren"
+      },
+      "renderChildren.childSpec": {
+        "name": "childSpec",
+        "line": 71,
+        "col": 10,
+        "endLine": 71,
+        "endCol": 33,
+        "kind": "variable",
+        "scope": "renderChildren"
+      },
+      "renderChildren.childId": {
+        "name": "childId",
+        "line": 72,
+        "col": 10,
+        "endLine": 72,
+        "endCol": 76,
+        "kind": "variable",
+        "scope": "renderChildren"
+      },
+      "renderChildren.childViewId": {
+        "name": "childViewId",
+        "line": 73,
+        "col": 10,
+        "endLine": 73,
+        "endCol": 111,
+        "kind": "variable",
+        "scope": "renderChildren"
+      },
+      "renderChildren.childItem": {
+        "name": "childItem",
+        "line": 75,
+        "col": 10,
+        "endLine": 75,
+        "endCol": 44,
+        "kind": "variable",
+        "scope": "renderChildren"
+      },
+      "renderChildren.listItem": {
+        "name": "listItem",
+        "line": 78,
+        "col": 10,
+        "endLine": 78,
+        "endCol": 98,
+        "kind": "variable",
+        "scope": "renderChildren"
+      },
+      "createListItem": {
+        "name": "createListItem",
+        "line": 86,
+        "col": 0,
+        "endLine": 138,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null
+      },
+      "createListItem.listItem": {
+        "name": "listItem",
+        "line": 87,
+        "col": 8,
+        "endLine": 93,
+        "endCol": 8,
+        "kind": "variable",
+        "scope": "createListItem"
+      },
+      "createListItem.dragHandle": {
+        "name": "dragHandle",
+        "line": 95,
+        "col": 8,
+        "endLine": 99,
+        "endCol": 16,
+        "kind": "variable",
+        "scope": "createListItem"
+      },
+      "createListItem.contentArea": {
+        "name": "contentArea",
+        "line": 103,
+        "col": 8,
+        "endLine": 105,
+        "endCol": 8,
+        "kind": "variable",
+        "scope": "createListItem"
+      },
+      "createListItem.childNode": {
+        "name": "childNode",
+        "line": 108,
+        "col": 10,
+        "endLine": 108,
+        "endCol": 59,
+        "kind": "variable",
+        "scope": "createListItem"
+      },
+      "createListItem.errorMsg": {
+        "name": "errorMsg",
+        "line": 111,
+        "col": 10,
+        "endLine": 113,
+        "endCol": 32,
+        "kind": "variable",
+        "scope": "createListItem"
+      },
+      "createListItem.actions": {
+        "name": "actions",
+        "line": 117,
+        "col": 8,
+        "endLine": 119,
+        "endCol": 8,
+        "kind": "variable",
+        "scope": "createListItem"
+      },
+      "createListItem.removeButton": {
+        "name": "removeButton",
+        "line": 121,
+        "col": 8,
+        "endLine": 128,
+        "endCol": 16,
+        "kind": "variable",
+        "scope": "createListItem"
+      },
+      "showItemPicker": {
+        "name": "showItemPicker",
+        "line": 141,
+        "col": 0,
+        "endLine": 198,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null
+      },
+      "showItemPicker.overlay": {
+        "name": "overlay",
+        "line": 142,
+        "col": 8,
+        "endLine": 144,
+        "endCol": 8,
+        "kind": "variable",
+        "scope": "showItemPicker"
+      },
+      "showItemPicker.modal": {
+        "name": "modal",
+        "line": 146,
+        "col": 8,
+        "endLine": 148,
+        "endCol": 8,
+        "kind": "variable",
+        "scope": "showItemPicker"
+      },
+      "showItemPicker.modalHeader": {
+        "name": "modalHeader",
+        "line": 150,
+        "col": 8,
+        "endLine": 152,
+        "endCol": 8,
+        "kind": "variable",
+        "scope": "showItemPicker"
+      },
+      "showItemPicker.modalTitle": {
+        "name": "modalTitle",
+        "line": 154,
+        "col": 8,
+        "endLine": 154,
+        "endCol": 91,
+        "kind": "variable",
+        "scope": "showItemPicker"
+      },
+      "showItemPicker.closeBtn": {
+        "name": "closeBtn",
+        "line": 156,
+        "col": 8,
+        "endLine": 159,
+        "endCol": 16,
+        "kind": "variable",
+        "scope": "showItemPicker"
+      },
+      "showItemPicker.searchContainer": {
+        "name": "searchContainer",
+        "line": 165,
+        "col": 8,
+        "endLine": 167,
+        "endCol": 8,
+        "kind": "variable",
+        "scope": "showItemPicker"
+      },
+      "showItemPicker.searchLib": {
+        "name": "searchLib",
+        "line": 173,
+        "col": 8,
+        "endLine": 173,
+        "endCol": 56,
+        "kind": "variable",
+        "scope": "showItemPicker"
+      },
+      "showItemPicker.existingIds": {
+        "name": "existingIds",
+        "line": 175,
+        "col": 8,
+        "endLine": 177,
+        "endCol": 3,
+        "kind": "variable",
+        "scope": "showItemPicker"
+      },
+      "showItemPicker.placeholder": {
+        "name": "placeholder",
+        "line": 191,
+        "col": 6,
+        "endLine": 191,
+        "endCol": 47,
+        "kind": "property",
+        "scope": "showItemPicker"
+      },
+      "showItemPicker.autoFocus": {
+        "name": "autoFocus",
+        "line": 191,
+        "col": 49,
+        "endLine": 191,
+        "endCol": 64,
+        "kind": "property",
+        "scope": "showItemPicker"
+      },
+      "addItemToList": {
+        "name": "addItemToList",
+        "line": 200,
+        "col": 0,
+        "endLine": 211,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null
+      },
+      "addItemToList.fresh": {
+        "name": "fresh",
+        "line": 201,
+        "col": 8,
+        "endLine": 201,
+        "endCol": 44,
+        "kind": "variable",
+        "scope": "addItemToList"
+      },
+      "addItemToList.children": {
+        "name": "children",
+        "line": 202,
+        "col": 8,
+        "endLine": 202,
+        "endCol": 89,
+        "kind": "variable",
+        "scope": "addItemToList"
+      },
+      "addItemToList.id": {
+        "name": "id",
+        "line": 203,
+        "col": 18,
+        "endLine": 203,
+        "endCol": 28,
+        "kind": "property",
+        "scope": "addItemToList"
+      },
+      "addItemToList.updated": {
+        "name": "updated",
+        "line": 205,
+        "col": 8,
+        "endLine": 205,
+        "endCol": 62,
+        "kind": "variable",
+        "scope": "addItemToList"
+      },
+      "updated.children": {
+        "name": "children",
+        "line": 340,
+        "col": 30,
+        "endLine": 340,
+        "endCol": 38,
+        "kind": "property",
+        "scope": "updated"
+      },
+      "updated.modified": {
+        "name": "modified",
+        "line": 340,
+        "col": 40,
+        "endLine": 340,
+        "endCol": 60,
+        "kind": "property",
+        "scope": "updated"
+      },
+      "removeItemFromList": {
+        "name": "removeItemFromList",
+        "line": 213,
+        "col": 0,
+        "endLine": 238,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null
+      },
+      "removeItemFromList.fresh": {
+        "name": "fresh",
+        "line": 214,
+        "col": 8,
+        "endLine": 214,
+        "endCol": 44,
+        "kind": "variable",
+        "scope": "removeItemFromList"
+      },
+      "removeItemFromList.children": {
+        "name": "children",
+        "line": 215,
+        "col": 8,
+        "endLine": 218,
+        "endCol": 4,
+        "kind": "variable",
+        "scope": "removeItemFromList"
+      },
+      "removeItemFromList.updated": {
+        "name": "updated",
+        "line": 220,
+        "col": 8,
+        "endLine": 220,
+        "endCol": 62,
+        "kind": "variable",
+        "scope": "removeItemFromList"
+      },
+      "removeItemFromList.itemElement": {
+        "name": "itemElement",
+        "line": 224,
+        "col": 8,
+        "endLine": 224,
+        "endCol": 80,
+        "kind": "variable",
+        "scope": "removeItemFromList"
+      },
+      "removeItemFromList.empty": {
+        "name": "empty",
+        "line": 233,
+        "col": 10,
+        "endLine": 235,
+        "endCol": 64,
+        "kind": "variable",
+        "scope": "removeItemFromList"
+      },
+      "setupDragAndDrop": {
+        "name": "setupDragAndDrop",
+        "line": 241,
+        "col": 0,
+        "endLine": 331,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null
+      },
+      "setupDragAndDrop.draggedItem": {
+        "name": "draggedItem",
+        "line": 242,
+        "col": 6,
+        "endLine": 242,
+        "endCol": 24,
+        "kind": "variable",
+        "scope": "setupDragAndDrop"
+      },
+      "setupDragAndDrop.draggedIndex": {
+        "name": "draggedIndex",
+        "line": 243,
+        "col": 6,
+        "endLine": 243,
+        "endCol": 25,
+        "kind": "variable",
+        "scope": "setupDragAndDrop"
+      },
+      "setupDragAndDrop.dropIndicator": {
+        "name": "dropIndicator",
+        "line": 244,
+        "col": 6,
+        "endLine": 244,
+        "endCol": 26,
+        "kind": "variable",
+        "scope": "setupDragAndDrop"
+      },
+      "setupDragAndDrop.class": {
+        "name": "class",
+        "line": 247,
+        "col": 4,
+        "endLine": 247,
+        "endCol": 27,
+        "kind": "property",
+        "scope": "setupDragAndDrop"
+      },
+      "setupDragAndDrop.style": {
+        "name": "style",
+        "line": 248,
+        "col": 4,
+        "endLine": 248,
+        "endCol": 109,
+        "kind": "property",
+        "scope": "setupDragAndDrop"
+      },
+      "setupDragAndDrop.items": {
+        "name": "items",
+        "line": 251,
+        "col": 8,
+        "endLine": 251,
+        "endCol": 69,
+        "kind": "variable",
+        "scope": "setupDragAndDrop"
+      },
+      "setupDragAndDrop.dragHandle": {
+        "name": "dragHandle",
+        "line": 254,
+        "col": 10,
+        "endLine": 254,
+        "endCol": 57,
+        "kind": "variable",
+        "scope": "setupDragAndDrop"
+      },
+      "setupDragAndDrop.handleDrag": {
+        "name": "handleDrag",
+        "line": 271,
+        "col": 2,
+        "endLine": 295,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "setupDragAndDrop"
+      },
+      "handleDrag.items": {
+        "name": "items",
+        "line": 274,
+        "col": 10,
+        "endLine": 274,
+        "endCol": 83,
+        "kind": "variable",
+        "scope": "handleDrag"
+      },
+      "handleDrag.mouseY": {
+        "name": "mouseY",
+        "line": 275,
+        "col": 10,
+        "endLine": 275,
+        "endCol": 28,
+        "kind": "variable",
+        "scope": "handleDrag"
+      },
+      "handleDrag.targetIndex": {
+        "name": "targetIndex",
+        "line": 276,
+        "col": 8,
+        "endLine": 276,
+        "endCol": 34,
+        "kind": "variable",
+        "scope": "handleDrag"
+      },
+      "handleDrag.i": {
+        "name": "i",
+        "line": 278,
+        "col": 13,
+        "endLine": 278,
+        "endCol": 18,
+        "kind": "variable",
+        "scope": "handleDrag"
+      },
+      "handleDrag.item": {
+        "name": "item",
+        "line": 279,
+        "col": 12,
+        "endLine": 279,
+        "endCol": 27,
+        "kind": "variable",
+        "scope": "handleDrag"
+      },
+      "handleDrag.rect": {
+        "name": "rect",
+        "line": 281,
+        "col": 12,
+        "endLine": 281,
+        "endCol": 47,
+        "kind": "variable",
+        "scope": "handleDrag"
+      },
+      "setupDragAndDrop.endDrag": {
+        "name": "endDrag",
+        "line": 297,
+        "col": 2,
+        "endLine": 330,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "setupDragAndDrop"
+      },
+      "endDrag.items": {
+        "name": "items",
+        "line": 300,
+        "col": 10,
+        "endLine": 300,
+        "endCol": 83,
+        "kind": "variable",
+        "scope": "endDrag"
+      },
+      "endDrag.mouseY": {
+        "name": "mouseY",
+        "line": 301,
+        "col": 10,
+        "endLine": 301,
+        "endCol": 28,
+        "kind": "variable",
+        "scope": "endDrag"
+      },
+      "endDrag.newIndex": {
+        "name": "newIndex",
+        "line": 302,
+        "col": 8,
+        "endLine": 302,
+        "endCol": 31,
+        "kind": "variable",
+        "scope": "endDrag"
+      },
+      "endDrag.i": {
+        "name": "i",
+        "line": 304,
+        "col": 13,
+        "endLine": 304,
+        "endCol": 18,
+        "kind": "variable",
+        "scope": "endDrag"
+      },
+      "endDrag.item": {
+        "name": "item",
+        "line": 305,
+        "col": 12,
+        "endLine": 305,
+        "endCol": 27,
+        "kind": "variable",
+        "scope": "endDrag"
+      },
+      "endDrag.rect": {
+        "name": "rect",
+        "line": 307,
+        "col": 12,
+        "endLine": 307,
+        "endCol": 47,
+        "kind": "variable",
+        "scope": "endDrag"
+      },
+      "updateChildOrder": {
+        "name": "updateChildOrder",
+        "line": 333,
+        "col": 0,
+        "endLine": 358,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null
+      },
+      "updateChildOrder.fresh": {
+        "name": "fresh",
+        "line": 334,
+        "col": 8,
+        "endLine": 334,
+        "endCol": 44,
+        "kind": "variable",
+        "scope": "updateChildOrder"
+      },
+      "updateChildOrder.children": {
+        "name": "children",
+        "line": 335,
+        "col": 6,
+        "endLine": 335,
+        "endCol": 87,
+        "kind": "variable",
+        "scope": "updateChildOrder"
+      },
+      "updateChildOrder.updated": {
+        "name": "updated",
+        "line": 340,
+        "col": 8,
+        "endLine": 340,
+        "endCol": 62,
+        "kind": "variable",
+        "scope": "updateChildOrder"
+      },
+      "updateChildOrder.items": {
+        "name": "items",
+        "line": 345,
+        "col": 8,
+        "endLine": 345,
+        "endCol": 81,
+        "kind": "variable",
+        "scope": "updateChildOrder"
+      },
+      "updateChildOrder.movedElement": {
+        "name": "movedElement",
+        "line": 346,
+        "col": 8,
+        "endLine": 346,
+        "endCol": 39,
+        "kind": "variable",
+        "scope": "updateChildOrder"
+      },
+      "updateChildOrder.targetElement": {
+        "name": "targetElement",
+        "line": 351,
+        "col": 10,
+        "endLine": 351,
+        "endCol": 83,
+        "kind": "variable",
+        "scope": "updateChildOrder"
+      }
+    }
   }
 }

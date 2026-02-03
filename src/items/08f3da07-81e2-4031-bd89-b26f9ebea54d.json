@@ -3,7 +3,7 @@
   "name": "system:tag-browser-view",
   "type": "aaaaaaaa-0000-0000-0000-000000000000",
   "created": 1768383577941,
-  "modified": 1769534195710,
+  "modified": 1770144885026,
   "children": [],
   "content": {
     "for_type": "05e72011-d70e-4ff3-ac78-fe6b7fc5d884",
@@ -13,6 +13,431 @@
       "write"
     ],
     "code": "\n// Tag browser view - stores results as children for uniform interaction\n// Uses tag-tree-builder and tag-picker-ui libraries\n\nexport async function render(browser, api) {\n  // Load shared libraries\n  const treeBuilder = await api.require('tag-tree-builder');\n  const tagPickerUI = await api.require('tag-picker-ui');\n\n  const container = api.createElement('div', {\n    class: 'tag-browser-view',\n    style: 'max-width: 600px; margin: 0 auto;'\n  }, []);\n\n  // Header\n  const header = api.createElement('div', {\n    style: 'margin-bottom: 20px; padding-bottom: 15px; border-bottom: 2px solid var(--color-border-light);'\n  }, []);\n\n  const title = api.createElement('h2', {\n    style: 'margin: 0; font-size: 20px;'\n  }, [browser.name || 'Tag Browser']);\n  header.appendChild(title);\n\n  container.appendChild(header);\n\n  // Get all tag items and build tree\n  const TAG_TYPE_ID = \"d1da8525-b0dc-4a79-8bef-0cbed1ed003d\";\n  const tags = await api.query({ type: TAG_TYPE_ID });\n  const tree = treeBuilder.buildTagTree(tags);\n\n  // Track expanded state (tag ID -> boolean)\n  const expandedState = new Map();\n\n  // Tag tree container\n  const treeContainer = api.createElement('div', {\n    style: 'display: flex; flex-direction: column;'\n  }, []);\n\n  // Results container\n  const resultsContainer = api.createElement('div', {\n    style: 'margin-top: 20px; padding: 15px; background: var(--color-bg-surface-alt); border-radius: var(--border-radius);'\n  }, []);\n\n  const resultsTitle = api.createElement('h3', {\n    style: 'margin: 0 0 15px 0; font-size: 16px; color: var(--color-text);'\n  }, []);\n  resultsContainer.appendChild(resultsTitle);\n\n  const resultsList = api.createElement('div', {\n    style: 'max-height: 400px; overflow-y: auto;'\n  }, []);\n  resultsContainer.appendChild(resultsList);\n\n  // Find compact_card_view for rendering results (default view)\n  const compactViews = await api.query({ name: 'system:compact-card-view' });\n  const compactViewId = compactViews[0]?.id || null;\n\n  // Cycle handler - returns a clickable card for items in render path\n  const onCycle = (cycleItem) => {\n    const card = api.createElement('div', {\n      style: 'padding: 12px; margin-bottom: 8px; background: var(--color-warning-light); border: 1px dashed var(--color-warning); border-radius: var(--border-radius); cursor: pointer; transition: all 0.2s;'\n    }, []);\n\n    const titleRow = api.createElement('div', {\n      style: 'display: flex; align-items: center; gap: 8px; margin-bottom: 6px;'\n    }, []);\n\n    const icon = api.createElement('span', {\n      style: 'color: var(--color-warning);'\n    }, ['\\u21bb']);\n    titleRow.appendChild(icon);\n\n    const name = api.createElement('span', {\n      style: 'font-weight: 500; color: var(--color-text);'\n    }, [cycleItem.name || cycleItem.id.substring(0, 8)]);\n    titleRow.appendChild(name);\n\n    const badge = api.createElement('span', {\n      style: 'font-size: 11px; color: #92400e; background: #fef3c7; padding: 2px 6px; border-radius: var(--border-radius);'\n    }, ['in current view']);\n    titleRow.appendChild(badge);\n\n    card.appendChild(titleRow);\n\n    const meta = api.createElement('div', {\n      style: 'font-size: 12px; color: var(--color-border-dark);'\n    }, ['Click to open']);\n    card.appendChild(meta);\n\n    card.onmouseover = () => {\n      card.style.background = '#fef3c7';\n      card.style.borderColor = '#d97706';\n      card.style.transform = 'translateX(4px)';\n    };\n    card.onmouseout = () => {\n      card.style.background = 'var(--color-warning-light)';\n      card.style.borderColor = 'var(--color-warning)';\n      card.style.transform = 'translateX(0)';\n    };\n\n    card.onclick = (e) => {\n      e.stopPropagation();\n      api.siblingContainer?.addSibling(cycleItem.id);\n    };\n\n    return card;\n  };\n\n  // Render results from children\n  const renderResults = async () => {\n    resultsList.innerHTML = '';\n\n    const selectedTag = browser.content?.selectedTag;\n    const children = browser.children || [];\n\n    if (!selectedTag) {\n      resultsContainer.style.display = 'none';\n      return;\n    }\n\n    // Get tag name for title\n    let tagName = selectedTag;\n    try {\n      const tagItem = await api.get(selectedTag);\n      tagName = treeBuilder.getTagName(tagItem);\n    } catch (e) {\n      // Use ID if tag not found\n    }\n\n    resultsTitle.textContent = 'Items tagged with \"' + tagName + '\" (' + children.length + ')';\n    resultsContainer.style.display = 'block';\n\n    if (children.length === 0) {\n      const emptyMsg = api.createElement('div', {\n        style: 'padding: 20px; text-align: center; color: var(--color-border-dark); font-style: italic;'\n      }, ['No items found with this tag.']);\n      resultsList.appendChild(emptyMsg);\n    } else {\n      for (const childSpec of children) {\n        const childId = typeof childSpec === 'string' ? childSpec : childSpec.id;\n        // Respect per-child view override (from \"Display As...\"), fall back to compact view\n        const childViewId = (typeof childSpec === 'object' && childSpec.view) ? childSpec.view : compactViewId;\n\n        try {\n          const childNode = await api.renderItem(childId, childViewId, { onCycle });\n          // data-item-id is set automatically by api.renderItem()\n          childNode.setAttribute('data-parent-id', browser.id);\n          resultsList.appendChild(childNode);\n        } catch (err) {\n          const errorNode = api.createElement('div', {\n            style: 'padding: 12px; margin-bottom: 8px; color: var(--color-danger); border: 1px solid var(--color-danger); border-radius: var(--border-radius); background: var(--color-danger-light);'\n          }, ['Error loading item: ' + childId]);\n          resultsList.appendChild(errorNode);\n        }\n      }\n    }\n  };\n\n  // Function to select a tag and update children\n  const selectTag = async (tag) => {\n    // Find all items with this tag\n    const allItems = await api.getAll();\n    const taggedItems = allItems.filter(item =>\n      item.tags && item.tags.includes(tag.id)\n    );\n\n    // Store results as children and save selected tag\n    const updated = {\n      ...browser,\n      children: taggedItems.map(item => ({ id: item.id })),\n      content: {\n        ...browser.content,\n        selectedTag: tag.id\n      }\n    };\n\n    await api.set(updated);\n\n    // Update local reference and re-render results\n    browser.children = updated.children;\n    browser.content = updated.content;\n    await renderResults();\n  };\n\n  // Function to render the tag tree\n  const renderTree = () => {\n    tagPickerUI.renderTagBrowser({\n      container: treeContainer,\n      tree: tree,\n      expandedState: expandedState,\n      onClick: selectTag,\n      onExpand: () => renderTree()\n    }, api);\n  };\n\n  // Initial render\n  renderTree();\n\n  container.appendChild(treeContainer);\n  container.appendChild(resultsContainer);\n\n  // Render existing results if there's a selected tag\n  await renderResults();\n\n  return container;\n}\n",
-    "description": "Renders tag-browser items"
+    "description": "Renders tag-browser items",
+    "_symbols": {
+      "render": {
+        "name": "render",
+        "line": 5,
+        "col": 7,
+        "endLine": 207,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null
+      },
+      "render.treeBuilder": {
+        "name": "treeBuilder",
+        "line": 7,
+        "col": 8,
+        "endLine": 7,
+        "endCol": 59,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.tagPickerUI": {
+        "name": "tagPickerUI",
+        "line": 8,
+        "col": 8,
+        "endLine": 8,
+        "endCol": 56,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.container": {
+        "name": "container",
+        "line": 10,
+        "col": 8,
+        "endLine": 13,
+        "endCol": 8,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.header": {
+        "name": "header",
+        "line": 16,
+        "col": 8,
+        "endLine": 18,
+        "endCol": 8,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.title": {
+        "name": "title",
+        "line": 20,
+        "col": 8,
+        "endLine": 22,
+        "endCol": 37,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.TAG_TYPE_ID": {
+        "name": "TAG_TYPE_ID",
+        "line": 28,
+        "col": 8,
+        "endLine": 28,
+        "endCol": 60,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.tags": {
+        "name": "tags",
+        "line": 29,
+        "col": 8,
+        "endLine": 29,
+        "endCol": 53,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.tree": {
+        "name": "tree",
+        "line": 30,
+        "col": 8,
+        "endLine": 30,
+        "endCol": 45,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.expandedState": {
+        "name": "expandedState",
+        "line": 33,
+        "col": 8,
+        "endLine": 33,
+        "endCol": 33,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.treeContainer": {
+        "name": "treeContainer",
+        "line": 36,
+        "col": 8,
+        "endLine": 38,
+        "endCol": 8,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.resultsContainer": {
+        "name": "resultsContainer",
+        "line": 41,
+        "col": 8,
+        "endLine": 43,
+        "endCol": 8,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.resultsTitle": {
+        "name": "resultsTitle",
+        "line": 45,
+        "col": 8,
+        "endLine": 47,
+        "endCol": 8,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.resultsList": {
+        "name": "resultsList",
+        "line": 50,
+        "col": 8,
+        "endLine": 52,
+        "endCol": 8,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.compactViews": {
+        "name": "compactViews",
+        "line": 56,
+        "col": 8,
+        "endLine": 56,
+        "endCol": 76,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.compactViewId": {
+        "name": "compactViewId",
+        "line": 57,
+        "col": 8,
+        "endLine": 57,
+        "endCol": 51,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.onCycle": {
+        "name": "onCycle",
+        "line": 60,
+        "col": 8,
+        "endLine": 108,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "render"
+      },
+      "onCycle.card": {
+        "name": "card",
+        "line": 61,
+        "col": 10,
+        "endLine": 63,
+        "endCol": 10,
+        "kind": "variable",
+        "scope": "onCycle"
+      },
+      "onCycle.titleRow": {
+        "name": "titleRow",
+        "line": 65,
+        "col": 10,
+        "endLine": 67,
+        "endCol": 10,
+        "kind": "variable",
+        "scope": "onCycle"
+      },
+      "onCycle.icon": {
+        "name": "icon",
+        "line": 69,
+        "col": 10,
+        "endLine": 71,
+        "endCol": 18,
+        "kind": "variable",
+        "scope": "onCycle"
+      },
+      "onCycle.name": {
+        "name": "name",
+        "line": 74,
+        "col": 10,
+        "endLine": 76,
+        "endCol": 56,
+        "kind": "variable",
+        "scope": "onCycle"
+      },
+      "onCycle.badge": {
+        "name": "badge",
+        "line": 79,
+        "col": 10,
+        "endLine": 81,
+        "endCol": 27,
+        "kind": "variable",
+        "scope": "onCycle"
+      },
+      "onCycle.meta": {
+        "name": "meta",
+        "line": 86,
+        "col": 10,
+        "endLine": 88,
+        "endCol": 25,
+        "kind": "variable",
+        "scope": "onCycle"
+      },
+      "render.renderResults": {
+        "name": "renderResults",
+        "line": 111,
+        "col": 8,
+        "endLine": 158,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "render"
+      },
+      "renderResults.selectedTag": {
+        "name": "selectedTag",
+        "line": 114,
+        "col": 10,
+        "endLine": 114,
+        "endCol": 52,
+        "kind": "variable",
+        "scope": "renderResults"
+      },
+      "renderResults.children": {
+        "name": "children",
+        "line": 115,
+        "col": 10,
+        "endLine": 115,
+        "endCol": 43,
+        "kind": "variable",
+        "scope": "renderResults"
+      },
+      "renderResults.tagName": {
+        "name": "tagName",
+        "line": 123,
+        "col": 8,
+        "endLine": 123,
+        "endCol": 29,
+        "kind": "variable",
+        "scope": "renderResults"
+      },
+      "renderResults.tagItem": {
+        "name": "tagItem",
+        "line": 125,
+        "col": 12,
+        "endLine": 125,
+        "endCol": 48,
+        "kind": "variable",
+        "scope": "renderResults"
+      },
+      "renderResults.emptyMsg": {
+        "name": "emptyMsg",
+        "line": 135,
+        "col": 12,
+        "endLine": 137,
+        "endCol": 43,
+        "kind": "variable",
+        "scope": "renderResults"
+      },
+      "renderResults.childSpec": {
+        "name": "childSpec",
+        "line": 140,
+        "col": 17,
+        "endLine": 140,
+        "endCol": 26,
+        "kind": "variable",
+        "scope": "renderResults"
+      },
+      "renderResults.childId": {
+        "name": "childId",
+        "line": 141,
+        "col": 14,
+        "endLine": 141,
+        "endCol": 80,
+        "kind": "variable",
+        "scope": "renderResults"
+      },
+      "renderResults.childViewId": {
+        "name": "childViewId",
+        "line": 143,
+        "col": 14,
+        "endLine": 143,
+        "endCol": 110,
+        "kind": "variable",
+        "scope": "renderResults"
+      },
+      "renderResults.childNode": {
+        "name": "childNode",
+        "line": 146,
+        "col": 16,
+        "endLine": 146,
+        "endCol": 83,
+        "kind": "variable",
+        "scope": "renderResults"
+      },
+      "renderResults.errorNode": {
+        "name": "errorNode",
+        "line": 151,
+        "col": 16,
+        "endLine": 153,
+        "endCol": 48,
+        "kind": "variable",
+        "scope": "renderResults"
+      },
+      "render.selectTag": {
+        "name": "selectTag",
+        "line": 161,
+        "col": 8,
+        "endLine": 184,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "render"
+      },
+      "selectTag.allItems": {
+        "name": "allItems",
+        "line": 163,
+        "col": 10,
+        "endLine": 163,
+        "endCol": 39,
+        "kind": "variable",
+        "scope": "selectTag"
+      },
+      "selectTag.taggedItems": {
+        "name": "taggedItems",
+        "line": 164,
+        "col": 10,
+        "endLine": 166,
+        "endCol": 5,
+        "kind": "variable",
+        "scope": "selectTag"
+      },
+      "selectTag.updated": {
+        "name": "updated",
+        "line": 169,
+        "col": 10,
+        "endLine": 176,
+        "endCol": 5,
+        "kind": "variable",
+        "scope": "selectTag"
+      },
+      "updated.children": {
+        "name": "children",
+        "line": 171,
+        "col": 6,
+        "endLine": 171,
+        "endCol": 58,
+        "kind": "property",
+        "scope": "updated"
+      },
+      "updated.content": {
+        "name": "content",
+        "line": 172,
+        "col": 6,
+        "endLine": 175,
+        "endCol": 7,
+        "kind": "property",
+        "scope": "updated"
+      },
+      "updated.content.selectedTag": {
+        "name": "selectedTag",
+        "line": 174,
+        "col": 8,
+        "endLine": 174,
+        "endCol": 27,
+        "kind": "property",
+        "scope": "updated.content"
+      },
+      "render.renderTree": {
+        "name": "renderTree",
+        "line": 187,
+        "col": 8,
+        "endLine": 195,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "render"
+      },
+      "renderTree.container": {
+        "name": "container",
+        "line": 189,
+        "col": 6,
+        "endLine": 189,
+        "endCol": 30,
+        "kind": "property",
+        "scope": "renderTree"
+      },
+      "renderTree.tree": {
+        "name": "tree",
+        "line": 190,
+        "col": 6,
+        "endLine": 190,
+        "endCol": 16,
+        "kind": "property",
+        "scope": "renderTree"
+      },
+      "renderTree.expandedState": {
+        "name": "expandedState",
+        "line": 191,
+        "col": 6,
+        "endLine": 191,
+        "endCol": 34,
+        "kind": "property",
+        "scope": "renderTree"
+      },
+      "renderTree.onClick": {
+        "name": "onClick",
+        "line": 192,
+        "col": 6,
+        "endLine": 192,
+        "endCol": 24,
+        "kind": "property",
+        "scope": "renderTree"
+      },
+      "renderTree.onExpand": {
+        "name": "onExpand",
+        "line": 193,
+        "col": 6,
+        "endLine": 193,
+        "endCol": 34,
+        "kind": "property-function",
+        "scope": "renderTree"
+      }
+    }
   }
 }

@@ -17,7 +17,7 @@ export function render(value, options, api) {
     // Editable mode: use contenteditable or input styled as heading
     const input = api.createElement('input', {
       type: 'text',
-      style: 'width: 100%; border: none; border-bottom: 2px solid #ddd; background: transparent; outline: none; font-weight: bold; padding: 4px 0;'
+      style: 'width: 100%; border: none; border-bottom: 2px solid var(--color-border-light); background: transparent; outline: none; font-weight: bold; padding: 4px 0;'
     });
 
     // Set font size based on level

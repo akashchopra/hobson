@@ -2,6 +2,10 @@
 // ID: ef793c27-2d4b-4c99-b05a-2769db5bc5a9
 // Type: aaaaaaaa-0000-0000-0000-000000000000
 
+// Item: system:spatial-canvas-view
+// ID: ef793c27-2d4b-4c99-b05a-2769db5bc5a9
+// Type: aaaaaaaa-0000-0000-0000-000000000000
+
 // Item: spatial-canvas-view
 // ID: ef793c27-2d4b-4c99-b05a-2769db5bc5a9
 // Type: aaaaaaaa-0000-0000-0000-000000000000
@@ -131,7 +135,7 @@ export async function render(item, api) {
       }
     } catch (error) {
       const errorDiv = api.createElement('div', {
-        style: 'padding: 20px; color: #c00; background: #fff0f0; border: 1px solid #fcc; margin: 10px;'
+        style: 'padding: 20px; color: var(--color-danger); background: var(--color-danger-light); border: 1px solid var(--color-danger); margin: 10px;'
       }, ['Error rendering inner view: ' + error.message]);
       background.appendChild(errorDiv);
     }
@@ -229,7 +233,7 @@ export async function render(item, api) {
   if (children.length === 0 && !innerViewConfig) {
     // Show empty message only when no children AND no background view
     const empty = api.createElement('div', {
-      style: 'position: absolute; left: 40px; top: 40px; color: #999; font-style: italic; z-index: 1;'
+      style: 'position: absolute; left: 40px; top: 40px; color: var(--color-border-dark); font-style: italic; z-index: 1;'
     }, [
       'No items yet. Use View As > Spatial Canvas to set a background view, or add children via REPL.'
     ]);
@@ -333,7 +337,7 @@ export async function render(item, api) {
     // Cycle handler for when a child item is already being rendered in the ancestor chain
     const onCycle = (cycleItem) => api.createElement('div', {
       class: 'cycle-marker',
-      style: 'padding: 12px; color: #888; font-style: italic; border: 1px dashed #ccc; border-radius: 4px; background: #f9f9f9; text-align: center;'
+      style: 'padding: 12px; color: var(--color-text-tertiary); font-style: italic; border: 1px dashed var(--color-border); border-radius: var(--border-radius); background: var(--color-bg-surface-alt); text-align: center;'
     }, ['↻ ' + (cycleItem.name || cycleItem.id.substring(0, 8)) + ' (already shown above)']);
 
     // Forward declaration for siblingContainer (needed by createWindowForChild)
@@ -407,11 +411,11 @@ export async function render(item, api) {
         width: ${width}px;
         height: ${height}px;
         z-index: ${z};
-        border: 1px solid #ddd;
-        border-radius: 6px;
-        background: #fafafa;
+        border: 1px solid var(--color-border-light);
+        border-radius: var(--border-radius);
+        background: var(--color-bg-surface-alt);
         overflow: hidden;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        box-shadow: var(--shadow-sm);
       `;
 
       if (isMaximized) {
@@ -422,11 +426,11 @@ export async function render(item, api) {
           right: 0;
           bottom: 0;
           z-index: 1000000;
-          border: 1px solid #ddd;
-          border-radius: 6px;
-          background: #fafafa;
+          border: 1px solid var(--color-border-light);
+          border-radius: var(--border-radius);
+          background: var(--color-bg-surface-alt);
           overflow: hidden;
-          box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+          box-shadow: var(--shadow-md);
         `;
       }
 
@@ -462,8 +466,8 @@ export async function render(item, api) {
         class: 'titlebar',
         style: `
           height: 24px;
-          background: #e8e8e8;
-          border-bottom: 1px solid #ccc;
+          background: var(--color-bg-hover);
+          border-bottom: 1px solid var(--color-border);
           padding: 0 8px;
           display: flex;
           align-items: center;
@@ -486,7 +490,7 @@ export async function render(item, api) {
           background: transparent;
           cursor: pointer;
           font-size: 12px;
-          color: #666;
+          color: var(--color-text-secondary);
           display: flex;
           align-items: center;
           justify-content: center;
@@ -509,10 +513,10 @@ export async function render(item, api) {
             position: fixed;
             left: ${btnRect.left}px;
             top: ${btnRect.bottom + 2}px;
-            background: white;
-            border: 1px solid #ccc;
-            border-radius: 4px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+            background: var(--color-bg-surface);
+            border: 1px solid var(--color-border);
+            border-radius: var(--border-radius);
+            box-shadow: var(--shadow-md);
             z-index: 100000;
             min-width: 120px;
             font-size: 13px;
@@ -526,7 +530,7 @@ export async function render(item, api) {
               cursor: pointer;
             `
           }, [label]);
-          menuItemEl.addEventListener('mouseenter', () => { menuItemEl.style.background = '#f5f5f5'; });
+          menuItemEl.addEventListener('mouseenter', () => { menuItemEl.style.background = 'var(--color-bg-body)'; });
           menuItemEl.addEventListener('mouseleave', () => { menuItemEl.style.background = 'transparent'; });
           menuItemEl.addEventListener('click', (clickE) => {
             clickE.stopPropagation();
@@ -538,7 +542,7 @@ export async function render(item, api) {
 
         const createSeparator = () => {
           return api.createElement('div', {
-            style: 'height: 1px; background: #ddd; margin: 4px 0;'
+            style: 'height: 1px; background: var(--color-border-light); margin: 4px 0;'
           }, []);
         };
 
@@ -694,7 +698,7 @@ export async function render(item, api) {
             background: transparent;
             cursor: pointer;
             font-size: 12px;
-            color: #666;
+            color: var(--color-text-secondary);
             display: flex;
             align-items: center;
             justify-content: center;
@@ -741,7 +745,7 @@ export async function render(item, api) {
             cursor: pointer;
             font-size: 14px;
             font-weight: bold;
-            color: #666;
+            color: var(--color-text-secondary);
             display: flex;
             align-items: center;
             justify-content: center;
@@ -767,7 +771,7 @@ export async function render(item, api) {
             background: transparent;
             cursor: pointer;
             font-size: 12px;
-            color: #666;
+            color: var(--color-text-secondary);
             display: flex;
             align-items: center;
             justify-content: center;
@@ -800,7 +804,7 @@ export async function render(item, api) {
             cursor: pointer;
             font-size: 14px;
             font-weight: bold;
-            color: #666;
+            color: var(--color-text-secondary);
             display: flex;
             align-items: center;
             justify-content: center;
@@ -905,7 +909,7 @@ export async function render(item, api) {
               ${positions[corner].right !== undefined ? 'right: ' + positions[corner].right + ';' : ''}
               width: 8px;
               height: 8px;
-              background: #999;
+              background: var(--color-border-dark);
               cursor: ${cursorStyle};
               z-index: 10;
             `
@@ -1194,10 +1198,10 @@ export async function render(item, api) {
             top: ${yPos}px;
             width: ${widthVal}px;
             padding: 15px;
-            border: 1px solid #ffcccc;
-            border-radius: 6px;
-            background: #fff0f0;
-            color: #cc0000;
+            border: 1px solid var(--color-danger);
+            border-radius: var(--border-radius);
+            background: var(--color-danger-light);
+            color: var(--color-danger);
             z-index: ${zVal};
           `
         }, [
@@ -1225,15 +1229,15 @@ export async function render(item, api) {
             left: ${8 + (index * 158)}px;
             width: 150px;
             height: 32px;
-            background: #e5e5e5;
-            border: 1px solid #ccc;
-            border-radius: 4px;
+            background: var(--color-bg-hover);
+            border: 1px solid var(--color-border);
+            border-radius: var(--border-radius);
             display: flex;
             align-items: center;
             padding: 0 8px;
             cursor: pointer;
             z-index: 9999;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            box-shadow: var(--shadow-sm);
           `,
           title: itemName,
           onclick: async () => {

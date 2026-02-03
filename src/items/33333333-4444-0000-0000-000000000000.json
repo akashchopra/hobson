@@ -3,10 +3,282 @@
   "type": "33333333-0000-0000-0000-000000000000",
   "name": "kernel:module-system",
   "created": 0,
-  "modified": 1770040068286,
+  "modified": 1770144885319,
   "children": [],
   "content": {
     "description": "Provides the `require()` function for loading code items as ES modules. Handles module caching, invalidation, and circular dependency detection.\n\n## Features\n\n- **Name Resolution**: Load modules by name (`api.require('my-lib')`) or by GUID\n- **Caching**: Modules cached by ID with timestamp; automatically invalidated when item's `modified` changes\n- **Circular Detection**: Tracks call stack during load, throws descriptive error if cycle detected\n- **Blob URL Evaluation**: Code items compiled to ES modules via blob URLs with sourceURL for debugging\n- **Type Chain Utilities**: `typeChainIncludes()` and `buildExtendsChain()` for capability checking\n\n## API\n\n```javascript\nconst module = await api.require('library-name');\nconst cached = kernel.moduleSystem.getCached('library-name'); // sync, returns null if not loaded\nawait api.typeChainIncludes(typeId, targetId); // check inheritance\n```\n\n## Error Handling\n\nEvaluation errors are captured via `kernel.captureError()` and re-thrown with context. The original stack trace is preserved for debugging.",
-    "code": "// Module System - See [Core Concepts - Code as Data](item://a0a0a0a0-d0c0-4000-8000-000000000002#description?region=Code)\n\n// [BEGIN:ModuleSystem]\nexport class ModuleSystem {\n  constructor(kernel) {\n    this.kernel = kernel;\n    this.moduleCache = new Map(); // itemId -> { module, timestamp }\n    this.loadingPromises = new Map(); // itemId -> Promise (tracks in-flight loads)\n  }\n\n  // [BEGIN:require]\n  // Load a code item as an ES module\n  // See [Core Concepts - The Module System](item://a0a0a0a0-d0c0-4000-8000-000000000002#The-Module-System)\n  async require(nameOrId, callStack = new Set()) {\n    // Resolve name to ID if necessary\n    let itemId = nameOrId;\n\n    // Check if it's a name (not a UUID pattern)\n    if (!nameOrId.includes(\"-\") || nameOrId.length < 36) {\n      const items = await this.kernel.storage.query({ name: nameOrId });\n      if (items.length === 0) {\n        throw new Error(`Code item not found: ${nameOrId}`);\n      }\n      itemId = items[0].id;\n    }\n\n    // Check for circular dependencies\n    if (callStack.has(itemId)) {\n      const chain = Array.from(callStack).join(\" -> \");\n      throw new Error(`Circular dependency detected: ${chain} -> ${itemId}`);\n    }\n\n    // Check cache first\n    const item = await this.kernel.storage.get(itemId);\n    const cached = this.moduleCache.get(itemId);\n\n    // Return cached module if fresh\n    if (cached && cached.timestamp >= item.modified) {\n      return cached.module;\n    }\n\n    // Check if this module is already being loaded (prevents race condition)\n    // This handles the case where multiple concurrent calls try to load the same module\n    const inFlight = this.loadingPromises.get(itemId);\n    if (inFlight) {\n      return inFlight;\n    }\n\n    // Start loading and track the promise\n    callStack.add(itemId);\n    const originalName = nameOrId !== itemId ? nameOrId : item.name;\n    const loadPromise = this.evaluateCodeItem(item, callStack)\n      .then(module => {\n        // Update cache on success, including name for getCached lookups\n        this.moduleCache.set(itemId, {\n          module,\n          timestamp: item.modified,\n          name: originalName\n        });\n        return module;\n      })\n      .finally(() => {\n        // Always clean up in-flight tracking\n        this.loadingPromises.delete(itemId);\n        callStack.delete(itemId);\n      });\n\n    this.loadingPromises.set(itemId, loadPromise);\n    return loadPromise;\n  }\n  // [END:require]\n\n  // [BEGIN:evaluateCodeItem]\n  // Compile and execute a code item as an ES module via blob URL\n  async evaluateCodeItem(item) {\n    if (!item.content?.code) {\n      throw new Error(`Item ${item.id} has no code to evaluate`);\n    }\n\n    const code = `\n      \"use strict\";\n      ${item.content.code}\n      //# sourceURL=${item.name || item.id}.js\n    `;\n\n    const blob = new Blob([code], { type: \"application/javascript\" });\n    const url = URL.createObjectURL(blob);\n\n    try {\n      const module = await import(url);\n      return module;\n    } catch (error) {\n      const wrappedError = new Error(`Failed to evaluate code item ${item.id} (${item.name}): ${error.message}`, { cause: error });\n      wrappedError.stack = error.stack;\n\n      // Capture error for logging/notification\n      await this.kernel.captureError(wrappedError, {\n        operation: 'require',\n        itemId: item.id,\n        itemName: item.name\n      });\n\n      throw wrappedError;\n    } finally {\n      URL.revokeObjectURL(url);\n    }\n  }\n  // [END:evaluateCodeItem]\n\n  // Capability check: is this item a code item?\n  // Walks the extends chain of the item's type\n  async isCodeItem(item) {\n    return await this.typeChainIncludes(item.type, this.kernel.IDS.CODE);\n  }\n\n  // Build the extends chain for a type (for inheritance/capability checking)\n  // Returns array of type IDs from the given type up to ITEM (root)\n  // Falls back to walking 'type' field if 'extends' is not present (backwards compat)\n  async buildExtendsChain(typeId) {\n    const chain = [];\n    let current = typeId;\n    const visited = new Set();\n\n    while (current && !visited.has(current)) {\n      chain.push(current);\n      visited.add(current);\n\n      // Stop at ITEM (root)\n      if (current === this.kernel.IDS.ITEM) break;\n\n      try {\n        const typeItem = await this.kernel.storage.get(current);\n        \n        // Prefer 'extends' field (new model)\n        if (typeItem.extends !== undefined) {\n          // null means root reached\n          if (typeItem.extends === null) break;\n          current = typeItem.extends;\n        } else {\n          // Fallback to 'type' field (old model) for backwards compatibility\n          // Stop at TYPE_DEFINITION boundary to avoid meta-level (old heuristic)\n          if (typeItem.type === this.kernel.IDS.TYPE_DEFINITION) break;\n          current = typeItem.type;\n        }\n      } catch {\n        break;\n      }\n    }\n\n    return chain;\n  }\n\n  // [BEGIN:typeChainIncludes]\n  // Check if a type's extends chain includes the target type\n  // Used for capability detection (e.g., \"is this item's type a code type?\")\n  async typeChainIncludes(typeId, targetId) {\n    const chain = await this.buildExtendsChain(typeId);\n    return chain.includes(targetId);\n  }\n  // [END:typeChainIncludes]\n\n  // Get a cached module synchronously (returns null if not cached)\n  // Use this for synchronous code paths that can't await require()\n  getCached(nameOrId) {\n    // For name lookups, we can't do async storage query, so only works with IDs\n    // or if we've seen this name before in the cache (stored during require)\n    for (const [itemId, cached] of this.moduleCache) {\n      // Check if this cache entry matches by name (from previous load) or ID\n      if (cached.name === nameOrId || itemId === nameOrId) {\n        return cached.module;\n      }\n    }\n    return null;\n  }\n\n  clearCache() {\n    this.moduleCache.clear();\n    this.loadingPromises.clear();\n  }\n}\n// [END:ModuleSystem]\n"
+    "code": "// Module System - See [Core Concepts - Code as Data](item://a0a0a0a0-d0c0-4000-8000-000000000002#description?region=Code)\n\n// [BEGIN:ModuleSystem]\nexport class ModuleSystem {\n  constructor(kernel) {\n    this.kernel = kernel;\n    this.moduleCache = new Map(); // itemId -> { module, timestamp }\n    this.loadingPromises = new Map(); // itemId -> Promise (tracks in-flight loads)\n  }\n\n  // [BEGIN:require]\n  // Load a code item as an ES module\n  // See [Core Concepts - The Module System](item://a0a0a0a0-d0c0-4000-8000-000000000002#The-Module-System)\n  async require(nameOrId, callStack = new Set()) {\n    // Resolve name to ID if necessary\n    let itemId = nameOrId;\n\n    // Check if it's a name (not a UUID pattern)\n    if (!nameOrId.includes(\"-\") || nameOrId.length < 36) {\n      const items = await this.kernel.storage.query({ name: nameOrId });\n      if (items.length === 0) {\n        throw new Error(`Code item not found: ${nameOrId}`);\n      }\n      itemId = items[0].id;\n    }\n\n    // Check for circular dependencies\n    if (callStack.has(itemId)) {\n      const chain = Array.from(callStack).join(\" -> \");\n      throw new Error(`Circular dependency detected: ${chain} -> ${itemId}`);\n    }\n\n    // Check cache first\n    const item = await this.kernel.storage.get(itemId);\n    const cached = this.moduleCache.get(itemId);\n\n    // Return cached module if fresh\n    if (cached && cached.timestamp >= item.modified) {\n      return cached.module;\n    }\n\n    // Check if this module is already being loaded (prevents race condition)\n    // This handles the case where multiple concurrent calls try to load the same module\n    const inFlight = this.loadingPromises.get(itemId);\n    if (inFlight) {\n      return inFlight;\n    }\n\n    // Start loading and track the promise\n    callStack.add(itemId);\n    const originalName = nameOrId !== itemId ? nameOrId : item.name;\n    const loadPromise = this.evaluateCodeItem(item, callStack)\n      .then(module => {\n        // Update cache on success, including name for getCached lookups\n        this.moduleCache.set(itemId, {\n          module,\n          timestamp: item.modified,\n          name: originalName\n        });\n        return module;\n      })\n      .finally(() => {\n        // Always clean up in-flight tracking\n        this.loadingPromises.delete(itemId);\n        callStack.delete(itemId);\n      });\n\n    this.loadingPromises.set(itemId, loadPromise);\n    return loadPromise;\n  }\n  // [END:require]\n\n  // [BEGIN:evaluateCodeItem]\n  // Compile and execute a code item as an ES module via blob URL\n  async evaluateCodeItem(item) {\n    if (!item.content?.code) {\n      throw new Error(`Item ${item.id} has no code to evaluate`);\n    }\n\n    const code = `\n      \"use strict\";\n      ${item.content.code}\n      //# sourceURL=${item.name || item.id}.js\n    `;\n\n    const blob = new Blob([code], { type: \"application/javascript\" });\n    const url = URL.createObjectURL(blob);\n\n    try {\n      const module = await import(url);\n      return module;\n    } catch (error) {\n      const wrappedError = new Error(`Failed to evaluate code item ${item.id} (${item.name}): ${error.message}`, { cause: error });\n      wrappedError.stack = error.stack;\n\n      // Capture error for logging/notification\n      await this.kernel.captureError(wrappedError, {\n        operation: 'require',\n        itemId: item.id,\n        itemName: item.name\n      });\n\n      throw wrappedError;\n    } finally {\n      URL.revokeObjectURL(url);\n    }\n  }\n  // [END:evaluateCodeItem]\n\n  // Capability check: is this item a code item?\n  // Walks the extends chain of the item's type\n  async isCodeItem(item) {\n    return await this.typeChainIncludes(item.type, this.kernel.IDS.CODE);\n  }\n\n  // Build the extends chain for a type (for inheritance/capability checking)\n  // Returns array of type IDs from the given type up to ITEM (root)\n  // Falls back to walking 'type' field if 'extends' is not present (backwards compat)\n  async buildExtendsChain(typeId) {\n    const chain = [];\n    let current = typeId;\n    const visited = new Set();\n\n    while (current && !visited.has(current)) {\n      chain.push(current);\n      visited.add(current);\n\n      // Stop at ITEM (root)\n      if (current === this.kernel.IDS.ITEM) break;\n\n      try {\n        const typeItem = await this.kernel.storage.get(current);\n        \n        // Prefer 'extends' field (new model)\n        if (typeItem.extends !== undefined) {\n          // null means root reached\n          if (typeItem.extends === null) break;\n          current = typeItem.extends;\n        } else {\n          // Fallback to 'type' field (old model) for backwards compatibility\n          // Stop at TYPE_DEFINITION boundary to avoid meta-level (old heuristic)\n          if (typeItem.type === this.kernel.IDS.TYPE_DEFINITION) break;\n          current = typeItem.type;\n        }\n      } catch {\n        break;\n      }\n    }\n\n    return chain;\n  }\n\n  // [BEGIN:typeChainIncludes]\n  // Check if a type's extends chain includes the target type\n  // Used for capability detection (e.g., \"is this item's type a code type?\")\n  async typeChainIncludes(typeId, targetId) {\n    const chain = await this.buildExtendsChain(typeId);\n    return chain.includes(targetId);\n  }\n  // [END:typeChainIncludes]\n\n  // Get a cached module synchronously (returns null if not cached)\n  // Use this for synchronous code paths that can't await require()\n  getCached(nameOrId) {\n    // For name lookups, we can't do async storage query, so only works with IDs\n    // or if we've seen this name before in the cache (stored during require)\n    for (const [itemId, cached] of this.moduleCache) {\n      // Check if this cache entry matches by name (from previous load) or ID\n      if (cached.name === nameOrId || itemId === nameOrId) {\n        return cached.module;\n      }\n    }\n    return null;\n  }\n\n  clearCache() {\n    this.moduleCache.clear();\n    this.loadingPromises.clear();\n  }\n}\n// [END:ModuleSystem]\n",
+    "_symbols": {
+      "ModuleSystem": {
+        "name": "ModuleSystem",
+        "line": 4,
+        "col": 7,
+        "endLine": 180,
+        "endCol": 1,
+        "kind": "class",
+        "scope": null
+      },
+      "ModuleSystem.constructor": {
+        "name": "constructor",
+        "line": 5,
+        "col": 2,
+        "endLine": 9,
+        "endCol": 3,
+        "kind": "method",
+        "scope": "ModuleSystem"
+      },
+      "ModuleSystem.require": {
+        "name": "require",
+        "line": 14,
+        "col": 2,
+        "endLine": 70,
+        "endCol": 3,
+        "kind": "method",
+        "scope": "ModuleSystem"
+      },
+      "ModuleSystem.require.itemId": {
+        "name": "itemId",
+        "line": 16,
+        "col": 8,
+        "endLine": 16,
+        "endCol": 25,
+        "kind": "variable",
+        "scope": "ModuleSystem.require"
+      },
+      "ModuleSystem.require.items": {
+        "name": "items",
+        "line": 20,
+        "col": 12,
+        "endLine": 20,
+        "endCol": 71,
+        "kind": "variable",
+        "scope": "ModuleSystem.require"
+      },
+      "ModuleSystem.require.chain": {
+        "name": "chain",
+        "line": 29,
+        "col": 12,
+        "endLine": 29,
+        "endCol": 54,
+        "kind": "variable",
+        "scope": "ModuleSystem.require"
+      },
+      "ModuleSystem.require.item": {
+        "name": "item",
+        "line": 34,
+        "col": 10,
+        "endLine": 34,
+        "endCol": 54,
+        "kind": "variable",
+        "scope": "ModuleSystem.require"
+      },
+      "ModuleSystem.require.cached": {
+        "name": "cached",
+        "line": 35,
+        "col": 10,
+        "endLine": 35,
+        "endCol": 47,
+        "kind": "variable",
+        "scope": "ModuleSystem.require"
+      },
+      "ModuleSystem.require.inFlight": {
+        "name": "inFlight",
+        "line": 44,
+        "col": 10,
+        "endLine": 44,
+        "endCol": 53,
+        "kind": "variable",
+        "scope": "ModuleSystem.require"
+      },
+      "ModuleSystem.require.originalName": {
+        "name": "originalName",
+        "line": 51,
+        "col": 10,
+        "endLine": 51,
+        "endCol": 67,
+        "kind": "variable",
+        "scope": "ModuleSystem.require"
+      },
+      "ModuleSystem.require.loadPromise": {
+        "name": "loadPromise",
+        "line": 52,
+        "col": 10,
+        "endLine": 66,
+        "endCol": 8,
+        "kind": "variable",
+        "scope": "ModuleSystem.require"
+      },
+      "ModuleSystem.evaluateCodeItem": {
+        "name": "evaluateCodeItem",
+        "line": 75,
+        "col": 2,
+        "endLine": 107,
+        "endCol": 3,
+        "kind": "method",
+        "scope": "ModuleSystem"
+      },
+      "ModuleSystem.evaluateCodeItem.code": {
+        "name": "code",
+        "line": 80,
+        "col": 10,
+        "endLine": 84,
+        "endCol": 5,
+        "kind": "variable",
+        "scope": "ModuleSystem.evaluateCodeItem"
+      },
+      "ModuleSystem.evaluateCodeItem.blob": {
+        "name": "blob",
+        "line": 86,
+        "col": 10,
+        "endLine": 86,
+        "endCol": 69,
+        "kind": "variable",
+        "scope": "ModuleSystem.evaluateCodeItem"
+      },
+      "ModuleSystem.evaluateCodeItem.url": {
+        "name": "url",
+        "line": 87,
+        "col": 10,
+        "endLine": 87,
+        "endCol": 41,
+        "kind": "variable",
+        "scope": "ModuleSystem.evaluateCodeItem"
+      },
+      "ModuleSystem.evaluateCodeItem.module": {
+        "name": "module",
+        "line": 90,
+        "col": 12,
+        "endLine": 90,
+        "endCol": 38,
+        "kind": "variable",
+        "scope": "ModuleSystem.evaluateCodeItem"
+      },
+      "ModuleSystem.evaluateCodeItem.wrappedError": {
+        "name": "wrappedError",
+        "line": 93,
+        "col": 12,
+        "endLine": 93,
+        "endCol": 130,
+        "kind": "variable",
+        "scope": "ModuleSystem.evaluateCodeItem"
+      },
+      "ModuleSystem.evaluateCodeItem.operation": {
+        "name": "operation",
+        "line": 98,
+        "col": 8,
+        "endLine": 98,
+        "endCol": 28,
+        "kind": "property",
+        "scope": "ModuleSystem.evaluateCodeItem"
+      },
+      "ModuleSystem.evaluateCodeItem.itemId": {
+        "name": "itemId",
+        "line": 99,
+        "col": 8,
+        "endLine": 99,
+        "endCol": 23,
+        "kind": "property",
+        "scope": "ModuleSystem.evaluateCodeItem"
+      },
+      "ModuleSystem.evaluateCodeItem.itemName": {
+        "name": "itemName",
+        "line": 100,
+        "col": 8,
+        "endLine": 100,
+        "endCol": 27,
+        "kind": "property",
+        "scope": "ModuleSystem.evaluateCodeItem"
+      },
+      "ModuleSystem.isCodeItem": {
+        "name": "isCodeItem",
+        "line": 112,
+        "col": 2,
+        "endLine": 114,
+        "endCol": 3,
+        "kind": "method",
+        "scope": "ModuleSystem"
+      },
+      "ModuleSystem.buildExtendsChain": {
+        "name": "buildExtendsChain",
+        "line": 119,
+        "col": 2,
+        "endLine": 151,
+        "endCol": 3,
+        "kind": "method",
+        "scope": "ModuleSystem"
+      },
+      "ModuleSystem.buildExtendsChain.chain": {
+        "name": "chain",
+        "line": 120,
+        "col": 10,
+        "endLine": 120,
+        "endCol": 20,
+        "kind": "variable",
+        "scope": "ModuleSystem.buildExtendsChain"
+      },
+      "ModuleSystem.buildExtendsChain.current": {
+        "name": "current",
+        "line": 121,
+        "col": 8,
+        "endLine": 121,
+        "endCol": 24,
+        "kind": "variable",
+        "scope": "ModuleSystem.buildExtendsChain"
+      },
+      "ModuleSystem.buildExtendsChain.visited": {
+        "name": "visited",
+        "line": 122,
+        "col": 10,
+        "endLine": 122,
+        "endCol": 29,
+        "kind": "variable",
+        "scope": "ModuleSystem.buildExtendsChain"
+      },
+      "ModuleSystem.buildExtendsChain.typeItem": {
+        "name": "typeItem",
+        "line": 132,
+        "col": 14,
+        "endLine": 132,
+        "endCol": 63,
+        "kind": "variable",
+        "scope": "ModuleSystem.buildExtendsChain"
+      },
+      "ModuleSystem.typeChainIncludes": {
+        "name": "typeChainIncludes",
+        "line": 156,
+        "col": 2,
+        "endLine": 159,
+        "endCol": 3,
+        "kind": "method",
+        "scope": "ModuleSystem"
+      },
+      "ModuleSystem.typeChainIncludes.chain": {
+        "name": "chain",
+        "line": 157,
+        "col": 10,
+        "endLine": 157,
+        "endCol": 54,
+        "kind": "variable",
+        "scope": "ModuleSystem.typeChainIncludes"
+      },
+      "ModuleSystem.getCached": {
+        "name": "getCached",
+        "line": 164,
+        "col": 2,
+        "endLine": 174,
+        "endCol": 3,
+        "kind": "method",
+        "scope": "ModuleSystem"
+      },
+      "ModuleSystem.clearCache": {
+        "name": "clearCache",
+        "line": 176,
+        "col": 2,
+        "endLine": 179,
+        "endCol": 3,
+        "kind": "method",
+        "scope": "ModuleSystem"
+      }
+    }
   }
 }

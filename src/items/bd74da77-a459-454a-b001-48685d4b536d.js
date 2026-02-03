@@ -2,6 +2,10 @@
 // ID: bd74da77-a459-454a-b001-48685d4b536d
 // Type: aaaaaaaa-0000-0000-0000-000000000000
 
+// Item: system:viewport-view
+// ID: bd74da77-a459-454a-b001-48685d4b536d
+// Type: aaaaaaaa-0000-0000-0000-000000000000
+
 
 export async function render(item, api) {
   // Load dependencies
@@ -180,17 +184,17 @@ export async function render(item, api) {
     }, []);
 
     const modal = api.createElement('div', {
-      style: 'background: white; border-radius: 8px; width: 90%; max-width: 600px; max-height: 80vh; display: flex; flex-direction: column; box-shadow: 0 4px 20px rgba(0,0,0,0.3);'
+      style: 'background: var(--color-bg-surface); border-radius: 8px; width: 90%; max-width: 600px; max-height: 80vh; display: flex; flex-direction: column; box-shadow: var(--shadow-md);'
     }, []);
 
     const modalHeader = api.createElement('div', {
-      style: 'display: flex; justify-content: space-between; align-items: center; padding: 20px; border-bottom: 1px solid #ddd;'
+      style: 'display: flex; justify-content: space-between; align-items: center; padding: 20px; border-bottom: 1px solid var(--color-border-light);'
     }, []);
 
     const modalTitle = api.createElement('h3', { style: 'margin: 0;' }, ['Add Existing Item']);
 
     const closeBtn = api.createElement('button', {
-      style: 'padding: 4px 10px; cursor: pointer; background: transparent; border: none; font-size: 24px; color: #666;',
+      style: 'padding: 4px 10px; cursor: pointer; background: transparent; border: none; font-size: 24px; color: var(--color-text-secondary);',
       onclick: () => document.body.removeChild(overlay)
     }, ['\u00d7']);
 
@@ -274,7 +278,7 @@ export async function render(item, api) {
   // If no root, show empty state
   if (!rootId) {
     const empty = api.createElement('div', {
-      style: 'padding: 40px; text-align: center; color: #666; flex: 1;'
+      style: 'padding: 40px; text-align: center; color: var(--color-text-secondary); flex: 1;'
     }, []);
     empty.innerHTML = 'No item selected.<br><br><span style="font-size: 14px;">Cmd+K - Search items<br>Esc - Open REPL<br>Right-click - Context menu</span>';
     container.appendChild(empty);
@@ -352,7 +356,7 @@ export async function render(item, api) {
     rootNode = await api.renderItem(rootId, rootSpec?.view || null, { decorator: itemDecorator });
   } catch (error) {
     rootNode = api.createElement('div', {
-      style: 'padding: 20px; color: #c00; background: #fff0f0; border: 1px solid #fcc; border-radius: 4px;'
+      style: 'padding: 20px; color: var(--color-danger); background: var(--color-danger-light); border: 1px solid var(--color-danger); border-radius: var(--border-radius);'
     }, ['Error rendering item: ' + error.message]);
   }
 
@@ -883,7 +887,7 @@ export async function render(item, api) {
 
     // Delete
     contextMenu.appendChild(api.createElement('div', { class: 'context-menu-separator' }, []));
-    const deleteItem = api.createElement('div', { class: 'context-menu-item', style: 'color: #d33;' }, ['Delete']);
+    const deleteItem = api.createElement('div', { class: 'context-menu-item', style: 'color: var(--color-danger);' }, ['Delete']);
     deleteItem.onclick = async () => {
       hideContextMenu();
       const itemData = await api.get(itemId);

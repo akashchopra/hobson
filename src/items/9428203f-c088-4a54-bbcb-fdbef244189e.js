@@ -14,7 +14,7 @@ export async function render(search, api) {
 
   // Header
   const header = api.createElement('div', {
-    style: 'margin-bottom: 20px; padding-bottom: 15px; border-bottom: 2px solid #e0e0e0;'
+    style: 'margin-bottom: 20px; padding-bottom: 15px; border-bottom: 2px solid var(--color-border-light);'
   }, []);
 
   const title = api.createElement('h2', {
@@ -32,11 +32,11 @@ export async function render(search, api) {
     type: 'text',
     placeholder: 'Search for items...',
     value: search.content?.currentQuery || '',
-    style: 'width: 100%; padding: 12px 16px; font-size: 16px; border: 2px solid #d0d0d0; border-radius: 8px; outline: none; transition: border-color 0.2s;'
+    style: 'width: 100%; padding: 12px 16px; font-size: 16px; border: 2px solid var(--color-border); border-radius: 8px; outline: none; transition: border-color 0.2s;'
   }, []);
 
-  input.onfocus = () => { input.style.borderColor = '#3b82f6'; };
-  input.onblur = () => { input.style.borderColor = '#d0d0d0'; };
+  input.onfocus = () => { input.style.borderColor = 'var(--color-primary)'; };
+  input.onblur = () => { input.style.borderColor = 'var(--color-border)'; };
 
   searchBox.appendChild(input);
   container.appendChild(searchBox);
@@ -53,7 +53,7 @@ export async function render(search, api) {
   const onCycle = (cycleItem) => {
     const card = api.createElement('div', {
       'data-item-id': cycleItem.id,
-      style: 'padding: 12px; margin-bottom: 8px; background: #fffbeb; border: 1px dashed #f59e0b; border-radius: 6px; cursor: pointer; transition: all 0.2s;'
+      style: 'padding: 12px; margin-bottom: 8px; background: var(--color-warning-light); border: 1px dashed var(--color-warning); border-radius: var(--border-radius); cursor: pointer; transition: all 0.2s;'
     }, []);
 
     const titleRow = api.createElement('div', {
@@ -61,24 +61,24 @@ export async function render(search, api) {
     }, []);
 
     const icon = api.createElement('span', {
-      style: 'color: #f59e0b;'
-    }, ['↻']);
+      style: 'color: var(--color-warning);'
+    }, ['\u21bb']);
     titleRow.appendChild(icon);
 
     const name = api.createElement('span', {
-      style: 'font-weight: 500; color: #333;'
+      style: 'font-weight: 500; color: var(--color-text);'
     }, [cycleItem.name || cycleItem.id.substring(0, 8)]);
     titleRow.appendChild(name);
 
     const badge = api.createElement('span', {
-      style: 'font-size: 11px; color: #92400e; background: #fef3c7; padding: 2px 6px; border-radius: 4px;'
+      style: 'font-size: 11px; color: #92400e; background: #fef3c7; padding: 2px 6px; border-radius: var(--border-radius);'
     }, ['in current view']);
     titleRow.appendChild(badge);
 
     card.appendChild(titleRow);
 
     const meta = api.createElement('div', {
-      style: 'font-size: 12px; color: #999;'
+      style: 'font-size: 12px; color: var(--color-border-dark);'
     }, ['Click to open']);
     card.appendChild(meta);
 
@@ -88,8 +88,8 @@ export async function render(search, api) {
       card.style.transform = 'translateX(4px)';
     };
     card.onmouseout = () => {
-      card.style.background = '#fffbeb';
-      card.style.borderColor = '#f59e0b';
+      card.style.background = 'var(--color-warning-light)';
+      card.style.borderColor = 'var(--color-warning)';
       card.style.transform = 'translateX(0)';
     };
 
@@ -110,7 +110,7 @@ export async function render(search, api) {
 
     if (!query || query.trim().length === 0) {
       const emptyMsg = api.createElement('div', {
-        style: 'padding: 40px; text-align: center; color: #999; font-style: italic;'
+        style: 'padding: 40px; text-align: center; color: var(--color-border-dark); font-style: italic;'
       }, ['Type to search...']);
       resultsArea.appendChild(emptyMsg);
     } else if (children.length === 0) {
@@ -120,13 +120,13 @@ export async function render(search, api) {
       }, []);
 
       const msg = api.createElement('div', {
-        style: 'margin-bottom: 20px; color: #666;'
+        style: 'margin-bottom: 20px; color: var(--color-text-secondary);'
       }, ['No items found matching "' + query + '"']);
       noResults.appendChild(msg);
 
       /*
       const createBtn = api.createElement('button', {
-        style: 'padding: 10px 20px; background: #3b82f6; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 14px;',
+        style: 'padding: 10px 20px; background: var(--color-primary); color: white; border: none; border-radius: var(--border-radius); cursor: pointer; font-size: 14px;',
         onclick: async () => {
           const noteTypes = await api.query({ name: 'note' });
           const noteTypeId = noteTypes[0]?.id || api.IDS.ATOM;
@@ -149,15 +149,15 @@ export async function render(search, api) {
         }
       }, ['Create New: ' + query]);
 
-      createBtn.onmouseover = () => { createBtn.style.background = '#2563eb'; };
-      createBtn.onmouseout = () => { createBtn.style.background = '#3b82f6'; };
+      createBtn.onmouseover = () => { createBtn.style.background = 'var(--color-primary-hover)'; };
+      createBtn.onmouseout = () => { createBtn.style.background = 'var(--color-primary)'; };
 
       noResults.appendChild(createBtn); */
       resultsArea.appendChild(noResults);
     } else {
       // Has results - render children with their specified view or compact view
       const countHeader = api.createElement('div', {
-        style: 'margin-bottom: 15px; font-size: 14px; color: #666; font-weight: 500;'
+        style: 'margin-bottom: 15px; font-size: 14px; color: var(--color-text-secondary); font-weight: 500;'
       }, ['Found ' + children.length + ' item' + (children.length === 1 ? '' : 's')]);
       resultsArea.appendChild(countHeader);
 
@@ -175,7 +175,7 @@ export async function render(search, api) {
           resultsList.appendChild(childNode);
         } catch (err) {
           const errorNode = api.createElement('div', {
-            style: 'padding: 12px; margin-bottom: 8px; color: #c00; border: 1px solid #fcc; border-radius: 6px; background: #fff5f5;'
+            style: 'padding: 12px; margin-bottom: 8px; color: var(--color-danger); border: 1px solid var(--color-danger); border-radius: var(--border-radius); background: var(--color-danger-light);'
           }, ['Error loading item: ' + childId]);
           resultsList.appendChild(errorNode);
         }
@@ -221,7 +221,7 @@ export async function render(search, api) {
     if (query && query.trim().length > 0) {
       resultsArea.innerHTML = '';
       const searching = api.createElement('div', {
-        style: 'padding: 40px; text-align: center; color: #999; font-style: italic;'
+        style: 'padding: 40px; text-align: center; color: var(--color-border-dark); font-style: italic;'
       }, ['Searching...']);
       resultsArea.appendChild(searching);
     }

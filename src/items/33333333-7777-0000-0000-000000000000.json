@@ -3,10 +3,336 @@
   "type": "33333333-0000-0000-0000-000000000000",
   "name": "kernel:safe-mode",
   "created": 1769021393691,
-  "modified": 1770020876244,
+  "modified": 1770144885446,
   "children": [],
   "content": {
     "description": "Emergency recovery interface activated via `?safe=1` URL parameter. Provides a minimal UI for fixing broken code items when normal rendering fails.\n\n## Activation\n\nAccess safe mode by:\n- Adding `?safe=1` to the URL\n- Pressing `Ctrl+Shift+S` from anywhere (hardcoded kernel shortcut)\n\n## Capabilities\n\n- **View All Items**: Browse complete item list sorted by name\n- **View Code Items**: Filter to only executable items (renderers, libraries, views)\n- **Edit as JSON**: Raw JSON editing with syntax validation\n- **Delete Items**: Remove problematic items (with confirmation)\n- **Export Data**: Download all items as JSON backup\n- **Import Data**: Restore items from backup (skips existing IDs)\n- **Reset System**: Nuclear option - deletes everything except seed items\n\n## When to Use\n\n- Renderer throwing errors prevents normal UI from loading\n- Need to edit code items without executing them\n- System is in an inconsistent state after failed import\n- Want to inspect raw item structure",
-    "code": "// kernel-safe-mode module\n// See [Architecture Overview - Safe Mode](item://a0a0a0a0-d0c0-4000-8000-000000000003#Safe-Mode)\n\n// [BEGIN:SafeMode]\nexport class SafeMode {\n  constructor(kernel) {\n    this.kernel = kernel;\n  }\n  \n  // [BEGIN:render]\n  render(rootElement) {\n    rootElement.innerHTML = `\n      <div id=\"safe-mode\">\n        <h1>⚠️ Safe Mode</h1>\n        <p>Booted with minimal kernel only. No user code items loaded.</p>\n        <p>Use this mode to fix broken code items.</p>\n        <p style=\"color: #666; font-size: 12px;\">Access safe mode anytime by adding <code>?safe=1</code> to the URL.</p>\n        \n        <div class=\"actions\">\n          <button onclick=\"kernel.safeMode.listAllItems()\">View All Items</button>\n          <button onclick=\"kernel.safeMode.listCodeItems()\">View Code Items Only</button>\n          <button onclick=\"kernel.safeMode.exportData(false)\">Export All Data</button>\n          <button onclick=\"kernel.safeMode.importData()\">Import Data</button>\n          <button onclick=\"kernel.safeMode.resetSystem()\">Reset System (Dangerous!)</button>\n          <button onclick=\"window.location.href = window.location.pathname\">Exit Safe Mode</button>\n        </div>\n        \n        <div id=\"item-list\" class=\"item-list\"></div>\n      </div>\n    `;\n  }\n  \n  async listAllItems() {\n    const items = await this.kernel.storage.getAll();\n    this._renderItemList(items, \"All Items\");\n  }\n  \n  async listCodeItems() {\n    const items = await this.kernel.storage.getAll();\n    const codeItems = [];\n    \n    for (const item of items) {\n      if (await this.kernel.isCodeItem(item)) {\n        codeItems.push(item);\n      }\n    }\n    \n    this._renderItemList(codeItems, \"Code Items\");\n  }\n  // [END:render]\n  \n  _renderItemList(items, title) {\n    const listEl = document.getElementById(\"item-list\");\n    if (!listEl) return;\n    \n    listEl.innerHTML = `<h2>${title} (${items.length})</h2>`;\n    \n    items.sort((a,b) => (a.name || '').localeCompare(b.name || ''));\n\n    for (const item of items) {\n      const preview = document.createElement(\"div\");\n      preview.className = \"item-preview\";\n      preview.innerHTML = `\n        <div class=\"item-info\">\n          <div class=\"item-name\">${this._escapeHtml(item.name || item.id)}</div>\n          <div class=\"item-type\">Type: ${this._escapeHtml(item.type)}</div>\n        </div>\n        <div>\n          <button onclick=\"kernel.safeMode.editItem('${item.id}')\">Edit as JSON</button>\n          <button onclick=\"kernel.safeMode.deleteItem('${item.id}')\" style=\"color: red;\">Delete</button>\n        </div>\n      `;\n      listEl.appendChild(preview);\n    }\n  }\n  \n  // [BEGIN:editItem]\n  async editItem(itemId) {\n    const item = await this.kernel.storage.get(itemId);\n    const json = JSON.stringify(item, null, 2);\n    \n    const rootElement = this.kernel.rootElement;\n    rootElement.innerHTML = `\n      <div class=\"raw-editor\">\n        <h2>Editing: ${this._escapeHtml(item.name || item.id)}</h2>\n        <textarea id=\"raw-json\" rows=\"30\">${this._escapeHtml(json)}</textarea>\n        <div class=\"actions\">\n          <button onclick=\"kernel.safeMode.saveItem('${itemId}')\">Save</button>\n          <button onclick=\"kernel.safeMode.render(kernel.rootElement)\">Cancel</button>\n        </div>\n      </div>\n    `;\n  }\n  \n  async saveItem(itemId) {\n    const textarea = document.getElementById(\"raw-json\");\n    if (!textarea) return;\n    \n    try {\n      const updated = JSON.parse(textarea.value);\n      await this.kernel.saveItem(updated);\n      this.kernel.moduleSystem.clearCache();\n      alert(\"Saved successfully\");\n      this.render(this.kernel.rootElement);\n    } catch (error) {\n      alert(`Error: ${error.message}`);\n    }\n  }\n  // [END:editItem]\n  \n  async deleteItem(itemId) {\n    if (!confirm(`Delete item ${itemId}? This cannot be undone.`)) {\n      return;\n    }\n    \n    await this.kernel.storage.delete(itemId);\n    await this.listAllItems();\n  }\n  \n  async exportData(singleFile = true) {\n    const count = await this.kernel.export(singleFile);\n    alert(`Exported ${count} items`);\n  }\n  \n  importData() {\n    const input = document.createElement('input');\n    input.type = 'file';\n    input.accept = '.json';\n\n    input.onchange = async (e) => {\n      const file = e.target.files[0];\n      if (!file) return;\n\n      try {\n        const text = await file.text();\n        const items = JSON.parse(text);\n\n        if (!Array.isArray(items)) {\n          throw new Error('JSON must be an array of items');\n        }\n\n        let created = 0, skipped = 0;\n\n        for (const item of items) {\n          const exists = await this.kernel.storage.exists(item.id);\n          if (!exists) {\n            await this.kernel.saveItem(item);\n            created++;\n          } else {\n            skipped++;\n          }\n        }\n\n        // Clear module cache\n        this.kernel.moduleSystem.clearCache();\n\n        alert(`Import complete!\\nCreated: ${created}\\nSkipped: ${skipped}`);\n        this.render(this.kernel.rootElement);\n\n      } catch (error) {\n        alert(`Import failed: ${error.message}`);\n      }\n    };\n\n    input.click();\n  }\n\n  // [BEGIN:resetSystem]\n  async resetSystem() {\n    if (!confirm(\"WARNING: This will delete ALL your data!\\n\\nOnly the seed items will remain.\\n\\nHave you exported your data? This cannot be undone!\")) {\n      return;\n    }\n    \n    const items = await this.kernel.storage.getAll();\n    for (const item of items) {\n      await this.kernel.storage.delete(item.id);\n    }\n    \n    await this.kernel.ensureSeedItems();\n    this.render(this.kernel.rootElement);\n    alert(\"System reset complete\");\n  }\n  // [END:resetSystem]\n  \n  _escapeHtml(str) {\n    return String(str)\n      .replace(/&/g, \"&amp;\")\n      .replace(/</g, \"&lt;\")\n      .replace(/>/g, \"&gt;\")\n      .replace(/\"/g, \"&quot;\")\n      .replace(/'/g, \"&#039;\");\n  }\n}\n// [END:SafeMode]\n"
+    "code": "// kernel-safe-mode module\n// See [Architecture Overview - Safe Mode](item://a0a0a0a0-d0c0-4000-8000-000000000003#Safe-Mode)\n\n// [BEGIN:SafeMode]\nexport class SafeMode {\n  constructor(kernel) {\n    this.kernel = kernel;\n  }\n  \n  // [BEGIN:render]\n  render(rootElement) {\n    rootElement.innerHTML = `\n      <div id=\"safe-mode\">\n        <h1>⚠️ Safe Mode</h1>\n        <p>Booted with minimal kernel only. No user code items loaded.</p>\n        <p>Use this mode to fix broken code items.</p>\n        <p style=\"color: #666; font-size: 12px;\">Access safe mode anytime by adding <code>?safe=1</code> to the URL.</p>\n        \n        <div class=\"actions\">\n          <button onclick=\"kernel.safeMode.listAllItems()\">View All Items</button>\n          <button onclick=\"kernel.safeMode.listCodeItems()\">View Code Items Only</button>\n          <button onclick=\"kernel.safeMode.exportData(false)\">Export All Data</button>\n          <button onclick=\"kernel.safeMode.importData()\">Import Data</button>\n          <button onclick=\"kernel.safeMode.resetSystem()\">Reset System (Dangerous!)</button>\n          <button onclick=\"window.location.href = window.location.pathname\">Exit Safe Mode</button>\n        </div>\n        \n        <div id=\"item-list\" class=\"item-list\"></div>\n      </div>\n    `;\n  }\n  \n  async listAllItems() {\n    const items = await this.kernel.storage.getAll();\n    this._renderItemList(items, \"All Items\");\n  }\n  \n  async listCodeItems() {\n    const items = await this.kernel.storage.getAll();\n    const codeItems = [];\n    \n    for (const item of items) {\n      if (await this.kernel.isCodeItem(item)) {\n        codeItems.push(item);\n      }\n    }\n    \n    this._renderItemList(codeItems, \"Code Items\");\n  }\n  // [END:render]\n  \n  _renderItemList(items, title) {\n    const listEl = document.getElementById(\"item-list\");\n    if (!listEl) return;\n    \n    listEl.innerHTML = `<h2>${title} (${items.length})</h2>`;\n    \n    items.sort((a,b) => (a.name || '').localeCompare(b.name || ''));\n\n    for (const item of items) {\n      const preview = document.createElement(\"div\");\n      preview.className = \"item-preview\";\n      preview.innerHTML = `\n        <div class=\"item-info\">\n          <div class=\"item-name\">${this._escapeHtml(item.name || item.id)}</div>\n          <div class=\"item-type\">Type: ${this._escapeHtml(item.type)}</div>\n        </div>\n        <div>\n          <button onclick=\"kernel.safeMode.editItem('${item.id}')\">Edit as JSON</button>\n          <button onclick=\"kernel.safeMode.deleteItem('${item.id}')\" style=\"color: red;\">Delete</button>\n        </div>\n      `;\n      listEl.appendChild(preview);\n    }\n  }\n  \n  // [BEGIN:editItem]\n  async editItem(itemId) {\n    const item = await this.kernel.storage.get(itemId);\n    const json = JSON.stringify(item, null, 2);\n    \n    const rootElement = this.kernel.rootElement;\n    rootElement.innerHTML = `\n      <div class=\"raw-editor\">\n        <h2>Editing: ${this._escapeHtml(item.name || item.id)}</h2>\n        <textarea id=\"raw-json\" rows=\"30\">${this._escapeHtml(json)}</textarea>\n        <div class=\"actions\">\n          <button onclick=\"kernel.safeMode.saveItem('${itemId}')\">Save</button>\n          <button onclick=\"kernel.safeMode.render(kernel.rootElement)\">Cancel</button>\n        </div>\n      </div>\n    `;\n  }\n  \n  async saveItem(itemId) {\n    const textarea = document.getElementById(\"raw-json\");\n    if (!textarea) return;\n    \n    try {\n      const updated = JSON.parse(textarea.value);\n      await this.kernel.saveItem(updated);\n      this.kernel.moduleSystem.clearCache();\n      alert(\"Saved successfully\");\n      this.render(this.kernel.rootElement);\n    } catch (error) {\n      alert(`Error: ${error.message}`);\n    }\n  }\n  // [END:editItem]\n  \n  async deleteItem(itemId) {\n    if (!confirm(`Delete item ${itemId}? This cannot be undone.`)) {\n      return;\n    }\n    \n    await this.kernel.storage.delete(itemId);\n    await this.listAllItems();\n  }\n  \n  async exportData(singleFile = true) {\n    const count = await this.kernel.export(singleFile);\n    alert(`Exported ${count} items`);\n  }\n  \n  importData() {\n    const input = document.createElement('input');\n    input.type = 'file';\n    input.accept = '.json';\n\n    input.onchange = async (e) => {\n      const file = e.target.files[0];\n      if (!file) return;\n\n      try {\n        const text = await file.text();\n        const items = JSON.parse(text);\n\n        if (!Array.isArray(items)) {\n          throw new Error('JSON must be an array of items');\n        }\n\n        let created = 0, skipped = 0;\n\n        for (const item of items) {\n          const exists = await this.kernel.storage.exists(item.id);\n          if (!exists) {\n            await this.kernel.saveItem(item);\n            created++;\n          } else {\n            skipped++;\n          }\n        }\n\n        // Clear module cache\n        this.kernel.moduleSystem.clearCache();\n\n        alert(`Import complete!\\nCreated: ${created}\\nSkipped: ${skipped}`);\n        this.render(this.kernel.rootElement);\n\n      } catch (error) {\n        alert(`Import failed: ${error.message}`);\n      }\n    };\n\n    input.click();\n  }\n\n  // [BEGIN:resetSystem]\n  async resetSystem() {\n    if (!confirm(\"WARNING: This will delete ALL your data!\\n\\nOnly the seed items will remain.\\n\\nHave you exported your data? This cannot be undone!\")) {\n      return;\n    }\n    \n    const items = await this.kernel.storage.getAll();\n    for (const item of items) {\n      await this.kernel.storage.delete(item.id);\n    }\n    \n    await this.kernel.ensureSeedItems();\n    this.render(this.kernel.rootElement);\n    alert(\"System reset complete\");\n  }\n  // [END:resetSystem]\n  \n  _escapeHtml(str) {\n    return String(str)\n      .replace(/&/g, \"&amp;\")\n      .replace(/</g, \"&lt;\")\n      .replace(/>/g, \"&gt;\")\n      .replace(/\"/g, \"&quot;\")\n      .replace(/'/g, \"&#039;\");\n  }\n}\n// [END:SafeMode]\n",
+    "_symbols": {
+      "SafeMode": {
+        "name": "SafeMode",
+        "line": 5,
+        "col": 7,
+        "endLine": 193,
+        "endCol": 1,
+        "kind": "class",
+        "scope": null
+      },
+      "SafeMode.constructor": {
+        "name": "constructor",
+        "line": 6,
+        "col": 2,
+        "endLine": 8,
+        "endCol": 3,
+        "kind": "method",
+        "scope": "SafeMode"
+      },
+      "SafeMode.render": {
+        "name": "render",
+        "line": 11,
+        "col": 2,
+        "endLine": 31,
+        "endCol": 3,
+        "kind": "method",
+        "scope": "SafeMode"
+      },
+      "SafeMode.listAllItems": {
+        "name": "listAllItems",
+        "line": 33,
+        "col": 2,
+        "endLine": 36,
+        "endCol": 3,
+        "kind": "method",
+        "scope": "SafeMode"
+      },
+      "SafeMode.listAllItems.items": {
+        "name": "items",
+        "line": 34,
+        "col": 10,
+        "endLine": 34,
+        "endCol": 52,
+        "kind": "variable",
+        "scope": "SafeMode.listAllItems"
+      },
+      "SafeMode.listCodeItems": {
+        "name": "listCodeItems",
+        "line": 38,
+        "col": 2,
+        "endLine": 49,
+        "endCol": 3,
+        "kind": "method",
+        "scope": "SafeMode"
+      },
+      "SafeMode.listCodeItems.items": {
+        "name": "items",
+        "line": 39,
+        "col": 10,
+        "endLine": 39,
+        "endCol": 52,
+        "kind": "variable",
+        "scope": "SafeMode.listCodeItems"
+      },
+      "SafeMode.listCodeItems.codeItems": {
+        "name": "codeItems",
+        "line": 40,
+        "col": 10,
+        "endLine": 40,
+        "endCol": 24,
+        "kind": "variable",
+        "scope": "SafeMode.listCodeItems"
+      },
+      "SafeMode.listCodeItems.item": {
+        "name": "item",
+        "line": 42,
+        "col": 15,
+        "endLine": 42,
+        "endCol": 19,
+        "kind": "variable",
+        "scope": "SafeMode.listCodeItems"
+      },
+      "SafeMode._renderItemList": {
+        "name": "_renderItemList",
+        "line": 52,
+        "col": 2,
+        "endLine": 75,
+        "endCol": 3,
+        "kind": "method",
+        "scope": "SafeMode"
+      },
+      "SafeMode._renderItemList.listEl": {
+        "name": "listEl",
+        "line": 53,
+        "col": 10,
+        "endLine": 53,
+        "endCol": 55,
+        "kind": "variable",
+        "scope": "SafeMode._renderItemList"
+      },
+      "SafeMode._renderItemList.item": {
+        "name": "item",
+        "line": 60,
+        "col": 15,
+        "endLine": 60,
+        "endCol": 19,
+        "kind": "variable",
+        "scope": "SafeMode._renderItemList"
+      },
+      "SafeMode._renderItemList.preview": {
+        "name": "preview",
+        "line": 61,
+        "col": 12,
+        "endLine": 61,
+        "endCol": 51,
+        "kind": "variable",
+        "scope": "SafeMode._renderItemList"
+      },
+      "SafeMode.editItem": {
+        "name": "editItem",
+        "line": 78,
+        "col": 2,
+        "endLine": 93,
+        "endCol": 3,
+        "kind": "method",
+        "scope": "SafeMode"
+      },
+      "SafeMode.editItem.item": {
+        "name": "item",
+        "line": 79,
+        "col": 10,
+        "endLine": 79,
+        "endCol": 54,
+        "kind": "variable",
+        "scope": "SafeMode.editItem"
+      },
+      "SafeMode.editItem.json": {
+        "name": "json",
+        "line": 80,
+        "col": 10,
+        "endLine": 80,
+        "endCol": 46,
+        "kind": "variable",
+        "scope": "SafeMode.editItem"
+      },
+      "SafeMode.editItem.rootElement": {
+        "name": "rootElement",
+        "line": 82,
+        "col": 10,
+        "endLine": 82,
+        "endCol": 47,
+        "kind": "variable",
+        "scope": "SafeMode.editItem"
+      },
+      "SafeMode.saveItem": {
+        "name": "saveItem",
+        "line": 95,
+        "col": 2,
+        "endLine": 108,
+        "endCol": 3,
+        "kind": "method",
+        "scope": "SafeMode"
+      },
+      "SafeMode.saveItem.textarea": {
+        "name": "textarea",
+        "line": 96,
+        "col": 10,
+        "endLine": 96,
+        "endCol": 56,
+        "kind": "variable",
+        "scope": "SafeMode.saveItem"
+      },
+      "SafeMode.saveItem.updated": {
+        "name": "updated",
+        "line": 100,
+        "col": 12,
+        "endLine": 100,
+        "endCol": 48,
+        "kind": "variable",
+        "scope": "SafeMode.saveItem"
+      },
+      "SafeMode.deleteItem": {
+        "name": "deleteItem",
+        "line": 111,
+        "col": 2,
+        "endLine": 118,
+        "endCol": 3,
+        "kind": "method",
+        "scope": "SafeMode"
+      },
+      "SafeMode.exportData": {
+        "name": "exportData",
+        "line": 120,
+        "col": 2,
+        "endLine": 123,
+        "endCol": 3,
+        "kind": "method",
+        "scope": "SafeMode"
+      },
+      "SafeMode.exportData.count": {
+        "name": "count",
+        "line": 121,
+        "col": 10,
+        "endLine": 121,
+        "endCol": 54,
+        "kind": "variable",
+        "scope": "SafeMode.exportData"
+      },
+      "SafeMode.importData": {
+        "name": "importData",
+        "line": 125,
+        "col": 2,
+        "endLine": 166,
+        "endCol": 3,
+        "kind": "method",
+        "scope": "SafeMode"
+      },
+      "SafeMode.importData.input": {
+        "name": "input",
+        "line": 126,
+        "col": 10,
+        "endLine": 126,
+        "endCol": 49,
+        "kind": "variable",
+        "scope": "SafeMode.importData"
+      },
+      "SafeMode.importData.file": {
+        "name": "file",
+        "line": 131,
+        "col": 12,
+        "endLine": 131,
+        "endCol": 36,
+        "kind": "variable",
+        "scope": "SafeMode.importData"
+      },
+      "SafeMode.importData.text": {
+        "name": "text",
+        "line": 135,
+        "col": 14,
+        "endLine": 135,
+        "endCol": 38,
+        "kind": "variable",
+        "scope": "SafeMode.importData"
+      },
+      "SafeMode.importData.items": {
+        "name": "items",
+        "line": 136,
+        "col": 14,
+        "endLine": 136,
+        "endCol": 38,
+        "kind": "variable",
+        "scope": "SafeMode.importData"
+      },
+      "SafeMode.importData.created": {
+        "name": "created",
+        "line": 142,
+        "col": 12,
+        "endLine": 142,
+        "endCol": 23,
+        "kind": "variable",
+        "scope": "SafeMode.importData"
+      },
+      "SafeMode.importData.skipped": {
+        "name": "skipped",
+        "line": 142,
+        "col": 25,
+        "endLine": 142,
+        "endCol": 36,
+        "kind": "variable",
+        "scope": "SafeMode.importData"
+      },
+      "SafeMode.importData.item": {
+        "name": "item",
+        "line": 144,
+        "col": 19,
+        "endLine": 144,
+        "endCol": 23,
+        "kind": "variable",
+        "scope": "SafeMode.importData"
+      },
+      "SafeMode.importData.exists": {
+        "name": "exists",
+        "line": 145,
+        "col": 16,
+        "endLine": 145,
+        "endCol": 66,
+        "kind": "variable",
+        "scope": "SafeMode.importData"
+      },
+      "SafeMode.resetSystem": {
+        "name": "resetSystem",
+        "line": 169,
+        "col": 2,
+        "endLine": 182,
+        "endCol": 3,
+        "kind": "method",
+        "scope": "SafeMode"
+      },
+      "SafeMode.resetSystem.items": {
+        "name": "items",
+        "line": 174,
+        "col": 10,
+        "endLine": 174,
+        "endCol": 52,
+        "kind": "variable",
+        "scope": "SafeMode.resetSystem"
+      },
+      "SafeMode.resetSystem.item": {
+        "name": "item",
+        "line": 175,
+        "col": 15,
+        "endLine": 175,
+        "endCol": 19,
+        "kind": "variable",
+        "scope": "SafeMode.resetSystem"
+      },
+      "SafeMode._escapeHtml": {
+        "name": "_escapeHtml",
+        "line": 185,
+        "col": 2,
+        "endLine": 192,
+        "endCol": 3,
+        "kind": "method",
+        "scope": "SafeMode"
+      }
+    }
   }
 }

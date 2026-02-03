@@ -3,7 +3,7 @@
   "name": "system:viewport-view",
   "type": "aaaaaaaa-0000-0000-0000-000000000000",
   "created": 1768506119995,
-  "modified": 1770118858265,
+  "modified": 1770144889073,
   "children": [],
   "content": {
     "description": "The viewport's view - renders the navigation chrome around the current root item. This is the top-level container that frames all user interaction with Hobson.\n\n## Responsibilities\n\n- **Root Resolution**: Reads root item from URL (`?root=`) or viewport item's children\n- **Title Management**: Updates browser tab title to show current item name\n- **Item Selection**: Tracks selected item for context menu operations\n- **Context Menus**: Right-click menu for View As, Add Child, Delete, Copy ID, etc.\n- **View Settings Modal**: Three-level preference management (context/item/type)\n- **Keyboard Shortcuts**: Cmd+K (search), Esc (clear selection)\n\n## View Preference System\n\nThe viewport manages the full view resolution hierarchy:\n1. Contextual override (stored in parent's child spec or viewport's root view)\n2. Item's `preferredView` field\n3. Type's `preferredView` field\n4. Type chain lookup (via [kernel:rendering](item://33333333-5555-0000-0000-000000000000))\n\n## Item Decorator\n\nApplies `data-item-id` attributes and tooltips to rendered items for:\n- Selection highlighting\n- Context menu targeting\n- Debug mode introspection",
@@ -12,6 +12,2087 @@
       "read",
       "write"
     ],
-    "code": "// Item: system:viewport-view\n// ID: bd74da77-a459-454a-b001-48685d4b536d\n// Type: aaaaaaaa-0000-0000-0000-000000000000\n\n\nexport async function render(item, api) {\n  // Load dependencies\n  // Note: Libraries under active development should be required where used, not here.\n  // See docs/Hot-Reloading Libraries.md for the pattern.\n  const cssLoader = await api.require('css-loader-lib');\n  await cssLoader.loadCSS('context-menu-css', api);\n  const searchLib = await api.require('item-search-lib');\n\n  // Determine root: URL takes precedence over viewport item\n  // This allows direct linking and avoids flash on initial load\n  const urlParams = new URLSearchParams(window.location.search);\n  const urlRoot = urlParams.get('root');\n  \n  // The viewport item stores rootId in children[0]\n  const storedSpec = item.children?.[0];\n  const storedRootId = storedSpec?.id || storedSpec;\n  \n  // Use URL root if present and valid, otherwise use stored root\n  let rootId = storedRootId;\n  let rootSpec = storedSpec;\n  \n  if (urlRoot && urlRoot !== storedRootId) {\n    // URL has different root - verify it exists\n    try {\n      await api.get(urlRoot);\n      rootId = urlRoot;\n      rootSpec = { id: urlRoot };  // No view config from URL\n      \n      // Update viewport item to match URL (for consistency on next render)\n      // Do this silently via api.set to avoid re-render loop\n      const updatedViewport = { ...item, children: [{ id: urlRoot }], modified: Date.now() };\n      await api.set(updatedViewport);\n    } catch {\n      // URL root doesn't exist - fall back to stored root\n      console.warn('[viewport-view] URL root not found:', urlRoot);\n    }\n  }\n  \n  // Read view type from new schema (view.type) or fall back to old flat format\n  const rootViewId = rootSpec?.view?.type || rootSpec?.view || rootSpec?.renderer || null;\n\n  // Update browser tab title\n  const updateBrowserTitle = async (itemId) => {\n    if (!itemId) {\n      document.title = 'Hobson';\n      return;\n    }\n    const rootItem = await api.get(itemId);\n    const itemName = rootItem?.content?.title || rootItem?.name || itemId.slice(0, 8);\n    document.title = itemName + ' - Hobson';\n  };\n  await updateBrowserTitle(rootId);\n\n  // Create main container\n  const container = api.createElement('div', {\n    class: 'viewport-container',\n    style: 'display: flex; flex-direction: column; height: 100%; position: relative;'\n  }, []);\n\n  // Helper: Add child item to a parent\n  // parentId: the item to add a child to\n  // clickCoords: {x, y} if adding from a spatial context, null otherwise\n  const addChildToItem = async (parentId, clickCoords) => {\n    // Re-require to pick up any edits (see docs/Hot-Reloading Libraries.md)\n    const typePicker = await api.require('type-picker-lib');\n    const selectedType = await typePicker.showTypePicker(api);\n    if (!selectedType) return;\n\n    const newItem = {\n      id: crypto.randomUUID(),\n      name: new Date().toISOString(),\n      type: selectedType,\n      created: Date.now(),\n      modified: Date.now(),\n      children: [],\n      content: {}\n    };\n\n    await api.set(newItem);\n\n    // Get parent and determine if it's being rendered spatially\n    const parent = await api.get(parentId);\n    const children = parent.children || [];\n    \n    // Check if parent is rendered spatially by looking at existing children\n    // If children have position data (view.x, view.y), it's spatial\n    const isSpatial = children.length > 0 \n      ? children.some(c => c.view?.x !== undefined || c.view?.y !== undefined)\n      : false;\n\n    if (isSpatial || clickCoords) {\n      // Spatial: add with position in view object\n      const maxZ = children.length > 0 ? Math.max(...children.map(c => c.view?.z || 1000)) : 999;\n      const x = clickCoords?.x || 50;\n      const y = clickCoords?.y || 50;\n      \n      children.push({\n        id: newItem.id,\n        view: {\n          x: x,\n          y: y,\n          width: 400,\n          height: 300,\n          z: maxZ + 1\n        }\n      });\n    } else {\n      // Non-spatial: just add the ID reference\n      children.push({ id: newItem.id });\n    }\n\n    parent.children = children;\n    parent.modified = Date.now();\n    await api.update(parent);\n    api.viewport.select(newItem.id, parentId);\n\n    // Scroll new item into view after DOM updates\n    setTimeout(() => {\n      const el = document.querySelector(`[data-item-id=\"${newItem.id}\"]`);\n      el?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });\n    }, 0);\n  };\n\n  // Helper: Add existing item as child to a parent\n  const addExistingChildToItem = async (parentId, childId, clickCoords) => {\n    const parent = await api.get(parentId);\n    const children = parent.children || [];\n\n    // Check if already a child\n    if (children.some(c => c.id === childId)) {\n      alert('This item is already a child.');\n      return;\n    }\n\n    // Check if parent is rendered spatially\n    const isSpatial = children.length > 0\n      ? children.some(c => c.view?.x !== undefined || c.view?.y !== undefined)\n      : false;\n\n    if (isSpatial || clickCoords) {\n      const maxZ = children.length > 0 ? Math.max(...children.map(c => c.view?.z || 1000)) : 999;\n      const x = clickCoords?.x || 50;\n      const y = clickCoords?.y || 50;\n\n      children.push({\n        id: childId,\n        view: {\n          x: x,\n          y: y,\n          width: 400,\n          height: 300,\n          z: maxZ + 1\n        }\n      });\n    } else {\n      children.push({ id: childId });\n    }\n\n    parent.children = children;\n    parent.modified = Date.now();\n    await api.update(parent);\n    api.viewport.select(childId, parentId);\n\n    // Scroll new item into view after DOM updates\n    setTimeout(() => {\n      const el = document.querySelector(`[data-item-id=\"${childId}\"]`);\n      el?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });\n    }, 0);\n  };\n\n  // Helper: Show item picker modal for adding existing item\n  const showExistingItemPicker = (parentId, clickCoords) => {\n    const overlay = api.createElement('div', {\n      style: 'position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 10000;'\n    }, []);\n\n    const modal = api.createElement('div', {\n      style: 'background: var(--color-bg-surface); border-radius: 8px; width: 90%; max-width: 600px; max-height: 80vh; display: flex; flex-direction: column; box-shadow: var(--shadow-md);'\n    }, []);\n\n    const modalHeader = api.createElement('div', {\n      style: 'display: flex; justify-content: space-between; align-items: center; padding: 20px; border-bottom: 1px solid var(--color-border-light);'\n    }, []);\n\n    const modalTitle = api.createElement('h3', { style: 'margin: 0;' }, ['Add Existing Item']);\n\n    const closeBtn = api.createElement('button', {\n      style: 'padding: 4px 10px; cursor: pointer; background: transparent; border: none; font-size: 24px; color: var(--color-text-secondary);',\n      onclick: () => document.body.removeChild(overlay)\n    }, ['\\u00d7']);\n\n    modalHeader.appendChild(modalTitle);\n    modalHeader.appendChild(closeBtn);\n    modal.appendChild(modalHeader);\n\n    const searchContainer = api.createElement('div', {\n      style: 'padding: 20px; flex: 1; overflow: auto;'\n    }, []);\n    modal.appendChild(searchContainer);\n\n    overlay.appendChild(modal);\n    document.body.appendChild(overlay);\n\n    searchLib.createSearchUI(\n      searchContainer,\n      async (selectedItem) => {\n        document.body.removeChild(overlay);\n        await addExistingChildToItem(parentId, selectedItem.id, clickCoords);\n      },\n      api,\n      { placeholder: 'Search for items to add...', autoFocus: true }\n    );\n\n    overlay.onclick = (e) => {\n      if (e.target === overlay) document.body.removeChild(overlay);\n    };\n    modal.onclick = (e) => e.stopPropagation();\n  };\n\n  // Context menu for empty/background state\n  // Append to document.body so it's always above windows (which can have high z-indices)\n  const contextMenu = api.createElement('div', {\n    id: 'context-menu',\n    class: 'context-menu',\n    style: 'display: none;'\n  }, []);\n  document.body.appendChild(contextMenu);\n\n  const hideContextMenu = () => {\n    contextMenu.style.display = 'none';\n    contextMenu.innerHTML = '';\n  };\n\n  const showEmptyContextMenu = (x, y) => {\n    contextMenu.innerHTML = '';\n\n    // Search Items\n    const searchItem = api.createElement('div', { class: 'context-menu-item' }, ['Search Items (Cmd+K)']);\n    searchItem.onclick = () => {\n      hideContextMenu();\n      api.showItemList();\n    };\n    contextMenu.appendChild(searchItem);\n\n    // Open REPL\n    const replItem = api.createElement('div', { class: 'context-menu-item' }, ['Open REPL (Esc)']);\n    replItem.onclick = async () => {\n      hideContextMenu();\n      try {\n        const replUi = await api.require('repl-ui');\n        await replUi.toggle();\n      } catch {\n        // Fallback to kernel if repl-ui not available\n        await window.kernel?.repl?.toggle();\n      }\n    };\n    contextMenu.appendChild(replItem);\n\n    // Position menu\n    const menuWidth = 180, menuHeight = 100;\n    let menuX = x, menuY = y;\n    if (x + menuWidth > window.innerWidth) menuX = window.innerWidth - menuWidth - 10;\n    if (y + menuHeight > window.innerHeight) menuY = window.innerHeight - menuHeight - 10;\n    contextMenu.style.left = menuX + 'px';\n    contextMenu.style.top = menuY + 'px';\n    contextMenu.style.display = 'block';\n  };\n\n  // If no root, show empty state\n  if (!rootId) {\n    const empty = api.createElement('div', {\n      style: 'padding: 40px; text-align: center; color: var(--color-text-secondary); flex: 1;'\n    }, []);\n    empty.innerHTML = 'No item selected.<br><br><span style=\"font-size: 14px;\">Cmd+K - Search items<br>Esc - Open REPL<br>Right-click - Context menu</span>';\n    container.appendChild(empty);\n\n    // Handle right-click on empty state\n    container.addEventListener('contextmenu', (e) => {\n      if (e.shiftKey) return;\n      e.preventDefault();\n      showEmptyContextMenu(e.clientX, e.clientY);\n    });\n\n    container.addEventListener('click', () => hideContextMenu());\n\n    // Keyboard shortcuts for empty state\n    const globalKeyHandler = (e) => {\n      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {\n        e.preventDefault();\n        api.showItemList();\n      }\n    };\n    document.addEventListener('keydown', globalKeyHandler);\n\n    const observer = new MutationObserver((mutations) => {\n      for (const mutation of mutations) {\n        for (const node of mutation.removedNodes) {\n          if (node === container || node.contains?.(container)) {\n            document.removeEventListener('keydown', globalKeyHandler);\n            contextMenu.remove();\n            observer.disconnect();\n            return;\n          }\n        }\n      }\n    });\n    observer.observe(document.body, { childList: true, subtree: true });\n\n    return container;\n  }\n\n  // Decorator for rendered items - adds data-item-id and tooltip\n  // This is viewport-specific; users can customize by modifying this function\n  const itemDecorator = async (dom, itemId, item) => {\n    dom.setAttribute('data-item-id', itemId);\n    \n    // Add tooltip with item name, type, and tags\n    const itemName = item.name || item.content?.title || itemId.slice(0, 8);\n    let typeName = item.type.slice(0, 8);\n    try {\n      const typeItem = await api.get(item.type);\n      typeName = typeItem.name || typeName;\n    } catch {}\n    \n    let titleText = itemName + ' (' + typeName + ')';\n    \n    // Add tags to tooltip if present\n    if (item.tags?.length) {\n      const tagNames = await Promise.all(item.tags.map(async tagId => {\n        try {\n          const tag = await api.get(tagId);\n          return tag.content?.name || tag.name || tagId.slice(0, 8);\n        } catch {\n          return tagId.slice(0, 8);\n        }\n      }));\n      titleText += '\\nTags: ' + tagNames.join(', ');\n    }\n    \n    dom.setAttribute('title', titleText);\n  };\n\n  // Render the root item with decorator for viewport integration\n  // Pass the full view config object so the renderer can access and update its view state\n  let rootNode;\n  try {\n    rootNode = await api.renderItem(rootId, rootSpec?.view || null, { decorator: itemDecorator });\n  } catch (error) {\n    rootNode = api.createElement('div', {\n      style: 'padding: 20px; color: var(--color-danger); background: var(--color-danger-light); border: 1px solid var(--color-danger); border-radius: var(--border-radius);'\n    }, ['Error rendering item: ' + error.message]);\n  }\n\n  const contentArea = api.createElement('div', {\n    'data-item-id': rootId,\n    class: 'viewport-content',\n    style: 'flex: 1; overflow: auto; display: flex; flex-direction: column; min-height: 0;'\n  }, [rootNode]);\n\n  container.appendChild(contentArea);\n\n  let selectedItemId = null;\n  let selectedParentId = null;\n  let selectedElement = null;\n  let lastContextMenuCoords = { x: 0, y: 0 };\n\n  const updateSelectionVisual = () => {\n    container.querySelectorAll('[data-item-id].item-selected').forEach(el => el.classList.remove('item-selected'));\n    if (selectedElement) {\n      selectedElement.classList.add('item-selected');\n    }\n  };\n\n  const selectItem = (itemId, itemElement) => {\n    selectedItemId = itemId;\n    selectedParentId = itemElement?.getAttribute('data-parent-id') || null;\n    selectedElement = itemElement;\n    api.viewport.select(itemId, selectedParentId);\n    updateSelectionVisual();\n  };\n\n  const clearSelection = () => {\n    selectedItemId = null;\n    selectedParentId = null;\n    selectedElement = null;\n    api.viewport.clearSelection();\n    updateSelectionVisual();\n  };\n\n  // Helper: set child view\n  const setChildView = async (parentId, childId, viewId) => {\n    await api.setChildView(parentId, childId, viewId);\n  };\n\n  // Helper: set root view\n  const setRootView = async (viewId) => {\n    await api.viewport.setRootView(viewId);\n  };\n\n  // Helper: get root view ID (async - reads from viewport item)\n  const getRootView = async () => {\n    return api.viewport.getRootView();\n  };\n\n  // View Settings Modal - shows all three levels of view preferences\n  const showViewSettingsModal = async (itemId, parentId) => {\n    const item = await api.get(itemId);\n    const typeItem = await api.get(item.type);\n    const typeName = typeItem.name || 'item';\n    const views = await api.getViews(item.type);\n    const effectiveView = await api.getEffectiveView(itemId);\n\n    // Get current values at each level\n    const contextualViewId = await api.getContextualView(itemId, parentId);\n    const itemPreferredViewId = item.preferredView || null;\n    const typePreferredViewId = typeItem.preferredView || null;\n\n    // Helper to get view name by ID\n    const getViewName = async (viewId) => {\n      if (!viewId) return 'None';\n      try {\n        const v = await api.get(viewId);\n        return v.content?.displayName || v.name || viewId.slice(0, 8);\n      } catch {\n        return viewId.slice(0, 8) + ' (missing)';\n      }\n    };\n\n    // Create modal overlay\n    const overlay = api.createElement('div', {\n      class: 'view-settings-overlay',\n      style: 'position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 10001;'\n    }, []);\n\n    const modal = api.createElement('div', {\n      class: 'view-settings-modal',\n      style: 'background: var(--bg-primary, white); border: 1px solid var(--border-color, #ddd); border-radius: 8px; width: 420px; max-width: 90vw; box-shadow: 0 4px 20px rgba(0,0,0,0.3);'\n    }, []);\n\n    // Header\n    const itemName = item.name || item.content?.title || item.id.slice(0, 8);\n    const header = api.createElement('div', {\n      style: 'display: flex; justify-content: space-between; align-items: center; padding: 16px 20px; border-bottom: 1px solid var(--border-color, #ddd);'\n    }, []);\n    header.innerHTML = '<h3 style=\"margin: 0; font-size: 16px;\">View Settings for \"' + itemName + '\"</h3>';\n    const closeBtn = api.createElement('button', {\n      style: 'background: none; border: none; font-size: 20px; cursor: pointer; color: #666; padding: 0 4px;',\n      onclick: () => overlay.remove()\n    }, ['\\u00d7']);\n    header.appendChild(closeBtn);\n    modal.appendChild(header);\n\n    // Body\n    const body = api.createElement('div', { style: 'padding: 20px;' }, []);\n\n    // Current effective view\n    const effectiveName = await getViewName(effectiveView?.id);\n    const currentSection = api.createElement('div', { style: 'margin-bottom: 16px; padding: 12px; background: var(--bg-secondary, #f5f5f5); border-radius: 6px;' }, []);\n    currentSection.innerHTML = 'Currently showing: <strong>' + effectiveName + '</strong>';\n    body.appendChild(currentSection);\n\n    // Helper to create a section\n    const createSection = (label, description, currentViewId, onSelect, onClear) => {\n      const section = api.createElement('div', { style: 'margin-bottom: 20px;' }, []);\n      \n      const labelEl = api.createElement('div', { style: 'font-weight: 600; margin-bottom: 4px;' }, [label]);\n      section.appendChild(labelEl);\n      \n      const descEl = api.createElement('div', { style: 'font-size: 13px; color: var(--text-secondary, #666); margin-bottom: 8px;' }, [description]);\n      section.appendChild(descEl);\n      \n      const controlRow = api.createElement('div', { style: 'display: flex; gap: 8px; align-items: center;' }, []);\n      \n      const select = api.createElement('select', { style: 'flex: 1; padding: 6px 8px; border: 1px solid var(--border-color, #ccc); border-radius: 4px;' }, []);\n      \n      // None option\n      const noneOpt = api.createElement('option', { value: '' }, ['None']);\n      if (!currentViewId) noneOpt.selected = true;\n      select.appendChild(noneOpt);\n      \n      // View options - sorted alphabetically\n      const sortedViews = [...views].sort((a, b) => {\n        const nameA = a.view.content?.displayName || a.view.name || a.view.id.slice(0, 8);\n        const nameB = b.view.content?.displayName || b.view.name || b.view.id.slice(0, 8);\n        return nameA.localeCompare(nameB);\n      });\n      for (const { view } of sortedViews) {\n        const opt = api.createElement('option', { value: view.id }, []);\n        opt.textContent = view.content?.displayName || view.name || view.id.slice(0, 8);\n        if (view.id === currentViewId) opt.selected = true;\n        select.appendChild(opt);\n      }\n      \n      select.onchange = () => onSelect(select.value || null);\n      controlRow.appendChild(select);\n      \n      if (currentViewId && onClear) {\n        const clearBtn = api.createElement('button', {\n          style: 'padding: 6px 12px; border: 1px solid var(--border-color, #ccc); border-radius: 4px; background: var(--bg-primary, white); cursor: pointer;',\n          onclick: onClear\n        }, ['Clear']);\n        controlRow.appendChild(clearBtn);\n      }\n      \n      section.appendChild(controlRow);\n      return section;\n    };\n\n    // Helper to create read-only section (for contextual)\n    const createReadOnlySection = (label, description, currentViewId, onClear) => {\n      const section = api.createElement('div', { style: 'margin-bottom: 20px;' }, []);\n      \n      const labelEl = api.createElement('div', { style: 'font-weight: 600; margin-bottom: 4px;' }, [label]);\n      section.appendChild(labelEl);\n      \n      const descEl = api.createElement('div', { style: 'font-size: 13px; color: var(--text-secondary, #666); margin-bottom: 8px;' }, [description]);\n      section.appendChild(descEl);\n      \n      const controlRow = api.createElement('div', { style: 'display: flex; gap: 8px; align-items: center;' }, []);\n      \n      const valueEl = api.createElement('span', { style: 'flex: 1; padding: 6px 8px; background: var(--bg-secondary, #f0f0f0); border-radius: 4px;' }, []);\n      getViewName(currentViewId).then(name => { valueEl.textContent = name; });\n      controlRow.appendChild(valueEl);\n      \n      if (currentViewId && onClear) {\n        const clearBtn = api.createElement('button', {\n          style: 'padding: 6px 12px; border: 1px solid var(--border-color, #ccc); border-radius: 4px; background: var(--bg-primary, white); cursor: pointer;',\n          onclick: onClear\n        }, ['Clear']);\n        controlRow.appendChild(clearBtn);\n      }\n      \n      section.appendChild(controlRow);\n      return section;\n    };\n\n    // Refresh modal after changes\n    const refreshModal = async () => {\n      overlay.remove();\n      await showViewSettingsModal(itemId, parentId);\n    };\n\n    // Section 1: In this context (read-only, set via View As menu)\n    const contextSection = createReadOnlySection(\n      'In this context',\n      'Override for this location only (set via \"View As...\" menu)',\n      contextualViewId,\n      contextualViewId ? async () => {\n        // Clear contextual override\n        if (parentId) {\n          await api.setChildView(parentId, itemId, null);\n          await api.rerenderItem(itemId);\n        } else {\n          await api.viewport.setRootView(null);\n          await api.navigate(api.viewport.getRoot());\n        }\n        await refreshModal();\n      } : null\n    );\n    body.appendChild(contextSection);\n\n    // Divider\n    body.appendChild(api.createElement('hr', { style: 'border: none; border-top: 1px solid var(--border-color, #ddd); margin: 16px 0;' }, []));\n\n    // Section 2: For this item\n    const itemSection = createSection(\n      'For this item',\n      'Default view wherever this item appears',\n      itemPreferredViewId,\n      async (viewId) => {\n        await api.setPreferredView(itemId, viewId);\n        await refreshModal();\n      },\n      itemPreferredViewId ? async () => {\n        await api.setPreferredView(itemId, null);\n        await refreshModal();\n      } : null\n    );\n    body.appendChild(itemSection);\n\n    // Divider\n    body.appendChild(api.createElement('hr', { style: 'border: none; border-top: 1px solid var(--border-color, #ddd); margin: 16px 0;' }, []));\n\n    // Section 3: For all [Type]s\n    const typeDisplayName = typeName.charAt(0).toUpperCase() + typeName.slice(1);\n    const typeSection = createSection(\n      'For all ' + typeDisplayName + 's',\n      'Default view for items of this type',\n      typePreferredViewId,\n      async (viewId) => {\n        await api.setPreferredView(item.type, viewId);\n        await refreshModal();\n      },\n      typePreferredViewId ? async () => {\n        await api.setPreferredView(item.type, null);\n        await refreshModal();\n      } : null\n    );\n    body.appendChild(typeSection);\n\n    // Resolution note\n    const noteEl = api.createElement('div', {\n      style: 'margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border-color, #ddd); font-size: 12px; color: var(--text-secondary, #888); text-align: center;'\n    }, ['Resolution order: context \\u2192 item \\u2192 type \\u2192 system']);\n    body.appendChild(noteEl);\n\n    modal.appendChild(body);\n    overlay.appendChild(modal);\n\n    // Close on overlay click\n    overlay.onclick = (e) => {\n      if (e.target === overlay) overlay.remove();\n    };\n    modal.onclick = (e) => e.stopPropagation();\n\n    // Close on Escape\n    const escHandler = (e) => {\n      if (e.key === 'Escape') {\n        overlay.remove();\n        document.removeEventListener('keydown', escHandler);\n      }\n    };\n    document.addEventListener('keydown', escHandler);\n\n    document.body.appendChild(overlay);\n  };\n\n  const showContextMenu = async (x, y, itemId) => {\n    const menuItem = await api.get(itemId);\n    contextMenu.innerHTML = '';\n    lastContextMenuCoords = { x, y };\n\n    // \"Add Child\" submenu\n    const addChildItem = api.createElement('div', { class: 'context-menu-item context-menu-submenu' }, ['Add Child']);\n    const addChildSubmenu = api.createElement('div', { class: 'context-menu-submenu-items' }, []);\n\n    // Helper to get click coords for spatial layouts\n    const getClickCoords = () => {\n      let clickCoords = null;\n      if (selectedParentId) {\n        const canvas = document.querySelector('[data-parent-id=\"' + selectedParentId + '\"]')?.parentElement;\n        if (canvas) {\n          const rect = canvas.getBoundingClientRect();\n          clickCoords = {\n            x: lastContextMenuCoords.x - rect.left + canvas.scrollLeft,\n            y: lastContextMenuCoords.y - rect.top + canvas.scrollTop\n          };\n        }\n      }\n      return clickCoords;\n    };\n\n    // \"New Item...\" option\n    const newItemOption = api.createElement('div', { class: 'context-menu-item' }, ['New Item...']);\n    newItemOption.onclick = async () => {\n      hideContextMenu();\n      await addChildToItem(itemId, getClickCoords());\n    };\n    addChildSubmenu.appendChild(newItemOption);\n\n    // \"Existing Item...\" option\n    const existingItemOption = api.createElement('div', { class: 'context-menu-item' }, ['Existing Item...']);\n    existingItemOption.onclick = () => {\n      hideContextMenu();\n      showExistingItemPicker(itemId, getClickCoords());\n    };\n    addChildSubmenu.appendChild(existingItemOption);\n\n    addChildItem.appendChild(addChildSubmenu);\n    contextMenu.appendChild(addChildItem);\n\n    // Separator\n    contextMenu.appendChild(api.createElement('div', { class: 'context-menu-separator' }, []));\n\n    // \"Display As...\" submenu\n    const displayAsItem = api.createElement('div', { class: 'context-menu-item context-menu-submenu' }, ['View As...']);\n    const displayAsSubmenu = api.createElement('div', { class: 'context-menu-submenu-items' }, []);\n\n    // Get available views for this type\n    const views = await api.getViews(menuItem.type);\n\n    // Get current view override (for checkmark display)\n    let currentViewId = null;\n    if (selectedParentId) {\n      const parent = await api.get(selectedParentId);\n      const childSpec = parent.children?.find(c => c.id === itemId);\n      currentViewId = childSpec?.view?.type || null;\n    } else {\n      currentViewId = await getRootView();\n    }\n\n    // Get effective view from preferences (fallback if no contextual override)\n    const effectiveView = await api.getEffectiveView(itemId);\n    const effectiveViewId = effectiveView?.id || null;\n\n    // The view to use as background when switching to a wrapper view:\n    // Prefer the explicit contextual override (currentViewId), fall back to effective view\n    const currentlyRenderedViewId = currentViewId || effectiveViewId;\n\n    // Separate normal views from debug views\n    const normalViews = views.filter(v => v.view.content?.category !== 'debug');\n    const debugViews = views.filter(v => v.view.content?.category === 'debug');\n\n    if (normalViews.length === 0) {\n      const noViews = api.createElement('div', { class: 'context-menu-item disabled' }, ['(No views available)']);\n      displayAsSubmenu.appendChild(noViews);\n    } else {\n      // Sort views alphabetically by display name\n      const sortedViews = [...normalViews].sort((a, b) => {\n        const nameA = a.view.content?.displayName || a.view.name || a.view.id.slice(0, 8);\n        const nameB = b.view.content?.displayName || b.view.name || b.view.id.slice(0, 8);\n        return nameA.localeCompare(nameB);\n      });\n\n      for (const { view, forType, inherited } of sortedViews) {\n        const isActive = currentViewId === view.id;\n        let label = view.content?.displayName || view.name || view.id.slice(0, 8);\n        if (isActive) label += ' ✓';\n\n        // Check if active view has submenu items to contribute\n        let viewMenuItems = null;\n        if (isActive) {\n          try {\n            const viewModule = await api.require(view.id);\n            if (viewModule && typeof viewModule.getViewMenuItems === 'function') {\n              viewMenuItems = await viewModule.getViewMenuItems(menuItem, api);\n            }\n          } catch (e) {\n            // View module doesn't export getViewMenuItems or failed to load\n          }\n        }\n\n        if (viewMenuItems && viewMenuItems.length > 0) {\n          // Active view with submenu items - create submenu\n          const viewOption = api.createElement('div', {\n            class: 'context-menu-item context-menu-submenu' + (isActive ? ' selected' : '')\n          }, [label]);\n\n          const viewSubmenu = api.createElement('div', { class: 'context-menu-submenu-items' }, []);\n\n          for (const menuItemDef of viewMenuItems) {\n            const subItem = api.createElement('div', {\n              class: 'context-menu-item' + (menuItemDef.checked ? ' selected' : '')\n            }, [menuItemDef.label]);\n\n            subItem.onclick = async () => {\n              hideContextMenu();\n              if (menuItemDef.onClick) {\n                await menuItemDef.onClick();\n              }\n            };\n            viewSubmenu.appendChild(subItem);\n          }\n\n          viewOption.appendChild(viewSubmenu);\n          displayAsSubmenu.appendChild(viewOption);\n        } else {\n          // Normal view option - click to switch\n          const viewOption = api.createElement('div', {\n            class: 'context-menu-item' + (isActive ? ' selected' : '')\n          }, []);\n\n          viewOption.textContent = label;\n\n          viewOption.onclick = async () => {\n            hideContextMenu();\n            if (selectedParentId) {\n              // For nested items, update the child's view config in parent's children array\n              // This sets both the view type AND innerView for wrapper views in one atomic operation\n              const parent = await api.get(selectedParentId);\n              const childIndex = parent.children.findIndex(c => c.id === itemId);\n              if (childIndex >= 0) {\n                const currentChild = parent.children[childIndex];\n                const currentView = currentChild.view || {};\n\n                // Build new view config\n                const newView = {\n                  ...currentView,\n                  type: view.id,\n                  // Set innerView to current view for wrapper views (like spatial-canvas)\n                  innerView: currentlyRenderedViewId ? { type: currentlyRenderedViewId } : undefined\n                };\n\n                // Store previous view for restore functionality\n                parent.children[childIndex] = {\n                  ...currentChild,\n                  previousView: currentView.type ? { ...currentView } : null,\n                  view: newView\n                };\n                parent.modified = Date.now();\n                await api.set(parent);\n              }\n              await api.rerenderItem(itemId);\n            } else {\n              // For root items, update viewport-manager's root view config\n              // Set both view type AND innerView for wrapper views in one operation\n              await api.viewport.updateRootViewConfig({\n                type: view.id,\n                innerView: currentlyRenderedViewId ? { type: currentlyRenderedViewId } : undefined\n              });\n              await api.rerenderItem(itemId);\n            }\n          };\n          displayAsSubmenu.appendChild(viewOption);\n        }\n      }\n    }\n\n    displayAsItem.appendChild(displayAsSubmenu);\n    contextMenu.appendChild(displayAsItem);\n\n    // \"View Settings...\" option - opens modal for item/type preferences\n    const viewSettingsItem = api.createElement('div', { class: 'context-menu-item' }, ['View Settings...']);\n    viewSettingsItem.onclick = async () => {\n      hideContextMenu();\n      await showViewSettingsModal(itemId, selectedParentId);\n    };\n    contextMenu.appendChild(viewSettingsItem);\n\n    // Separator\n    contextMenu.appendChild(api.createElement('div', { class: 'context-menu-separator' }, []));\n\n    // Copy ID\n    const copyIdItem = api.createElement('div', { class: 'context-menu-item' }, ['Copy ID']);\n    copyIdItem.onclick = async () => {\n      hideContextMenu();\n      await navigator.clipboard.writeText(itemId);\n      console.log('Copied ID:', itemId);\n    };\n    contextMenu.appendChild(copyIdItem);\n\n    // Make Root\n    const makeRootItem = api.createElement('div', { class: 'context-menu-item' }, ['Make Root']);\n    makeRootItem.onclick = async () => {\n      hideContextMenu();\n      // Preserve the current view config when making this item the root\n      let viewConfig = null;\n      if (selectedParentId) {\n        // Get the view config from the parent's children array\n        const parent = await api.get(selectedParentId);\n        const childSpec = parent.children?.find(c => c.id === itemId);\n        viewConfig = childSpec?.view || null;\n      }\n      await api.navigate(itemId);\n      // Set the preserved view config as the root view config\n      if (viewConfig) {\n        // Set view type if present\n        if (viewConfig.type) {\n          await setRootView(viewConfig.type);\n        }\n        // Set other view config properties (bannerPosition, etc.)\n        const { type, ...otherConfig } = viewConfig;\n        if (Object.keys(otherConfig).length > 0 && api.viewport.updateRootViewConfig) {\n          await api.viewport.updateRootViewConfig(otherConfig);\n        }\n        await window.kernel.renderViewport();  // Re-render with the view config\n      }\n    };\n    contextMenu.appendChild(makeRootItem);\n\n    // Export as JSON\n    const exportItem = api.createElement('div', { class: 'context-menu-item' }, ['Export as JSON']);\n    exportItem.onclick = async () => {\n      hideContextMenu();\n      const itemData = await api.get(itemId);\n      const json = JSON.stringify(itemData, null, 2);\n      const blob = new Blob([json], { type: 'application/json' });\n      const url = URL.createObjectURL(blob);\n      const a = document.createElement('a');\n      a.href = url;\n      a.download = (itemData.name || itemData.content?.title || itemId.slice(0, 8)) + '.json';\n      document.body.appendChild(a);\n      a.click();\n      document.body.removeChild(a);\n      URL.revokeObjectURL(url);\n    };\n    contextMenu.appendChild(exportItem);\n\n    // Delete\n    contextMenu.appendChild(api.createElement('div', { class: 'context-menu-separator' }, []));\n    const deleteItem = api.createElement('div', { class: 'context-menu-item', style: 'color: var(--color-danger);' }, ['Delete']);\n    deleteItem.onclick = async () => {\n      hideContextMenu();\n      const itemData = await api.get(itemId);\n      const itemLabel = itemData.name || itemData.content?.title || itemId.slice(0, 8);\n\n      if (confirm('Delete \"' + itemLabel + '\"? This cannot be undone.')) {\n        await api.delete(itemId);\n        if (itemId === rootId) {\n          const WORKSPACE_ID = '00000000-0000-0000-0000-000000000006';\n          await api.navigate(WORKSPACE_ID);\n        } else {\n          await api.navigate(rootId);\n        }\n      }\n    };\n    contextMenu.appendChild(deleteItem);\n\n    // Debug submenu (at the bottom, after Delete)\n    contextMenu.appendChild(api.createElement('div', { class: 'context-menu-separator' }, []));\n    const debugItem = api.createElement('div', { class: 'context-menu-item context-menu-submenu' }, ['Debug']);\n    const debugSubmenu = api.createElement('div', { class: 'context-menu-submenu-items' }, []);\n\n    // Debug views (Raw JSON, etc.)\n    if (debugViews.length > 0) {\n      const sortedDebugViews = [...debugViews].sort((a, b) => {\n        const nameA = a.view.content?.displayName || a.view.name || a.view.id.slice(0, 8);\n        const nameB = b.view.content?.displayName || b.view.name || b.view.id.slice(0, 8);\n        return nameA.localeCompare(nameB);\n      });\n\n      for (const { view } of sortedDebugViews) {\n        const isActive = currentViewId === view.id;\n        const viewOption = api.createElement('div', {\n          class: 'context-menu-item' + (isActive ? ' selected' : '')\n        }, []);\n\n        let label = view.content?.displayName || view.name || view.id.slice(0, 8);\n        if (isActive) label += ' \\u2713';\n        viewOption.textContent = label;\n\n        viewOption.onclick = async () => {\n          hideContextMenu();\n          if (selectedParentId) {\n            await setChildView(selectedParentId, itemId, view.id);\n            await api.rerenderItem(itemId);\n          } else {\n            await setRootView(view.id);\n            await api.navigate(api.viewport.getRoot());\n          }\n        };\n        debugSubmenu.appendChild(viewOption);\n      }\n\n      // Separator between debug views and debug options\n      debugSubmenu.appendChild(api.createElement('div', { class: 'context-menu-separator' }, []));\n    }\n\n    // Enable Debug Mode option\n    const isDebugMode = window.kernel?.debugMode || false;\n    const debugModeOption = api.createElement('div', {\n      class: 'context-menu-item' + (isDebugMode ? ' selected' : '')\n    }, [isDebugMode ? 'Debug Mode \\u2713' : 'Enable Debug Mode']);\n    debugModeOption.onclick = async () => {\n      hideContextMenu();\n      const kernel = window.kernel;\n      if (!kernel) return;\n\n      kernel.debugMode = !kernel.debugMode;\n\n      if (kernel.debugMode) {\n        // Activate element inspector if not already active\n        if (!kernel._elementInspector) {\n          try {\n            const inspectorModule = await kernel.moduleSystem.require('element-inspector');\n            const replApi = kernel.createREPLAPI();\n            kernel._elementInspector = inspectorModule.activate(replApi);\n          } catch (e) {\n            console.warn('Could not load element-inspector:', e.message);\n          }\n        }\n        // Re-render to apply debug attributes to elements\n        await api.navigate(api.viewport.getRoot());\n      } else {\n        // Deactivate element inspector\n        if (kernel._elementInspector) {\n          try {\n            const inspectorModule = await kernel.moduleSystem.require('element-inspector');\n            inspectorModule.deactivate();\n            kernel._elementInspector = null;\n          } catch (e) {\n            console.warn('Could not deactivate element-inspector:', e.message);\n          }\n        }\n        // Re-render to remove debug attributes\n        await api.navigate(api.viewport.getRoot());\n      }\n    };\n    debugSubmenu.appendChild(debugModeOption);\n\n    // Toggle Inspector option (only when debug mode is active)\n    if (isDebugMode && window.kernel?._elementInspector) {\n      const inspectorActive = window.kernel._elementInspector.isActive();\n      const inspectorOption = api.createElement('div', {\n        class: 'context-menu-item' + (inspectorActive ? ' selected' : '')\n      }, [inspectorActive ? 'Inspector Mode \\u2713' : 'Toggle Inspector (Ctrl+Shift+.)']);\n      inspectorOption.onclick = () => {\n        hideContextMenu();\n        window.kernel._elementInspector.toggle();\n      };\n      debugSubmenu.appendChild(inspectorOption);\n    }\n\n    debugItem.appendChild(debugSubmenu);\n    contextMenu.appendChild(debugItem);\n\n    // Position menu\n    const menuWidth = 180, menuHeight = 400, submenuWidth = 160;\n    let menuX = x, menuY = y;\n    if (x + menuWidth > window.innerWidth) menuX = window.innerWidth - menuWidth - 10;\n    if (y + menuHeight > window.innerHeight) menuY = window.innerHeight - menuHeight - 10;\n    contextMenu.style.left = menuX + 'px';\n    contextMenu.style.top = menuY + 'px';\n    contextMenu.style.display = 'block';\n    \n    // Flip submenus to left if near right edge\n    if (menuX + menuWidth + submenuWidth > window.innerWidth) {\n      contextMenu.classList.add('submenu-left');\n    } else {\n      contextMenu.classList.remove('submenu-left');\n    }\n  };\n\n  const findItemElement = (target) => {\n    let element = target.closest('[data-parent-id][data-item-id]');\n    if (!element) element = target.closest('[data-item-id]');\n    return element;\n  };\n\n  container.addEventListener('click', (e) => {\n    hideContextMenu();\n    const itemElement = findItemElement(e.target);\n    if (itemElement) {\n      selectItem(itemElement.getAttribute('data-item-id'), itemElement);\n      e.stopPropagation();\n    } else {\n      clearSelection();\n    }\n  });\n\n  container.addEventListener('contextmenu', (e) => {\n    // Let browser menu through if modifier key held\n    if (e.shiftKey) {\n      return; // Don't preventDefault, let browser handle it\n    }\n    e.preventDefault();\n    const itemElement = findItemElement(e.target);\n    if (itemElement) {\n      const itemId = itemElement.getAttribute('data-item-id');\n      selectItem(itemId, itemElement);\n      showContextMenu(e.clientX, e.clientY, itemId);\n    } else {\n      // Clicked on background - show background context menu\n      clearSelection();\n      showEmptyContextMenu(e.clientX, e.clientY);\n    }\n  });\n\n  // Keyboard shortcuts\n  const handleKeydown = (e) => {\n    // Cmd+K or Ctrl+K: Open item list\n    if ((e.metaKey || e.ctrlKey) && e.key === 'k') {\n      e.preventDefault();\n      api.showItemList();\n      return;\n    }\n    \n    // Escape: Hide context menu or clear selection\n    if (e.key === 'Escape') {\n      if (contextMenu.style.display !== 'none') hideContextMenu();\n      else clearSelection();\n    }\n  };\n\n  container.addEventListener('keydown', handleKeydown);\n  \n  // Also listen at document level for Cmd+K (so it works even when container not focused)\n  const globalKeyHandler = (e) => {\n    if ((e.metaKey || e.ctrlKey) && e.key === 'k') {\n      e.preventDefault();\n      api.showItemList();\n    }\n  };\n  document.addEventListener('keydown', globalKeyHandler);\n  \n  // Clean up global listener when container is removed\n  const observer = new MutationObserver((mutations) => {\n    for (const mutation of mutations) {\n      for (const node of mutation.removedNodes) {\n        if (node === container || node.contains?.(container)) {\n          document.removeEventListener('keydown', globalKeyHandler);\n          contextMenu.remove();\n          observer.disconnect();\n          return;\n        }\n      }\n    }\n  });\n  observer.observe(document.body, { childList: true, subtree: true });\n\n  container.setAttribute('tabindex', '0');\n  return container;\n}\n"
+    "code": "// Item: system:viewport-view\n// ID: bd74da77-a459-454a-b001-48685d4b536d\n// Type: aaaaaaaa-0000-0000-0000-000000000000\n\n\nexport async function render(item, api) {\n  // Load dependencies\n  // Note: Libraries under active development should be required where used, not here.\n  // See docs/Hot-Reloading Libraries.md for the pattern.\n  const cssLoader = await api.require('css-loader-lib');\n  await cssLoader.loadCSS('context-menu-css', api);\n  const searchLib = await api.require('item-search-lib');\n\n  // Determine root: URL takes precedence over viewport item\n  // This allows direct linking and avoids flash on initial load\n  const urlParams = new URLSearchParams(window.location.search);\n  const urlRoot = urlParams.get('root');\n  \n  // The viewport item stores rootId in children[0]\n  const storedSpec = item.children?.[0];\n  const storedRootId = storedSpec?.id || storedSpec;\n  \n  // Use URL root if present and valid, otherwise use stored root\n  let rootId = storedRootId;\n  let rootSpec = storedSpec;\n  \n  if (urlRoot && urlRoot !== storedRootId) {\n    // URL has different root - verify it exists\n    try {\n      await api.get(urlRoot);\n      rootId = urlRoot;\n      rootSpec = { id: urlRoot };  // No view config from URL\n      \n      // Update viewport item to match URL (for consistency on next render)\n      // Do this silently via api.set to avoid re-render loop\n      const updatedViewport = { ...item, children: [{ id: urlRoot }], modified: Date.now() };\n      await api.set(updatedViewport);\n    } catch {\n      // URL root doesn't exist - fall back to stored root\n      console.warn('[viewport-view] URL root not found:', urlRoot);\n    }\n  }\n  \n  // Read view type from new schema (view.type) or fall back to old flat format\n  const rootViewId = rootSpec?.view?.type || rootSpec?.view || rootSpec?.renderer || null;\n\n  // Update browser tab title\n  const updateBrowserTitle = async (itemId) => {\n    if (!itemId) {\n      document.title = 'Hobson';\n      return;\n    }\n    const rootItem = await api.get(itemId);\n    const itemName = rootItem?.content?.title || rootItem?.name || itemId.slice(0, 8);\n    document.title = itemName + ' - Hobson';\n  };\n  await updateBrowserTitle(rootId);\n\n  // Create main container\n  const container = api.createElement('div', {\n    class: 'viewport-container',\n    style: 'display: flex; flex-direction: column; height: 100%; position: relative;'\n  }, []);\n\n  // Helper: Add child item to a parent\n  // parentId: the item to add a child to\n  // clickCoords: {x, y} if adding from a spatial context, null otherwise\n  const addChildToItem = async (parentId, clickCoords) => {\n    // Re-require to pick up any edits (see docs/Hot-Reloading Libraries.md)\n    const typePicker = await api.require('type-picker-lib');\n    const selectedType = await typePicker.showTypePicker(api);\n    if (!selectedType) return;\n\n    const newItem = {\n      id: crypto.randomUUID(),\n      name: new Date().toISOString(),\n      type: selectedType,\n      created: Date.now(),\n      modified: Date.now(),\n      children: [],\n      content: {}\n    };\n\n    await api.set(newItem);\n\n    // Get parent and determine if it's being rendered spatially\n    const parent = await api.get(parentId);\n    const children = parent.children || [];\n    \n    // Check if parent is rendered spatially by looking at existing children\n    // If children have position data (view.x, view.y), it's spatial\n    const isSpatial = children.length > 0 \n      ? children.some(c => c.view?.x !== undefined || c.view?.y !== undefined)\n      : false;\n\n    if (isSpatial || clickCoords) {\n      // Spatial: add with position in view object\n      const maxZ = children.length > 0 ? Math.max(...children.map(c => c.view?.z || 1000)) : 999;\n      const x = clickCoords?.x || 50;\n      const y = clickCoords?.y || 50;\n      \n      children.push({\n        id: newItem.id,\n        view: {\n          x: x,\n          y: y,\n          width: 400,\n          height: 300,\n          z: maxZ + 1\n        }\n      });\n    } else {\n      // Non-spatial: just add the ID reference\n      children.push({ id: newItem.id });\n    }\n\n    parent.children = children;\n    parent.modified = Date.now();\n    await api.update(parent);\n    api.viewport.select(newItem.id, parentId);\n\n    // Scroll new item into view after DOM updates\n    setTimeout(() => {\n      const el = document.querySelector(`[data-item-id=\"${newItem.id}\"]`);\n      el?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });\n    }, 0);\n  };\n\n  // Helper: Add existing item as child to a parent\n  const addExistingChildToItem = async (parentId, childId, clickCoords) => {\n    const parent = await api.get(parentId);\n    const children = parent.children || [];\n\n    // Check if already a child\n    if (children.some(c => c.id === childId)) {\n      alert('This item is already a child.');\n      return;\n    }\n\n    // Check if parent is rendered spatially\n    const isSpatial = children.length > 0\n      ? children.some(c => c.view?.x !== undefined || c.view?.y !== undefined)\n      : false;\n\n    if (isSpatial || clickCoords) {\n      const maxZ = children.length > 0 ? Math.max(...children.map(c => c.view?.z || 1000)) : 999;\n      const x = clickCoords?.x || 50;\n      const y = clickCoords?.y || 50;\n\n      children.push({\n        id: childId,\n        view: {\n          x: x,\n          y: y,\n          width: 400,\n          height: 300,\n          z: maxZ + 1\n        }\n      });\n    } else {\n      children.push({ id: childId });\n    }\n\n    parent.children = children;\n    parent.modified = Date.now();\n    await api.update(parent);\n    api.viewport.select(childId, parentId);\n\n    // Scroll new item into view after DOM updates\n    setTimeout(() => {\n      const el = document.querySelector(`[data-item-id=\"${childId}\"]`);\n      el?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });\n    }, 0);\n  };\n\n  // Helper: Show item picker modal for adding existing item\n  const showExistingItemPicker = (parentId, clickCoords) => {\n    const overlay = api.createElement('div', {\n      style: 'position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 10000;'\n    }, []);\n\n    const modal = api.createElement('div', {\n      style: 'background: var(--color-bg-surface); border-radius: 8px; width: 90%; max-width: 600px; max-height: 80vh; display: flex; flex-direction: column; box-shadow: var(--shadow-md);'\n    }, []);\n\n    const modalHeader = api.createElement('div', {\n      style: 'display: flex; justify-content: space-between; align-items: center; padding: 20px; border-bottom: 1px solid var(--color-border-light);'\n    }, []);\n\n    const modalTitle = api.createElement('h3', { style: 'margin: 0;' }, ['Add Existing Item']);\n\n    const closeBtn = api.createElement('button', {\n      style: 'padding: 4px 10px; cursor: pointer; background: transparent; border: none; font-size: 24px; color: var(--color-text-secondary);',\n      onclick: () => document.body.removeChild(overlay)\n    }, ['\\u00d7']);\n\n    modalHeader.appendChild(modalTitle);\n    modalHeader.appendChild(closeBtn);\n    modal.appendChild(modalHeader);\n\n    const searchContainer = api.createElement('div', {\n      style: 'padding: 20px; flex: 1; overflow: auto;'\n    }, []);\n    modal.appendChild(searchContainer);\n\n    overlay.appendChild(modal);\n    document.body.appendChild(overlay);\n\n    searchLib.createSearchUI(\n      searchContainer,\n      async (selectedItem) => {\n        document.body.removeChild(overlay);\n        await addExistingChildToItem(parentId, selectedItem.id, clickCoords);\n      },\n      api,\n      { placeholder: 'Search for items to add...', autoFocus: true }\n    );\n\n    overlay.onclick = (e) => {\n      if (e.target === overlay) document.body.removeChild(overlay);\n    };\n    modal.onclick = (e) => e.stopPropagation();\n  };\n\n  // Context menu for empty/background state\n  // Append to document.body so it's always above windows (which can have high z-indices)\n  const contextMenu = api.createElement('div', {\n    id: 'context-menu',\n    class: 'context-menu',\n    style: 'display: none;'\n  }, []);\n  document.body.appendChild(contextMenu);\n\n  const hideContextMenu = () => {\n    contextMenu.style.display = 'none';\n    contextMenu.innerHTML = '';\n  };\n\n  const showEmptyContextMenu = (x, y) => {\n    contextMenu.innerHTML = '';\n\n    // Search Items\n    const searchItem = api.createElement('div', { class: 'context-menu-item' }, ['Search Items (Cmd+K)']);\n    searchItem.onclick = () => {\n      hideContextMenu();\n      api.showItemList();\n    };\n    contextMenu.appendChild(searchItem);\n\n    // Open REPL\n    const replItem = api.createElement('div', { class: 'context-menu-item' }, ['Open REPL (Esc)']);\n    replItem.onclick = async () => {\n      hideContextMenu();\n      try {\n        const replUi = await api.require('repl-ui');\n        await replUi.toggle();\n      } catch {\n        // Fallback to kernel if repl-ui not available\n        await window.kernel?.repl?.toggle();\n      }\n    };\n    contextMenu.appendChild(replItem);\n\n    // Position menu\n    const menuWidth = 180, menuHeight = 100;\n    let menuX = x, menuY = y;\n    if (x + menuWidth > window.innerWidth) menuX = window.innerWidth - menuWidth - 10;\n    if (y + menuHeight > window.innerHeight) menuY = window.innerHeight - menuHeight - 10;\n    contextMenu.style.left = menuX + 'px';\n    contextMenu.style.top = menuY + 'px';\n    contextMenu.style.display = 'block';\n  };\n\n  // If no root, show empty state\n  if (!rootId) {\n    const empty = api.createElement('div', {\n      style: 'padding: 40px; text-align: center; color: var(--color-text-secondary); flex: 1;'\n    }, []);\n    empty.innerHTML = 'No item selected.<br><br><span style=\"font-size: 14px;\">Cmd+K - Search items<br>Esc - Open REPL<br>Right-click - Context menu</span>';\n    container.appendChild(empty);\n\n    // Handle right-click on empty state\n    container.addEventListener('contextmenu', (e) => {\n      if (e.shiftKey) return;\n      e.preventDefault();\n      showEmptyContextMenu(e.clientX, e.clientY);\n    });\n\n    container.addEventListener('click', () => hideContextMenu());\n\n    // Keyboard shortcuts for empty state\n    const globalKeyHandler = (e) => {\n      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {\n        e.preventDefault();\n        api.showItemList();\n      }\n    };\n    document.addEventListener('keydown', globalKeyHandler);\n\n    const observer = new MutationObserver((mutations) => {\n      for (const mutation of mutations) {\n        for (const node of mutation.removedNodes) {\n          if (node === container || node.contains?.(container)) {\n            document.removeEventListener('keydown', globalKeyHandler);\n            contextMenu.remove();\n            observer.disconnect();\n            return;\n          }\n        }\n      }\n    });\n    observer.observe(document.body, { childList: true, subtree: true });\n\n    return container;\n  }\n\n  // Decorator for rendered items - adds data-item-id and tooltip\n  // This is viewport-specific; users can customize by modifying this function\n  const itemDecorator = async (dom, itemId, item) => {\n    dom.setAttribute('data-item-id', itemId);\n    \n    // Add tooltip with item name, type, and tags\n    const itemName = item.name || item.content?.title || itemId.slice(0, 8);\n    let typeName = item.type.slice(0, 8);\n    try {\n      const typeItem = await api.get(item.type);\n      typeName = typeItem.name || typeName;\n    } catch {}\n    \n    let titleText = itemName + ' (' + typeName + ')';\n    \n    // Add tags to tooltip if present\n    if (item.tags?.length) {\n      const tagNames = await Promise.all(item.tags.map(async tagId => {\n        try {\n          const tag = await api.get(tagId);\n          return tag.content?.name || tag.name || tagId.slice(0, 8);\n        } catch {\n          return tagId.slice(0, 8);\n        }\n      }));\n      titleText += '\\nTags: ' + tagNames.join(', ');\n    }\n    \n    dom.setAttribute('title', titleText);\n  };\n\n  // Render the root item with decorator for viewport integration\n  // Pass the full view config object so the renderer can access and update its view state\n  let rootNode;\n  try {\n    rootNode = await api.renderItem(rootId, rootSpec?.view || null, { decorator: itemDecorator });\n  } catch (error) {\n    rootNode = api.createElement('div', {\n      style: 'padding: 20px; color: var(--color-danger); background: var(--color-danger-light); border: 1px solid var(--color-danger); border-radius: var(--border-radius);'\n    }, ['Error rendering item: ' + error.message]);\n  }\n\n  const contentArea = api.createElement('div', {\n    'data-item-id': rootId,\n    class: 'viewport-content',\n    style: 'flex: 1; overflow: auto; display: flex; flex-direction: column; min-height: 0;'\n  }, [rootNode]);\n\n  container.appendChild(contentArea);\n\n  let selectedItemId = null;\n  let selectedParentId = null;\n  let selectedElement = null;\n  let lastContextMenuCoords = { x: 0, y: 0 };\n\n  const updateSelectionVisual = () => {\n    container.querySelectorAll('[data-item-id].item-selected').forEach(el => el.classList.remove('item-selected'));\n    if (selectedElement) {\n      selectedElement.classList.add('item-selected');\n    }\n  };\n\n  const selectItem = (itemId, itemElement) => {\n    selectedItemId = itemId;\n    selectedParentId = itemElement?.getAttribute('data-parent-id') || null;\n    selectedElement = itemElement;\n    api.viewport.select(itemId, selectedParentId);\n    updateSelectionVisual();\n  };\n\n  const clearSelection = () => {\n    selectedItemId = null;\n    selectedParentId = null;\n    selectedElement = null;\n    api.viewport.clearSelection();\n    updateSelectionVisual();\n  };\n\n  // Helper: set child view\n  const setChildView = async (parentId, childId, viewId) => {\n    await api.setChildView(parentId, childId, viewId);\n  };\n\n  // Helper: set root view\n  const setRootView = async (viewId) => {\n    await api.viewport.setRootView(viewId);\n  };\n\n  // Helper: get root view ID (async - reads from viewport item)\n  const getRootView = async () => {\n    return api.viewport.getRootView();\n  };\n\n  // View Settings Modal - shows all three levels of view preferences\n  const showViewSettingsModal = async (itemId, parentId) => {\n    const item = await api.get(itemId);\n    const typeItem = await api.get(item.type);\n    const typeName = typeItem.name || 'item';\n    const views = await api.getViews(item.type);\n    const effectiveView = await api.getEffectiveView(itemId);\n\n    // Get current values at each level\n    const contextualViewId = await api.getContextualView(itemId, parentId);\n    const itemPreferredViewId = item.preferredView || null;\n    const typePreferredViewId = typeItem.preferredView || null;\n\n    // Helper to get view name by ID\n    const getViewName = async (viewId) => {\n      if (!viewId) return 'None';\n      try {\n        const v = await api.get(viewId);\n        return v.content?.displayName || v.name || viewId.slice(0, 8);\n      } catch {\n        return viewId.slice(0, 8) + ' (missing)';\n      }\n    };\n\n    // Create modal overlay\n    const overlay = api.createElement('div', {\n      class: 'view-settings-overlay',\n      style: 'position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 10001;'\n    }, []);\n\n    const modal = api.createElement('div', {\n      class: 'view-settings-modal',\n      style: 'background: var(--bg-primary, white); border: 1px solid var(--border-color, #ddd); border-radius: 8px; width: 420px; max-width: 90vw; box-shadow: 0 4px 20px rgba(0,0,0,0.3);'\n    }, []);\n\n    // Header\n    const itemName = item.name || item.content?.title || item.id.slice(0, 8);\n    const header = api.createElement('div', {\n      style: 'display: flex; justify-content: space-between; align-items: center; padding: 16px 20px; border-bottom: 1px solid var(--border-color, #ddd);'\n    }, []);\n    header.innerHTML = '<h3 style=\"margin: 0; font-size: 16px;\">View Settings for \"' + itemName + '\"</h3>';\n    const closeBtn = api.createElement('button', {\n      style: 'background: none; border: none; font-size: 20px; cursor: pointer; color: #666; padding: 0 4px;',\n      onclick: () => overlay.remove()\n    }, ['\\u00d7']);\n    header.appendChild(closeBtn);\n    modal.appendChild(header);\n\n    // Body\n    const body = api.createElement('div', { style: 'padding: 20px;' }, []);\n\n    // Current effective view\n    const effectiveName = await getViewName(effectiveView?.id);\n    const currentSection = api.createElement('div', { style: 'margin-bottom: 16px; padding: 12px; background: var(--bg-secondary, #f5f5f5); border-radius: 6px;' }, []);\n    currentSection.innerHTML = 'Currently showing: <strong>' + effectiveName + '</strong>';\n    body.appendChild(currentSection);\n\n    // Helper to create a section\n    const createSection = (label, description, currentViewId, onSelect, onClear) => {\n      const section = api.createElement('div', { style: 'margin-bottom: 20px;' }, []);\n      \n      const labelEl = api.createElement('div', { style: 'font-weight: 600; margin-bottom: 4px;' }, [label]);\n      section.appendChild(labelEl);\n      \n      const descEl = api.createElement('div', { style: 'font-size: 13px; color: var(--text-secondary, #666); margin-bottom: 8px;' }, [description]);\n      section.appendChild(descEl);\n      \n      const controlRow = api.createElement('div', { style: 'display: flex; gap: 8px; align-items: center;' }, []);\n      \n      const select = api.createElement('select', { style: 'flex: 1; padding: 6px 8px; border: 1px solid var(--border-color, #ccc); border-radius: 4px;' }, []);\n      \n      // None option\n      const noneOpt = api.createElement('option', { value: '' }, ['None']);\n      if (!currentViewId) noneOpt.selected = true;\n      select.appendChild(noneOpt);\n      \n      // View options - sorted alphabetically\n      const sortedViews = [...views].sort((a, b) => {\n        const nameA = a.view.content?.displayName || a.view.name || a.view.id.slice(0, 8);\n        const nameB = b.view.content?.displayName || b.view.name || b.view.id.slice(0, 8);\n        return nameA.localeCompare(nameB);\n      });\n      for (const { view } of sortedViews) {\n        const opt = api.createElement('option', { value: view.id }, []);\n        opt.textContent = view.content?.displayName || view.name || view.id.slice(0, 8);\n        if (view.id === currentViewId) opt.selected = true;\n        select.appendChild(opt);\n      }\n      \n      select.onchange = () => onSelect(select.value || null);\n      controlRow.appendChild(select);\n      \n      if (currentViewId && onClear) {\n        const clearBtn = api.createElement('button', {\n          style: 'padding: 6px 12px; border: 1px solid var(--border-color, #ccc); border-radius: 4px; background: var(--bg-primary, white); cursor: pointer;',\n          onclick: onClear\n        }, ['Clear']);\n        controlRow.appendChild(clearBtn);\n      }\n      \n      section.appendChild(controlRow);\n      return section;\n    };\n\n    // Helper to create read-only section (for contextual)\n    const createReadOnlySection = (label, description, currentViewId, onClear) => {\n      const section = api.createElement('div', { style: 'margin-bottom: 20px;' }, []);\n      \n      const labelEl = api.createElement('div', { style: 'font-weight: 600; margin-bottom: 4px;' }, [label]);\n      section.appendChild(labelEl);\n      \n      const descEl = api.createElement('div', { style: 'font-size: 13px; color: var(--text-secondary, #666); margin-bottom: 8px;' }, [description]);\n      section.appendChild(descEl);\n      \n      const controlRow = api.createElement('div', { style: 'display: flex; gap: 8px; align-items: center;' }, []);\n      \n      const valueEl = api.createElement('span', { style: 'flex: 1; padding: 6px 8px; background: var(--bg-secondary, #f0f0f0); border-radius: 4px;' }, []);\n      getViewName(currentViewId).then(name => { valueEl.textContent = name; });\n      controlRow.appendChild(valueEl);\n      \n      if (currentViewId && onClear) {\n        const clearBtn = api.createElement('button', {\n          style: 'padding: 6px 12px; border: 1px solid var(--border-color, #ccc); border-radius: 4px; background: var(--bg-primary, white); cursor: pointer;',\n          onclick: onClear\n        }, ['Clear']);\n        controlRow.appendChild(clearBtn);\n      }\n      \n      section.appendChild(controlRow);\n      return section;\n    };\n\n    // Refresh modal after changes\n    const refreshModal = async () => {\n      overlay.remove();\n      await showViewSettingsModal(itemId, parentId);\n    };\n\n    // Section 1: In this context (read-only, set via View As menu)\n    const contextSection = createReadOnlySection(\n      'In this context',\n      'Override for this location only (set via \"View As...\" menu)',\n      contextualViewId,\n      contextualViewId ? async () => {\n        // Clear contextual override\n        if (parentId) {\n          await api.setChildView(parentId, itemId, null);\n          await api.rerenderItem(itemId);\n        } else {\n          await api.viewport.setRootView(null);\n          await api.navigate(api.viewport.getRoot());\n        }\n        await refreshModal();\n      } : null\n    );\n    body.appendChild(contextSection);\n\n    // Divider\n    body.appendChild(api.createElement('hr', { style: 'border: none; border-top: 1px solid var(--border-color, #ddd); margin: 16px 0;' }, []));\n\n    // Section 2: For this item\n    const itemSection = createSection(\n      'For this item',\n      'Default view wherever this item appears',\n      itemPreferredViewId,\n      async (viewId) => {\n        await api.setPreferredView(itemId, viewId);\n        await refreshModal();\n      },\n      itemPreferredViewId ? async () => {\n        await api.setPreferredView(itemId, null);\n        await refreshModal();\n      } : null\n    );\n    body.appendChild(itemSection);\n\n    // Divider\n    body.appendChild(api.createElement('hr', { style: 'border: none; border-top: 1px solid var(--border-color, #ddd); margin: 16px 0;' }, []));\n\n    // Section 3: For all [Type]s\n    const typeDisplayName = typeName.charAt(0).toUpperCase() + typeName.slice(1);\n    const typeSection = createSection(\n      'For all ' + typeDisplayName + 's',\n      'Default view for items of this type',\n      typePreferredViewId,\n      async (viewId) => {\n        await api.setPreferredView(item.type, viewId);\n        await refreshModal();\n      },\n      typePreferredViewId ? async () => {\n        await api.setPreferredView(item.type, null);\n        await refreshModal();\n      } : null\n    );\n    body.appendChild(typeSection);\n\n    // Resolution note\n    const noteEl = api.createElement('div', {\n      style: 'margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border-color, #ddd); font-size: 12px; color: var(--text-secondary, #888); text-align: center;'\n    }, ['Resolution order: context \\u2192 item \\u2192 type \\u2192 system']);\n    body.appendChild(noteEl);\n\n    modal.appendChild(body);\n    overlay.appendChild(modal);\n\n    // Close on overlay click\n    overlay.onclick = (e) => {\n      if (e.target === overlay) overlay.remove();\n    };\n    modal.onclick = (e) => e.stopPropagation();\n\n    // Close on Escape\n    const escHandler = (e) => {\n      if (e.key === 'Escape') {\n        overlay.remove();\n        document.removeEventListener('keydown', escHandler);\n      }\n    };\n    document.addEventListener('keydown', escHandler);\n\n    document.body.appendChild(overlay);\n  };\n\n  const showContextMenu = async (x, y, itemId) => {\n    const menuItem = await api.get(itemId);\n    contextMenu.innerHTML = '';\n    lastContextMenuCoords = { x, y };\n\n    // \"Add Child\" submenu\n    const addChildItem = api.createElement('div', { class: 'context-menu-item context-menu-submenu' }, ['Add Child']);\n    const addChildSubmenu = api.createElement('div', { class: 'context-menu-submenu-items' }, []);\n\n    // Helper to get click coords for spatial layouts\n    const getClickCoords = () => {\n      let clickCoords = null;\n      if (selectedParentId) {\n        const canvas = document.querySelector('[data-parent-id=\"' + selectedParentId + '\"]')?.parentElement;\n        if (canvas) {\n          const rect = canvas.getBoundingClientRect();\n          clickCoords = {\n            x: lastContextMenuCoords.x - rect.left + canvas.scrollLeft,\n            y: lastContextMenuCoords.y - rect.top + canvas.scrollTop\n          };\n        }\n      }\n      return clickCoords;\n    };\n\n    // \"New Item...\" option\n    const newItemOption = api.createElement('div', { class: 'context-menu-item' }, ['New Item...']);\n    newItemOption.onclick = async () => {\n      hideContextMenu();\n      await addChildToItem(itemId, getClickCoords());\n    };\n    addChildSubmenu.appendChild(newItemOption);\n\n    // \"Existing Item...\" option\n    const existingItemOption = api.createElement('div', { class: 'context-menu-item' }, ['Existing Item...']);\n    existingItemOption.onclick = () => {\n      hideContextMenu();\n      showExistingItemPicker(itemId, getClickCoords());\n    };\n    addChildSubmenu.appendChild(existingItemOption);\n\n    addChildItem.appendChild(addChildSubmenu);\n    contextMenu.appendChild(addChildItem);\n\n    // Separator\n    contextMenu.appendChild(api.createElement('div', { class: 'context-menu-separator' }, []));\n\n    // \"Display As...\" submenu\n    const displayAsItem = api.createElement('div', { class: 'context-menu-item context-menu-submenu' }, ['View As...']);\n    const displayAsSubmenu = api.createElement('div', { class: 'context-menu-submenu-items' }, []);\n\n    // Get available views for this type\n    const views = await api.getViews(menuItem.type);\n\n    // Get current view override (for checkmark display)\n    let currentViewId = null;\n    if (selectedParentId) {\n      const parent = await api.get(selectedParentId);\n      const childSpec = parent.children?.find(c => c.id === itemId);\n      currentViewId = childSpec?.view?.type || null;\n    } else {\n      currentViewId = await getRootView();\n    }\n\n    // Get effective view from preferences (fallback if no contextual override)\n    const effectiveView = await api.getEffectiveView(itemId);\n    const effectiveViewId = effectiveView?.id || null;\n\n    // The view to use as background when switching to a wrapper view:\n    // Prefer the explicit contextual override (currentViewId), fall back to effective view\n    const currentlyRenderedViewId = currentViewId || effectiveViewId;\n\n    // Separate normal views from debug views\n    const normalViews = views.filter(v => v.view.content?.category !== 'debug');\n    const debugViews = views.filter(v => v.view.content?.category === 'debug');\n\n    if (normalViews.length === 0) {\n      const noViews = api.createElement('div', { class: 'context-menu-item disabled' }, ['(No views available)']);\n      displayAsSubmenu.appendChild(noViews);\n    } else {\n      // Sort views alphabetically by display name\n      const sortedViews = [...normalViews].sort((a, b) => {\n        const nameA = a.view.content?.displayName || a.view.name || a.view.id.slice(0, 8);\n        const nameB = b.view.content?.displayName || b.view.name || b.view.id.slice(0, 8);\n        return nameA.localeCompare(nameB);\n      });\n\n      for (const { view, forType, inherited } of sortedViews) {\n        const isActive = currentViewId === view.id;\n        let label = view.content?.displayName || view.name || view.id.slice(0, 8);\n        if (isActive) label += ' ✓';\n\n        // Check if active view has submenu items to contribute\n        let viewMenuItems = null;\n        if (isActive) {\n          try {\n            const viewModule = await api.require(view.id);\n            if (viewModule && typeof viewModule.getViewMenuItems === 'function') {\n              viewMenuItems = await viewModule.getViewMenuItems(menuItem, api);\n            }\n          } catch (e) {\n            // View module doesn't export getViewMenuItems or failed to load\n          }\n        }\n\n        if (viewMenuItems && viewMenuItems.length > 0) {\n          // Active view with submenu items - create submenu\n          const viewOption = api.createElement('div', {\n            class: 'context-menu-item context-menu-submenu' + (isActive ? ' selected' : '')\n          }, [label]);\n\n          const viewSubmenu = api.createElement('div', { class: 'context-menu-submenu-items' }, []);\n\n          for (const menuItemDef of viewMenuItems) {\n            const subItem = api.createElement('div', {\n              class: 'context-menu-item' + (menuItemDef.checked ? ' selected' : '')\n            }, [menuItemDef.label]);\n\n            subItem.onclick = async () => {\n              hideContextMenu();\n              if (menuItemDef.onClick) {\n                await menuItemDef.onClick();\n              }\n            };\n            viewSubmenu.appendChild(subItem);\n          }\n\n          viewOption.appendChild(viewSubmenu);\n          displayAsSubmenu.appendChild(viewOption);\n        } else {\n          // Normal view option - click to switch\n          const viewOption = api.createElement('div', {\n            class: 'context-menu-item' + (isActive ? ' selected' : '')\n          }, []);\n\n          viewOption.textContent = label;\n\n          viewOption.onclick = async () => {\n            hideContextMenu();\n            if (selectedParentId) {\n              // For nested items, update the child's view config in parent's children array\n              // This sets both the view type AND innerView for wrapper views in one atomic operation\n              const parent = await api.get(selectedParentId);\n              const childIndex = parent.children.findIndex(c => c.id === itemId);\n              if (childIndex >= 0) {\n                const currentChild = parent.children[childIndex];\n                const currentView = currentChild.view || {};\n\n                // Build new view config\n                const newView = {\n                  ...currentView,\n                  type: view.id,\n                  // Set innerView to current view for wrapper views (like spatial-canvas)\n                  innerView: currentlyRenderedViewId ? { type: currentlyRenderedViewId } : undefined\n                };\n\n                // Store previous view for restore functionality\n                parent.children[childIndex] = {\n                  ...currentChild,\n                  previousView: currentView.type ? { ...currentView } : null,\n                  view: newView\n                };\n                parent.modified = Date.now();\n                await api.set(parent);\n              }\n              await api.rerenderItem(itemId);\n            } else {\n              // For root items, update viewport-manager's root view config\n              // Set both view type AND innerView for wrapper views in one operation\n              await api.viewport.updateRootViewConfig({\n                type: view.id,\n                innerView: currentlyRenderedViewId ? { type: currentlyRenderedViewId } : undefined\n              });\n              await api.rerenderItem(itemId);\n            }\n          };\n          displayAsSubmenu.appendChild(viewOption);\n        }\n      }\n    }\n\n    displayAsItem.appendChild(displayAsSubmenu);\n    contextMenu.appendChild(displayAsItem);\n\n    // \"View Settings...\" option - opens modal for item/type preferences\n    const viewSettingsItem = api.createElement('div', { class: 'context-menu-item' }, ['View Settings...']);\n    viewSettingsItem.onclick = async () => {\n      hideContextMenu();\n      await showViewSettingsModal(itemId, selectedParentId);\n    };\n    contextMenu.appendChild(viewSettingsItem);\n\n    // Separator\n    contextMenu.appendChild(api.createElement('div', { class: 'context-menu-separator' }, []));\n\n    // Copy ID\n    const copyIdItem = api.createElement('div', { class: 'context-menu-item' }, ['Copy ID']);\n    copyIdItem.onclick = async () => {\n      hideContextMenu();\n      await navigator.clipboard.writeText(itemId);\n      console.log('Copied ID:', itemId);\n    };\n    contextMenu.appendChild(copyIdItem);\n\n    // Make Root\n    const makeRootItem = api.createElement('div', { class: 'context-menu-item' }, ['Make Root']);\n    makeRootItem.onclick = async () => {\n      hideContextMenu();\n      // Preserve the current view config when making this item the root\n      let viewConfig = null;\n      if (selectedParentId) {\n        // Get the view config from the parent's children array\n        const parent = await api.get(selectedParentId);\n        const childSpec = parent.children?.find(c => c.id === itemId);\n        viewConfig = childSpec?.view || null;\n      }\n      await api.navigate(itemId);\n      // Set the preserved view config as the root view config\n      if (viewConfig) {\n        // Set view type if present\n        if (viewConfig.type) {\n          await setRootView(viewConfig.type);\n        }\n        // Set other view config properties (bannerPosition, etc.)\n        const { type, ...otherConfig } = viewConfig;\n        if (Object.keys(otherConfig).length > 0 && api.viewport.updateRootViewConfig) {\n          await api.viewport.updateRootViewConfig(otherConfig);\n        }\n        await window.kernel.renderViewport();  // Re-render with the view config\n      }\n    };\n    contextMenu.appendChild(makeRootItem);\n\n    // Export as JSON\n    const exportItem = api.createElement('div', { class: 'context-menu-item' }, ['Export as JSON']);\n    exportItem.onclick = async () => {\n      hideContextMenu();\n      const itemData = await api.get(itemId);\n      const json = JSON.stringify(itemData, null, 2);\n      const blob = new Blob([json], { type: 'application/json' });\n      const url = URL.createObjectURL(blob);\n      const a = document.createElement('a');\n      a.href = url;\n      a.download = (itemData.name || itemData.content?.title || itemId.slice(0, 8)) + '.json';\n      document.body.appendChild(a);\n      a.click();\n      document.body.removeChild(a);\n      URL.revokeObjectURL(url);\n    };\n    contextMenu.appendChild(exportItem);\n\n    // Delete\n    contextMenu.appendChild(api.createElement('div', { class: 'context-menu-separator' }, []));\n    const deleteItem = api.createElement('div', { class: 'context-menu-item', style: 'color: var(--color-danger);' }, ['Delete']);\n    deleteItem.onclick = async () => {\n      hideContextMenu();\n      const itemData = await api.get(itemId);\n      const itemLabel = itemData.name || itemData.content?.title || itemId.slice(0, 8);\n\n      if (confirm('Delete \"' + itemLabel + '\"? This cannot be undone.')) {\n        await api.delete(itemId);\n        if (itemId === rootId) {\n          const WORKSPACE_ID = '00000000-0000-0000-0000-000000000006';\n          await api.navigate(WORKSPACE_ID);\n        } else {\n          await api.navigate(rootId);\n        }\n      }\n    };\n    contextMenu.appendChild(deleteItem);\n\n    // Debug submenu (at the bottom, after Delete)\n    contextMenu.appendChild(api.createElement('div', { class: 'context-menu-separator' }, []));\n    const debugItem = api.createElement('div', { class: 'context-menu-item context-menu-submenu' }, ['Debug']);\n    const debugSubmenu = api.createElement('div', { class: 'context-menu-submenu-items' }, []);\n\n    // Debug views (Raw JSON, etc.)\n    if (debugViews.length > 0) {\n      const sortedDebugViews = [...debugViews].sort((a, b) => {\n        const nameA = a.view.content?.displayName || a.view.name || a.view.id.slice(0, 8);\n        const nameB = b.view.content?.displayName || b.view.name || b.view.id.slice(0, 8);\n        return nameA.localeCompare(nameB);\n      });\n\n      for (const { view } of sortedDebugViews) {\n        const isActive = currentViewId === view.id;\n        const viewOption = api.createElement('div', {\n          class: 'context-menu-item' + (isActive ? ' selected' : '')\n        }, []);\n\n        let label = view.content?.displayName || view.name || view.id.slice(0, 8);\n        if (isActive) label += ' \\u2713';\n        viewOption.textContent = label;\n\n        viewOption.onclick = async () => {\n          hideContextMenu();\n          if (selectedParentId) {\n            await setChildView(selectedParentId, itemId, view.id);\n            await api.rerenderItem(itemId);\n          } else {\n            await setRootView(view.id);\n            await api.navigate(api.viewport.getRoot());\n          }\n        };\n        debugSubmenu.appendChild(viewOption);\n      }\n\n      // Separator between debug views and debug options\n      debugSubmenu.appendChild(api.createElement('div', { class: 'context-menu-separator' }, []));\n    }\n\n    // Enable Debug Mode option\n    const isDebugMode = window.kernel?.debugMode || false;\n    const debugModeOption = api.createElement('div', {\n      class: 'context-menu-item' + (isDebugMode ? ' selected' : '')\n    }, [isDebugMode ? 'Debug Mode \\u2713' : 'Enable Debug Mode']);\n    debugModeOption.onclick = async () => {\n      hideContextMenu();\n      const kernel = window.kernel;\n      if (!kernel) return;\n\n      kernel.debugMode = !kernel.debugMode;\n\n      if (kernel.debugMode) {\n        // Activate element inspector if not already active\n        if (!kernel._elementInspector) {\n          try {\n            const inspectorModule = await kernel.moduleSystem.require('element-inspector');\n            const replApi = kernel.createREPLAPI();\n            kernel._elementInspector = inspectorModule.activate(replApi);\n          } catch (e) {\n            console.warn('Could not load element-inspector:', e.message);\n          }\n        }\n        // Re-render to apply debug attributes to elements\n        await api.navigate(api.viewport.getRoot());\n      } else {\n        // Deactivate element inspector\n        if (kernel._elementInspector) {\n          try {\n            const inspectorModule = await kernel.moduleSystem.require('element-inspector');\n            inspectorModule.deactivate();\n            kernel._elementInspector = null;\n          } catch (e) {\n            console.warn('Could not deactivate element-inspector:', e.message);\n          }\n        }\n        // Re-render to remove debug attributes\n        await api.navigate(api.viewport.getRoot());\n      }\n    };\n    debugSubmenu.appendChild(debugModeOption);\n\n    // Toggle Inspector option (only when debug mode is active)\n    if (isDebugMode && window.kernel?._elementInspector) {\n      const inspectorActive = window.kernel._elementInspector.isActive();\n      const inspectorOption = api.createElement('div', {\n        class: 'context-menu-item' + (inspectorActive ? ' selected' : '')\n      }, [inspectorActive ? 'Inspector Mode \\u2713' : 'Toggle Inspector (Ctrl+Shift+.)']);\n      inspectorOption.onclick = () => {\n        hideContextMenu();\n        window.kernel._elementInspector.toggle();\n      };\n      debugSubmenu.appendChild(inspectorOption);\n    }\n\n    debugItem.appendChild(debugSubmenu);\n    contextMenu.appendChild(debugItem);\n\n    // Position menu\n    const menuWidth = 180, menuHeight = 400, submenuWidth = 160;\n    let menuX = x, menuY = y;\n    if (x + menuWidth > window.innerWidth) menuX = window.innerWidth - menuWidth - 10;\n    if (y + menuHeight > window.innerHeight) menuY = window.innerHeight - menuHeight - 10;\n    contextMenu.style.left = menuX + 'px';\n    contextMenu.style.top = menuY + 'px';\n    contextMenu.style.display = 'block';\n    \n    // Flip submenus to left if near right edge\n    if (menuX + menuWidth + submenuWidth > window.innerWidth) {\n      contextMenu.classList.add('submenu-left');\n    } else {\n      contextMenu.classList.remove('submenu-left');\n    }\n  };\n\n  const findItemElement = (target) => {\n    let element = target.closest('[data-parent-id][data-item-id]');\n    if (!element) element = target.closest('[data-item-id]');\n    return element;\n  };\n\n  container.addEventListener('click', (e) => {\n    hideContextMenu();\n    const itemElement = findItemElement(e.target);\n    if (itemElement) {\n      selectItem(itemElement.getAttribute('data-item-id'), itemElement);\n      e.stopPropagation();\n    } else {\n      clearSelection();\n    }\n  });\n\n  container.addEventListener('contextmenu', (e) => {\n    // Let browser menu through if modifier key held\n    if (e.shiftKey) {\n      return; // Don't preventDefault, let browser handle it\n    }\n    e.preventDefault();\n    const itemElement = findItemElement(e.target);\n    if (itemElement) {\n      const itemId = itemElement.getAttribute('data-item-id');\n      selectItem(itemId, itemElement);\n      showContextMenu(e.clientX, e.clientY, itemId);\n    } else {\n      // Clicked on background - show background context menu\n      clearSelection();\n      showEmptyContextMenu(e.clientX, e.clientY);\n    }\n  });\n\n  // Keyboard shortcuts\n  const handleKeydown = (e) => {\n    // Cmd+K or Ctrl+K: Open item list\n    if ((e.metaKey || e.ctrlKey) && e.key === 'k') {\n      e.preventDefault();\n      api.showItemList();\n      return;\n    }\n    \n    // Escape: Hide context menu or clear selection\n    if (e.key === 'Escape') {\n      if (contextMenu.style.display !== 'none') hideContextMenu();\n      else clearSelection();\n    }\n  };\n\n  container.addEventListener('keydown', handleKeydown);\n  \n  // Also listen at document level for Cmd+K (so it works even when container not focused)\n  const globalKeyHandler = (e) => {\n    if ((e.metaKey || e.ctrlKey) && e.key === 'k') {\n      e.preventDefault();\n      api.showItemList();\n    }\n  };\n  document.addEventListener('keydown', globalKeyHandler);\n  \n  // Clean up global listener when container is removed\n  const observer = new MutationObserver((mutations) => {\n    for (const mutation of mutations) {\n      for (const node of mutation.removedNodes) {\n        if (node === container || node.contains?.(container)) {\n          document.removeEventListener('keydown', globalKeyHandler);\n          contextMenu.remove();\n          observer.disconnect();\n          return;\n        }\n      }\n    }\n  });\n  observer.observe(document.body, { childList: true, subtree: true });\n\n  container.setAttribute('tabindex', '0');\n  return container;\n}\n",
+    "_symbols": {
+      "render": {
+        "name": "render",
+        "line": 6,
+        "col": 7,
+        "endLine": 1098,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null
+      },
+      "render.cssLoader": {
+        "name": "cssLoader",
+        "line": 10,
+        "col": 8,
+        "endLine": 10,
+        "endCol": 55,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.searchLib": {
+        "name": "searchLib",
+        "line": 12,
+        "col": 8,
+        "endLine": 12,
+        "endCol": 56,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.urlParams": {
+        "name": "urlParams",
+        "line": 16,
+        "col": 8,
+        "endLine": 16,
+        "endCol": 63,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.urlRoot": {
+        "name": "urlRoot",
+        "line": 17,
+        "col": 8,
+        "endLine": 17,
+        "endCol": 39,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.storedSpec": {
+        "name": "storedSpec",
+        "line": 20,
+        "col": 8,
+        "endLine": 20,
+        "endCol": 39,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.storedRootId": {
+        "name": "storedRootId",
+        "line": 21,
+        "col": 8,
+        "endLine": 21,
+        "endCol": 51,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.rootId": {
+        "name": "rootId",
+        "line": 24,
+        "col": 6,
+        "endLine": 24,
+        "endCol": 27,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.rootSpec": {
+        "name": "rootSpec",
+        "line": 25,
+        "col": 6,
+        "endLine": 25,
+        "endCol": 27,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.id": {
+        "name": "id",
+        "line": 32,
+        "col": 19,
+        "endLine": 32,
+        "endCol": 30,
+        "kind": "property",
+        "scope": "render"
+      },
+      "render.updatedViewport": {
+        "name": "updatedViewport",
+        "line": 36,
+        "col": 12,
+        "endLine": 36,
+        "endCol": 92,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "updatedViewport.children": {
+        "name": "children",
+        "line": 36,
+        "col": 41,
+        "endLine": 36,
+        "endCol": 68,
+        "kind": "property",
+        "scope": "updatedViewport"
+      },
+      "updatedViewport.modified": {
+        "name": "modified",
+        "line": 36,
+        "col": 70,
+        "endLine": 36,
+        "endCol": 90,
+        "kind": "property",
+        "scope": "updatedViewport"
+      },
+      "render.rootViewId": {
+        "name": "rootViewId",
+        "line": 45,
+        "col": 8,
+        "endLine": 45,
+        "endCol": 89,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.updateBrowserTitle": {
+        "name": "updateBrowserTitle",
+        "line": 48,
+        "col": 8,
+        "endLine": 56,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "render"
+      },
+      "updateBrowserTitle.rootItem": {
+        "name": "rootItem",
+        "line": 53,
+        "col": 10,
+        "endLine": 53,
+        "endCol": 42,
+        "kind": "variable",
+        "scope": "updateBrowserTitle"
+      },
+      "updateBrowserTitle.itemName": {
+        "name": "itemName",
+        "line": 54,
+        "col": 10,
+        "endLine": 54,
+        "endCol": 85,
+        "kind": "variable",
+        "scope": "updateBrowserTitle"
+      },
+      "render.container": {
+        "name": "container",
+        "line": 60,
+        "col": 8,
+        "endLine": 63,
+        "endCol": 8,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.addChildToItem": {
+        "name": "addChildToItem",
+        "line": 68,
+        "col": 8,
+        "endLine": 127,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "render"
+      },
+      "addChildToItem.typePicker": {
+        "name": "typePicker",
+        "line": 70,
+        "col": 10,
+        "endLine": 70,
+        "endCol": 59,
+        "kind": "variable",
+        "scope": "addChildToItem"
+      },
+      "addChildToItem.selectedType": {
+        "name": "selectedType",
+        "line": 71,
+        "col": 10,
+        "endLine": 71,
+        "endCol": 61,
+        "kind": "variable",
+        "scope": "addChildToItem"
+      },
+      "addChildToItem.newItem": {
+        "name": "newItem",
+        "line": 74,
+        "col": 10,
+        "endLine": 82,
+        "endCol": 5,
+        "kind": "variable",
+        "scope": "addChildToItem"
+      },
+      "newItem.id": {
+        "name": "id",
+        "line": 75,
+        "col": 6,
+        "endLine": 75,
+        "endCol": 29,
+        "kind": "property",
+        "scope": "newItem"
+      },
+      "newItem.name": {
+        "name": "name",
+        "line": 76,
+        "col": 6,
+        "endLine": 76,
+        "endCol": 36,
+        "kind": "property",
+        "scope": "newItem"
+      },
+      "newItem.type": {
+        "name": "type",
+        "line": 77,
+        "col": 6,
+        "endLine": 77,
+        "endCol": 24,
+        "kind": "property",
+        "scope": "newItem"
+      },
+      "newItem.created": {
+        "name": "created",
+        "line": 78,
+        "col": 6,
+        "endLine": 78,
+        "endCol": 25,
+        "kind": "property",
+        "scope": "newItem"
+      },
+      "newItem.modified": {
+        "name": "modified",
+        "line": 79,
+        "col": 6,
+        "endLine": 79,
+        "endCol": 26,
+        "kind": "property",
+        "scope": "newItem"
+      },
+      "newItem.children": {
+        "name": "children",
+        "line": 80,
+        "col": 6,
+        "endLine": 80,
+        "endCol": 18,
+        "kind": "property",
+        "scope": "newItem"
+      },
+      "newItem.content": {
+        "name": "content",
+        "line": 81,
+        "col": 6,
+        "endLine": 81,
+        "endCol": 17,
+        "kind": "property",
+        "scope": "newItem"
+      },
+      "addChildToItem.parent": {
+        "name": "parent",
+        "line": 87,
+        "col": 10,
+        "endLine": 87,
+        "endCol": 42,
+        "kind": "variable",
+        "scope": "addChildToItem"
+      },
+      "addChildToItem.children": {
+        "name": "children",
+        "line": 88,
+        "col": 10,
+        "endLine": 88,
+        "endCol": 42,
+        "kind": "variable",
+        "scope": "addChildToItem"
+      },
+      "addChildToItem.isSpatial": {
+        "name": "isSpatial",
+        "line": 92,
+        "col": 10,
+        "endLine": 94,
+        "endCol": 13,
+        "kind": "variable",
+        "scope": "addChildToItem"
+      },
+      "addChildToItem.maxZ": {
+        "name": "maxZ",
+        "line": 98,
+        "col": 12,
+        "endLine": 98,
+        "endCol": 96,
+        "kind": "variable",
+        "scope": "addChildToItem"
+      },
+      "addChildToItem.x": {
+        "name": "x",
+        "line": 99,
+        "col": 12,
+        "endLine": 99,
+        "endCol": 36,
+        "kind": "variable",
+        "scope": "addChildToItem"
+      },
+      "addChildToItem.y": {
+        "name": "y",
+        "line": 100,
+        "col": 12,
+        "endLine": 100,
+        "endCol": 36,
+        "kind": "variable",
+        "scope": "addChildToItem"
+      },
+      "addChildToItem.id": {
+        "name": "id",
+        "line": 114,
+        "col": 22,
+        "endLine": 114,
+        "endCol": 36,
+        "kind": "property",
+        "scope": "addChildToItem"
+      },
+      "addChildToItem.view": {
+        "name": "view",
+        "line": 104,
+        "col": 8,
+        "endLine": 110,
+        "endCol": 9,
+        "kind": "property",
+        "scope": "addChildToItem"
+      },
+      "addChildToItem.view.x": {
+        "name": "x",
+        "line": 105,
+        "col": 10,
+        "endLine": 105,
+        "endCol": 14,
+        "kind": "property",
+        "scope": "addChildToItem.view"
+      },
+      "addChildToItem.view.y": {
+        "name": "y",
+        "line": 106,
+        "col": 10,
+        "endLine": 106,
+        "endCol": 14,
+        "kind": "property",
+        "scope": "addChildToItem.view"
+      },
+      "addChildToItem.view.width": {
+        "name": "width",
+        "line": 107,
+        "col": 10,
+        "endLine": 107,
+        "endCol": 20,
+        "kind": "property",
+        "scope": "addChildToItem.view"
+      },
+      "addChildToItem.view.height": {
+        "name": "height",
+        "line": 108,
+        "col": 10,
+        "endLine": 108,
+        "endCol": 21,
+        "kind": "property",
+        "scope": "addChildToItem.view"
+      },
+      "addChildToItem.view.z": {
+        "name": "z",
+        "line": 109,
+        "col": 10,
+        "endLine": 109,
+        "endCol": 21,
+        "kind": "property",
+        "scope": "addChildToItem.view"
+      },
+      "addChildToItem.el": {
+        "name": "el",
+        "line": 124,
+        "col": 12,
+        "endLine": 124,
+        "endCol": 73,
+        "kind": "variable",
+        "scope": "addChildToItem"
+      },
+      "addChildToItem.behavior": {
+        "name": "behavior",
+        "line": 125,
+        "col": 27,
+        "endLine": 125,
+        "endCol": 45,
+        "kind": "property",
+        "scope": "addChildToItem"
+      },
+      "addChildToItem.block": {
+        "name": "block",
+        "line": 125,
+        "col": 47,
+        "endLine": 125,
+        "endCol": 63,
+        "kind": "property",
+        "scope": "addChildToItem"
+      },
+      "render.addExistingChildToItem": {
+        "name": "addExistingChildToItem",
+        "line": 130,
+        "col": 8,
+        "endLine": 174,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "render"
+      },
+      "addExistingChildToItem.parent": {
+        "name": "parent",
+        "line": 131,
+        "col": 10,
+        "endLine": 131,
+        "endCol": 42,
+        "kind": "variable",
+        "scope": "addExistingChildToItem"
+      },
+      "addExistingChildToItem.children": {
+        "name": "children",
+        "line": 132,
+        "col": 10,
+        "endLine": 132,
+        "endCol": 42,
+        "kind": "variable",
+        "scope": "addExistingChildToItem"
+      },
+      "addExistingChildToItem.isSpatial": {
+        "name": "isSpatial",
+        "line": 141,
+        "col": 10,
+        "endLine": 143,
+        "endCol": 13,
+        "kind": "variable",
+        "scope": "addExistingChildToItem"
+      },
+      "addExistingChildToItem.maxZ": {
+        "name": "maxZ",
+        "line": 146,
+        "col": 12,
+        "endLine": 146,
+        "endCol": 96,
+        "kind": "variable",
+        "scope": "addExistingChildToItem"
+      },
+      "addExistingChildToItem.x": {
+        "name": "x",
+        "line": 147,
+        "col": 12,
+        "endLine": 147,
+        "endCol": 36,
+        "kind": "variable",
+        "scope": "addExistingChildToItem"
+      },
+      "addExistingChildToItem.y": {
+        "name": "y",
+        "line": 148,
+        "col": 12,
+        "endLine": 148,
+        "endCol": 36,
+        "kind": "variable",
+        "scope": "addExistingChildToItem"
+      },
+      "addExistingChildToItem.id": {
+        "name": "id",
+        "line": 161,
+        "col": 22,
+        "endLine": 161,
+        "endCol": 33,
+        "kind": "property",
+        "scope": "addExistingChildToItem"
+      },
+      "addExistingChildToItem.view": {
+        "name": "view",
+        "line": 152,
+        "col": 8,
+        "endLine": 158,
+        "endCol": 9,
+        "kind": "property",
+        "scope": "addExistingChildToItem"
+      },
+      "addExistingChildToItem.view.x": {
+        "name": "x",
+        "line": 153,
+        "col": 10,
+        "endLine": 153,
+        "endCol": 14,
+        "kind": "property",
+        "scope": "addExistingChildToItem.view"
+      },
+      "addExistingChildToItem.view.y": {
+        "name": "y",
+        "line": 154,
+        "col": 10,
+        "endLine": 154,
+        "endCol": 14,
+        "kind": "property",
+        "scope": "addExistingChildToItem.view"
+      },
+      "addExistingChildToItem.view.width": {
+        "name": "width",
+        "line": 155,
+        "col": 10,
+        "endLine": 155,
+        "endCol": 20,
+        "kind": "property",
+        "scope": "addExistingChildToItem.view"
+      },
+      "addExistingChildToItem.view.height": {
+        "name": "height",
+        "line": 156,
+        "col": 10,
+        "endLine": 156,
+        "endCol": 21,
+        "kind": "property",
+        "scope": "addExistingChildToItem.view"
+      },
+      "addExistingChildToItem.view.z": {
+        "name": "z",
+        "line": 157,
+        "col": 10,
+        "endLine": 157,
+        "endCol": 21,
+        "kind": "property",
+        "scope": "addExistingChildToItem.view"
+      },
+      "addExistingChildToItem.el": {
+        "name": "el",
+        "line": 171,
+        "col": 12,
+        "endLine": 171,
+        "endCol": 70,
+        "kind": "variable",
+        "scope": "addExistingChildToItem"
+      },
+      "addExistingChildToItem.behavior": {
+        "name": "behavior",
+        "line": 172,
+        "col": 27,
+        "endLine": 172,
+        "endCol": 45,
+        "kind": "property",
+        "scope": "addExistingChildToItem"
+      },
+      "addExistingChildToItem.block": {
+        "name": "block",
+        "line": 172,
+        "col": 47,
+        "endLine": 172,
+        "endCol": 63,
+        "kind": "property",
+        "scope": "addExistingChildToItem"
+      },
+      "render.showExistingItemPicker": {
+        "name": "showExistingItemPicker",
+        "line": 177,
+        "col": 8,
+        "endLine": 223,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "render"
+      },
+      "showExistingItemPicker.overlay": {
+        "name": "overlay",
+        "line": 178,
+        "col": 10,
+        "endLine": 180,
+        "endCol": 10,
+        "kind": "variable",
+        "scope": "showExistingItemPicker"
+      },
+      "showExistingItemPicker.modal": {
+        "name": "modal",
+        "line": 182,
+        "col": 10,
+        "endLine": 184,
+        "endCol": 10,
+        "kind": "variable",
+        "scope": "showExistingItemPicker"
+      },
+      "showExistingItemPicker.modalHeader": {
+        "name": "modalHeader",
+        "line": 186,
+        "col": 10,
+        "endLine": 188,
+        "endCol": 10,
+        "kind": "variable",
+        "scope": "showExistingItemPicker"
+      },
+      "showExistingItemPicker.modalTitle": {
+        "name": "modalTitle",
+        "line": 190,
+        "col": 10,
+        "endLine": 190,
+        "endCol": 94,
+        "kind": "variable",
+        "scope": "showExistingItemPicker"
+      },
+      "showExistingItemPicker.closeBtn": {
+        "name": "closeBtn",
+        "line": 192,
+        "col": 10,
+        "endLine": 195,
+        "endCol": 18,
+        "kind": "variable",
+        "scope": "showExistingItemPicker"
+      },
+      "showExistingItemPicker.searchContainer": {
+        "name": "searchContainer",
+        "line": 201,
+        "col": 10,
+        "endLine": 203,
+        "endCol": 10,
+        "kind": "variable",
+        "scope": "showExistingItemPicker"
+      },
+      "showExistingItemPicker.placeholder": {
+        "name": "placeholder",
+        "line": 216,
+        "col": 8,
+        "endLine": 216,
+        "endCol": 49,
+        "kind": "property",
+        "scope": "showExistingItemPicker"
+      },
+      "showExistingItemPicker.autoFocus": {
+        "name": "autoFocus",
+        "line": 216,
+        "col": 51,
+        "endLine": 216,
+        "endCol": 66,
+        "kind": "property",
+        "scope": "showExistingItemPicker"
+      },
+      "render.contextMenu": {
+        "name": "contextMenu",
+        "line": 227,
+        "col": 8,
+        "endLine": 231,
+        "endCol": 8,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.hideContextMenu": {
+        "name": "hideContextMenu",
+        "line": 234,
+        "col": 8,
+        "endLine": 237,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "render"
+      },
+      "render.showEmptyContextMenu": {
+        "name": "showEmptyContextMenu",
+        "line": 239,
+        "col": 8,
+        "endLine": 272,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "render"
+      },
+      "showEmptyContextMenu.searchItem": {
+        "name": "searchItem",
+        "line": 243,
+        "col": 10,
+        "endLine": 243,
+        "endCol": 105,
+        "kind": "variable",
+        "scope": "showEmptyContextMenu"
+      },
+      "showEmptyContextMenu.replItem": {
+        "name": "replItem",
+        "line": 251,
+        "col": 10,
+        "endLine": 251,
+        "endCol": 98,
+        "kind": "variable",
+        "scope": "showEmptyContextMenu"
+      },
+      "showEmptyContextMenu.replUi": {
+        "name": "replUi",
+        "line": 255,
+        "col": 14,
+        "endLine": 255,
+        "endCol": 51,
+        "kind": "variable",
+        "scope": "showEmptyContextMenu"
+      },
+      "showEmptyContextMenu.menuWidth": {
+        "name": "menuWidth",
+        "line": 265,
+        "col": 10,
+        "endLine": 265,
+        "endCol": 25,
+        "kind": "variable",
+        "scope": "showEmptyContextMenu"
+      },
+      "showEmptyContextMenu.menuHeight": {
+        "name": "menuHeight",
+        "line": 265,
+        "col": 27,
+        "endLine": 265,
+        "endCol": 43,
+        "kind": "variable",
+        "scope": "showEmptyContextMenu"
+      },
+      "showEmptyContextMenu.menuX": {
+        "name": "menuX",
+        "line": 266,
+        "col": 8,
+        "endLine": 266,
+        "endCol": 17,
+        "kind": "variable",
+        "scope": "showEmptyContextMenu"
+      },
+      "showEmptyContextMenu.menuY": {
+        "name": "menuY",
+        "line": 266,
+        "col": 19,
+        "endLine": 266,
+        "endCol": 28,
+        "kind": "variable",
+        "scope": "showEmptyContextMenu"
+      },
+      "render.empty": {
+        "name": "empty",
+        "line": 276,
+        "col": 10,
+        "endLine": 278,
+        "endCol": 10,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.globalKeyHandler": {
+        "name": "globalKeyHandler",
+        "line": 1073,
+        "col": 8,
+        "endLine": 1078,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "render"
+      },
+      "render.observer": {
+        "name": "observer",
+        "line": 1082,
+        "col": 8,
+        "endLine": 1093,
+        "endCol": 4,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.childList": {
+        "name": "childList",
+        "line": 1094,
+        "col": 36,
+        "endLine": 1094,
+        "endCol": 51,
+        "kind": "property",
+        "scope": "render"
+      },
+      "render.subtree": {
+        "name": "subtree",
+        "line": 1094,
+        "col": 53,
+        "endLine": 1094,
+        "endCol": 66,
+        "kind": "property",
+        "scope": "render"
+      },
+      "render.itemDecorator": {
+        "name": "itemDecorator",
+        "line": 319,
+        "col": 8,
+        "endLine": 346,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "render"
+      },
+      "itemDecorator.itemName": {
+        "name": "itemName",
+        "line": 323,
+        "col": 10,
+        "endLine": 323,
+        "endCol": 75,
+        "kind": "variable",
+        "scope": "itemDecorator"
+      },
+      "itemDecorator.typeName": {
+        "name": "typeName",
+        "line": 324,
+        "col": 8,
+        "endLine": 324,
+        "endCol": 40,
+        "kind": "variable",
+        "scope": "itemDecorator"
+      },
+      "itemDecorator.typeItem": {
+        "name": "typeItem",
+        "line": 326,
+        "col": 12,
+        "endLine": 326,
+        "endCol": 47,
+        "kind": "variable",
+        "scope": "itemDecorator"
+      },
+      "itemDecorator.titleText": {
+        "name": "titleText",
+        "line": 330,
+        "col": 8,
+        "endLine": 330,
+        "endCol": 52,
+        "kind": "variable",
+        "scope": "itemDecorator"
+      },
+      "itemDecorator.tagNames": {
+        "name": "tagNames",
+        "line": 334,
+        "col": 12,
+        "endLine": 341,
+        "endCol": 9,
+        "kind": "variable",
+        "scope": "itemDecorator"
+      },
+      "render.rootNode": {
+        "name": "rootNode",
+        "line": 350,
+        "col": 6,
+        "endLine": 350,
+        "endCol": 14,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.decorator": {
+        "name": "decorator",
+        "line": 352,
+        "col": 70,
+        "endLine": 352,
+        "endCol": 94,
+        "kind": "property",
+        "scope": "render"
+      },
+      "render.style": {
+        "name": "style",
+        "line": 355,
+        "col": 6,
+        "endLine": 355,
+        "endCol": 172,
+        "kind": "property",
+        "scope": "render"
+      },
+      "render.contentArea": {
+        "name": "contentArea",
+        "line": 359,
+        "col": 8,
+        "endLine": 363,
+        "endCol": 16,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.selectedItemId": {
+        "name": "selectedItemId",
+        "line": 367,
+        "col": 6,
+        "endLine": 367,
+        "endCol": 27,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.selectedParentId": {
+        "name": "selectedParentId",
+        "line": 368,
+        "col": 6,
+        "endLine": 368,
+        "endCol": 29,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.selectedElement": {
+        "name": "selectedElement",
+        "line": 369,
+        "col": 6,
+        "endLine": 369,
+        "endCol": 28,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.lastContextMenuCoords": {
+        "name": "lastContextMenuCoords",
+        "line": 370,
+        "col": 6,
+        "endLine": 370,
+        "endCol": 44,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "lastContextMenuCoords.x": {
+        "name": "x",
+        "line": 370,
+        "col": 32,
+        "endLine": 370,
+        "endCol": 36,
+        "kind": "property",
+        "scope": "lastContextMenuCoords"
+      },
+      "lastContextMenuCoords.y": {
+        "name": "y",
+        "line": 370,
+        "col": 38,
+        "endLine": 370,
+        "endCol": 42,
+        "kind": "property",
+        "scope": "lastContextMenuCoords"
+      },
+      "render.updateSelectionVisual": {
+        "name": "updateSelectionVisual",
+        "line": 372,
+        "col": 8,
+        "endLine": 377,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "render"
+      },
+      "render.selectItem": {
+        "name": "selectItem",
+        "line": 379,
+        "col": 8,
+        "endLine": 385,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "render"
+      },
+      "render.clearSelection": {
+        "name": "clearSelection",
+        "line": 387,
+        "col": 8,
+        "endLine": 393,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "render"
+      },
+      "render.setChildView": {
+        "name": "setChildView",
+        "line": 396,
+        "col": 8,
+        "endLine": 398,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "render"
+      },
+      "render.setRootView": {
+        "name": "setRootView",
+        "line": 401,
+        "col": 8,
+        "endLine": 403,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "render"
+      },
+      "render.getRootView": {
+        "name": "getRootView",
+        "line": 406,
+        "col": 8,
+        "endLine": 408,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "render"
+      },
+      "render.showViewSettingsModal": {
+        "name": "showViewSettingsModal",
+        "line": 411,
+        "col": 8,
+        "endLine": 631,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "render"
+      },
+      "showViewSettingsModal.item": {
+        "name": "item",
+        "line": 412,
+        "col": 10,
+        "endLine": 412,
+        "endCol": 38,
+        "kind": "variable",
+        "scope": "showViewSettingsModal"
+      },
+      "showViewSettingsModal.typeItem": {
+        "name": "typeItem",
+        "line": 413,
+        "col": 10,
+        "endLine": 413,
+        "endCol": 45,
+        "kind": "variable",
+        "scope": "showViewSettingsModal"
+      },
+      "showViewSettingsModal.typeName": {
+        "name": "typeName",
+        "line": 414,
+        "col": 10,
+        "endLine": 414,
+        "endCol": 44,
+        "kind": "variable",
+        "scope": "showViewSettingsModal"
+      },
+      "showViewSettingsModal.views": {
+        "name": "views",
+        "line": 415,
+        "col": 10,
+        "endLine": 415,
+        "endCol": 47,
+        "kind": "variable",
+        "scope": "showViewSettingsModal"
+      },
+      "showViewSettingsModal.effectiveView": {
+        "name": "effectiveView",
+        "line": 416,
+        "col": 10,
+        "endLine": 416,
+        "endCol": 60,
+        "kind": "variable",
+        "scope": "showViewSettingsModal"
+      },
+      "showViewSettingsModal.contextualViewId": {
+        "name": "contextualViewId",
+        "line": 419,
+        "col": 10,
+        "endLine": 419,
+        "endCol": 74,
+        "kind": "variable",
+        "scope": "showViewSettingsModal"
+      },
+      "showViewSettingsModal.itemPreferredViewId": {
+        "name": "itemPreferredViewId",
+        "line": 420,
+        "col": 10,
+        "endLine": 420,
+        "endCol": 58,
+        "kind": "variable",
+        "scope": "showViewSettingsModal"
+      },
+      "showViewSettingsModal.typePreferredViewId": {
+        "name": "typePreferredViewId",
+        "line": 421,
+        "col": 10,
+        "endLine": 421,
+        "endCol": 62,
+        "kind": "variable",
+        "scope": "showViewSettingsModal"
+      },
+      "showViewSettingsModal.getViewName": {
+        "name": "getViewName",
+        "line": 424,
+        "col": 10,
+        "endLine": 432,
+        "endCol": 5,
+        "kind": "function",
+        "scope": "showViewSettingsModal"
+      },
+      "getViewName.v": {
+        "name": "v",
+        "line": 427,
+        "col": 14,
+        "endLine": 427,
+        "endCol": 39,
+        "kind": "variable",
+        "scope": "getViewName"
+      },
+      "showViewSettingsModal.overlay": {
+        "name": "overlay",
+        "line": 435,
+        "col": 10,
+        "endLine": 438,
+        "endCol": 10,
+        "kind": "variable",
+        "scope": "showViewSettingsModal"
+      },
+      "showViewSettingsModal.modal": {
+        "name": "modal",
+        "line": 440,
+        "col": 10,
+        "endLine": 443,
+        "endCol": 10,
+        "kind": "variable",
+        "scope": "showViewSettingsModal"
+      },
+      "showViewSettingsModal.itemName": {
+        "name": "itemName",
+        "line": 446,
+        "col": 10,
+        "endLine": 446,
+        "endCol": 76,
+        "kind": "variable",
+        "scope": "showViewSettingsModal"
+      },
+      "showViewSettingsModal.header": {
+        "name": "header",
+        "line": 447,
+        "col": 10,
+        "endLine": 449,
+        "endCol": 10,
+        "kind": "variable",
+        "scope": "showViewSettingsModal"
+      },
+      "showViewSettingsModal.closeBtn": {
+        "name": "closeBtn",
+        "line": 451,
+        "col": 10,
+        "endLine": 454,
+        "endCol": 18,
+        "kind": "variable",
+        "scope": "showViewSettingsModal"
+      },
+      "showViewSettingsModal.body": {
+        "name": "body",
+        "line": 459,
+        "col": 10,
+        "endLine": 459,
+        "endCol": 74,
+        "kind": "variable",
+        "scope": "showViewSettingsModal"
+      },
+      "showViewSettingsModal.effectiveName": {
+        "name": "effectiveName",
+        "line": 462,
+        "col": 10,
+        "endLine": 462,
+        "endCol": 62,
+        "kind": "variable",
+        "scope": "showViewSettingsModal"
+      },
+      "showViewSettingsModal.currentSection": {
+        "name": "currentSection",
+        "line": 463,
+        "col": 10,
+        "endLine": 463,
+        "endCol": 167,
+        "kind": "variable",
+        "scope": "showViewSettingsModal"
+      },
+      "showViewSettingsModal.createSection": {
+        "name": "createSection",
+        "line": 468,
+        "col": 10,
+        "endLine": 512,
+        "endCol": 5,
+        "kind": "function",
+        "scope": "showViewSettingsModal"
+      },
+      "createSection.section": {
+        "name": "section",
+        "line": 469,
+        "col": 12,
+        "endLine": 469,
+        "endCol": 85,
+        "kind": "variable",
+        "scope": "createSection"
+      },
+      "createSection.labelEl": {
+        "name": "labelEl",
+        "line": 471,
+        "col": 12,
+        "endLine": 471,
+        "endCol": 107,
+        "kind": "variable",
+        "scope": "createSection"
+      },
+      "createSection.descEl": {
+        "name": "descEl",
+        "line": 474,
+        "col": 12,
+        "endLine": 474,
+        "endCol": 147,
+        "kind": "variable",
+        "scope": "createSection"
+      },
+      "createSection.controlRow": {
+        "name": "controlRow",
+        "line": 477,
+        "col": 12,
+        "endLine": 477,
+        "endCol": 113,
+        "kind": "variable",
+        "scope": "createSection"
+      },
+      "createSection.select": {
+        "name": "select",
+        "line": 479,
+        "col": 12,
+        "endLine": 479,
+        "endCol": 158,
+        "kind": "variable",
+        "scope": "createSection"
+      },
+      "createSection.noneOpt": {
+        "name": "noneOpt",
+        "line": 482,
+        "col": 12,
+        "endLine": 482,
+        "endCol": 74,
+        "kind": "variable",
+        "scope": "createSection"
+      },
+      "createSection.sortedViews": {
+        "name": "sortedViews",
+        "line": 487,
+        "col": 12,
+        "endLine": 491,
+        "endCol": 8,
+        "kind": "variable",
+        "scope": "createSection"
+      },
+      "createSection.opt": {
+        "name": "opt",
+        "line": 493,
+        "col": 14,
+        "endLine": 493,
+        "endCol": 71,
+        "kind": "variable",
+        "scope": "createSection"
+      },
+      "createSection.clearBtn": {
+        "name": "clearBtn",
+        "line": 503,
+        "col": 14,
+        "endLine": 506,
+        "endCol": 21,
+        "kind": "variable",
+        "scope": "createSection"
+      },
+      "showViewSettingsModal.createReadOnlySection": {
+        "name": "createReadOnlySection",
+        "line": 515,
+        "col": 10,
+        "endLine": 540,
+        "endCol": 5,
+        "kind": "function",
+        "scope": "showViewSettingsModal"
+      },
+      "createReadOnlySection.section": {
+        "name": "section",
+        "line": 516,
+        "col": 12,
+        "endLine": 516,
+        "endCol": 85,
+        "kind": "variable",
+        "scope": "createReadOnlySection"
+      },
+      "createReadOnlySection.labelEl": {
+        "name": "labelEl",
+        "line": 518,
+        "col": 12,
+        "endLine": 518,
+        "endCol": 107,
+        "kind": "variable",
+        "scope": "createReadOnlySection"
+      },
+      "createReadOnlySection.descEl": {
+        "name": "descEl",
+        "line": 521,
+        "col": 12,
+        "endLine": 521,
+        "endCol": 147,
+        "kind": "variable",
+        "scope": "createReadOnlySection"
+      },
+      "createReadOnlySection.controlRow": {
+        "name": "controlRow",
+        "line": 524,
+        "col": 12,
+        "endLine": 524,
+        "endCol": 113,
+        "kind": "variable",
+        "scope": "createReadOnlySection"
+      },
+      "createReadOnlySection.valueEl": {
+        "name": "valueEl",
+        "line": 526,
+        "col": 12,
+        "endLine": 526,
+        "endCol": 154,
+        "kind": "variable",
+        "scope": "createReadOnlySection"
+      },
+      "createReadOnlySection.clearBtn": {
+        "name": "clearBtn",
+        "line": 531,
+        "col": 14,
+        "endLine": 534,
+        "endCol": 21,
+        "kind": "variable",
+        "scope": "createReadOnlySection"
+      },
+      "showViewSettingsModal.refreshModal": {
+        "name": "refreshModal",
+        "line": 543,
+        "col": 10,
+        "endLine": 546,
+        "endCol": 5,
+        "kind": "function",
+        "scope": "showViewSettingsModal"
+      },
+      "showViewSettingsModal.contextSection": {
+        "name": "contextSection",
+        "line": 549,
+        "col": 10,
+        "endLine": 564,
+        "endCol": 5,
+        "kind": "variable",
+        "scope": "showViewSettingsModal"
+      },
+      "showViewSettingsModal.style": {
+        "name": "style",
+        "line": 587,
+        "col": 47,
+        "endLine": 587,
+        "endCol": 134,
+        "kind": "property",
+        "scope": "showViewSettingsModal"
+      },
+      "showViewSettingsModal.itemSection": {
+        "name": "itemSection",
+        "line": 571,
+        "col": 10,
+        "endLine": 583,
+        "endCol": 5,
+        "kind": "variable",
+        "scope": "showViewSettingsModal"
+      },
+      "showViewSettingsModal.typeDisplayName": {
+        "name": "typeDisplayName",
+        "line": 590,
+        "col": 10,
+        "endLine": 590,
+        "endCol": 80,
+        "kind": "variable",
+        "scope": "showViewSettingsModal"
+      },
+      "showViewSettingsModal.typeSection": {
+        "name": "typeSection",
+        "line": 591,
+        "col": 10,
+        "endLine": 603,
+        "endCol": 5,
+        "kind": "variable",
+        "scope": "showViewSettingsModal"
+      },
+      "showViewSettingsModal.noteEl": {
+        "name": "noteEl",
+        "line": 607,
+        "col": 10,
+        "endLine": 609,
+        "endCol": 75,
+        "kind": "variable",
+        "scope": "showViewSettingsModal"
+      },
+      "showViewSettingsModal.escHandler": {
+        "name": "escHandler",
+        "line": 622,
+        "col": 10,
+        "endLine": 627,
+        "endCol": 5,
+        "kind": "function",
+        "scope": "showViewSettingsModal"
+      },
+      "render.showContextMenu": {
+        "name": "showContextMenu",
+        "line": 633,
+        "col": 8,
+        "endLine": 1017,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "render"
+      },
+      "showContextMenu.menuItem": {
+        "name": "menuItem",
+        "line": 634,
+        "col": 10,
+        "endLine": 634,
+        "endCol": 42,
+        "kind": "variable",
+        "scope": "showContextMenu"
+      },
+      "showContextMenu.x": {
+        "name": "x",
+        "line": 636,
+        "col": 30,
+        "endLine": 636,
+        "endCol": 31,
+        "kind": "property",
+        "scope": "showContextMenu"
+      },
+      "showContextMenu.y": {
+        "name": "y",
+        "line": 636,
+        "col": 33,
+        "endLine": 636,
+        "endCol": 34,
+        "kind": "property",
+        "scope": "showContextMenu"
+      },
+      "showContextMenu.addChildItem": {
+        "name": "addChildItem",
+        "line": 639,
+        "col": 10,
+        "endLine": 639,
+        "endCol": 117,
+        "kind": "variable",
+        "scope": "showContextMenu"
+      },
+      "showContextMenu.addChildSubmenu": {
+        "name": "addChildSubmenu",
+        "line": 640,
+        "col": 10,
+        "endLine": 640,
+        "endCol": 97,
+        "kind": "variable",
+        "scope": "showContextMenu"
+      },
+      "showContextMenu.getClickCoords": {
+        "name": "getClickCoords",
+        "line": 643,
+        "col": 10,
+        "endLine": 656,
+        "endCol": 5,
+        "kind": "function",
+        "scope": "showContextMenu"
+      },
+      "getClickCoords.clickCoords": {
+        "name": "clickCoords",
+        "line": 644,
+        "col": 10,
+        "endLine": 644,
+        "endCol": 28,
+        "kind": "variable",
+        "scope": "getClickCoords"
+      },
+      "getClickCoords.canvas": {
+        "name": "canvas",
+        "line": 646,
+        "col": 14,
+        "endLine": 646,
+        "endCol": 107,
+        "kind": "variable",
+        "scope": "getClickCoords"
+      },
+      "getClickCoords.rect": {
+        "name": "rect",
+        "line": 648,
+        "col": 16,
+        "endLine": 648,
+        "endCol": 53,
+        "kind": "variable",
+        "scope": "getClickCoords"
+      },
+      "getClickCoords.x": {
+        "name": "x",
+        "line": 650,
+        "col": 12,
+        "endLine": 650,
+        "endCol": 70,
+        "kind": "property",
+        "scope": "getClickCoords"
+      },
+      "getClickCoords.y": {
+        "name": "y",
+        "line": 651,
+        "col": 12,
+        "endLine": 651,
+        "endCol": 68,
+        "kind": "property",
+        "scope": "getClickCoords"
+      },
+      "showContextMenu.newItemOption": {
+        "name": "newItemOption",
+        "line": 659,
+        "col": 10,
+        "endLine": 659,
+        "endCol": 99,
+        "kind": "variable",
+        "scope": "showContextMenu"
+      },
+      "showContextMenu.existingItemOption": {
+        "name": "existingItemOption",
+        "line": 667,
+        "col": 10,
+        "endLine": 667,
+        "endCol": 109,
+        "kind": "variable",
+        "scope": "showContextMenu"
+      },
+      "showContextMenu.class": {
+        "name": "class",
+        "line": 941,
+        "col": 58,
+        "endLine": 941,
+        "endCol": 89,
+        "kind": "property",
+        "scope": "showContextMenu"
+      },
+      "showContextMenu.displayAsItem": {
+        "name": "displayAsItem",
+        "line": 681,
+        "col": 10,
+        "endLine": 681,
+        "endCol": 119,
+        "kind": "variable",
+        "scope": "showContextMenu"
+      },
+      "showContextMenu.displayAsSubmenu": {
+        "name": "displayAsSubmenu",
+        "line": 682,
+        "col": 10,
+        "endLine": 682,
+        "endCol": 98,
+        "kind": "variable",
+        "scope": "showContextMenu"
+      },
+      "showContextMenu.views": {
+        "name": "views",
+        "line": 685,
+        "col": 10,
+        "endLine": 685,
+        "endCol": 51,
+        "kind": "variable",
+        "scope": "showContextMenu"
+      },
+      "showContextMenu.currentViewId": {
+        "name": "currentViewId",
+        "line": 688,
+        "col": 8,
+        "endLine": 688,
+        "endCol": 28,
+        "kind": "variable",
+        "scope": "showContextMenu"
+      },
+      "showContextMenu.parent": {
+        "name": "parent",
+        "line": 845,
+        "col": 14,
+        "endLine": 845,
+        "endCol": 54,
+        "kind": "variable",
+        "scope": "showContextMenu"
+      },
+      "showContextMenu.childSpec": {
+        "name": "childSpec",
+        "line": 846,
+        "col": 14,
+        "endLine": 846,
+        "endCol": 69,
+        "kind": "variable",
+        "scope": "showContextMenu"
+      },
+      "showContextMenu.effectiveView": {
+        "name": "effectiveView",
+        "line": 698,
+        "col": 10,
+        "endLine": 698,
+        "endCol": 60,
+        "kind": "variable",
+        "scope": "showContextMenu"
+      },
+      "showContextMenu.effectiveViewId": {
+        "name": "effectiveViewId",
+        "line": 699,
+        "col": 10,
+        "endLine": 699,
+        "endCol": 53,
+        "kind": "variable",
+        "scope": "showContextMenu"
+      },
+      "showContextMenu.currentlyRenderedViewId": {
+        "name": "currentlyRenderedViewId",
+        "line": 703,
+        "col": 10,
+        "endLine": 703,
+        "endCol": 68,
+        "kind": "variable",
+        "scope": "showContextMenu"
+      },
+      "showContextMenu.normalViews": {
+        "name": "normalViews",
+        "line": 706,
+        "col": 10,
+        "endLine": 706,
+        "endCol": 79,
+        "kind": "variable",
+        "scope": "showContextMenu"
+      },
+      "showContextMenu.debugViews": {
+        "name": "debugViews",
+        "line": 707,
+        "col": 10,
+        "endLine": 707,
+        "endCol": 78,
+        "kind": "variable",
+        "scope": "showContextMenu"
+      },
+      "showContextMenu.noViews": {
+        "name": "noViews",
+        "line": 710,
+        "col": 12,
+        "endLine": 710,
+        "endCol": 113,
+        "kind": "variable",
+        "scope": "showContextMenu"
+      },
+      "showContextMenu.sortedViews": {
+        "name": "sortedViews",
+        "line": 714,
+        "col": 12,
+        "endLine": 718,
+        "endCol": 8,
+        "kind": "variable",
+        "scope": "showContextMenu"
+      },
+      "showContextMenu.isActive": {
+        "name": "isActive",
+        "line": 918,
+        "col": 14,
+        "endLine": 918,
+        "endCol": 50,
+        "kind": "variable",
+        "scope": "showContextMenu"
+      },
+      "showContextMenu.label": {
+        "name": "label",
+        "line": 923,
+        "col": 12,
+        "endLine": 923,
+        "endCol": 81,
+        "kind": "variable",
+        "scope": "showContextMenu"
+      },
+      "showContextMenu.viewMenuItems": {
+        "name": "viewMenuItems",
+        "line": 726,
+        "col": 12,
+        "endLine": 726,
+        "endCol": 32,
+        "kind": "variable",
+        "scope": "showContextMenu"
+      },
+      "showContextMenu.viewModule": {
+        "name": "viewModule",
+        "line": 729,
+        "col": 18,
+        "endLine": 729,
+        "endCol": 57,
+        "kind": "variable",
+        "scope": "showContextMenu"
+      },
+      "showContextMenu.viewOption": {
+        "name": "viewOption",
+        "line": 919,
+        "col": 14,
+        "endLine": 921,
+        "endCol": 14,
+        "kind": "variable",
+        "scope": "showContextMenu"
+      },
+      "showContextMenu.viewSubmenu": {
+        "name": "viewSubmenu",
+        "line": 744,
+        "col": 16,
+        "endLine": 744,
+        "endCol": 99,
+        "kind": "variable",
+        "scope": "showContextMenu"
+      },
+      "showContextMenu.menuItemDef": {
+        "name": "menuItemDef",
+        "line": 746,
+        "col": 21,
+        "endLine": 746,
+        "endCol": 32,
+        "kind": "variable",
+        "scope": "showContextMenu"
+      },
+      "showContextMenu.subItem": {
+        "name": "subItem",
+        "line": 747,
+        "col": 18,
+        "endLine": 749,
+        "endCol": 35,
+        "kind": "variable",
+        "scope": "showContextMenu"
+      },
+      "showContextMenu.childIndex": {
+        "name": "childIndex",
+        "line": 776,
+        "col": 20,
+        "endLine": 776,
+        "endCol": 80,
+        "kind": "variable",
+        "scope": "showContextMenu"
+      },
+      "showContextMenu.currentChild": {
+        "name": "currentChild",
+        "line": 778,
+        "col": 22,
+        "endLine": 778,
+        "endCol": 64,
+        "kind": "variable",
+        "scope": "showContextMenu"
+      },
+      "showContextMenu.currentView": {
+        "name": "currentView",
+        "line": 779,
+        "col": 22,
+        "endLine": 779,
+        "endCol": 59,
+        "kind": "variable",
+        "scope": "showContextMenu"
+      },
+      "showContextMenu.newView": {
+        "name": "newView",
+        "line": 782,
+        "col": 22,
+        "endLine": 787,
+        "endCol": 17,
+        "kind": "variable",
+        "scope": "showContextMenu"
+      },
+      "newView.type": {
+        "name": "type",
+        "line": 784,
+        "col": 18,
+        "endLine": 784,
+        "endCol": 31,
+        "kind": "property",
+        "scope": "newView"
+      },
+      "newView.innerView": {
+        "name": "innerView",
+        "line": 786,
+        "col": 18,
+        "endLine": 786,
+        "endCol": 100,
+        "kind": "property",
+        "scope": "newView"
+      },
+      "showContextMenu.previousView": {
+        "name": "previousView",
+        "line": 792,
+        "col": 18,
+        "endLine": 792,
+        "endCol": 76,
+        "kind": "property",
+        "scope": "showContextMenu"
+      },
+      "showContextMenu.view": {
+        "name": "view",
+        "line": 793,
+        "col": 18,
+        "endLine": 793,
+        "endCol": 31,
+        "kind": "property",
+        "scope": "showContextMenu"
+      },
+      "showContextMenu.type": {
+        "name": "type",
+        "line": 803,
+        "col": 16,
+        "endLine": 803,
+        "endCol": 29,
+        "kind": "property",
+        "scope": "showContextMenu"
+      },
+      "showContextMenu.innerView": {
+        "name": "innerView",
+        "line": 804,
+        "col": 16,
+        "endLine": 804,
+        "endCol": 98,
+        "kind": "property",
+        "scope": "showContextMenu"
+      },
+      "showContextMenu.viewSettingsItem": {
+        "name": "viewSettingsItem",
+        "line": 818,
+        "col": 10,
+        "endLine": 818,
+        "endCol": 107,
+        "kind": "variable",
+        "scope": "showContextMenu"
+      },
+      "showContextMenu.copyIdItem": {
+        "name": "copyIdItem",
+        "line": 829,
+        "col": 10,
+        "endLine": 829,
+        "endCol": 92,
+        "kind": "variable",
+        "scope": "showContextMenu"
+      },
+      "showContextMenu.makeRootItem": {
+        "name": "makeRootItem",
+        "line": 838,
+        "col": 10,
+        "endLine": 838,
+        "endCol": 96,
+        "kind": "variable",
+        "scope": "showContextMenu"
+      },
+      "showContextMenu.viewConfig": {
+        "name": "viewConfig",
+        "line": 842,
+        "col": 10,
+        "endLine": 842,
+        "endCol": 27,
+        "kind": "variable",
+        "scope": "showContextMenu"
+      },
+      "showContextMenu.exportItem": {
+        "name": "exportItem",
+        "line": 867,
+        "col": 10,
+        "endLine": 867,
+        "endCol": 99,
+        "kind": "variable",
+        "scope": "showContextMenu"
+      },
+      "showContextMenu.itemData": {
+        "name": "itemData",
+        "line": 889,
+        "col": 12,
+        "endLine": 889,
+        "endCol": 44,
+        "kind": "variable",
+        "scope": "showContextMenu"
+      },
+      "showContextMenu.json": {
+        "name": "json",
+        "line": 871,
+        "col": 12,
+        "endLine": 871,
+        "endCol": 52,
+        "kind": "variable",
+        "scope": "showContextMenu"
+      },
+      "showContextMenu.blob": {
+        "name": "blob",
+        "line": 872,
+        "col": 12,
+        "endLine": 872,
+        "endCol": 65,
+        "kind": "variable",
+        "scope": "showContextMenu"
+      },
+      "showContextMenu.url": {
+        "name": "url",
+        "line": 873,
+        "col": 12,
+        "endLine": 873,
+        "endCol": 43,
+        "kind": "variable",
+        "scope": "showContextMenu"
+      },
+      "showContextMenu.a": {
+        "name": "a",
+        "line": 874,
+        "col": 12,
+        "endLine": 874,
+        "endCol": 43,
+        "kind": "variable",
+        "scope": "showContextMenu"
+      },
+      "showContextMenu.deleteItem": {
+        "name": "deleteItem",
+        "line": 886,
+        "col": 10,
+        "endLine": 886,
+        "endCol": 129,
+        "kind": "variable",
+        "scope": "showContextMenu"
+      },
+      "showContextMenu.itemLabel": {
+        "name": "itemLabel",
+        "line": 890,
+        "col": 12,
+        "endLine": 890,
+        "endCol": 86,
+        "kind": "variable",
+        "scope": "showContextMenu"
+      },
+      "showContextMenu.WORKSPACE_ID": {
+        "name": "WORKSPACE_ID",
+        "line": 895,
+        "col": 16,
+        "endLine": 895,
+        "endCol": 69,
+        "kind": "variable",
+        "scope": "showContextMenu"
+      },
+      "showContextMenu.debugItem": {
+        "name": "debugItem",
+        "line": 906,
+        "col": 10,
+        "endLine": 906,
+        "endCol": 110,
+        "kind": "variable",
+        "scope": "showContextMenu"
+      },
+      "showContextMenu.debugSubmenu": {
+        "name": "debugSubmenu",
+        "line": 907,
+        "col": 10,
+        "endLine": 907,
+        "endCol": 94,
+        "kind": "variable",
+        "scope": "showContextMenu"
+      },
+      "showContextMenu.sortedDebugViews": {
+        "name": "sortedDebugViews",
+        "line": 911,
+        "col": 12,
+        "endLine": 915,
+        "endCol": 8,
+        "kind": "variable",
+        "scope": "showContextMenu"
+      },
+      "showContextMenu.isDebugMode": {
+        "name": "isDebugMode",
+        "line": 945,
+        "col": 10,
+        "endLine": 945,
+        "endCol": 57,
+        "kind": "variable",
+        "scope": "showContextMenu"
+      },
+      "showContextMenu.debugModeOption": {
+        "name": "debugModeOption",
+        "line": 946,
+        "col": 10,
+        "endLine": 948,
+        "endCol": 65,
+        "kind": "variable",
+        "scope": "showContextMenu"
+      },
+      "showContextMenu.kernel": {
+        "name": "kernel",
+        "line": 951,
+        "col": 12,
+        "endLine": 951,
+        "endCol": 34,
+        "kind": "variable",
+        "scope": "showContextMenu"
+      },
+      "showContextMenu.inspectorModule": {
+        "name": "inspectorModule",
+        "line": 973,
+        "col": 18,
+        "endLine": 973,
+        "endCol": 90,
+        "kind": "variable",
+        "scope": "showContextMenu"
+      },
+      "showContextMenu.replApi": {
+        "name": "replApi",
+        "line": 961,
+        "col": 18,
+        "endLine": 961,
+        "endCol": 50,
+        "kind": "variable",
+        "scope": "showContextMenu"
+      },
+      "showContextMenu.inspectorActive": {
+        "name": "inspectorActive",
+        "line": 988,
+        "col": 12,
+        "endLine": 988,
+        "endCol": 72,
+        "kind": "variable",
+        "scope": "showContextMenu"
+      },
+      "showContextMenu.inspectorOption": {
+        "name": "inspectorOption",
+        "line": 989,
+        "col": 12,
+        "endLine": 991,
+        "endCol": 89,
+        "kind": "variable",
+        "scope": "showContextMenu"
+      },
+      "showContextMenu.menuWidth": {
+        "name": "menuWidth",
+        "line": 1003,
+        "col": 10,
+        "endLine": 1003,
+        "endCol": 25,
+        "kind": "variable",
+        "scope": "showContextMenu"
+      },
+      "showContextMenu.menuHeight": {
+        "name": "menuHeight",
+        "line": 1003,
+        "col": 27,
+        "endLine": 1003,
+        "endCol": 43,
+        "kind": "variable",
+        "scope": "showContextMenu"
+      },
+      "showContextMenu.submenuWidth": {
+        "name": "submenuWidth",
+        "line": 1003,
+        "col": 45,
+        "endLine": 1003,
+        "endCol": 63,
+        "kind": "variable",
+        "scope": "showContextMenu"
+      },
+      "showContextMenu.menuX": {
+        "name": "menuX",
+        "line": 1004,
+        "col": 8,
+        "endLine": 1004,
+        "endCol": 17,
+        "kind": "variable",
+        "scope": "showContextMenu"
+      },
+      "showContextMenu.menuY": {
+        "name": "menuY",
+        "line": 1004,
+        "col": 19,
+        "endLine": 1004,
+        "endCol": 28,
+        "kind": "variable",
+        "scope": "showContextMenu"
+      },
+      "render.findItemElement": {
+        "name": "findItemElement",
+        "line": 1019,
+        "col": 8,
+        "endLine": 1023,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "render"
+      },
+      "findItemElement.element": {
+        "name": "element",
+        "line": 1020,
+        "col": 8,
+        "endLine": 1020,
+        "endCol": 66,
+        "kind": "variable",
+        "scope": "findItemElement"
+      },
+      "render.itemElement": {
+        "name": "itemElement",
+        "line": 1042,
+        "col": 10,
+        "endLine": 1042,
+        "endCol": 49,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.itemId": {
+        "name": "itemId",
+        "line": 1044,
+        "col": 12,
+        "endLine": 1044,
+        "endCol": 61,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.handleKeydown": {
+        "name": "handleKeydown",
+        "line": 1055,
+        "col": 8,
+        "endLine": 1068,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "render"
+      }
+    }
   }
 }

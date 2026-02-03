@@ -8,11 +8,11 @@ export function render(value, onChange, api, options = {}) {
   input.type = 'text';
   input.value = value || '';
   input.placeholder = options.placeholder || '';
-  input.style.cssText = 'width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 14px;';
+  input.style.cssText = 'width: 100%; padding: 8px; border: 1px solid var(--color-border); border-radius: var(--border-radius); font-size: 14px;';
 
   if (options.readonly) {
     input.readOnly = true;
-    input.style.background = '#f5f5f5';
+    input.style.background = 'var(--color-bg-body)';
   }
 
   input.addEventListener('input', (e) => {

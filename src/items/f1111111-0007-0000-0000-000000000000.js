@@ -50,7 +50,7 @@ export async function show(itemId, _api) {
 
   const modal = document.createElement('div');
   modal.style.cssText = `
-    background: white;
+    background: var(--color-bg-surface);
     border-radius: 8px;
     width: 800px;
     max-width: 90vw;
@@ -62,7 +62,7 @@ export async function show(itemId, _api) {
 
   // Header
   const header = document.createElement('div');
-  header.style.cssText = 'padding: 16px 20px; border-bottom: 1px solid #ddd; display: flex; justify-content: space-between; align-items: center;';
+  header.style.cssText = 'padding: 16px 20px; border-bottom: 1px solid var(--color-border-light); display: flex; justify-content: space-between; align-items: center;';
   
   const title = document.createElement('h3');
   title.style.cssText = 'margin: 0; font-size: 16px;';
@@ -71,7 +71,7 @@ export async function show(itemId, _api) {
 
   const closeBtn = document.createElement('button');
   closeBtn.textContent = '\u00d7';
-  closeBtn.style.cssText = 'background: none; border: none; font-size: 24px; cursor: pointer; color: #666; padding: 0 4px;';
+  closeBtn.style.cssText = 'background: none; border: none; font-size: 24px; cursor: pointer; color: var(--color-text-secondary); padding: 0 4px;';
   closeBtn.onclick = () => hide();
   header.appendChild(closeBtn);
 
@@ -90,8 +90,8 @@ export async function show(itemId, _api) {
     font-family: monospace;
     font-size: 13px;
     padding: 12px;
-    border: 1px solid #ccc;
-    border-radius: 4px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--border-radius);
     resize: vertical;
     outline: none;
   `;
@@ -101,24 +101,24 @@ export async function show(itemId, _api) {
   // Error display
   const errorDisplay = document.createElement('div');
   errorDisplay.id = 'json-editor-error';
-  errorDisplay.style.cssText = 'color: #c00; font-size: 13px; margin-top: 8px; display: none;';
+  errorDisplay.style.cssText = 'color: var(--color-danger); font-size: 13px; margin-top: 8px; display: none;';
   editorArea.appendChild(errorDisplay);
 
   modal.appendChild(editorArea);
 
   // Actions
   const actions = document.createElement('div');
-  actions.style.cssText = 'padding: 16px 20px; border-top: 1px solid #ddd; display: flex; gap: 10px; justify-content: flex-end;';
+  actions.style.cssText = 'padding: 16px 20px; border-top: 1px solid var(--color-border-light); display: flex; gap: 10px; justify-content: flex-end;';
 
   const cancelBtn = document.createElement('button');
   cancelBtn.textContent = 'Cancel';
-  cancelBtn.style.cssText = 'padding: 8px 16px; cursor: pointer; border: 1px solid #ccc; background: white; border-radius: 4px;';
+  cancelBtn.style.cssText = 'padding: 8px 16px; cursor: pointer; border: 1px solid var(--color-border); background: var(--color-bg-surface); border-radius: var(--border-radius);';
   cancelBtn.onclick = () => hide();
   actions.appendChild(cancelBtn);
 
   const saveBtn = document.createElement('button');
   saveBtn.textContent = 'Save';
-  saveBtn.style.cssText = 'padding: 8px 16px; cursor: pointer; border: none; background: #007bff; color: white; border-radius: 4px;';
+  saveBtn.style.cssText = 'padding: 8px 16px; cursor: pointer; border: none; background: var(--color-primary); color: white; border-radius: var(--border-radius);';
   saveBtn.onclick = async () => {
     try {
       const updated = JSON.parse(textarea.value);

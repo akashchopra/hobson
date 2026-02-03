@@ -3,7 +3,7 @@
   "type": "66666666-0000-0000-0000-000000000000",
   "name": "system:default-error-handler",
   "created": 1737849600000,
-  "modified": 1770105096317,
+  "modified": 1770144891327,
   "children": [],
   "content": {
     "description": "Default system error handler. Creates error items with parsed stack traces and shows toast notifications. You can replace or delete this handler to customize error handling.",
@@ -12,6 +12,395 @@
         "event": "e0e00000-0002-0001-0000-000000000000"
       }
     ],
-    "code": "\n// Default error handler - creates error items and shows toast notifications\n\nconst ERROR_TYPE_ID = 'e7707000-0000-0000-0000-000000000001';\nconst ERROR_LIST_TYPE_ID = 'e7707000-0000-0000-0000-000000000010';\n\nexport async function onSystemError({ error, context, timestamp }, api) {\n  try {\n    // Parse stack trace into structured data (async - looks up item names)\n    const frames = await parseStackTrace(error.stack, api);\n    \n    // Create error item\n    const errorId = crypto.randomUUID();\n    await api.set({\n      id: errorId,\n      type: ERROR_TYPE_ID,\n      name: `Error: ${(error.message || '').substring(0, 40)}`,\n      created: Date.now(),\n      modified: Date.now(),\n      children: [],\n      content: {\n        message: error.message,\n        errorType: error.name || 'Error',\n        frames: frames,\n        context: context,\n        timestamp: timestamp,\n        resolved: false\n      }\n    });\n    \n    // Re-render any visible error lists so they show the new error\n    await api.rerenderByType(ERROR_LIST_TYPE_ID);\n\n    // Show toast notification\n    showErrorToast(error.message, errorId, context, api);\n  } catch (handlerError) {\n    // If our handler fails, just log to console\n    console.error('Error handler failed:', handlerError);\n    console.error('Original error:', error);\n  }\n}\n\nasync function parseStackTrace(stack, api) {\n  if (!stack) return [];\n  \n  const lines = stack.split('\\n').slice(1); // Skip \"Error: message\" line\n  const frames = [];\n  \n  // Cache item lookups to avoid repeated queries\n  const itemCache = new Map();\n  \n  for (const line of lines) {\n    const trimmed = line.trim();\n    if (!trimmed) continue;\n    \n    // Parse stack frame formats:\n    // Firefox classic: \"functionName@sourceURL:line:column\"\n    // Firefox simple:  \"functionName sourceURL:line\"\n    // Chrome:          \"    at functionName (sourceURL:line:column)\"\n    // Anonymous:       \"@sourceURL:line:column\"\n    \n    let sourceName = null;\n    let lineNum = null;\n    let colNum = null;\n    \n    // Try Firefox classic format: funcName@source:line:col\n    const firefoxClassicMatch = trimmed.match(/@([^:]+):(\\d+):(\\d+)$/);\n    if (firefoxClassicMatch) {\n      sourceName = firefoxClassicMatch[1];\n      lineNum = firefoxClassicMatch[2];\n      colNum = firefoxClassicMatch[3];\n    }\n    \n    // Try Firefox simple format: funcName source:line (space-separated, no column)\n    if (!sourceName) {\n      const firefoxSimpleMatch = trimmed.match(/^(\\S+)\\s+([^:]+):(\\d+)$/);\n      if (firefoxSimpleMatch) {\n        sourceName = firefoxSimpleMatch[2];\n        lineNum = firefoxSimpleMatch[3];\n        colNum = '0';\n      }\n    }\n    \n    // Try Firefox simple format with column: funcName source:line:col\n    if (!sourceName) {\n      const firefoxSimpleColMatch = trimmed.match(/^(\\S+)\\s+([^:]+):(\\d+):(\\d+)$/);\n      if (firefoxSimpleColMatch) {\n        sourceName = firefoxSimpleColMatch[2];\n        lineNum = firefoxSimpleColMatch[3];\n        colNum = firefoxSimpleColMatch[4];\n      }\n    }\n    \n    // Try Chrome format: at funcName (source:line:col)\n    if (!sourceName) {\n      const chromeMatch = trimmed.match(/\\(([^:]+):(\\d+):(\\d+)\\)$/);\n      if (chromeMatch) {\n        sourceName = chromeMatch[1];\n        lineNum = chromeMatch[2];\n        colNum = chromeMatch[3];\n      }\n    }\n    \n    // Try to find item by source name\n    let itemId = null;\n    if (sourceName) {\n      // Remove .js extension if present\n      const itemName = sourceName.replace(/\\.js$/, '');\n      \n      // Skip built-in browser sources\n      if (!itemName.includes('://') &&\n          !itemName.startsWith('blob:')) {\n        \n        if (itemCache.has(itemName)) {\n          itemId = itemCache.get(itemName);\n        } else {\n          try {\n            const item = await api.helpers.findByName(itemName);\n            if (item) {\n              itemId = item.id;\n              itemCache.set(itemName, itemId);\n            } else {\n              itemCache.set(itemName, null);\n            }\n          } catch (e) {\n            itemCache.set(itemName, null);\n          }\n        }\n      }\n    }\n    \n    frames.push({\n      raw: trimmed,\n      sourceName: sourceName,\n      field: 'code',\n      line: lineNum,\n      column: colNum,\n      itemId: itemId,\n      navigable: !!itemId\n    });\n  }\n  \n  return frames;\n}\n\nfunction showErrorToast(message, errorId, context, api) {\n  // Remove any existing toast\n  const existing = document.querySelector('.error-toast');\n  if (existing) existing.remove();\n\n  const toast = document.createElement('div');\n  toast.className = 'error-toast';\n  toast.style.cssText = `\n    position: fixed;\n    bottom: 20px;\n    right: 20px;\n    background: var(--color-danger);\n    color: white;\n    padding: 16px;\n    border-radius: var(--border-radius);\n    box-shadow: var(--shadow-md);\n    max-width: 400px;\n    z-index: 9999;\n    cursor: pointer;\n    font-family: system-ui, sans-serif;\n  `;\n\n  const truncatedMessage = (message || 'Unknown error').length > 100\n    ? message.substring(0, 100) + '...'\n    : message;\n\n  toast.innerHTML = `\n    <div style=\"display: flex; gap: 12px; align-items: start;\">\n      <span style=\"font-size: 24px;\">&#9888;</span>\n      <div style=\"flex: 1;\">\n        <strong>Error Occurred</strong>\n        <p style=\"margin: 4px 0 0 0; font-size: 14px;\">${truncatedMessage}</p>\n        <p style=\"margin: 4px 0 0 0; font-size: 12px; opacity: 0.8;\">Click to view details</p>\n      </div>\n    </div>\n  `;\n\n  toast.onclick = async () => {\n    toast.remove();\n    const currentRoot = api.viewport.getRoot();\n    if (context.itemId === currentRoot) {\n      // Error was in root item - navigate to error\n      await api.navigate(errorId);\n    } else {\n      // Error was in child - open error as sibling of root's children\n      if (currentRoot) {\n        await api.addChild(currentRoot, errorId);\n        await api.renderViewport();\n      } else {\n        await api.navigate(errorId);\n      }\n    }\n  };\n\n  document.body.appendChild(toast);\n\n  // Auto-dismiss after 8 seconds\n  setTimeout(() => {\n    if (toast.parentNode) toast.remove();\n  }, 8000);\n}\n"
+    "code": "\n// Default error handler - creates error items and shows toast notifications\n\nconst ERROR_TYPE_ID = 'e7707000-0000-0000-0000-000000000001';\nconst ERROR_LIST_TYPE_ID = 'e7707000-0000-0000-0000-000000000010';\n\nexport async function onSystemError({ error, context, timestamp }, api) {\n  try {\n    // Parse stack trace into structured data (async - looks up item names)\n    const frames = await parseStackTrace(error.stack, api);\n    \n    // Create error item\n    const errorId = crypto.randomUUID();\n    await api.set({\n      id: errorId,\n      type: ERROR_TYPE_ID,\n      name: `Error: ${(error.message || '').substring(0, 40)}`,\n      created: Date.now(),\n      modified: Date.now(),\n      children: [],\n      content: {\n        message: error.message,\n        errorType: error.name || 'Error',\n        frames: frames,\n        context: context,\n        timestamp: timestamp,\n        resolved: false\n      }\n    });\n    \n    // Re-render any visible error lists so they show the new error\n    await api.rerenderByType(ERROR_LIST_TYPE_ID);\n\n    // Show toast notification\n    showErrorToast(error.message, errorId, context, api);\n  } catch (handlerError) {\n    // If our handler fails, just log to console\n    console.error('Error handler failed:', handlerError);\n    console.error('Original error:', error);\n  }\n}\n\nasync function parseStackTrace(stack, api) {\n  if (!stack) return [];\n  \n  const lines = stack.split('\\n').slice(1); // Skip \"Error: message\" line\n  const frames = [];\n  \n  // Cache item lookups to avoid repeated queries\n  const itemCache = new Map();\n  \n  for (const line of lines) {\n    const trimmed = line.trim();\n    if (!trimmed) continue;\n    \n    // Parse stack frame formats:\n    // Firefox classic: \"functionName@sourceURL:line:column\"\n    // Firefox simple:  \"functionName sourceURL:line\"\n    // Chrome:          \"    at functionName (sourceURL:line:column)\"\n    // Anonymous:       \"@sourceURL:line:column\"\n    \n    let sourceName = null;\n    let lineNum = null;\n    let colNum = null;\n    \n    // Try Firefox classic format: funcName@source:line:col\n    const firefoxClassicMatch = trimmed.match(/@([^:]+):(\\d+):(\\d+)$/);\n    if (firefoxClassicMatch) {\n      sourceName = firefoxClassicMatch[1];\n      lineNum = firefoxClassicMatch[2];\n      colNum = firefoxClassicMatch[3];\n    }\n    \n    // Try Firefox simple format: funcName source:line (space-separated, no column)\n    if (!sourceName) {\n      const firefoxSimpleMatch = trimmed.match(/^(\\S+)\\s+([^:]+):(\\d+)$/);\n      if (firefoxSimpleMatch) {\n        sourceName = firefoxSimpleMatch[2];\n        lineNum = firefoxSimpleMatch[3];\n        colNum = '0';\n      }\n    }\n    \n    // Try Firefox simple format with column: funcName source:line:col\n    if (!sourceName) {\n      const firefoxSimpleColMatch = trimmed.match(/^(\\S+)\\s+([^:]+):(\\d+):(\\d+)$/);\n      if (firefoxSimpleColMatch) {\n        sourceName = firefoxSimpleColMatch[2];\n        lineNum = firefoxSimpleColMatch[3];\n        colNum = firefoxSimpleColMatch[4];\n      }\n    }\n    \n    // Try Chrome format: at funcName (source:line:col)\n    if (!sourceName) {\n      const chromeMatch = trimmed.match(/\\(([^:]+):(\\d+):(\\d+)\\)$/);\n      if (chromeMatch) {\n        sourceName = chromeMatch[1];\n        lineNum = chromeMatch[2];\n        colNum = chromeMatch[3];\n      }\n    }\n    \n    // Try to find item by source name\n    let itemId = null;\n    if (sourceName) {\n      // Remove .js extension if present\n      const itemName = sourceName.replace(/\\.js$/, '');\n      \n      // Skip built-in browser sources\n      if (!itemName.includes('://') &&\n          !itemName.startsWith('blob:')) {\n        \n        if (itemCache.has(itemName)) {\n          itemId = itemCache.get(itemName);\n        } else {\n          try {\n            const item = await api.helpers.findByName(itemName);\n            if (item) {\n              itemId = item.id;\n              itemCache.set(itemName, itemId);\n            } else {\n              itemCache.set(itemName, null);\n            }\n          } catch (e) {\n            itemCache.set(itemName, null);\n          }\n        }\n      }\n    }\n    \n    frames.push({\n      raw: trimmed,\n      sourceName: sourceName,\n      field: 'code',\n      line: lineNum,\n      column: colNum,\n      itemId: itemId,\n      navigable: !!itemId\n    });\n  }\n  \n  return frames;\n}\n\nfunction showErrorToast(message, errorId, context, api) {\n  // Remove any existing toast\n  const existing = document.querySelector('.error-toast');\n  if (existing) existing.remove();\n\n  const toast = document.createElement('div');\n  toast.className = 'error-toast';\n  toast.style.cssText = `\n    position: fixed;\n    bottom: 20px;\n    right: 20px;\n    background: var(--color-danger);\n    color: white;\n    padding: 16px;\n    border-radius: var(--border-radius);\n    box-shadow: var(--shadow-md);\n    max-width: 400px;\n    z-index: 9999;\n    cursor: pointer;\n    font-family: system-ui, sans-serif;\n  `;\n\n  const truncatedMessage = (message || 'Unknown error').length > 100\n    ? message.substring(0, 100) + '...'\n    : message;\n\n  toast.innerHTML = `\n    <div style=\"display: flex; gap: 12px; align-items: start;\">\n      <span style=\"font-size: 24px;\">&#9888;</span>\n      <div style=\"flex: 1;\">\n        <strong>Error Occurred</strong>\n        <p style=\"margin: 4px 0 0 0; font-size: 14px;\">${truncatedMessage}</p>\n        <p style=\"margin: 4px 0 0 0; font-size: 12px; opacity: 0.8;\">Click to view details</p>\n      </div>\n    </div>\n  `;\n\n  toast.onclick = async () => {\n    toast.remove();\n    const currentRoot = api.viewport.getRoot();\n    if (context.itemId === currentRoot) {\n      // Error was in root item - navigate to error\n      await api.navigate(errorId);\n    } else {\n      // Error was in child - open error as sibling of root's children\n      if (currentRoot) {\n        await api.addChild(currentRoot, errorId);\n        await api.renderViewport();\n      } else {\n        await api.navigate(errorId);\n      }\n    }\n  };\n\n  document.body.appendChild(toast);\n\n  // Auto-dismiss after 8 seconds\n  setTimeout(() => {\n    if (toast.parentNode) toast.remove();\n  }, 8000);\n}\n",
+    "_symbols": {
+      "ERROR_TYPE_ID": {
+        "name": "ERROR_TYPE_ID",
+        "line": 4,
+        "col": 6,
+        "endLine": 4,
+        "endCol": 60,
+        "kind": "variable",
+        "scope": null
+      },
+      "ERROR_LIST_TYPE_ID": {
+        "name": "ERROR_LIST_TYPE_ID",
+        "line": 5,
+        "col": 6,
+        "endLine": 5,
+        "endCol": 65,
+        "kind": "variable",
+        "scope": null
+      },
+      "onSystemError": {
+        "name": "onSystemError",
+        "line": 7,
+        "col": 7,
+        "endLine": 41,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null
+      },
+      "onSystemError.frames": {
+        "name": "frames",
+        "line": 10,
+        "col": 10,
+        "endLine": 10,
+        "endCol": 58,
+        "kind": "variable",
+        "scope": "onSystemError"
+      },
+      "onSystemError.errorId": {
+        "name": "errorId",
+        "line": 13,
+        "col": 10,
+        "endLine": 13,
+        "endCol": 39,
+        "kind": "variable",
+        "scope": "onSystemError"
+      },
+      "onSystemError.id": {
+        "name": "id",
+        "line": 15,
+        "col": 6,
+        "endLine": 15,
+        "endCol": 17,
+        "kind": "property",
+        "scope": "onSystemError"
+      },
+      "onSystemError.type": {
+        "name": "type",
+        "line": 16,
+        "col": 6,
+        "endLine": 16,
+        "endCol": 25,
+        "kind": "property",
+        "scope": "onSystemError"
+      },
+      "onSystemError.name": {
+        "name": "name",
+        "line": 17,
+        "col": 6,
+        "endLine": 17,
+        "endCol": 62,
+        "kind": "property",
+        "scope": "onSystemError"
+      },
+      "onSystemError.created": {
+        "name": "created",
+        "line": 18,
+        "col": 6,
+        "endLine": 18,
+        "endCol": 25,
+        "kind": "property",
+        "scope": "onSystemError"
+      },
+      "onSystemError.modified": {
+        "name": "modified",
+        "line": 19,
+        "col": 6,
+        "endLine": 19,
+        "endCol": 26,
+        "kind": "property",
+        "scope": "onSystemError"
+      },
+      "onSystemError.children": {
+        "name": "children",
+        "line": 20,
+        "col": 6,
+        "endLine": 20,
+        "endCol": 18,
+        "kind": "property",
+        "scope": "onSystemError"
+      },
+      "onSystemError.content": {
+        "name": "content",
+        "line": 21,
+        "col": 6,
+        "endLine": 28,
+        "endCol": 7,
+        "kind": "property",
+        "scope": "onSystemError"
+      },
+      "onSystemError.content.message": {
+        "name": "message",
+        "line": 22,
+        "col": 8,
+        "endLine": 22,
+        "endCol": 30,
+        "kind": "property",
+        "scope": "onSystemError.content"
+      },
+      "onSystemError.content.errorType": {
+        "name": "errorType",
+        "line": 23,
+        "col": 8,
+        "endLine": 23,
+        "endCol": 40,
+        "kind": "property",
+        "scope": "onSystemError.content"
+      },
+      "onSystemError.content.frames": {
+        "name": "frames",
+        "line": 24,
+        "col": 8,
+        "endLine": 24,
+        "endCol": 22,
+        "kind": "property",
+        "scope": "onSystemError.content"
+      },
+      "onSystemError.content.context": {
+        "name": "context",
+        "line": 25,
+        "col": 8,
+        "endLine": 25,
+        "endCol": 24,
+        "kind": "property",
+        "scope": "onSystemError.content"
+      },
+      "onSystemError.content.timestamp": {
+        "name": "timestamp",
+        "line": 26,
+        "col": 8,
+        "endLine": 26,
+        "endCol": 28,
+        "kind": "property",
+        "scope": "onSystemError.content"
+      },
+      "onSystemError.content.resolved": {
+        "name": "resolved",
+        "line": 27,
+        "col": 8,
+        "endLine": 27,
+        "endCol": 23,
+        "kind": "property",
+        "scope": "onSystemError.content"
+      },
+      "parseStackTrace": {
+        "name": "parseStackTrace",
+        "line": 43,
+        "col": 0,
+        "endLine": 144,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null
+      },
+      "parseStackTrace.lines": {
+        "name": "lines",
+        "line": 46,
+        "col": 8,
+        "endLine": 46,
+        "endCol": 42,
+        "kind": "variable",
+        "scope": "parseStackTrace"
+      },
+      "parseStackTrace.frames": {
+        "name": "frames",
+        "line": 47,
+        "col": 8,
+        "endLine": 47,
+        "endCol": 19,
+        "kind": "variable",
+        "scope": "parseStackTrace"
+      },
+      "parseStackTrace.itemCache": {
+        "name": "itemCache",
+        "line": 50,
+        "col": 8,
+        "endLine": 50,
+        "endCol": 29,
+        "kind": "variable",
+        "scope": "parseStackTrace"
+      },
+      "parseStackTrace.line": {
+        "name": "line",
+        "line": 136,
+        "col": 6,
+        "endLine": 136,
+        "endCol": 19,
+        "kind": "property",
+        "scope": "parseStackTrace"
+      },
+      "parseStackTrace.trimmed": {
+        "name": "trimmed",
+        "line": 53,
+        "col": 10,
+        "endLine": 53,
+        "endCol": 31,
+        "kind": "variable",
+        "scope": "parseStackTrace"
+      },
+      "parseStackTrace.sourceName": {
+        "name": "sourceName",
+        "line": 134,
+        "col": 6,
+        "endLine": 134,
+        "endCol": 28,
+        "kind": "property",
+        "scope": "parseStackTrace"
+      },
+      "parseStackTrace.lineNum": {
+        "name": "lineNum",
+        "line": 63,
+        "col": 8,
+        "endLine": 63,
+        "endCol": 22,
+        "kind": "variable",
+        "scope": "parseStackTrace"
+      },
+      "parseStackTrace.colNum": {
+        "name": "colNum",
+        "line": 64,
+        "col": 8,
+        "endLine": 64,
+        "endCol": 21,
+        "kind": "variable",
+        "scope": "parseStackTrace"
+      },
+      "parseStackTrace.firefoxClassicMatch": {
+        "name": "firefoxClassicMatch",
+        "line": 67,
+        "col": 10,
+        "endLine": 67,
+        "endCol": 70,
+        "kind": "variable",
+        "scope": "parseStackTrace"
+      },
+      "parseStackTrace.firefoxSimpleMatch": {
+        "name": "firefoxSimpleMatch",
+        "line": 76,
+        "col": 12,
+        "endLine": 76,
+        "endCol": 73,
+        "kind": "variable",
+        "scope": "parseStackTrace"
+      },
+      "parseStackTrace.firefoxSimpleColMatch": {
+        "name": "firefoxSimpleColMatch",
+        "line": 86,
+        "col": 12,
+        "endLine": 86,
+        "endCol": 82,
+        "kind": "variable",
+        "scope": "parseStackTrace"
+      },
+      "parseStackTrace.chromeMatch": {
+        "name": "chromeMatch",
+        "line": 96,
+        "col": 12,
+        "endLine": 96,
+        "endCol": 67,
+        "kind": "variable",
+        "scope": "parseStackTrace"
+      },
+      "parseStackTrace.itemId": {
+        "name": "itemId",
+        "line": 138,
+        "col": 6,
+        "endLine": 138,
+        "endCol": 20,
+        "kind": "property",
+        "scope": "parseStackTrace"
+      },
+      "parseStackTrace.itemName": {
+        "name": "itemName",
+        "line": 108,
+        "col": 12,
+        "endLine": 108,
+        "endCol": 54,
+        "kind": "variable",
+        "scope": "parseStackTrace"
+      },
+      "parseStackTrace.item": {
+        "name": "item",
+        "line": 118,
+        "col": 18,
+        "endLine": 118,
+        "endCol": 63,
+        "kind": "variable",
+        "scope": "parseStackTrace"
+      },
+      "parseStackTrace.raw": {
+        "name": "raw",
+        "line": 133,
+        "col": 6,
+        "endLine": 133,
+        "endCol": 18,
+        "kind": "property",
+        "scope": "parseStackTrace"
+      },
+      "parseStackTrace.field": {
+        "name": "field",
+        "line": 135,
+        "col": 6,
+        "endLine": 135,
+        "endCol": 19,
+        "kind": "property",
+        "scope": "parseStackTrace"
+      },
+      "parseStackTrace.column": {
+        "name": "column",
+        "line": 137,
+        "col": 6,
+        "endLine": 137,
+        "endCol": 20,
+        "kind": "property",
+        "scope": "parseStackTrace"
+      },
+      "parseStackTrace.navigable": {
+        "name": "navigable",
+        "line": 139,
+        "col": 6,
+        "endLine": 139,
+        "endCol": 25,
+        "kind": "property",
+        "scope": "parseStackTrace"
+      },
+      "showErrorToast": {
+        "name": "showErrorToast",
+        "line": 146,
+        "col": 0,
+        "endLine": 206,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null
+      },
+      "showErrorToast.existing": {
+        "name": "existing",
+        "line": 148,
+        "col": 8,
+        "endLine": 148,
+        "endCol": 57,
+        "kind": "variable",
+        "scope": "showErrorToast"
+      },
+      "showErrorToast.toast": {
+        "name": "toast",
+        "line": 151,
+        "col": 8,
+        "endLine": 151,
+        "endCol": 45,
+        "kind": "variable",
+        "scope": "showErrorToast"
+      },
+      "showErrorToast.truncatedMessage": {
+        "name": "truncatedMessage",
+        "line": 168,
+        "col": 8,
+        "endLine": 170,
+        "endCol": 13,
+        "kind": "variable",
+        "scope": "showErrorToast"
+      },
+      "showErrorToast.currentRoot": {
+        "name": "currentRoot",
+        "line": 185,
+        "col": 10,
+        "endLine": 185,
+        "endCol": 46,
+        "kind": "variable",
+        "scope": "showErrorToast"
+      }
+    }
   }
 }

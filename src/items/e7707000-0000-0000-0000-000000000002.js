@@ -158,11 +158,11 @@ function showErrorToast(message, errorId, context, api) {
     position: fixed;
     bottom: 20px;
     right: 20px;
-    background: #d32f2f;
+    background: var(--color-danger);
     color: white;
     padding: 16px;
-    border-radius: 4px;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+    border-radius: var(--border-radius);
+    box-shadow: var(--shadow-md);
     max-width: 400px;
     z-index: 9999;
     cursor: pointer;

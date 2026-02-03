@@ -18,7 +18,7 @@ export async function render(browser, api) {
 
   // Header
   const header = api.createElement('div', {
-    style: 'margin-bottom: 20px; padding-bottom: 15px; border-bottom: 2px solid #e0e0e0;'
+    style: 'margin-bottom: 20px; padding-bottom: 15px; border-bottom: 2px solid var(--color-border-light);'
   }, []);
 
   const title = api.createElement('h2', {
@@ -43,11 +43,11 @@ export async function render(browser, api) {
 
   // Results container
   const resultsContainer = api.createElement('div', {
-    style: 'margin-top: 20px; padding: 15px; background: #f9f9f9; border-radius: 6px;'
+    style: 'margin-top: 20px; padding: 15px; background: var(--color-bg-surface-alt); border-radius: var(--border-radius);'
   }, []);
 
   const resultsTitle = api.createElement('h3', {
-    style: 'margin: 0 0 15px 0; font-size: 16px; color: #333;'
+    style: 'margin: 0 0 15px 0; font-size: 16px; color: var(--color-text);'
   }, []);
   resultsContainer.appendChild(resultsTitle);
 
@@ -63,7 +63,7 @@ export async function render(browser, api) {
   // Cycle handler - returns a clickable card for items in render path
   const onCycle = (cycleItem) => {
     const card = api.createElement('div', {
-      style: 'padding: 12px; margin-bottom: 8px; background: #fffbeb; border: 1px dashed #f59e0b; border-radius: 6px; cursor: pointer; transition: all 0.2s;'
+      style: 'padding: 12px; margin-bottom: 8px; background: var(--color-warning-light); border: 1px dashed var(--color-warning); border-radius: var(--border-radius); cursor: pointer; transition: all 0.2s;'
     }, []);
 
     const titleRow = api.createElement('div', {
@@ -71,24 +71,24 @@ export async function render(browser, api) {
     }, []);
 
     const icon = api.createElement('span', {
-      style: 'color: #f59e0b;'
+      style: 'color: var(--color-warning);'
     }, ['\u21bb']);
     titleRow.appendChild(icon);
 
     const name = api.createElement('span', {
-      style: 'font-weight: 500; color: #333;'
+      style: 'font-weight: 500; color: var(--color-text);'
     }, [cycleItem.name || cycleItem.id.substring(0, 8)]);
     titleRow.appendChild(name);
 
     const badge = api.createElement('span', {
-      style: 'font-size: 11px; color: #92400e; background: #fef3c7; padding: 2px 6px; border-radius: 4px;'
+      style: 'font-size: 11px; color: #92400e; background: #fef3c7; padding: 2px 6px; border-radius: var(--border-radius);'
     }, ['in current view']);
     titleRow.appendChild(badge);
 
     card.appendChild(titleRow);
 
     const meta = api.createElement('div', {
-      style: 'font-size: 12px; color: #999;'
+      style: 'font-size: 12px; color: var(--color-border-dark);'
     }, ['Click to open']);
     card.appendChild(meta);
 
@@ -98,8 +98,8 @@ export async function render(browser, api) {
       card.style.transform = 'translateX(4px)';
     };
     card.onmouseout = () => {
-      card.style.background = '#fffbeb';
-      card.style.borderColor = '#f59e0b';
+      card.style.background = 'var(--color-warning-light)';
+      card.style.borderColor = 'var(--color-warning)';
       card.style.transform = 'translateX(0)';
     };
 
@@ -137,7 +137,7 @@ export async function render(browser, api) {
 
     if (children.length === 0) {
       const emptyMsg = api.createElement('div', {
-        style: 'padding: 20px; text-align: center; color: #999; font-style: italic;'
+        style: 'padding: 20px; text-align: center; color: var(--color-border-dark); font-style: italic;'
       }, ['No items found with this tag.']);
       resultsList.appendChild(emptyMsg);
     } else {
@@ -153,7 +153,7 @@ export async function render(browser, api) {
           resultsList.appendChild(childNode);
         } catch (err) {
           const errorNode = api.createElement('div', {
-            style: 'padding: 12px; margin-bottom: 8px; color: #c00; border: 1px solid #fcc; border-radius: 6px; background: #fff5f5;'
+            style: 'padding: 12px; margin-bottom: 8px; color: var(--color-danger); border: 1px solid var(--color-danger); border-radius: var(--border-radius); background: var(--color-danger-light);'
           }, ['Error loading item: ' + childId]);
           resultsList.appendChild(errorNode);
         }

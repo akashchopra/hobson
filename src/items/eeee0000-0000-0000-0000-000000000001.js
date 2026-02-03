@@ -163,9 +163,9 @@ async function showInspectorOverlay(info, x, y, api) {
     left: ${x + 10}px;
     top: ${y + 10}px;
     max-width: 400px;
-    background: white;
-    border: 1px solid #ccc;
-    border-radius: 4px;
+    background: var(--color-bg-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--border-radius);
     box-shadow: 0 4px 12px rgba(0,0,0,0.15);
     padding: 12px;
     z-index: 100000;
@@ -177,7 +177,7 @@ async function showInspectorOverlay(info, x, y, api) {
   let html = '<div style="font-weight: 600; margin-bottom: 8px;">Element Inspector</div>';
 
   if (info.chain.length === 0) {
-    html += '<div style="color: #666;">No attribution found. Try reloading with ?debug=1</div>';
+    html += '<div style="color: var(--color-text-secondary);">No attribution found. Try reloading with ?debug=1</div>';
   } else {
     // Look up item names for better display
     const nameCache = {};
@@ -201,10 +201,10 @@ async function showInspectorOverlay(info, x, y, api) {
     }
 
     for (const entry of info.chain) {
-      html += '<div style="margin-bottom: 8px; padding: 8px; background: #f5f5f5; border-radius: 4px;">';
+      html += '<div style="margin-bottom: 8px; padding: 8px; background: var(--color-bg-body); border-radius: var(--border-radius);">';
 
       // Element tag at top - this is what we're inspecting
-      html += `<div style="font-family: monospace; color: #666; margin-bottom: 4px;">&lt;${entry.tagName}&gt;${entry.className ? '.' + entry.className.split(' ')[0] : ''}</div>`;
+      html += `<div style="font-family: monospace; color: var(--color-text-secondary); margin-bottom: 4px;">&lt;${entry.tagName}&gt;${entry.className ? '.' + entry.className.split(' ')[0] : ''}</div>`;
 
       if (entry.forItem) {
         html += `<div><strong>Item:</strong> <a href="#" class="inspector-link" data-id="${entry.forItem}">${nameCache[entry.forItem]}</a></div>`;
@@ -219,20 +219,20 @@ async function showInspectorOverlay(info, x, y, api) {
       }
 
       if (entry.itemId && entry.itemId !== entry.forItem) {
-        html += `<div style="color: #888; font-size: 12px;">via <a href="#" class="inspector-link" data-id="${entry.itemId}">${nameCache[entry.itemId]}</a></div>`;
+        html += `<div style="color: var(--color-text-tertiary); font-size: 12px;">via <a href="#" class="inspector-link" data-id="${entry.itemId}">${nameCache[entry.itemId]}</a></div>`;
       }
 
       html += '</div>';
     }
   }
 
-  html += '<div style="margin-top: 8px; font-size: 11px; color: #999;">Click to navigate (with line) | Ctrl+Shift+. to exit</div>';
+  html += '<div style="margin-top: 8px; font-size: 11px; color: var(--color-border-dark);">Click to navigate (with line) | Ctrl+Shift+. to exit</div>';
 
   overlay.innerHTML = html;
 
   // Add click handlers for links
   overlay.querySelectorAll('.inspector-link').forEach(link => {
-    link.style.cssText = 'color: #1976d2; cursor: pointer; text-decoration: none;';
+    link.style.cssText = 'color: var(--color-primary); cursor: pointer; text-decoration: none;';
     link.onclick = async (e) => {
       e.preventDefault();
 

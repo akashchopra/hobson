@@ -11,25 +11,25 @@ export function render(value, options, api) {
   if (label) {
     const labelEl = api.createElement('label');
     labelEl.textContent = label;
-    labelEl.style.cssText = 'font-weight: 500; font-size: 14px; color: #333;';
+    labelEl.style.cssText = 'font-weight: 500; font-size: 14px; color: var(--color-text);';
     wrapper.appendChild(labelEl);
   }
 
   const jsonStr = JSON.stringify(value, null, 2);
 
   if (mode === 'editable' && onChange) {
-    const textarea = api.createElement('textarea', { style: 'padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px; font-family: monospace; resize: vertical; min-height: 100px;' });
+    const textarea = api.createElement('textarea', { style: 'padding: 8px; border: 1px solid var(--color-border); border-radius: var(--border-radius); font-size: 13px; font-family: monospace; resize: vertical; min-height: 100px;' });
     textarea.value = jsonStr;
     const errorEl = api.createElement('div');
-    errorEl.style.cssText = 'color: #dc3545; font-size: 12px; min-height: 16px;';
+    errorEl.style.cssText = 'color: var(--color-danger); font-size: 12px; min-height: 16px;';
     textarea.oninput = (e) => {
       try {
         onChange(JSON.parse(e.target.value));
         errorEl.textContent = '';
-        textarea.style.borderColor = '#ccc';
+        textarea.style.borderColor = 'var(--color-border)';
       } catch (err) {
         errorEl.textContent = 'Invalid JSON';
-        textarea.style.borderColor = '#dc3545';
+        textarea.style.borderColor = 'var(--color-danger)';
       }
     };
     wrapper.appendChild(textarea);
@@ -37,7 +37,7 @@ export function render(value, options, api) {
   } else {
     const pre = api.createElement('pre');
     pre.textContent = jsonStr;
-    pre.style.cssText = 'padding: 8px; background: #f5f5f5; border-radius: 4px; font-size: 13px; font-family: monospace; white-space: pre-wrap; margin: 0;';
+    pre.style.cssText = 'padding: 8px; background: var(--color-bg-surface-alt); border-radius: var(--border-radius); font-size: 13px; font-family: monospace; white-space: pre-wrap; margin: 0;';
     wrapper.appendChild(pre);
   }
   return wrapper;

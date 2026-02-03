@@ -17,18 +17,18 @@ export async function render(item, api) {
   container.style.cssText = `
     width: 100%;
     height: 100%;
-    border: 2px solid #0066cc;
-    border-radius: 4px;
+    border: 2px solid var(--color-primary);
+    border-radius: var(--border-radius);
     overflow: hidden;
     display: flex;
     flex-direction: column;
-    background: #f5f5f5;
+    background: var(--color-bg-body);
   `;
   
   // Header showing this is a nested instance
   const header = document.createElement('div');
   header.style.cssText = `
-    background: #0066cc;
+    background: var(--color-primary);
     color: white;
     padding: 8px 12px;
     font-size: 12px;
@@ -50,7 +50,7 @@ export async function render(item, api) {
   // Reload button
   const reloadBtn = document.createElement('button');
   reloadBtn.textContent = 'Reload';
-  reloadBtn.style.cssText = 'padding: 4px 12px; background: white; color: #0066cc; border: none; border-radius: 3px; cursor: pointer; font-size: 11px;';
+  reloadBtn.style.cssText = 'padding: 4px 12px; background: var(--color-bg-surface); color: var(--color-primary); border: none; border-radius: 3px; cursor: pointer; font-size: 11px;';
   reloadBtn.onclick = () => {
     iframe.src = iframe.src; // Force reload
   };
@@ -59,7 +59,7 @@ export async function render(item, api) {
   // Open in new tab button
   const newTabBtn = document.createElement('button');
   newTabBtn.textContent = 'Open in Tab';
-  newTabBtn.style.cssText = 'padding: 4px 12px; background: white; color: #0066cc; border: none; border-radius: 3px; cursor: pointer; font-size: 11px;';
+  newTabBtn.style.cssText = 'padding: 4px 12px; background: var(--color-bg-surface); color: var(--color-primary); border: none; border-radius: 3px; cursor: pointer; font-size: 11px;';
   newTabBtn.onclick = () => {
     window.open(iframe.src, '_blank');
   };
@@ -74,7 +74,7 @@ export async function render(item, api) {
     top: 50%;
     left: 50%;
     transform: translate(-50%, -50%);
-    color: #666;
+    color: var(--color-text-secondary);
     font-size: 14px;
   `;
   loading.textContent = 'Loading nested instance...';
@@ -108,7 +108,7 @@ export async function render(item, api) {
   
   iframe.onerror = () => {
     loading.textContent = 'Failed to load nested instance';
-    loading.style.color = '#cc0000';
+    loading.style.color = 'var(--color-danger)';
   };
   
   iframeContainer.appendChild(iframe);

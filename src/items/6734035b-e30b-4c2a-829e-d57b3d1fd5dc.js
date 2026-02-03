@@ -79,7 +79,7 @@ export function createSearchUI(containerEl, onSelect, api, options = {}) {
     type: 'text',
     placeholder,
     value: savedQuery,
-    style: 'width: 100%; padding: 12px 16px; font-size: 16px; border: 2px solid var(--color-border); border-radius: 8px; outline: none; transition: border-color 0.2s;'
+    style: 'width: 100%; padding: 12px 16px; font-size: 16px; border: 2px solid var(--color-border); border-radius: var(--border-radius); outline: none; transition: border-color 0.2s;'
   }, []);
 
   input.onfocus = () => { input.style.borderColor = 'var(--color-primary)'; };

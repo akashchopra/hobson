@@ -17,7 +17,7 @@ export async function render(item, api) {
   
   // Description
   if (item.content.description) {
-    const desc = api.createElement('p', { style: 'color: #666; font-style: italic;' }, [
+    const desc = api.createElement('p', { style: 'color: var(--color-text-secondary); font-style: italic;' }, [
       item.content.description
     ]);
     container.appendChild(desc);
@@ -26,10 +26,10 @@ export async function render(item, api) {
   // Code display
   const code = api.createElement('pre', {
     style: `
-      background: #f8f8f8;
+      background: var(--color-bg-surface-alt);
       padding: 15px;
-      border-radius: 4px;
-      border: 1px solid #ddd;
+      border-radius: var(--border-radius);
+      border: 1px solid var(--color-border-light);
       overflow-x: auto;
       font-family: 'SF Mono', Monaco, monospace;
       font-size: 13px;
@@ -44,7 +44,7 @@ export async function render(item, api) {
   }, []);
   
   const runBtn = api.createElement('button', {
-    style: 'padding: 10px 20px; cursor: pointer; background: #007bff; color: white; border: none; border-radius: 4px; font-weight: 500;',
+    style: 'padding: 10px 20px; cursor: pointer; background: var(--color-primary); color: white; border: none; border-radius: var(--border-radius); font-weight: 500;',
     onclick: async () => {
       runBtn.disabled = true;
       runBtn.textContent = 'Running...';

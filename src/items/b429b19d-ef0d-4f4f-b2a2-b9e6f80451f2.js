@@ -141,7 +141,11 @@ export async function render(item, api) {
     // Check if this field is the navigation target for scroll-to-line/region
     // navigateTo.field is just 'code' but path might be 'content.code', so compare last segment
     const fieldName = path.split('.').pop();
-    const isNavigationTarget = navigateTo && navigateTo.field === fieldName;
+    // Navigation target: explicit field match, OR symbol without field defaults to 'code'
+    const isNavigationTarget = navigateTo && (
+      navigateTo.field === fieldName ||
+      (navigateTo.symbol && !navigateTo.field && fieldName === 'code')
+    );
 
     // Render field - AWAIT in case it's async!
     let fieldElement;
@@ -154,12 +158,13 @@ export async function render(item, api) {
         // Pass scroll params if this is the navigation target
         scrollToRegion: isNavigationTarget ? navigateTo.region : null,
         scrollToLines: isNavigationTarget ? navigateTo.lines : null,  // "5" or "10-20"
+        scrollToSymbol: isNavigationTarget ? navigateTo.symbol : null,
         ...hint
       }, api);
     } catch (renderError) {
       console.error('Error rendering field:', path, 'with view:', fieldViewName, renderError);
       fieldElement = api.createElement('div');
-      fieldElement.style.cssText = 'color: red; font-size: 12px;';
+      fieldElement.style.cssText = 'color: var(--color-danger); font-size: 12px;';
       fieldElement.textContent = 'Error: ' + renderError.message;
     }
 
@@ -168,7 +173,7 @@ export async function render(item, api) {
     // Add divider after field if requested
     if (hint.dividerAfter) {
       const divider = api.createElement('hr');
-      divider.style.cssText = 'border: none; border-top: 2px solid #e0e0e0; margin: 8px 0; flex-shrink: 0;';
+      divider.style.cssText = 'border: none; border-top: 2px solid var(--color-border); margin: 8px 0; flex-shrink: 0;';
       scrollArea.appendChild(divider);
     }
   }
@@ -178,7 +183,7 @@ export async function render(item, api) {
   // Add save/cancel buttons if any field is editable (sticky at bottom)
   if (hasEditableFields) {
     const actions = api.createElement('div', { className: 'view-actions' });
-    actions.style.cssText = 'display: flex; gap: 10px; justify-content: flex-end; padding: 16px; border-top: 1px solid #ddd; background: #f9f9f9; flex-shrink: 0;';
+    actions.style.cssText = 'display: flex; gap: 10px; justify-content: flex-end; padding: 16px; border-top: 1px solid var(--color-border-light); background: var(--color-bg-surface-alt); flex-shrink: 0;';
 
     const cancelBtn = api.createElement('button', {
       style: 'padding: 8px 16px; cursor: pointer;'
@@ -190,7 +195,7 @@ export async function render(item, api) {
     actions.appendChild(cancelBtn);
 
     const saveBtn = api.createElement('button', {
-      style: 'padding: 8px 16px; cursor: pointer; background: #6c757d; color: white; border: none; border-radius: 4px;'
+      style: 'padding: 8px 16px; cursor: pointer; background: var(--color-text-secondary); color: white; border: none; border-radius: var(--border-radius);'
     });
     saveBtn.textContent = 'Save';
     saveBtn.onclick = async () => {
@@ -205,7 +210,7 @@ export async function render(item, api) {
     actions.appendChild(saveBtn);
 
     const saveAndViewBtn = api.createElement('button', {
-      style: 'padding: 8px 16px; cursor: pointer; background: #007bff; color: white; border: none; border-radius: 4px;'
+      style: 'padding: 8px 16px; cursor: pointer; background: var(--color-primary); color: white; border: none; border-radius: var(--border-radius);'
     });
     saveAndViewBtn.textContent = 'Save & View';
     saveAndViewBtn.onclick = async () => {
