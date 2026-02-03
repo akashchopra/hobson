@@ -754,7 +754,7 @@ export async function render(item, api) {
           onclick: async (clickE) => {
             clickE.stopPropagation();
             await updateChild(childId, { minimized: true, maximized: false });
-            await api.navigate(api.getCurrentRoot());
+            await api.rerenderItem(item.id);
           }
         }, ['−']);
         buttonContainer.appendChild(minimizeBtn);
@@ -786,7 +786,7 @@ export async function render(item, api) {
               // Maximize
               await updateChild(childId, { maximized: true });
             }
-            await api.navigate(api.getCurrentRoot());
+            await api.rerenderItem(item.id);
           }
         }, [isMaximized ? '❐' : '□']);
         buttonContainer.appendChild(maxBtn);
@@ -1284,7 +1284,7 @@ export async function render(item, api) {
             };
 
             await api.updateSilent(updated);
-            await api.navigate(api.getCurrentRoot());
+            await api.rerenderItem(item.id);
           }
         }, []);
 
