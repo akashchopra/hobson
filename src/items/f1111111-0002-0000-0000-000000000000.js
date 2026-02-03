@@ -1,3 +1,7 @@
+// Item: viewport-manager
+// ID: f1111111-0002-0000-0000-000000000000
+// Type: 66666666-0000-0000-0000-000000000000
+
 // Viewport Manager Library
 // Stateless - reads from URL (root) and viewport item (view config)
 // No module-level caching; sources of truth are URL + viewport item

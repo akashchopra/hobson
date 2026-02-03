@@ -1,13 +1,17 @@
-// Item: kernel-safe-mode
+// Item: kernel:safe-mode
 // ID: 33333333-7777-0000-0000-000000000000
 // Type: 33333333-0000-0000-0000-000000000000
 
 // kernel-safe-mode module
+// See [Architecture Overview - Safe Mode](item://a0a0a0a0-d0c0-4000-8000-000000000003#Safe-Mode)
+
+// [BEGIN:SafeMode]
 export class SafeMode {
   constructor(kernel) {
     this.kernel = kernel;
   }
   
+  // [BEGIN:render]
   render(rootElement) {
     rootElement.innerHTML = `
       <div id="safe-mode">
@@ -47,6 +51,7 @@ export class SafeMode {
     
     this._renderItemList(codeItems, "Code Items");
   }
+  // [END:render]
   
   _renderItemList(items, title) {
     const listEl = document.getElementById("item-list");
@@ -73,6 +78,7 @@ export class SafeMode {
     }
   }
   
+  // [BEGIN:editItem]
   async editItem(itemId) {
     const item = await this.kernel.storage.get(itemId);
     const json = JSON.stringify(item, null, 2);
@@ -104,6 +110,7 @@ export class SafeMode {
       alert(`Error: ${error.message}`);
     }
   }
+  // [END:editItem]
   
   async deleteItem(itemId) {
     if (!confirm(`Delete item ${itemId}? This cannot be undone.`)) {
@@ -162,6 +169,7 @@ export class SafeMode {
     input.click();
   }
 
+  // [BEGIN:resetSystem]
   async resetSystem() {
     if (!confirm("WARNING: This will delete ALL your data!\n\nOnly the seed items will remain.\n\nHave you exported your data? This cannot be undone!")) {
       return;
@@ -176,6 +184,7 @@ export class SafeMode {
     this.render(this.kernel.rootElement);
     alert("System reset complete");
   }
+  // [END:resetSystem]
   
   _escapeHtml(str) {
     return String(str)
@@ -186,3 +195,4 @@ export class SafeMode {
       .replace(/'/g, "&#039;");
   }
 }
+// [END:SafeMode]

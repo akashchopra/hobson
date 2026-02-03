@@ -1,7 +1,13 @@
+// Item: kernel:storage
+// ID: 33333333-2222-0000-0000-000000000000
+// Type: 33333333-0000-0000-0000-000000000000
+
 // kernel-storage module
+// See [Architecture Overview - Storage Architecture](item://a0a0a0a0-d0c0-4000-8000-000000000003#Storage-Architecture)
 // Delegates all storage operations to the backend provided by the bootloader.
 // The backend handles IndexedDB access and ID prefixing for nested instances.
 
+// [BEGIN:Storage]
 export class Storage {
   constructor(backend) {
     this.backend = backend;
@@ -65,6 +71,8 @@ export class Storage {
     }
   }
 
+  // [BEGIN:validateItem]
+  // Validates items before storage - type chain and name uniqueness
   async _validateItem(item, kernel) {
     // See [item/atom](item://00000000-0000-0000-0000-000000000000)
     const ITEM_ID = kernel?.IDS?.ITEM || "00000000-0000-0000-0000-000000000000";
@@ -92,7 +100,9 @@ export class Storage {
       }
     }
   }
+  // [END:validateItem]
 
+  // [BEGIN:validateTypeChain]
   async _validateTypeChain(typeId, visited, ITEM_ID, TYPE_DEFINITION_ID) {
     // Valid termination points:
     // - ITEM (old model: atom.type = atom)
@@ -117,4 +127,6 @@ export class Storage {
       throw error;
     }
   }
+  // [END:validateTypeChain]
 }
+// [END:Storage]

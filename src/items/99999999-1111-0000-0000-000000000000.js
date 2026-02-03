@@ -1,7 +1,11 @@
-// Item: hobson_instance_view
+// Item: system:hobson-instance-view
 // ID: 99999999-1111-0000-0000-000000000000
 // Type: aaaaaaaa-0000-0000-0000-000000000000
 
+// Hobson Instance View - iframe-based isolation
+// See [system:hobson-instance-view documentation](item://99999999-1111-0000-0000-000000000000)
+
+// [BEGIN:render]
 // hobson-instance renderer - iframe-based isolation
 export async function render(item, api) {
   // Build full instance ID by chaining current prefix with this item's ID
@@ -114,3 +118,4 @@ export async function render(item, api) {
   
   return container;
 }
+// [END:render]

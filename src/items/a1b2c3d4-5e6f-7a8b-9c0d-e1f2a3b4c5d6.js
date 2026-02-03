@@ -209,23 +209,35 @@ export async function render(markdown, api) {
         header.onclick = () => api.siblingContainer.addSibling(parsed.itemId);
         wrapperDiv.appendChild(header);
 
-        const pre = api.createElement('pre');
-        pre.style.cssText = 'margin: 0; padding: 10px; background: #fff; border-radius: 4px; overflow-x: auto; font-family: monospace; font-size: 13px; line-height: 1.5;';
+        // Determine render mode: explicit override > auto-detect > default (code)
+        const renderMode = parsed.queryParams.render
+          || (fieldName === 'description' ? 'markdown' : null)
+          || 'code';
 
-        const code = api.createElement('code');
-        const lines = text.split('\n');
-        lines.forEach((line, idx) => {
-          const lineNum = startLine + idx;
-          const lineNumSpan = api.createElement('span');
-          lineNumSpan.style.cssText = 'display: inline-block; width: 40px; color: #999; user-select: none; text-align: right; margin-right: 10px;';
-          lineNumSpan.textContent = lineNum + '';
-          code.appendChild(lineNumSpan);
-          code.appendChild(document.createTextNode(line));
-          if (idx < lines.length - 1) code.appendChild(document.createTextNode('\n'));
-        });
+        if (renderMode === 'markdown') {
+          // Render as markdown (recursive call)
+          const renderedMarkdown = await render(text, api);
+          wrapperDiv.appendChild(renderedMarkdown);
+        } else {
+          // Render as code block
+          const pre = api.createElement('pre');
+          pre.style.cssText = 'margin: 0; padding: 10px; background: #fff; border-radius: 4px; overflow-x: auto; font-family: monospace; font-size: 13px; line-height: 1.5;';
 
-        pre.appendChild(code);
-        wrapperDiv.appendChild(pre);
+          const code = api.createElement('code');
+          const lines = text.split('\n');
+          lines.forEach((line, idx) => {
+            const lineNum = startLine + idx;
+            const lineNumSpan = api.createElement('span');
+            lineNumSpan.style.cssText = 'display: inline-block; width: 40px; color: #999; user-select: none; text-align: right; margin-right: 10px;';
+            lineNumSpan.textContent = lineNum + '';
+            code.appendChild(lineNumSpan);
+            code.appendChild(document.createTextNode(line));
+            if (idx < lines.length - 1) code.appendChild(document.createTextNode('\n'));
+          });
+
+          pre.appendChild(code);
+          wrapperDiv.appendChild(pre);
+        }
       } else {
         // Full transclusion
         const header = api.createElement('div');
@@ -369,3 +381,4 @@ export async function render(markdown, api) {
 
   return content;
 }
+

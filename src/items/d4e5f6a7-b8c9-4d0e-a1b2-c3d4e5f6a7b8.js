@@ -1,4 +1,4 @@
-// Item: compact_card_view
+// Item: system:compact-card-view
 // ID: d4e5f6a7-b8c9-4d0e-a1b2-c3d4e5f6a7b8
 // Type: aaaaaaaa-0000-0000-0000-000000000000
 

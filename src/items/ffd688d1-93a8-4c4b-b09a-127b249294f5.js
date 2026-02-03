@@ -1,4 +1,4 @@
-// Item: generic-editor
+// Item: system:generic-editor
 // ID: ffd688d1-93a8-4c4b-b09a-127b249294f5
 // Type: 66666666-0000-0000-0000-000000000000
 

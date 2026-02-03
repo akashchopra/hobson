@@ -1,4 +1,4 @@
-// Item: field_view_heading
+// Item: field-view-heading
 // ID: 43b8f6c8-a575-4610-83a4-fb3c6bd3d5d8
 // Type: cccccccc-0000-0000-0000-000000000000
 

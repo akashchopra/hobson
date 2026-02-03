@@ -12,6 +12,7 @@ export async function showTypePicker(api) {
   const modalLib = await api.require('modal-lib');
 
   const allItems = await api.getAll();
+  allItems.sort((a,b) => a.name.localeCompare(b.name));
   const types = allItems.filter(i => i.type === api.IDS.TYPE_DEFINITION);
 
   return new Promise((resolve) => {
@@ -43,7 +44,7 @@ export async function showTypePicker(api) {
           typeBtn.appendChild(typeName);
 
           if (type.content?.description) {
-            const typeDesc = api.createElement('div', { style: 'font-size: 12px; color: #666; margin-top: 4px;' }, [type.content.description]);
+            const typeDesc = api.createElement('div', { style: 'font-size: 12px; color: #666; margin-top: 4px;' }, [type.content.description.slice(0, 300)]);
             typeBtn.appendChild(typeDesc);
           }
 

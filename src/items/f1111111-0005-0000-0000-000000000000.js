@@ -4,6 +4,7 @@
 
 // Item Palette Library
 // Provides the item search/navigation modal. Moved from kernel to userland.
+// See [item-palette documentation](item://f1111111-0005-0000-0000-000000000000)
 
 let api = null;
 
@@ -12,6 +13,7 @@ export async function onSystemBootComplete({ safeMode }, _api) {
   api = _api;
 }
 
+// [BEGIN:show]
 export async function show() {
   if (!api) {
     console.warn('item-palette: not initialized');
@@ -135,6 +137,7 @@ export async function show() {
   document.body.appendChild(overlay);
   searchInput.focus();
 }
+// [END:show]
 
 export function hide() {
   const existing = document.getElementById("item-list-overlay");

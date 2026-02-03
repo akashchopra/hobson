@@ -1,4 +1,4 @@
-// Item: field_view_textarea
+// Item: field-view-textarea
 // ID: e933335e-5284-4943-8747-3b98333149ba
 // Type: cccccccc-0000-0000-0000-000000000000
 

@@ -1,9 +1,11 @@
-// Item: error_view
+// Item: system:error-view
 // ID: e7707000-0000-0000-0000-000000000003
 // Type: aaaaaaaa-0000-0000-0000-000000000000
 
-// Error renderer - displays error details with clickable stack traces
+// Error View - displays error details with clickable stack traces
+// See [Events System](item://a0a0a0a0-d0c0-4000-8000-000000000006#error-handling)
 
+// [BEGIN:render]
 export function render(item, api) {
   const content = item.content || {};
   const frames = content.frames || [];
@@ -198,6 +200,7 @@ export function render(item, api) {
   
   return container;
 }
+// [END:render]
 
 function escapeHtml(text) {
   if (!text) return '';

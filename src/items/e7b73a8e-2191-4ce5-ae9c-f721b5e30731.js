@@ -1,8 +1,11 @@
-// Item: field_view_code_editable
+// Item: field-view-code-editable
 // ID: e7b73a8e-2191-4ce5-ae9c-f721b5e30731
 // Type: cccccccc-0000-0000-0000-000000000000
 
+// Code Editable Field View - CodeMirror-based code editor
+// See [field-view-code-editable documentation](item://e7b73a8e-2191-4ce5-ae9c-f721b5e30731)
 
+// [BEGIN:findRegionStartLine]
 // Helper: Find the line number where a region starts
 function findRegionStartLine(text, regionName) {
   const lines = text.split('\n');
@@ -18,7 +21,9 @@ function findRegionStartLine(text, regionName) {
   }
   return null;
 }
+// [END:findRegionStartLine]
 
+// [BEGIN:render]
 // Code editable field view
 export async function render(value, options, api) {
   const { onChange, label, language = 'javascript', scrollToLine, scrollToRegion } = options;
@@ -149,3 +154,4 @@ export async function render(value, options, api) {
 
   return wrapper;
 }
+// [END:render]

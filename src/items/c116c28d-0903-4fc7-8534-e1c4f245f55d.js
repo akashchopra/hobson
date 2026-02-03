@@ -1,4 +1,4 @@
-// Item: field_view_text
+// Item: field-view-text
 // ID: c116c28d-0903-4fc7-8534-e1c4f245f55d
 // Type: cccccccc-0000-0000-0000-000000000000
 

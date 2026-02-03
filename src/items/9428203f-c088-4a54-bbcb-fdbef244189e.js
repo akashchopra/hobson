@@ -1,4 +1,4 @@
-// Item: item_search_view
+// Item: system:item-search-view
 // ID: 9428203f-c088-4a54-bbcb-fdbef244189e
 // Type: aaaaaaaa-0000-0000-0000-000000000000
 
@@ -45,7 +45,7 @@ export async function render(search, api) {
   const resultsArea = api.createElement('div', {}, []);
   container.appendChild(resultsArea);
 
-  // Find compact-card-view for rendering results (default view)
+  // Find compact_card_view for rendering results (default view)
   const compactViews = await api.query({ name: 'system:compact-card-view' });
   const compactViewId = compactViews[0]?.id || null;
 

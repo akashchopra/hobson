@@ -1,3 +1,7 @@
+// Item: system:viewport-view
+// ID: bd74da77-a459-454a-b001-48685d4b536d
+// Type: aaaaaaaa-0000-0000-0000-000000000000
+
 
 export async function render(item, api) {
   // Load dependencies

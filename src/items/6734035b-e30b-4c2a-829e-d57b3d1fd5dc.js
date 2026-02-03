@@ -2,7 +2,10 @@
 // ID: 6734035b-e30b-4c2a-829e-d57b3d1fd5dc
 // Type: 66666666-0000-0000-0000-000000000000
 
+// Item Search Library
+// See [item-search-lib documentation](item://6734035b-e30b-4c2a-829e-d57b3d1fd5dc)
 
+// [BEGIN:searchItems]
 /**
  * Search items based on query string
  */
@@ -52,7 +55,9 @@ export async function searchItems(query, api, options = {}) {
   matches.sort((a, b) => a.name.localeCompare(b.name));
   return matches;
 }
+// [END:searchItems]
 
+// [BEGIN:createSearchUI]
 /**
  * Create a search UI widget
  */
@@ -260,3 +265,4 @@ export function createSearchUI(containerEl, onSelect, api, options = {}) {
     }
   };
 }
+// [END:createSearchUI]

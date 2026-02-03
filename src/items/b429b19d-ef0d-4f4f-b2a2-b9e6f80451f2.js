@@ -2,9 +2,9 @@
 // ID: b429b19d-ef0d-4f4f-b2a2-b9e6f80451f2
 // Type: 66666666-0000-0000-0000-000000000000
 
-
 // Generic view library - interprets view-spec items
 // Supports both sync and async field views
+// See [Views & Rendering](item://a0a0a0a0-d0c0-4000-8000-000000000004#generic-view)
 
 // Helper: Parse navigation params from URL (for root context)
 // Supports: ?field=code&region=X&lines=10-20
@@ -33,6 +33,7 @@ function setNestedValue(obj, path, value) {
   target[lastKey] = value;
 }
 
+// [BEGIN:returnToDefaultView]
 // Helper to return to default view for an item
 async function returnToDefaultView(itemId, api) {
   console.log('[returnToDefaultView] itemId:', itemId);
@@ -68,7 +69,9 @@ async function returnToDefaultView(itemId, api) {
     await api.rerenderItem(itemId);
   }
 }
+// [END:returnToDefaultView]
 
+// [BEGIN:render]
 export async function render(item, api) {
   // Fetch the view item that's using this library to get the spec
   const viewId = api.getViewId();
@@ -221,5 +224,6 @@ export async function render(item, api) {
 
   return container;
 }
+// [END:render]
 
 export { getNestedValue, setNestedValue };

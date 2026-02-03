@@ -1,3 +1,7 @@
+// Item: kernel:core
+// ID: 33333333-1111-0000-0000-000000000000
+// Type: 33333333-0000-0000-0000-000000000000
+
 export async function loadKernel(require, storageBackend) {
   // Event system - Phase 2: Object-based emit with type hierarchy dispatch
   class EventBus {
@@ -123,7 +127,6 @@ export async function loadKernel(require, storageBackend) {
   // KERNEL_VIEWPORT removed - viewport state now managed by userland viewport-manager
   const { ModuleSystem } = await require(IDS.KERNEL_MODULE_SYSTEM);
   const { RenderingSystem } = await require(IDS.KERNEL_RENDERING_SYSTEM);
-  const { REPL } = await require(IDS.KERNEL_REPL);
   const { SafeMode } = await require(IDS.KERNEL_SAFE_MODE);
 
   class Kernel {
@@ -134,7 +137,6 @@ export async function loadKernel(require, storageBackend) {
       // viewport instance removed - state managed by userland viewport-manager
       this.moduleSystem = new ModuleSystem(this);
       this.rendering = new RenderingSystem(this);
-      this.repl = new REPL(this);
       this.safeMode = new SafeMode(this);
       this.events = new EventBus(this);
 

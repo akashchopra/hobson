@@ -18,7 +18,12 @@ export async function onSystemBootComplete({ safeMode }, _api) {
       // Cmd/Ctrl+Shift+? - Help dialog
       if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === '?') {
         e.preventDefault();
-        await window.kernel?.showHelp();
+        try {
+          const helpDialog = await api.require('help-dialog');
+          helpDialog.show();
+        } catch (err) {
+          console.warn('help-dialog not available:', err.message);
+        }
       }
       // Note: Cmd+K (item palette) is handled by system:viewport-view
     };

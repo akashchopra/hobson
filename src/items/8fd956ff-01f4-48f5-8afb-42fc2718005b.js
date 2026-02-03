@@ -1,4 +1,4 @@
-// Item: field_view_markdown_readonly
+// Item: field-view-markdown-readonly
 // ID: 8fd956ff-01f4-48f5-8afb-42fc2718005b
 // Type: cccccccc-0000-0000-0000-000000000000
 

@@ -1,8 +1,11 @@
-// Item: default_view
+// Item: kernel:default-view
 // ID: aaaaaaaa-1111-0000-0000-000000000000
 // Type: aaaaaaaa-0000-0000-0000-000000000000
 
+// Default View - Fallback JSON display
+// See [Views & Rendering](item://a0a0a0a0-d0c0-4000-8000-000000000004)
 
+// [BEGIN:render]
 export async function render(item, api) {
   const container = api.createElement('div', { className: 'default-view' });
 
@@ -48,3 +51,4 @@ export async function render(item, api) {
   container.appendChild(actions);
   return container;
 }
+// [END:render]

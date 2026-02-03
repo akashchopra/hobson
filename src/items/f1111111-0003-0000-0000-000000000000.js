@@ -43,7 +43,7 @@ async function loadPanelState() {
 
 async function savePanelState() {
   if (!api) return;
-
+  
   // Debounce: wait 500ms after last change before persisting
   if (persistTimer) clearTimeout(persistTimer);
   persistTimer = setTimeout(async () => {
@@ -63,24 +63,24 @@ export async function onSystemBootComplete({ safeMode }, _api) {
   if (safeMode) return;  // No REPL in safe mode
 
   api = _api;
-
+  
   // Load saved state from viewport
   await loadPanelState();
 
   // Create panel splitter (between main-view and panel)
   const panelSplitter = document.createElement('div');
   panelSplitter.id = 'repl-panel-splitter';
-
+  
   // Create and attach REPL panel
   panelElement = createPanel();
-
+  
   const app = document.getElementById('app');
   app.appendChild(panelSplitter);
   app.appendChild(panelElement);
-
+  
   // Setup panel height resize
   setupPanelSplitter(panelSplitter);
-
+  
   // Apply saved state
   applyPanelState();
 
@@ -99,7 +99,7 @@ export async function onSystemBootComplete({ safeMode }, _api) {
 
 function applyPanelState() {
   if (!panelElement) return;
-
+  
   if (panelState.expanded) {
     panelElement.classList.remove('collapsed');
     panelElement.classList.add('expanded');
@@ -109,7 +109,7 @@ function applyPanelState() {
     panelElement.classList.remove('expanded');
     panelElement.style.flex = '';
   }
-
+  
   // Apply input width
   const inputSection = panelElement.querySelector('.repl-input-section');
   const outputSection = panelElement.querySelector('.repl-output-section');
@@ -119,6 +119,7 @@ function applyPanelState() {
   }
 }
 
+// [BEGIN:createPanel]
 function createPanel() {
   const panel = document.createElement('div');
   panel.id = 'repl-panel';
@@ -128,22 +129,22 @@ function createPanel() {
   const collapseBar = document.createElement('div');
   collapseBar.className = 'repl-collapse-bar';
   collapseBar.onclick = async () => await toggle();
-
+  
   const title = document.createElement('span');
   title.className = 'repl-title';
   title.textContent = 'REPL';
   collapseBar.appendChild(title);
-
+  
   const hint = document.createElement('span');
   hint.className = 'repl-hint';
   hint.textContent = 'Escape or Ctrl+\\ to toggle';
   collapseBar.appendChild(hint);
-
+  
   const expandIcon = document.createElement('span');
   expandIcon.className = 'repl-expand-icon';
   expandIcon.textContent = '▲';
   collapseBar.appendChild(expandIcon);
-
+  
   panel.appendChild(collapseBar);
 
   // Panel content - horizontal layout
@@ -261,6 +262,7 @@ function createPanel() {
 
   return panel;
 }
+// [END:createPanel]
 
 function setupPanelSplitter(splitter) {
   let isDragging = false;
@@ -322,7 +324,7 @@ function setupVerticalSplitter(splitter, inputSection, outputSection, container)
     const newInputWidth = startInputWidth + delta;
     const minWidth = 200;
     const maxWidth = containerWidth - 200 - 6; // 6px for splitter
-
+    
     if (newInputWidth >= minWidth && newInputWidth <= maxWidth) {
       const percent = (newInputWidth / containerWidth) * 100;
       panelState.inputWidthPercent = percent;
@@ -367,6 +369,7 @@ function addTranscriptEntry(code, result, error) {
   entry.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
+// [BEGIN:run]
 export async function run() {
   const input = document.getElementById('repl-input');
   if (!input || !api) return;
@@ -410,12 +413,14 @@ export async function run() {
     addTranscriptEntry(code, null, errorStr);
   }
 }
+// [END:run]
 
+// [BEGIN:toggle]
 export async function toggle() {
   if (!panelElement) return;
 
   const expandIcon = panelElement.querySelector('.repl-expand-icon');
-
+  
   if (panelState.expanded) {
     // Collapse
     panelState.expanded = false;
@@ -430,14 +435,15 @@ export async function toggle() {
     panelElement.classList.add('expanded');
     panelElement.style.flex = `0 0 ${panelState.panelHeight}px`;
     if (expandIcon) expandIcon.textContent = '▼';
-
+    
     // Focus the input
     const input = document.getElementById('repl-input');
     if (input) input.focus();
   }
-
+  
   savePanelState();
 }
+// [END:toggle]
 
 // Export for external use
 export function isVisible() {

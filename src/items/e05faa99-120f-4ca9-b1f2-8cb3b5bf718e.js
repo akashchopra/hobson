@@ -4,7 +4,9 @@
 
 // Tag Picker UI Library
 // Shared component for rendering hierarchical tag picker
+// See [tag-picker-ui documentation](item://e05faa99-120f-4ca9-b1f2-8cb3b5bf718e)
 
+// [BEGIN:renderTagPicker]
 /**
  * Renders a hierarchical tag picker tree
  * @param {Object} config - Configuration object
@@ -134,7 +136,9 @@ export function renderTagPicker(config, api) {
     container.appendChild(renderTagNode(rootNode, 0));
   });
 }
+// [END:renderTagPicker]
 
+// [BEGIN:renderTagBrowser]
 /**
  * Renders a simple tag browser tree (for browsing/viewing, not picking)
  * @param {Object} config - Configuration object
@@ -261,3 +265,4 @@ export function renderTagBrowser(config, api) {
     container.appendChild(renderTagNode(rootNode, 0));
   });
 }
+// [END:renderTagBrowser]

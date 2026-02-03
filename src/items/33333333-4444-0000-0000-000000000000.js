@@ -1,3 +1,10 @@
+// Item: kernel:module-system
+// ID: 33333333-4444-0000-0000-000000000000
+// Type: 33333333-0000-0000-0000-000000000000
+
+// Module System - See [Core Concepts - Code as Data](item://a0a0a0a0-d0c0-4000-8000-000000000002#description?region=Code)
+
+// [BEGIN:ModuleSystem]
 export class ModuleSystem {
   constructor(kernel) {
     this.kernel = kernel;
@@ -5,6 +12,9 @@ export class ModuleSystem {
     this.loadingPromises = new Map(); // itemId -> Promise (tracks in-flight loads)
   }
 
+  // [BEGIN:require]
+  // Load a code item as an ES module
+  // See [Core Concepts - The Module System](item://a0a0a0a0-d0c0-4000-8000-000000000002#The-Module-System)
   async require(nameOrId, callStack = new Set()) {
     // Resolve name to ID if necessary
     let itemId = nameOrId;
@@ -62,7 +72,10 @@ export class ModuleSystem {
     this.loadingPromises.set(itemId, loadPromise);
     return loadPromise;
   }
+  // [END:require]
 
+  // [BEGIN:evaluateCodeItem]
+  // Compile and execute a code item as an ES module via blob URL
   async evaluateCodeItem(item) {
     if (!item.content?.code) {
       throw new Error(`Item ${item.id} has no code to evaluate`);
@@ -96,6 +109,7 @@ export class ModuleSystem {
       URL.revokeObjectURL(url);
     }
   }
+  // [END:evaluateCodeItem]
 
   // Capability check: is this item a code item?
   // Walks the extends chain of the item's type
@@ -140,12 +154,14 @@ export class ModuleSystem {
     return chain;
   }
 
+  // [BEGIN:typeChainIncludes]
   // Check if a type's extends chain includes the target type
   // Used for capability detection (e.g., "is this item's type a code type?")
   async typeChainIncludes(typeId, targetId) {
     const chain = await this.buildExtendsChain(typeId);
     return chain.includes(targetId);
   }
+  // [END:typeChainIncludes]
 
   // Get a cached module synchronously (returns null if not cached)
   // Use this for synchronous code paths that can't await require()
@@ -166,3 +182,4 @@ export class ModuleSystem {
     this.loadingPromises.clear();
   }
 }
+// [END:ModuleSystem]

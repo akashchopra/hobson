@@ -1,7 +1,7 @@
-// Item: default-error-handler
+// Item: system:default-error-handler
 // ID: e7707000-0000-0000-0000-000000000002
 // Type: 66666666-0000-0000-0000-000000000000
-// Watches: e0e00000-0002-0001-0000-000000000000 (system:error)
+
 
 // Default error handler - creates error items and shows toast notifications
 

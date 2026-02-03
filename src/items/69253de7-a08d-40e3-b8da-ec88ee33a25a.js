@@ -1,4 +1,4 @@
-// Item: sortable_list_view
+// Item: system:sortable-list-view
 // ID: 69253de7-a08d-40e3-b8da-ec88ee33a25a
 // Type: aaaaaaaa-0000-0000-0000-000000000000
 

@@ -1,4 +1,4 @@
-// Item: field_view_timestamp
+// Item: field-view-timestamp
 // ID: 9d2ad27f-76a6-41d7-9fa9-2f51d0346add
 // Type: cccccccc-0000-0000-0000-000000000000
 

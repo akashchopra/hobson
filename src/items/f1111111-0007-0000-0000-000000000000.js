@@ -1,0 +1,179 @@
+// Item: json-editor
+// ID: f1111111-0007-0000-0000-000000000000
+// Type: 66666666-0000-0000-0000-000000000000
+
+// JSON Editor Library
+// Provides raw JSON editing for items. Extracted from kernel to userland.
+
+let api = null;
+
+export function init(_api) {
+  api = _api;
+}
+
+export async function edit(itemId) {
+  if (!api) {
+    console.error('json-editor: not initialized. Call init(api) first or use show(itemId, api).');
+    return;
+  }
+  return show(itemId, api);
+}
+
+export async function show(itemId, _api) {
+  const localApi = _api || api;
+  if (!localApi) {
+    console.error('json-editor: no api provided');
+    return;
+  }
+
+  const item = await localApi.get(itemId);
+  const json = JSON.stringify(item, null, 2);
+
+  // Remove existing editor if present
+  hide();
+
+  // Create overlay
+  const overlay = document.createElement('div');
+  overlay.id = 'json-editor-overlay';
+  overlay.style.cssText = `
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 10000;
+  `;
+
+  const modal = document.createElement('div');
+  modal.style.cssText = `
+    background: white;
+    border-radius: 8px;
+    width: 800px;
+    max-width: 90vw;
+    max-height: 90vh;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+  `;
+
+  // Header
+  const header = document.createElement('div');
+  header.style.cssText = 'padding: 16px 20px; border-bottom: 1px solid #ddd; display: flex; justify-content: space-between; align-items: center;';
+  
+  const title = document.createElement('h3');
+  title.style.cssText = 'margin: 0; font-size: 16px;';
+  title.textContent = 'Edit: ' + (item.name || item.id.slice(0, 8));
+  header.appendChild(title);
+
+  const closeBtn = document.createElement('button');
+  closeBtn.textContent = '\u00d7';
+  closeBtn.style.cssText = 'background: none; border: none; font-size: 24px; cursor: pointer; color: #666; padding: 0 4px;';
+  closeBtn.onclick = () => hide();
+  header.appendChild(closeBtn);
+
+  modal.appendChild(header);
+
+  // Editor area
+  const editorArea = document.createElement('div');
+  editorArea.style.cssText = 'flex: 1; padding: 16px 20px; overflow: auto;';
+
+  const textarea = document.createElement('textarea');
+  textarea.id = 'json-editor-textarea';
+  textarea.value = json;
+  textarea.style.cssText = `
+    width: 100%;
+    height: 400px;
+    font-family: monospace;
+    font-size: 13px;
+    padding: 12px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    resize: vertical;
+    outline: none;
+  `;
+  textarea.spellcheck = false;
+  editorArea.appendChild(textarea);
+
+  // Error display
+  const errorDisplay = document.createElement('div');
+  errorDisplay.id = 'json-editor-error';
+  errorDisplay.style.cssText = 'color: #c00; font-size: 13px; margin-top: 8px; display: none;';
+  editorArea.appendChild(errorDisplay);
+
+  modal.appendChild(editorArea);
+
+  // Actions
+  const actions = document.createElement('div');
+  actions.style.cssText = 'padding: 16px 20px; border-top: 1px solid #ddd; display: flex; gap: 10px; justify-content: flex-end;';
+
+  const cancelBtn = document.createElement('button');
+  cancelBtn.textContent = 'Cancel';
+  cancelBtn.style.cssText = 'padding: 8px 16px; cursor: pointer; border: 1px solid #ccc; background: white; border-radius: 4px;';
+  cancelBtn.onclick = () => hide();
+  actions.appendChild(cancelBtn);
+
+  const saveBtn = document.createElement('button');
+  saveBtn.textContent = 'Save';
+  saveBtn.style.cssText = 'padding: 8px 16px; cursor: pointer; border: none; background: #007bff; color: white; border-radius: 4px;';
+  saveBtn.onclick = async () => {
+    try {
+      const updated = JSON.parse(textarea.value);
+      errorDisplay.style.display = 'none';
+      
+      // Save the item
+      await localApi.update(updated);
+      
+      // Clear module cache if it's a code item
+      if (updated.type === localApi.IDS?.CODE || 
+          updated.type === localApi.IDS?.LIBRARY || 
+          updated.type === localApi.IDS?.VIEW ||
+          updated.type === localApi.IDS?.KERNEL_MODULE) {
+        // Module cache will be cleared by saveItem
+      }
+      
+      hide();
+    } catch (error) {
+      errorDisplay.textContent = 'JSON Error: ' + error.message;
+      errorDisplay.style.display = 'block';
+    }
+  };
+  actions.appendChild(saveBtn);
+
+  modal.appendChild(actions);
+  overlay.appendChild(modal);
+
+  // Close on overlay click
+  overlay.onclick = (e) => {
+    if (e.target === overlay) hide();
+  };
+
+  // Close on Escape, Cmd+Enter to save
+  const keyHandler = (e) => {
+    if (e.key === 'Escape') {
+      hide();
+      document.removeEventListener('keydown', keyHandler);
+    }
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+      e.preventDefault();
+      saveBtn.click();
+    }
+  };
+  document.addEventListener('keydown', keyHandler);
+
+  document.body.appendChild(overlay);
+  textarea.focus();
+  
+  // Select all for easy replacement
+  textarea.select();
+}
+
+export function hide() {
+  const existing = document.getElementById('json-editor-overlay');
+  if (existing) {
+    existing.remove();
+  }
+}

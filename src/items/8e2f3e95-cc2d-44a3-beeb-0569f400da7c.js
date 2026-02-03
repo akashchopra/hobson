@@ -1,8 +1,11 @@
-// Item: field_view_code_readonly
+// Item: field-view-code-readonly
 // ID: 8e2f3e95-cc2d-44a3-beeb-0569f400da7c
 // Type: cccccccc-0000-0000-0000-000000000000
 
+// Code Readonly Field View - CodeMirror-based readonly code display
+// See [field-view-code-readonly documentation](item://8e2f3e95-cc2d-44a3-beeb-0569f400da7c)
 
+// [BEGIN:findRegionStartLine]
 // Helper: Find the line number where a region starts
 function findRegionStartLine(text, regionName) {
   const lines = text.split('\n');
@@ -18,7 +21,9 @@ function findRegionStartLine(text, regionName) {
   }
   return null;
 }
+// [END:findRegionStartLine]
 
+// [BEGIN:render]
 // Code readonly field view (CodeMirror)
 export async function render(value, options, api) {
   const { label, language = 'javascript', scrollToLines, scrollToRegion } = options;
@@ -86,7 +91,7 @@ export async function render(value, options, api) {
         // Create clickable link
         const linkText = match[1];
         const itemId = match[2];
-        const fragment = match[3]; // e.g., "#Code-as-Data" or undefined
+        const fragment = match[3]; // e.g., "#code?region=ModuleSystem" or undefined
         const link = document.createElement('a');
         link.textContent = linkText;
         link.href = '#';
@@ -219,3 +224,4 @@ export async function render(value, options, api) {
 
   return wrapper;
 }
+// [END:render]

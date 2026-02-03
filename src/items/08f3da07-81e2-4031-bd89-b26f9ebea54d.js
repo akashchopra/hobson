@@ -1,4 +1,4 @@
-// Item: tag_browser_view
+// Item: system:tag-browser-view
 // ID: 08f3da07-81e2-4031-bd89-b26f9ebea54d
 // Type: aaaaaaaa-0000-0000-0000-000000000000
 
@@ -56,7 +56,7 @@ export async function render(browser, api) {
   }, []);
   resultsContainer.appendChild(resultsList);
 
-  // Find compact-card-view for rendering results (default view)
+  // Find compact_card_view for rendering results (default view)
   const compactViews = await api.query({ name: 'system:compact-card-view' });
   const compactViewId = compactViews[0]?.id || null;
 
