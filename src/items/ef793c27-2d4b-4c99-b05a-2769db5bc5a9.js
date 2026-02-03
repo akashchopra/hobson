@@ -10,6 +10,47 @@
 // Renders an optional inner view as the background, with children as floating windows above.
 
 
+// Contributes submenu items to the "View As..." menu when this view is active
+export async function getViewMenuItems(item, api) {
+  const SPATIAL_CANVAS_ID = 'ef793c27-2d4b-4c99-b05a-2769db5bc5a9';
+
+  // Get current view config to determine current background
+  const viewConfig = await api.getViewConfig() || {};
+  const currentInnerViewId = viewConfig.innerView?.type || null;
+
+  // Get available views for this item's type
+  const views = await api.getViews(item.type);
+
+  // Filter out this view itself and debug views
+  const availableViews = views.filter(v =>
+    v.view.id !== SPATIAL_CANVAS_ID &&
+    v.view.content?.category !== 'debug'
+  );
+
+  // Sort views alphabetically
+  const sortedViews = [...availableViews].sort((a, b) => {
+    const nameA = a.view.content?.displayName || a.view.name || a.view.id.slice(0, 8);
+    const nameB = b.view.content?.displayName || b.view.name || b.view.id.slice(0, 8);
+    return nameA.localeCompare(nameB);
+  });
+
+  const items = [];
+
+  // View options (no "None" option - background view is required)
+  for (const { view } of sortedViews) {
+    const isActive = view.id === currentInnerViewId;
+    items.push({
+      label: (view.content?.displayName || view.name || view.id.slice(0, 8)) + (isActive ? ' ✓' : ''),
+      checked: isActive,
+      onClick: async () => {
+        await api.updateViewConfig({ innerView: { type: view.id } });
+        await api.navigate(api.getCurrentRoot());
+      }
+    });
+  }
+
+  return items;
+}
 
 export async function render(item, api) {
   // SCROLL PRESERVATION: Save scroll positions from existing DOM before re-render
@@ -97,119 +138,6 @@ export async function render(item, api) {
   }
 
   container.appendChild(background);
-
-  // === BACKGROUND CONTEXT MENU ===
-  // Right-click on background shows menu to set/clear inner view
-  const showBackgroundContextMenu = async (e) => {
-    if (e.shiftKey) return;
-    e.preventDefault();
-    e.stopPropagation();
-
-    // Remove any existing context menu
-    const existingMenu = document.querySelector('.background-context-menu');
-    if (existingMenu) existingMenu.remove();
-
-    const menu = api.createElement('div', {
-      class: 'background-context-menu',
-      style: `
-        position: fixed;
-        left: ${e.clientX}px;
-        top: ${e.clientY}px;
-        background: white;
-        border: 1px solid #ccc;
-        border-radius: 4px;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.15);
-        z-index: 100000;
-        min-width: 180px;
-      `
-    }, []);
-
-    // Get available views for this item's type
-    const views = await api.getViews(item.type);
-    const currentInnerViewId = innerViewConfig?.type || null;
-
-    // "Set Background View..." submenu header
-    const headerItem = api.createElement('div', {
-      style: 'padding: 8px 16px; font-size: 12px; color: #666; border-bottom: 1px solid #eee;'
-    }, ['Set Background View']);
-    menu.appendChild(headerItem);
-
-    // Filter out this view itself and debug views
-    const availableViews = views.filter(v =>
-      v.view.id !== 'ef793c27-2d4b-4c99-b05a-2769db5bc5a9' && // Not this view
-      v.view.content?.category !== 'debug'
-    );
-
-    if (availableViews.length === 0) {
-      const noViews = api.createElement('div', {
-        style: 'padding: 8px 16px; color: #999; font-style: italic;'
-      }, ['(No views available)']);
-      menu.appendChild(noViews);
-    } else {
-      // Sort views alphabetically
-      const sortedViews = [...availableViews].sort((a, b) => {
-        const nameA = a.view.content?.displayName || a.view.name || a.view.id.slice(0, 8);
-        const nameB = b.view.content?.displayName || b.view.name || b.view.id.slice(0, 8);
-        return nameA.localeCompare(nameB);
-      });
-
-      for (const { view } of sortedViews) {
-        const isActive = view.id === currentInnerViewId;
-        const viewItem = api.createElement('div', {
-          style: `
-            padding: 8px 16px;
-            cursor: pointer;
-            font-size: 13px;
-            ${isActive ? 'font-weight: bold; background: #f0f0f0;' : ''}
-          `
-        }, [(view.content?.displayName || view.name || view.id.slice(0, 8)) + (isActive ? ' ✓' : '')]);
-
-        viewItem.addEventListener('mouseenter', () => { if (!isActive) viewItem.style.background = '#f5f5f5'; });
-        viewItem.addEventListener('mouseleave', () => { if (!isActive) viewItem.style.background = 'transparent'; });
-        viewItem.addEventListener('click', async () => {
-          menu.remove();
-          await api.updateViewConfig({ innerView: { type: view.id } });
-          await api.navigate(api.getCurrentRoot());
-        });
-        menu.appendChild(viewItem);
-      }
-    }
-
-    // Clear Background option (only if inner view is set)
-    if (currentInnerViewId) {
-      const separator = api.createElement('div', {
-        style: 'height: 1px; background: #ddd; margin: 4px 0;'
-      }, []);
-      menu.appendChild(separator);
-
-      const clearItem = api.createElement('div', {
-        style: 'padding: 8px 16px; cursor: pointer; font-size: 13px;'
-      }, ['Clear Background']);
-      clearItem.addEventListener('mouseenter', () => { clearItem.style.background = '#f5f5f5'; });
-      clearItem.addEventListener('mouseleave', () => { clearItem.style.background = 'transparent'; });
-      clearItem.addEventListener('click', async () => {
-        menu.remove();
-        await api.updateViewConfig({ innerView: null });
-        await api.navigate(api.getCurrentRoot());
-      });
-      menu.appendChild(clearItem);
-    }
-
-    document.body.appendChild(menu);
-
-    // Close menu on click outside
-    const closeMenu = () => {
-      menu.remove();
-      document.removeEventListener('mousedown', onMouseDown, true);
-    };
-    const onMouseDown = (evt) => {
-      if (!menu.contains(evt.target)) closeMenu();
-    };
-    setTimeout(() => document.addEventListener('mousedown', onMouseDown, true), 0);
-  };
-
-  // Attach context menu to background
-  background.addEventListener('contextmenu', showBackgroundContextMenu);
 
   // === ANCHOR-BASED POSITIONING HELPERS ===
 
@@ -303,7 +231,7 @@ export async function render(item, api) {
     const empty = api.createElement('div', {
       style: 'position: absolute; left: 40px; top: 40px; color: #999; font-style: italic; z-index: 1;'
     }, [
-      'No items yet. Right-click to set a background view, or use the REPL to add children.'
+      'No items yet. Use View As > Spatial Canvas to set a background view, or add children via REPL.'
     ]);
     container.appendChild(empty);
   } else if (children.length > 0) {
