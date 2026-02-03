@@ -472,6 +472,7 @@ interface SymbolInfo {
   endCol: number;      // 0-based end column
   kind: SymbolKind;
   scope: string | null; // Parent scope for qualified lookup
+  signature?: string;  // Function signature, e.g., "(id, options = ...)"
 }
 
 type SymbolKind =
