@@ -684,7 +684,7 @@ export async function render(item, api) {
     // Get available views for this type
     const views = await api.getViews(menuItem.type);
 
-    // Get current view override
+    // Get current view override (for checkmark display)
     let currentViewId = null;
     if (selectedParentId) {
       const parent = await api.get(selectedParentId);
@@ -693,6 +693,14 @@ export async function render(item, api) {
     } else {
       currentViewId = await getRootView();
     }
+
+    // Get effective view from preferences (fallback if no contextual override)
+    const effectiveView = await api.getEffectiveView(itemId);
+    const effectiveViewId = effectiveView?.id || null;
+
+    // The view to use as background when switching to a wrapper view:
+    // Prefer the explicit contextual override (currentViewId), fall back to effective view
+    const currentlyRenderedViewId = currentViewId || effectiveViewId;
 
     // Separate normal views from debug views
     const normalViews = views.filter(v => v.view.content?.category !== 'debug');
@@ -711,27 +719,95 @@ export async function render(item, api) {
 
       for (const { view, forType, inherited } of sortedViews) {
         const isActive = currentViewId === view.id;
-        const viewOption = api.createElement('div', {
-          class: 'context-menu-item' + (isActive ? ' selected' : '')
-        }, []);
-
         let label = view.content?.displayName || view.name || view.id.slice(0, 8);
         if (isActive) label += ' ✓';
-        viewOption.textContent = label;
 
-        viewOption.onclick = async () => {
-          hideContextMenu();
-          if (selectedParentId) {
-            await setChildView(selectedParentId, itemId, view.id);
-            // Re-render just this item (preserves sibling scroll positions)
-            await api.rerenderItem(itemId);
-          } else {
-            await setRootView(view.id);
-            // Root view change needs full re-render
-            await api.navigate(api.viewport.getRoot());
+        // Check if active view has submenu items to contribute
+        let viewMenuItems = null;
+        if (isActive) {
+          try {
+            const viewModule = await api.require(view.id);
+            if (viewModule && typeof viewModule.getViewMenuItems === 'function') {
+              viewMenuItems = await viewModule.getViewMenuItems(menuItem, api);
+            }
+          } catch (e) {
+            // View module doesn't export getViewMenuItems or failed to load
           }
-        };
-        displayAsSubmenu.appendChild(viewOption);
+        }
+
+        if (viewMenuItems && viewMenuItems.length > 0) {
+          // Active view with submenu items - create submenu
+          const viewOption = api.createElement('div', {
+            class: 'context-menu-item context-menu-submenu' + (isActive ? ' selected' : '')
+          }, [label]);
+
+          const viewSubmenu = api.createElement('div', { class: 'context-menu-submenu-items' }, []);
+
+          for (const menuItemDef of viewMenuItems) {
+            const subItem = api.createElement('div', {
+              class: 'context-menu-item' + (menuItemDef.checked ? ' selected' : '')
+            }, [menuItemDef.label]);
+
+            subItem.onclick = async () => {
+              hideContextMenu();
+              if (menuItemDef.onClick) {
+                await menuItemDef.onClick();
+              }
+            };
+            viewSubmenu.appendChild(subItem);
+          }
+
+          viewOption.appendChild(viewSubmenu);
+          displayAsSubmenu.appendChild(viewOption);
+        } else {
+          // Normal view option - click to switch
+          const viewOption = api.createElement('div', {
+            class: 'context-menu-item' + (isActive ? ' selected' : '')
+          }, []);
+
+          viewOption.textContent = label;
+
+          viewOption.onclick = async () => {
+            hideContextMenu();
+            if (selectedParentId) {
+              // For nested items, update the child's view config in parent's children array
+              // This sets both the view type AND innerView for wrapper views in one atomic operation
+              const parent = await api.get(selectedParentId);
+              const childIndex = parent.children.findIndex(c => c.id === itemId);
+              if (childIndex >= 0) {
+                const currentChild = parent.children[childIndex];
+                const currentView = currentChild.view || {};
+
+                // Build new view config
+                const newView = {
+                  ...currentView,
+                  type: view.id,
+                  // Set innerView to current view for wrapper views (like spatial-canvas)
+                  innerView: currentlyRenderedViewId ? { type: currentlyRenderedViewId } : undefined
+                };
+
+                // Store previous view for restore functionality
+                parent.children[childIndex] = {
+                  ...currentChild,
+                  previousView: currentView.type ? { ...currentView } : null,
+                  view: newView
+                };
+                parent.modified = Date.now();
+                await api.set(parent);
+              }
+              await api.rerenderItem(itemId);
+            } else {
+              // For root items, update viewport-manager's root view config
+              // Set both view type AND innerView for wrapper views in one operation
+              await api.viewport.updateRootViewConfig({
+                type: view.id,
+                innerView: currentlyRenderedViewId ? { type: currentlyRenderedViewId } : undefined
+              });
+              await api.rerenderItem(itemId);
+            }
+          };
+          displayAsSubmenu.appendChild(viewOption);
+        }
       }
     }
 

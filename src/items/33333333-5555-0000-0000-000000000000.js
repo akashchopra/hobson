@@ -186,20 +186,32 @@ export class RenderingSystem {
     let updated = 0;
     for (const instance of instances) {
       try {
-        // Look up current view from parent's children array (may have changed via setChildView)
+        // Look up current view config from parent's children array (may have changed via setChildView)
+        // We need the FULL view config object (not just type) so views can access innerView, etc.
         let currentViewId = instance.viewId;
+        let viewConfig = null;
         if (instance.parentId) {
           const parent = await this.kernel.storage.get(instance.parentId);
           const childEntry = parent?.children?.find(c => c.id === itemId);
-          if (childEntry?.view?.type !== undefined) {
-            currentViewId = childEntry.view.type;
+          if (childEntry?.view) {
+            viewConfig = childEntry.view;  // Full view config object
+            currentViewId = childEntry.view.type || currentViewId;
+          }
+        } else {
+          // For root items (no parentId), get full view config from viewport-manager
+          const vpMgr = this.kernel.moduleSystem.getCached('viewport-manager');
+          if (vpMgr && vpMgr.getRootViewConfig) {
+            viewConfig = await vpMgr.getRootViewConfig();
+            currentViewId = viewConfig?.type || currentViewId;
           }
         }
 
-        // Re-render with current view and parent context (restore siblingContainer for proper context)
+        // Re-render with current view and parent context
+        // Pass viewConfig in context so views can access innerView, etc.
         const newDom = await this.renderItem(itemId, currentViewId, {}, {
           parentId: instance.parentId,
-          siblingContainer: instance.siblingContainer
+          siblingContainer: instance.siblingContainer,
+          viewConfig: viewConfig
         });
 
         // Replace content in existing container
