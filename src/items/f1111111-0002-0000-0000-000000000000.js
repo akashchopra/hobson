@@ -14,14 +14,11 @@ let rootViewConfig = {};
 let previousRootViewId = null;
 let previousRootViewConfig = {};
 let hasPreviousRootView = false;
-let api = null;
 let popstateHandlerRegistered = false;
 
 // Called at boot
 export async function onSystemBootComplete({ safeMode, rootId }, _api) {
   if (safeMode) return;
-
-  api = _api;
 
   // Restore state from viewport item
   await restoreState();
@@ -43,7 +40,7 @@ export async function onSystemBootComplete({ safeMode, rootId }, _api) {
 // Restore state from viewport item
 async function restoreState() {
   try {
-    const viewport = await api.get(VIEWPORT_ID);
+    const viewport = await window.kernel.storage.get(VIEWPORT_ID);
     const child = viewport.children?.[0];
     if (child) {
       currentRoot = child.id;
@@ -92,7 +89,7 @@ function getUrlParams() {
 // Handle browser back/forward
 async function handlePopstate(e) {
   const urlRoot = getUrlRoot();
-  if (urlRoot && api) {
+  if (urlRoot) {
     await navigateInternal(urlRoot, getUrlParams(), { pushState: false, popstate: true });
   }
 }
@@ -132,7 +129,7 @@ async function navigateInternal(itemId, params = {}, options = {}) {
   }
 
   // Emit viewport:root-changed event
-  api.events.emit({
+  window.kernel.events.emit({
     type: EVENT_IDS.VIEWPORT_ROOT_CHANGED,
     content: {
       rootId: itemId,
@@ -146,15 +143,13 @@ async function navigateInternal(itemId, params = {}, options = {}) {
   await persist();
 
   // Trigger re-render
-  await api.renderViewport();
+  await window.kernel.renderViewport();
 }
 
 // Persist viewport state to viewport item
 async function persist() {
-  if (!api) return;
-
   try {
-    const viewport = await api.get(VIEWPORT_ID);
+    const viewport = await window.kernel.storage.get(VIEWPORT_ID);
     const childSpec = { id: currentRoot };
 
     // Store full view config (type + additional properties)
@@ -176,7 +171,7 @@ async function persist() {
 
     viewport.children = currentRoot ? [childSpec] : [];
     viewport.modified = Date.now();
-    await api.set(viewport);
+    await window.kernel.saveItem(viewport);
   } catch (e) {
     console.warn('[viewport-manager] Failed to persist:', e);
   }
@@ -188,15 +183,16 @@ async function persist() {
 
 // Navigate to an item
 export async function navigate(itemId, params = {}) {
-  if (!api) {
-    console.warn('[viewport-manager] Not initialized, cannot navigate');
-    return;
-  }
   await navigateInternal(itemId, params);
 }
 
 // Get current root
 export function getRoot() {
+  if (!currentRoot) {
+    // Module may have been reloaded after cache clear - restore from URL
+    const params = new URLSearchParams(window.location.search);
+    currentRoot = params.get('root');
+  }
   return currentRoot;
 }
 

@@ -43,7 +43,13 @@ export async function loadKernel(require, storageBackend) {
         if (typeChain.has(subscribedType)) {
           for (const handler of handlers) {
             try {
-              handler(eventWithTimestamp);
+              const result = handler(eventWithTimestamp);
+              // Handle async handlers - catch promise rejections
+              if (result && typeof result.catch === 'function') {
+                result.catch(e => {
+                  console.error(`Async event handler error for ${subscribedType}:`, e);
+                });
+              }
             } catch (e) {
               console.error(`Event handler error for ${subscribedType}:`, e);
             }
@@ -1017,7 +1023,11 @@ export async function loadKernel(require, storageBackend) {
           },
           getRoot: () => {
             const vpMgr = kernel.moduleSystem.getCached('viewport-manager');
-            return vpMgr?.getRoot() || null;
+            const root = vpMgr?.getRoot();
+            if (root) return root;
+            // Fallback: read from URL when module not cached (e.g., after cache clear)
+            const params = new URLSearchParams(window.location.search);
+            return params.get('root');
           },
           getRootView: () => {
             const vpMgr = kernel.moduleSystem.getCached('viewport-manager');

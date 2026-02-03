@@ -6,6 +6,7 @@
 // Default error handler - creates error items and shows toast notifications
 
 const ERROR_TYPE_ID = 'e7707000-0000-0000-0000-000000000001';
+const ERROR_LIST_TYPE_ID = 'e7707000-0000-0000-0000-000000000010';
 
 export async function onSystemError({ error, context, timestamp }, api) {
   try {
@@ -13,9 +14,14 @@ export async function onSystemError({ error, context, timestamp }, api) {
     const frames = await parseStackTrace(error.stack, api);
     
     // Create error item
-    const errorId = await api.create({
+    const errorId = crypto.randomUUID();
+    await api.set({
+      id: errorId,
       type: ERROR_TYPE_ID,
       name: `Error: ${(error.message || '').substring(0, 40)}`,
+      created: Date.now(),
+      modified: Date.now(),
+      children: [],
       content: {
         message: error.message,
         errorType: error.name || 'Error',
@@ -26,6 +32,9 @@ export async function onSystemError({ error, context, timestamp }, api) {
       }
     });
     
+    // Re-render any visible error lists so they show the new error
+    await api.rerenderByType(ERROR_LIST_TYPE_ID);
+
     // Show toast notification
     showErrorToast(error.message, errorId, context, api);
   } catch (handlerError) {
@@ -142,7 +151,7 @@ function showErrorToast(message, errorId, context, api) {
   // Remove any existing toast
   const existing = document.querySelector('.error-toast');
   if (existing) existing.remove();
-  
+
   const toast = document.createElement('div');
   toast.className = 'error-toast';
   toast.style.cssText = `
@@ -159,11 +168,11 @@ function showErrorToast(message, errorId, context, api) {
     cursor: pointer;
     font-family: system-ui, sans-serif;
   `;
-  
-  const truncatedMessage = (message || 'Unknown error').length > 100 
-    ? message.substring(0, 100) + '...' 
+
+  const truncatedMessage = (message || 'Unknown error').length > 100
+    ? message.substring(0, 100) + '...'
     : message;
-  
+
   toast.innerHTML = `
     <div style="display: flex; gap: 12px; align-items: start;">
       <span style="font-size: 24px;">&#9888;</span>
@@ -174,21 +183,26 @@ function showErrorToast(message, errorId, context, api) {
       </div>
     </div>
   `;
-  
-  toast.onclick = () => {
+
+  toast.onclick = async () => {
+    toast.remove();
     const currentRoot = api.viewport.getRoot();
     if (context.itemId === currentRoot) {
       // Error was in root item - navigate to error
-      api.navigate(errorId);
+      await api.navigate(errorId);
     } else {
-      // Error was in child - open error as sibling
-      api.siblingContainer?.addSibling(errorId);
+      // Error was in child - open error as sibling of root's children
+      if (currentRoot) {
+        await api.addChild(currentRoot, errorId);
+        await api.renderViewport();
+      } else {
+        await api.navigate(errorId);
+      }
     }
-    toast.remove();
   };
-  
+
   document.body.appendChild(toast);
-  
+
   // Auto-dismiss after 8 seconds
   setTimeout(() => {
     if (toast.parentNode) toast.remove();

@@ -180,10 +180,8 @@ export async function render(errorList, api) {
     await renderResults();
   };
 
-  // Initial load - only query if no children yet
-  if (!errorList.children || errorList.children.length === 0) {
-    await refreshErrors();
-  }
+  // Always refresh from database to get latest errors (including on re-render)
+  await refreshErrors();
   await renderResults();
 
   return container;
