@@ -533,6 +533,37 @@ In the link/transclusion picker, offer autocomplete for symbols:
 2. System queries `kernel-core.content._symbols`
 3. Shows dropdown of available symbols
 
+### Auto-Generated API Documentation
+
+Use query blocks to generate live API reference tables from indexed symbols:
+
+````markdown
+```query
+const core = await api.get('33333333-1111-0000-0000-000000000000');
+const symbols = core.content._symbols || {};
+
+// Filter to REPL API methods (direct children only)
+const apiMethods = Object.entries(symbols)
+  .filter(([key, info]) => {
+    return key.startsWith('Kernel.createREPLAPI.') &&
+           key.split('.').length === 3 &&
+           info.kind.includes('function');
+  })
+  .sort((a, b) => a[1].line - b[1].line);
+
+// Generate markdown table with linked method names
+let md = '| Method | Signature |\n|--------|----------|\n';
+for (const [key, info] of apiMethods) {
+  // Put full method name inside the link text to avoid markdown parsing issues
+  const link = `[\`api.${info.name}\`](item://33333333-1111-0000-0000-000000000000?symbol=${key})`;
+  md += `| ${link} | \`${info.signature || '()'}\` |\n`;
+}
+return md;
+```
+````
+
+**Note:** The link must be `[`api.name`](url)` not `` `api.`[name](url) `` — markdown requires `[` to not be preceded by certain characters.
+
 ---
 
 ## Open Questions
