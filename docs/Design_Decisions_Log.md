@@ -1247,6 +1247,192 @@ Progressive disclosure system:
 
 ---
 
+### 15. Emergency REPL Loading
+
+**Decision: Kernel Loads REPL Directly on Error, Falls Back to Dev Tools**
+
+The REPL is a userland library (`repl-ui`) that normally activates via the `system:boot-complete` event. However, if errors occur before or during that process, the kernel attempts to load the REPL directly as a recovery mechanism.
+
+**Problem Statement:**
+
+The REPL moved from kernel to userland for consistency ("everything is an item"). But this creates a recovery problem:
+
+1. Normal boot: viewport renders → `system:boot-complete` fires → `repl-ui` activates
+2. If viewport rendering breaks before boot-complete, the REPL never appears
+3. User has no way to inspect/fix the problem without safe mode (nuclear option)
+
+**Solution: Emergency REPL Loading**
+
+When the kernel's error capture system receives an error and no handlers respond:
+
+```javascript
+async captureError(error, context = {}) {
+  // Emit system:error event for userland handlers
+  this.events.emit({
+    type: EVENT_IDS.SYSTEM_ERROR,
+    content: { error, context }
+  });
+
+  // If no handlers responded (REPL not visible), try loading it directly
+  try {
+    const replLib = await this.moduleSystem.require('repl-ui');
+    if (replLib.showEmergency) {
+      replLib.showEmergency(error, context);
+    }
+  } catch (replError) {
+    // REPL itself is broken - user can use browser dev tools
+    console.error('Emergency REPL failed to load:', replError);
+    console.error('Original error:', error, context);
+  }
+}
+```
+
+**Failure Modes:**
+
+| Scenario | Recovery Path |
+|----------|---------------|
+| Viewport rendering breaks | Kernel catches error → loads repl-ui directly → user debugs |
+| repl-ui library is broken | Kernel logs to console → user opens browser dev tools |
+| Storage is corrupted | Nothing works → safe mode or fresh import |
+
+**Design Principles:**
+
+- **REPL stays an item**: Editable, versionable, consistent with "everything is an item"
+- **No duplicate implementations**: Single repl-ui library, kernel just has a privileged path to load it
+- **Graceful degradation**: Emergency REPL → dev tools console → safe mode
+- **Skip kernel fallback UI**: Dev tools console is sufficient for the rare case where repl-ui itself is broken
+
+**What This Enables:**
+
+- `repl-ui` can export both normal activation (`onSystemBootComplete`) and emergency activation (`showEmergency`)
+- Emergency mode might skip non-essential features (history persistence, syntax highlighting) for reliability
+- Kernel makes no assumptions about REPL implementation - just calls `require()` and a known export
+
+**Future Consideration:**
+
+A keyboard shortcut (e.g., Ctrl+Shift+R) could force-load the REPL bypassing normal boot. Deferred until we see if it's actually needed - the error-triggered path may be sufficient.
+
+**Rationale:**
+- Maintains item-centric architecture (REPL is still a library item)
+- Provides practical recovery without safe mode's nuclear approach
+- Dev tools console is always available as ultimate fallback
+- No kernel UI code to maintain for edge cases
+
+---
+
+### 16. Module-Level State and Hot-Reload
+
+**Status: OPEN PROBLEM**
+
+Libraries that cache state at module level (e.g., `let api = null`) break when the module is hot-reloaded. This section documents the problem and known patterns.
+
+**The Problem:**
+
+The module system uses timestamp-based cache invalidation:
+```javascript
+// In ModuleSystem.require()
+if (cached && cached.timestamp >= item.modified) {
+  return cached.module;  // Return cached module
+}
+// Otherwise re-evaluate the code
+```
+
+When a code item is modified:
+1. Module cache detects stale timestamp
+2. Code is re-evaluated via `import()` of a new blob URL
+3. This creates a **fresh module namespace** with all module-level variables reset
+4. But `onSystemBootComplete` doesn't fire again (boot already happened)
+5. Result: Module-level state (like `api`) is null, functionality breaks
+
+**Example of Problematic Pattern:**
+
+```javascript
+// item-palette library (PROBLEMATIC)
+let api = null;  // Module-level state
+
+export async function onSystemBootComplete({ safeMode }, _api) {
+  if (safeMode) return;
+  api = _api;  // Set during boot
+}
+
+export async function show() {
+  if (!api) {
+    console.warn('item-palette: not initialized');
+    return;  // Silently fails after hot-reload!
+  }
+  // ... uses api
+}
+```
+
+**Current Workaround Pattern (viewport-manager):**
+
+```javascript
+let popstateHandlerRegistered = false;
+
+export async function onSystemBootComplete({ safeMode }, _api) {
+  if (!popstateHandlerRegistered) {
+    window.addEventListener('popstate', handlePopstate);
+    popstateHandlerRegistered = true;
+  }
+}
+
+// Uses window.kernel directly instead of cached api
+const viewport = await window.kernel.storage.get(VIEWPORT_ID);
+await window.kernel.renderViewport();
+```
+
+**Problems with Current Workaround:**
+
+1. **Flag doesn't survive re-evaluation**: If module is re-evaluated, `popstateHandlerRegistered` resets to `false`, but the old listener is still attached → duplicate handlers
+2. **No cleanup mechanism**: Can't remove old handler before adding new one
+3. **Still requires `onSystemBootComplete`**: Maintains dependency on boot event machinery
+
+**Proposed Clean Pattern:**
+
+For API access - don't cache, use window.kernel directly:
+```javascript
+export async function show() {
+  const api = window.kernel.createREPLAPI();
+  // ... use api
+}
+```
+
+For event listeners - use window-level references for cleanup:
+```javascript
+// Remove old handler if exists (from previous module evaluation)
+if (window._myModuleHandler) {
+  window.removeEventListener('popstate', window._myModuleHandler);
+}
+window._myModuleHandler = handlePopstate;
+window.addEventListener('popstate', window._myModuleHandler);
+```
+
+**Open Questions:**
+
+1. Should we formalize a `window.kernel` API contract for userland code?
+2. Should the kernel call cleanup hooks before re-evaluating modules?
+3. Should `onSystemBootComplete` be called on hot-reload (with a flag)?
+4. How to handle multiple instances of event listeners cleanly?
+5. Should we introduce a module lifecycle API (`onLoad`, `onUnload`)?
+
+**Affected Libraries:**
+
+Libraries currently using the problematic pattern (caching api at module level):
+- `item-palette` - Cmd+K item search
+- `keyboard-shortcuts` - Global keyboard shortcuts
+- `repl-ui` - REPL interface
+- `help-dialog` - Help modal
+- `viewport-manager` - Navigation state (partially migrated)
+
+**Symptoms of This Bug:**
+
+- Feature works after fresh page load
+- Feature stops working after editing any code item
+- Browser refresh fixes it
+- Console may show "not initialized" warnings
+
+---
+
 ## Decisions Deferred
 
 ### Offline-First & Sync
@@ -1344,6 +1530,8 @@ Systems examined for insights:
 | 2026-01-10 | Session 7: Implemented container type and renderer - two-step child creation flow (click to create, click to edit), container manages child addition via createChild API, workspace is now type container, validates hierarchical composition |
 | 2026-01-12 | Session 8: Implemented 2D canvas windowing system with spatial browsing - positioned children (x,y,width,height,z), draggable windows, click-to-front, silent updates for DOM preservation, scroll state restoration, stale closure prevention, openSibling API for link navigation |
 | 2026-01-13 | Documentation restructure: Created subsystem docs (Rendering_and_Editing.md, Tags_and_Classification.md, Spatial_Windowing.md, Future_Directions.md). Added sections 13 (Tags as Universal Property) and 14 (Editors as Separate Items & Multiple Renderers). Decided tags apply to all items, editors separate from renderers, multiple of each per type. |
+| 2026-02-03 | Added section 15 (Emergency REPL Loading). Kernel loads repl-ui directly on error when normal boot-complete activation didn't happen. Falls back to dev tools console if repl-ui itself is broken. No kernel fallback UI needed. |
+| 2026-02-03 | Added section 16 (Module-Level State and Hot-Reload). Documented the open problem where libraries caching `api` at module level break after hot-reload. Proposed clean pattern: use `window.kernel` directly, use window-level references for event listener cleanup. |
 
 ---
 
@@ -1363,7 +1551,13 @@ Systems examined for insights:
 
 ### Still Open
 
-1. **Code item organization conventions**: What patterns for structuring code across multiple items?
+1. **Hot-reload and module lifecycle**: How should libraries handle state across hot-reloads? (See Section 16)
+   - Formalize `window.kernel` API contract?
+   - Add module lifecycle hooks (`onLoad`, `onUnload`)?
+   - Call `onSystemBootComplete` on hot-reload with a flag?
+   - Standard pattern for event listener cleanup?
+
+2. **Code item organization conventions**: What patterns for structuring code across multiple items?
    - One large item vs many small items?
    - Namespacing conventions beyond just names?
    - How to handle related functions (keep together or split)?
