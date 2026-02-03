@@ -11,12 +11,12 @@ export function render(value, options, api) {
   if (label) {
     const labelEl = api.createElement('label');
     labelEl.textContent = label;
-    labelEl.style.cssText = 'font-weight: 500; font-size: 14px; color: #333;';
+    labelEl.style.cssText = 'font-weight: 500; font-size: 14px; color: var(--color-text);';
     wrapper.appendChild(labelEl);
   }
 
   if (mode === 'editable' && onChange) {
-    const textarea = api.createElement('textarea', { style: 'padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 14px; font-family: inherit; resize: vertical;', rows: rows });
+    const textarea = api.createElement('textarea', { style: 'padding: 8px; border: 1px solid var(--color-border); border-radius: var(--border-radius); font-size: 14px; font-family: inherit; resize: vertical;', rows: rows });
     textarea.value = value || '';
     textarea.placeholder = placeholder || '';
     textarea.oninput = (e) => onChange(e.target.value);
@@ -24,7 +24,7 @@ export function render(value, options, api) {
   } else {
     const pre = api.createElement('pre');
     pre.textContent = value || '';
-    pre.style.cssText = 'padding: 8px; background: #f5f5f5; border-radius: 4px; font-size: 14px; white-space: pre-wrap; margin: 0; font-family: inherit;';
+    pre.style.cssText = 'padding: 8px; background: var(--color-bg-body); border-radius: var(--border-radius); font-size: 14px; white-space: pre-wrap; margin: 0; font-family: inherit;';
     wrapper.appendChild(pre);
   }
   return wrapper;

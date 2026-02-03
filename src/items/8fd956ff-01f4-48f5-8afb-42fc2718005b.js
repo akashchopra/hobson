@@ -14,7 +14,7 @@ export async function render(value, options, api) {
   if (label) {
     const labelEl = api.createElement('label');
     labelEl.textContent = label;
-    labelEl.style.cssText = 'font-weight: 500; font-size: 14px; color: #333;';
+    labelEl.style.cssText = 'font-weight: 500; font-size: 14px; color: var(--color-text);';
     wrapper.appendChild(labelEl);
   }
 
@@ -60,7 +60,7 @@ export async function render(value, options, api) {
         target.scrollIntoView({ behavior: 'smooth', block: 'start' });
         // Add brief highlight effect
         target.style.transition = 'background 0.3s';
-        target.style.background = '#fff3cd';
+        target.style.background = 'var(--color-warning-light)';
         setTimeout(() => {
           target.style.background = '';
         }, 2000);

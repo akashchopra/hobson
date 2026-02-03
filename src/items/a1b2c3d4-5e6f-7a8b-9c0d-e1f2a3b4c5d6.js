@@ -148,7 +148,7 @@ export async function render(markdown, api) {
           api.navigate(parsed.itemId, hasNavigation ? navigateTo : null);
         }
       };
-      link.style.cssText = 'color: #007bff; text-decoration: none; border-bottom: 1px solid #007bff; cursor: pointer;';
+      link.style.cssText = 'color: var(--color-primary); text-decoration: none; border-bottom: 1px solid var(--color-primary); cursor: pointer;';
     }
   });
 
@@ -161,7 +161,7 @@ export async function render(markdown, api) {
 
     if (!parsed) {
       const errorDiv = api.createElement('div');
-      errorDiv.style.cssText = 'background: #fff3cd; border: 1px solid #ffc107; border-radius: 4px; padding: 8px 12px; margin: 10px 0; color: #856404; font-style: italic;';
+      errorDiv.style.cssText = 'background: var(--color-warning-light); border: 1px solid var(--color-warning); border-radius: var(--border-radius); padding: 8px 12px; margin: 10px 0; color: var(--color-warning-text); font-style: italic;';
       errorDiv.textContent = '[Invalid URL: ' + altText + ']';
       img.parentNode.replaceChild(errorDiv, img);
       continue;
@@ -172,7 +172,7 @@ export async function render(markdown, api) {
       const isPartial = parsed.fragment || Object.keys(parsed.queryParams).length > 0;
 
       const wrapperDiv = api.createElement('div', { className: 'transclusion-container' });
-      wrapperDiv.style.cssText = 'background: #f9f9f9; border: 1px solid #e0e0e0; border-radius: 6px; padding: 15px; margin: 15px 0;';
+      wrapperDiv.style.cssText = 'background: var(--color-bg-surface-alt); border: 1px solid var(--color-border-light); border-radius: var(--border-radius); padding: 15px; margin: 15px 0;';
 
       if (isPartial) {
         // Partial transclusion
@@ -204,7 +204,7 @@ export async function render(markdown, api) {
         }
 
         const header = api.createElement('div');
-        header.style.cssText = 'font-size: 12px; color: #666; margin-bottom: 10px; padding-bottom: 8px; border-bottom: 1px solid #ddd; cursor: pointer;';
+        header.style.cssText = 'font-size: 12px; color: var(--color-text-secondary); margin-bottom: 10px; padding-bottom: 8px; border-bottom: 1px solid var(--color-border-light); cursor: pointer;';
         header.textContent = 'Transcluded from: ' + headerDesc;
         header.onclick = () => api.siblingContainer.addSibling(parsed.itemId);
         wrapperDiv.appendChild(header);
@@ -221,14 +221,14 @@ export async function render(markdown, api) {
         } else {
           // Render as code block
           const pre = api.createElement('pre');
-          pre.style.cssText = 'margin: 0; padding: 10px; background: #fff; border-radius: 4px; overflow-x: auto; font-family: monospace; font-size: 13px; line-height: 1.5;';
+          pre.style.cssText = 'margin: 0; padding: 10px; background: var(--color-bg-surface); border-radius: var(--border-radius); overflow-x: auto; font-family: monospace; font-size: 13px; line-height: 1.5;';
 
           const code = api.createElement('code');
           const lines = text.split('\n');
           lines.forEach((line, idx) => {
             const lineNum = startLine + idx;
             const lineNumSpan = api.createElement('span');
-            lineNumSpan.style.cssText = 'display: inline-block; width: 40px; color: #999; user-select: none; text-align: right; margin-right: 10px;';
+            lineNumSpan.style.cssText = 'display: inline-block; width: 40px; color: var(--color-border-dark); user-select: none; text-align: right; margin-right: 10px;';
             lineNumSpan.textContent = lineNum + '';
             code.appendChild(lineNumSpan);
             code.appendChild(document.createTextNode(line));
@@ -241,7 +241,7 @@ export async function render(markdown, api) {
       } else {
         // Full transclusion
         const header = api.createElement('div');
-        header.style.cssText = 'font-size: 12px; color: #666; margin-bottom: 10px; padding-bottom: 8px; border-bottom: 1px solid #ddd; cursor: pointer;';
+        header.style.cssText = 'font-size: 12px; color: var(--color-text-secondary); margin-bottom: 10px; padding-bottom: 8px; border-bottom: 1px solid var(--color-border-light); cursor: pointer;';
         header.textContent = 'Transcluded from: ' + (transcludedItem.name || transcludedItem.id);
         header.onclick = () => api.navigate(parsed.itemId);
         wrapperDiv.appendChild(header);
@@ -253,7 +253,7 @@ export async function render(markdown, api) {
       img.parentNode.replaceChild(wrapperDiv, img);
     } catch (err) {
       const errorDiv = api.createElement('div');
-      errorDiv.style.cssText = 'background: #fff3cd; border: 1px solid #ffc107; border-radius: 4px; padding: 8px 12px; margin: 10px 0; color: #856404; font-style: italic;';
+      errorDiv.style.cssText = 'background: var(--color-warning-light); border: 1px solid var(--color-warning); border-radius: var(--border-radius); padding: 8px 12px; margin: 10px 0; color: var(--color-warning-text); font-style: italic;';
       errorDiv.textContent = '[Missing: ' + altText + ' - ' + err.message + ']';
       img.parentNode.replaceChild(errorDiv, img);
     }
@@ -315,7 +315,7 @@ export async function render(markdown, api) {
               api.navigate(parsed.itemId, hasNavigation ? navigateTo : null);
             }
           };
-          link.style.cssText = 'color: #007bff; text-decoration: none; border-bottom: 1px solid #007bff; cursor: pointer;';
+          link.style.cssText = 'color: var(--color-primary); text-decoration: none; border-bottom: 1px solid var(--color-primary); cursor: pointer;';
         }
       });
 
@@ -329,7 +329,7 @@ export async function render(markdown, api) {
           const itemName = decodeURIComponent(match[2]);
 
           // Style as subtle chrome
-          link.style.cssText = 'color: #999; font-size: 0.75em; margin-left: 3px; cursor: pointer; text-decoration: none; vertical-align: super;';
+          link.style.cssText = 'color: var(--color-border-dark); font-size: 0.75em; margin-left: 3px; cursor: pointer; text-decoration: none; vertical-align: super;';
           link.title = 'From: ' + itemName;
           link.onclick = (e) => {
             e.preventDefault();
@@ -350,10 +350,10 @@ export async function render(markdown, api) {
 
         // Create full chrome wrapper
         const wrapperDiv = api.createElement('div', { className: 'transclusion-container' });
-        wrapperDiv.style.cssText = 'background: #f9f9f9; border: 1px solid #e0e0e0; border-radius: 6px; padding: 15px; margin: 15px 0;';
+        wrapperDiv.style.cssText = 'background: var(--color-bg-surface-alt); border: 1px solid var(--color-border-light); border-radius: var(--border-radius); padding: 15px; margin: 15px 0;';
 
         const header = api.createElement('div');
-        header.style.cssText = 'font-size: 12px; color: #666; margin-bottom: 10px; padding-bottom: 8px; border-bottom: 1px solid #ddd; cursor: pointer;';
+        header.style.cssText = 'font-size: 12px; color: var(--color-text-secondary); margin-bottom: 10px; padding-bottom: 8px; border-bottom: 1px solid var(--color-border-light); cursor: pointer;';
         header.textContent = 'From: ' + itemName;
         header.onclick = () => api.siblingContainer?.addSibling(itemId);
         wrapperDiv.appendChild(header);
@@ -373,7 +373,7 @@ export async function render(markdown, api) {
 
     } catch (err) {
       const errorDiv = api.createElement('div');
-      errorDiv.style.cssText = 'background: #ffebee; border: 1px solid #f44336; border-radius: 4px; padding: 8px 12px; margin: 10px 0; color: #c62828;';
+      errorDiv.style.cssText = 'background: var(--color-danger-light); border: 1px solid var(--color-danger); border-radius: var(--border-radius); padding: 8px 12px; margin: 10px 0; color: var(--color-danger-text);';
       errorDiv.textContent = '[Query error: ' + err.message + ']';
       pre.parentNode.replaceChild(errorDiv, pre);
     }

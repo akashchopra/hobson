@@ -35,7 +35,7 @@ export async function render(value, options, api) {
   if (label) {
     const labelEl = api.createElement('label');
     labelEl.textContent = label;
-    labelEl.style.cssText = 'font-weight: 500; font-size: 14px; color: #333;';
+    labelEl.style.cssText = 'font-weight: 500; font-size: 14px; color: var(--color-text);';
     wrapper.appendChild(labelEl);
   }
 
@@ -48,7 +48,7 @@ export async function render(value, options, api) {
 
   // Editor container
   const editorContainer = api.createElement('div');
-  editorContainer.style.cssText = 'border: 1px solid #d0d0d0; border-radius: 6px; overflow: hidden;';
+  editorContainer.style.cssText = 'border: 1px solid var(--color-border); border-radius: var(--border-radius); overflow: hidden;';
   wrapper.appendChild(editorContainer);
 
   // Create CodeMirror instance in readonly mode
@@ -95,7 +95,7 @@ export async function render(value, options, api) {
         const link = document.createElement('a');
         link.textContent = linkText;
         link.href = '#';
-        link.style.cssText = 'color: #007bff; text-decoration: underline; cursor: pointer;';
+        link.style.cssText = 'color: var(--color-primary); text-decoration: underline; cursor: pointer;';
         link.onclick = (e) => {
           e.preventDefault();
           e.stopPropagation();
@@ -183,7 +183,7 @@ export async function render(value, options, api) {
       if (!document.getElementById('line-highlight-css')) {
         const style = document.createElement('style');
         style.id = 'line-highlight-css';
-        style.textContent = '.line-highlight { background: #fff3cd !important; }';
+        style.textContent = '.line-highlight { background: var(--color-warning-light) !important; }';
         document.head.appendChild(style);
       }
 

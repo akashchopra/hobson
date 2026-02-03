@@ -16,14 +16,14 @@ export function render(value, options, api) {
   } else {
     const indicator = api.createElement('span');
     indicator.textContent = value ? '\u2713' : '\u2717';
-    indicator.style.cssText = 'font-size: 18px; color: ' + (value ? '#28a745' : '#dc3545') + ';';
+    indicator.style.cssText = 'font-size: 18px; color: ' + (value ? 'var(--color-success)' : 'var(--color-danger)') + ';';
     wrapper.appendChild(indicator);
   }
 
   if (label) {
     const labelEl = api.createElement('label');
     labelEl.textContent = label;
-    labelEl.style.cssText = 'font-size: 14px; color: #333;';
+    labelEl.style.cssText = 'font-size: 14px; color: var(--color-text);';
     wrapper.appendChild(labelEl);
   }
   return wrapper;

@@ -79,11 +79,11 @@ export function createSearchUI(containerEl, onSelect, api, options = {}) {
     type: 'text',
     placeholder,
     value: savedQuery,
-    style: 'width: 100%; padding: 12px 16px; font-size: 16px; border: 2px solid #d0d0d0; border-radius: 8px; outline: none; transition: border-color 0.2s;'
+    style: 'width: 100%; padding: 12px 16px; font-size: 16px; border: 2px solid var(--color-border); border-radius: 8px; outline: none; transition: border-color 0.2s;'
   }, []);
 
-  input.onfocus = () => { input.style.borderColor = '#3b82f6'; };
-  input.onblur = () => { input.style.borderColor = '#d0d0d0'; };
+  input.onfocus = () => { input.style.borderColor = 'var(--color-primary)'; };
+  input.onblur = () => { input.style.borderColor = 'var(--color-border)'; };
 
   searchBox.appendChild(input);
   containerEl.appendChild(searchBox);
@@ -92,7 +92,7 @@ export function createSearchUI(containerEl, onSelect, api, options = {}) {
   containerEl.appendChild(resultsContainer);
 
   const statusDiv = api.createElement('div', {
-    style: 'padding: 40px; text-align: center; color: #999; font-style: italic;'
+    style: 'padding: 40px; text-align: center; color: var(--color-border-dark); font-style: italic;'
   }, ['Type to search...']);
   resultsContainer.appendChild(statusDiv);
 
@@ -133,7 +133,7 @@ export function createSearchUI(containerEl, onSelect, api, options = {}) {
 
       // Create New button
       const createBtn = api.createElement('button', {
-        style: 'padding: 10px 20px; background: #3b82f6; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 500; transition: background 0.2s;',
+        style: 'padding: 10px 20px; background: var(--color-primary); color: white; border: none; border-radius: var(--border-radius); cursor: pointer; font-size: 14px; font-weight: 500; transition: background 0.2s;',
         onclick: async () => {
           try {
             // Look up note type
@@ -169,10 +169,10 @@ export function createSearchUI(containerEl, onSelect, api, options = {}) {
 
       // Hover effects
       createBtn.onmouseover = () => {
-        createBtn.style.background = '#2563eb';
+        createBtn.style.background = 'var(--color-primary-hover)';
       };
       createBtn.onmouseout = () => {
-        createBtn.style.background = '#3b82f6';
+        createBtn.style.background = 'var(--color-primary)';
       };
 
       statusDiv.appendChild(createBtn);
@@ -182,29 +182,29 @@ export function createSearchUI(containerEl, onSelect, api, options = {}) {
       resultsList.innerHTML = '';
 
       const countHeader = api.createElement('div', {
-        style: 'margin-bottom: 15px; font-size: 14px; color: #666; font-weight: 500;'
+        style: 'margin-bottom: 15px; font-size: 14px; color: var(--color-text-secondary); font-weight: 500;'
       }, ['Found ' + matches.length + ' item' + (matches.length === 1 ? '' : 's')]);
       resultsList.appendChild(countHeader);
 
       matches.forEach(item => {
         const resultDiv = api.createElement('div', {
-          style: 'padding: 12px; margin-bottom: 8px; background: white; border: 1px solid #ddd; border-radius: 6px; cursor: pointer; transition: all 0.2s;'
+          style: 'padding: 12px; margin-bottom: 8px; background: var(--color-bg-surface); border: 1px solid var(--color-border-light); border-radius: var(--border-radius); cursor: pointer; transition: all 0.2s;'
         }, []);
 
         const itemTitle = api.createElement('div', {
-          style: 'font-weight: 500; color: #333; margin-bottom: 6px; font-size: 15px;'
+          style: 'font-weight: 500; color: var(--color-text); margin-bottom: 6px; font-size: 15px;'
         }, [item.name || item.content?.title || item.id]);
         resultDiv.appendChild(itemTitle);
 
         const previewText = item.content?.body || item.content?.description ||
                            JSON.stringify(item.content).substring(0, 150);
         const preview = api.createElement('div', {
-          style: 'font-size: 13px; color: #666; margin-bottom: 6px; line-height: 1.4; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;'
+          style: 'font-size: 13px; color: var(--color-text-secondary); margin-bottom: 6px; line-height: 1.4; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;'
         }, [previewText.substring(0, 200)]);
         resultDiv.appendChild(preview);
 
         const meta = api.createElement('div', {
-          style: 'font-size: 12px; color: #999;'
+          style: 'font-size: 12px; color: var(--color-border-dark);'
         }, [
           'Type: ' + item.type.substring(0, 8) + '... | Modified: ' +
           new Date(item.modified).toLocaleDateString()
@@ -214,13 +214,13 @@ export function createSearchUI(containerEl, onSelect, api, options = {}) {
         resultDiv.onclick = () => { onSelect(item); };
 
         resultDiv.onmouseover = () => {
-          resultDiv.style.background = '#f8f9fa';
-          resultDiv.style.borderColor = '#3b82f6';
+          resultDiv.style.background = 'var(--color-bg-surface-alt)';
+          resultDiv.style.borderColor = 'var(--color-primary)';
           resultDiv.style.transform = 'translateX(4px)';
         };
         resultDiv.onmouseout = () => {
           resultDiv.style.background = 'white';
-          resultDiv.style.borderColor = '#ddd';
+          resultDiv.style.borderColor = 'var(--color-border-light)';
           resultDiv.style.transform = 'translateX(0)';
         };
 

@@ -14,7 +14,7 @@ export async function render(value, options, api) {
   if (label) {
     const labelEl = api.createElement('label');
     labelEl.textContent = label;
-    labelEl.style.cssText = 'font-weight: 500; font-size: 14px; color: #333;';
+    labelEl.style.cssText = 'font-weight: 500; font-size: 14px; color: var(--color-text);';
     wrapper.appendChild(labelEl);
   }
 
@@ -27,7 +27,7 @@ export async function render(value, options, api) {
 
   // Editor container
   const editorContainer = api.createElement('div');
-  editorContainer.style.cssText = 'border: 1px solid #d0d0d0; border-radius: 6px; overflow: hidden;';
+  editorContainer.style.cssText = 'border: 1px solid var(--color-border); border-radius: var(--border-radius); overflow: hidden;';
   wrapper.appendChild(editorContainer);
 
   // Create CodeMirror instance in readonly mode
@@ -54,7 +54,7 @@ export async function render(value, options, api) {
   // Run Script button
   const runBtn = api.createElement('button');
   runBtn.textContent = 'Run Script';
-  runBtn.style.cssText = 'padding: 10px 20px; cursor: pointer; background: #007bff; color: white; border: none; border-radius: 4px; font-weight: 500;';
+  runBtn.style.cssText = 'padding: 10px 20px; cursor: pointer; background: var(--color-primary); color: white; border: none; border-radius: var(--border-radius); font-weight: 500;';
   runBtn.onclick = async () => {
     runBtn.disabled = true;
     runBtn.textContent = 'Running...';
@@ -88,7 +88,7 @@ export async function render(value, options, api) {
   // Copy Code button
   const copyBtn = api.createElement('button');
   copyBtn.textContent = 'Copy Code';
-  copyBtn.style.cssText = 'padding: 10px 20px; cursor: pointer; border: 1px solid #ccc; border-radius: 4px; background: white;';
+  copyBtn.style.cssText = 'padding: 10px 20px; cursor: pointer; border: 1px solid var(--color-border); border-radius: var(--border-radius); background: var(--color-bg-surface);';
   copyBtn.onclick = () => {
     navigator.clipboard.writeText(code);
     copyBtn.textContent = 'Copied!';

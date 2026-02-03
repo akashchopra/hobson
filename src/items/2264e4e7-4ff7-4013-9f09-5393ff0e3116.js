@@ -104,7 +104,7 @@ export function showModal(options = {}) {
   // Create modal box
   const modalBox = createElement('div', {
     style: `
-      background: white;
+      background: var(--color-bg-surface);
       border-radius: 8px;
       width: ${width};
       max-width: 90vw;
@@ -124,14 +124,14 @@ export function showModal(options = {}) {
         justify-content: space-between;
         align-items: center;
         padding: 16px 20px;
-        border-bottom: 1px solid #e0e0e0;
+        border-bottom: 1px solid var(--color-border-light);
         flex-shrink: 0;
       `
     });
 
     if (title) {
       const titleEl = createElement('h3', {
-        style: 'margin: 0; font-size: 18px; font-weight: 600; color: #333;'
+        style: 'margin: 0; font-size: 18px; font-weight: 600; color: var(--color-text);'
       }, [title]);
       header.appendChild(titleEl);
     } else {
@@ -146,16 +146,16 @@ export function showModal(options = {}) {
           background: transparent;
           border: none;
           font-size: 20px;
-          color: #666;
+          color: var(--color-text-secondary);
           line-height: 1;
-          border-radius: 4px;
+          border-radius: var(--border-radius);
         `,
         onclick: close,
         title: 'Close (Escape)'
       }, ['\u00d7']);
 
       // Hover effect
-      closeBtn.onmouseover = () => { closeBtn.style.background = '#f0f0f0'; };
+      closeBtn.onmouseover = () => { closeBtn.style.background = 'var(--color-bg-hover)'; };
       closeBtn.onmouseout = () => { closeBtn.style.background = 'transparent'; };
 
       header.appendChild(closeBtn);
@@ -235,7 +235,7 @@ export function confirm(options = {}) {
   } = options;
 
   return new Promise((resolve) => {
-    const confirmBtnColor = confirmStyle === 'danger' ? '#dc3545' : '#007bff';
+    const confirmBtnColor = confirmStyle === 'danger' ? 'var(--color-danger)' : 'var(--color-primary)';
 
     const { close } = showModal({
       title,
@@ -248,7 +248,7 @@ export function confirm(options = {}) {
         // Message
         const messageEl = document.createElement('p');
         messageEl.textContent = message;
-        messageEl.style.cssText = 'margin: 0 0 20px 0; font-size: 14px; color: #333; line-height: 1.5;';
+        messageEl.style.cssText = 'margin: 0 0 20px 0; font-size: 14px; color: var(--color-text); line-height: 1.5;';
         container.appendChild(messageEl);
 
         // Buttons
@@ -257,7 +257,7 @@ export function confirm(options = {}) {
 
         const cancelBtn = document.createElement('button');
         cancelBtn.textContent = cancelText;
-        cancelBtn.style.cssText = 'padding: 8px 16px; cursor: pointer; border: 1px solid #ccc; background: white; border-radius: 4px;';
+        cancelBtn.style.cssText = 'padding: 8px 16px; cursor: pointer; border: 1px solid var(--color-border); background: var(--color-bg-surface); border-radius: var(--border-radius);';
         cancelBtn.onclick = () => {
           resolve(false);
           closeModal();
@@ -266,7 +266,7 @@ export function confirm(options = {}) {
 
         const confirmBtn = document.createElement('button');
         confirmBtn.textContent = confirmText;
-        confirmBtn.style.cssText = `padding: 8px 16px; cursor: pointer; border: none; background: ${confirmBtnColor}; color: white; border-radius: 4px;`;
+        confirmBtn.style.cssText = `padding: 8px 16px; cursor: pointer; border: none; background: ${confirmBtnColor}; color: white; border-radius: var(--border-radius);`;
         confirmBtn.onclick = () => {
           resolve(true);
           closeModal();
@@ -309,7 +309,7 @@ export function alert(options = {}) {
         // Message
         const messageEl = document.createElement('p');
         messageEl.textContent = message;
-        messageEl.style.cssText = 'margin: 0 0 20px 0; font-size: 14px; color: #333; line-height: 1.5;';
+        messageEl.style.cssText = 'margin: 0 0 20px 0; font-size: 14px; color: var(--color-text); line-height: 1.5;';
         container.appendChild(messageEl);
 
         // Button
@@ -318,7 +318,7 @@ export function alert(options = {}) {
 
         const okBtn = document.createElement('button');
         okBtn.textContent = buttonText;
-        okBtn.style.cssText = 'padding: 8px 16px; cursor: pointer; border: none; background: #007bff; color: white; border-radius: 4px;';
+        okBtn.style.cssText = 'padding: 8px 16px; cursor: pointer; border: none; background: var(--color-primary); color: white; border-radius: var(--border-radius);';
         okBtn.onclick = () => {
           close();
           resolve();

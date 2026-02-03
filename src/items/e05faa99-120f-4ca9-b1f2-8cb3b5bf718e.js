@@ -25,7 +25,7 @@ export function renderTagPicker(config, api) {
 
   if (tree.length === 0) {
     const emptyMsg = api.createElement('div', {
-      style: 'padding: 20px; text-align: center; color: #999; font-style: italic;'
+      style: 'padding: 20px; text-align: center; color: var(--color-border-dark); font-style: italic;'
     }, ['No tags available. Create tag items first.']);
     container.appendChild(emptyMsg);
     return;
@@ -54,7 +54,7 @@ export function renderTagPicker(config, api) {
         align-items: center;
         gap: 8px;
         cursor: pointer;
-        border-radius: 4px;
+        border-radius: var(--border-radius);
         transition: background 0.2s;
         ${isSelected ? 'opacity: 0.5;' : ''}
       `
@@ -63,7 +63,7 @@ export function renderTagPicker(config, api) {
     // Expand/collapse icon (if has children)
     if (hasChildren) {
       const expandIcon = api.createElement('span', {
-        style: 'font-size: 10px; color: #666; width: 10px;'
+        style: 'font-size: 10px; color: var(--color-text-secondary); width: 10px;'
       }, [isExpanded ? '▼' : '▶']);
       tagRow.appendChild(expandIcon);
     } else {
@@ -88,7 +88,7 @@ export function renderTagPicker(config, api) {
 
     // Tag name
     const nameText = api.createElement('span', {
-      style: 'font-size: 13px; color: #333; flex-grow: 1;'
+      style: 'font-size: 13px; color: var(--color-text); flex-grow: 1;'
     }, [tagName]);
     tagRow.appendChild(nameText);
 
@@ -156,7 +156,7 @@ export function renderTagBrowser(config, api) {
 
   if (tree.length === 0) {
     const emptyMsg = api.createElement('div', {
-      style: 'padding: 40px; text-align: center; color: #999; font-style: italic;'
+      style: 'padding: 40px; text-align: center; color: var(--color-border-dark); font-style: italic;'
     }, ['No tags found. Create tag items to get started.']);
     container.appendChild(emptyMsg);
     return;
@@ -182,14 +182,14 @@ export function renderTagBrowser(config, api) {
         gap: 8px;
         cursor: pointer;
         transition: background 0.2s;
-        border-radius: 4px;
+        border-radius: var(--border-radius);
       `
     }, []);
 
     // Expand/collapse icon (if has children)
     if (hasChildren) {
       const expandIcon = api.createElement('span', {
-        style: 'font-size: 12px; color: #666; user-select: none; width: 12px;'
+        style: 'font-size: 12px; color: var(--color-text-secondary); user-select: none; width: 12px;'
       }, [isExpanded ? '▼' : '▶']);
       tagRow.appendChild(expandIcon);
     } else {
@@ -214,13 +214,13 @@ export function renderTagBrowser(config, api) {
 
     // Tag name
     const nameText = api.createElement('span', {
-      style: 'font-weight: 500; color: #333; flex-grow: 1;'
+      style: 'font-weight: 500; color: var(--color-text); flex-grow: 1;'
     }, [tagName]);
     tagRow.appendChild(nameText);
 
     // Tag ID (shortened)
     const tagId = api.createElement('span', {
-      style: 'font-family: monospace; font-size: 11px; color: #999;'
+      style: 'font-family: monospace; font-size: 11px; color: var(--color-border-dark);'
     }, [tagNode.id.substring(0, 8) + '...']);
     tagRow.appendChild(tagId);
 

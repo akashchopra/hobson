@@ -29,7 +29,7 @@ export async function showTypePicker(api) {
 
         for (const type of types) {
           const typeBtn = api.createElement('button', {
-            style: 'padding: 12px; text-align: left; border: 1px solid #ddd; border-radius: 4px; background: white; cursor: pointer;',
+            style: 'padding: 12px; text-align: left; border: 1px solid var(--color-border-light); border-radius: var(--border-radius); background: var(--color-bg-surface); cursor: pointer;',
             onclick: () => {
               resolve(type.id);
               closeModal();
@@ -37,14 +37,14 @@ export async function showTypePicker(api) {
           }, []);
 
           // Hover effect
-          typeBtn.onmouseover = () => { typeBtn.style.background = '#f5f5f5'; };
+          typeBtn.onmouseover = () => { typeBtn.style.background = 'var(--color-bg-body)'; };
           typeBtn.onmouseout = () => { typeBtn.style.background = 'white'; };
 
           const typeName = api.createElement('div', { style: 'font-weight: bold;' }, [type.name || type.id.slice(0, 8)]);
           typeBtn.appendChild(typeName);
 
           if (type.content?.description) {
-            const typeDesc = api.createElement('div', { style: 'font-size: 12px; color: #666; margin-top: 4px;' }, [type.content.description.slice(0, 300)]);
+            const typeDesc = api.createElement('div', { style: 'font-size: 12px; color: var(--color-text-secondary); margin-top: 4px;' }, [type.content.description.slice(0, 300)]);
             typeBtn.appendChild(typeDesc);
           }
 

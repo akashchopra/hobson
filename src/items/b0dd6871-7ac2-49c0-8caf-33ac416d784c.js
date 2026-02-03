@@ -11,7 +11,7 @@ export async function render(value, options, api) {
   if (label) {
     const labelEl = api.createElement('label');
     labelEl.textContent = label;
-    labelEl.style.cssText = 'font-weight: 500; font-size: 14px; color: #333;';
+    labelEl.style.cssText = 'font-weight: 500; font-size: 14px; color: var(--color-text);';
     wrapper.appendChild(labelEl);
   }
 
@@ -39,10 +39,10 @@ export async function render(value, options, api) {
     overlay.style.cssText = 'position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 10000;';
 
     const modal = api.createElement('div');
-    modal.style.cssText = 'background: white; border-radius: 8px; width: 90%; max-width: 500px; max-height: 70vh; display: flex; flex-direction: column; box-shadow: 0 4px 20px rgba(0,0,0,0.3);';
+    modal.style.cssText = 'background: var(--color-bg-surface); border-radius: var(--border-radius); width: 90%; max-width: 500px; max-height: 70vh; display: flex; flex-direction: column; box-shadow: var(--shadow-md);';
 
     const header = api.createElement('div');
-    header.style.cssText = 'display: flex; justify-content: space-between; align-items: center; padding: 16px; border-bottom: 1px solid #ddd;';
+    header.style.cssText = 'display: flex; justify-content: space-between; align-items: center; padding: 16px; border-bottom: 1px solid var(--color-border-light);';
     
     const title = api.createElement('h3');
     title.style.cssText = 'margin: 0; font-size: 16px;';
@@ -51,7 +51,7 @@ export async function render(value, options, api) {
 
     const closeBtn = api.createElement('button');
     closeBtn.textContent = '\u00d7';
-    closeBtn.style.cssText = 'background: none; border: none; font-size: 24px; cursor: pointer; color: #666; padding: 0 4px;';
+    closeBtn.style.cssText = 'background: none; border: none; font-size: 24px; cursor: pointer; color: var(--color-text-secondary); padding: 0 4px;';
     closeBtn.onclick = () => overlay.remove();
     header.appendChild(closeBtn);
     modal.appendChild(header);
@@ -110,7 +110,7 @@ export async function render(value, options, api) {
     row.style.cssText = 'display: flex; gap: 8px; align-items: center;';
 
     const pickerBtn = api.createElement('button');
-    pickerBtn.style.cssText = 'flex: 1; padding: 8px 12px; text-align: left; background: #f8f9fa; border: 1px solid #ddd; border-radius: 4px; cursor: pointer; font-size: 14px; display: flex; align-items: center; gap: 8px;';
+    pickerBtn.style.cssText = 'flex: 1; padding: 8px 12px; text-align: left; background: var(--color-bg-surface-alt); border: 1px solid var(--color-border-light); border-radius: var(--border-radius); cursor: pointer; font-size: 14px; display: flex; align-items: center; gap: 8px;';
     
     const nameSpan = api.createElement('span');
     nameSpan.style.cssText = 'flex: 1;';
@@ -119,7 +119,7 @@ export async function render(value, options, api) {
 
     const chevron = api.createElement('span');
     chevron.textContent = '\u25BC';
-    chevron.style.cssText = 'font-size: 10px; color: #666;';
+    chevron.style.cssText = 'font-size: 10px; color: var(--color-text-secondary);';
     pickerBtn.appendChild(chevron);
 
     pickerBtn.onclick = showItemPicker;
@@ -130,7 +130,7 @@ export async function render(value, options, api) {
       const navBtn = api.createElement('button');
       navBtn.textContent = '\u2192';
       navBtn.title = 'Go to item';
-      navBtn.style.cssText = 'padding: 8px 12px; background: #e9ecef; border: 1px solid #ddd; border-radius: 4px; cursor: pointer; font-size: 14px;';
+      navBtn.style.cssText = 'padding: 8px 12px; background: var(--color-bg-hover); border: 1px solid var(--color-border-light); border-radius: var(--border-radius); cursor: pointer; font-size: 14px;';
       navBtn.onclick = async (e) => {
         e.preventDefault();
         e.stopPropagation();
@@ -144,7 +144,7 @@ export async function render(value, options, api) {
       const clearBtn = api.createElement('button');
       clearBtn.textContent = '\u00d7';
       clearBtn.title = 'Clear';
-      clearBtn.style.cssText = 'padding: 8px 12px; background: #e9ecef; border: 1px solid #ddd; border-radius: 4px; cursor: pointer; font-size: 14px; color: #666;';
+      clearBtn.style.cssText = 'padding: 8px 12px; background: var(--color-bg-hover); border: 1px solid var(--color-border-light); border-radius: var(--border-radius); cursor: pointer; font-size: 14px; color: var(--color-text-secondary);';
       clearBtn.onclick = () => onChange('');
       row.appendChild(clearBtn);
     }
@@ -156,7 +156,7 @@ export async function render(value, options, api) {
       const link = api.createElement('a');
       link.textContent = currentName;
       link.href = '#';
-      link.style.cssText = 'color: #007bff; text-decoration: none; cursor: pointer; padding: 8px; background: #f5f5f5; border-radius: 4px; display: inline-block;';
+      link.style.cssText = 'color: var(--color-primary); text-decoration: none; cursor: pointer; padding: 8px; background: var(--color-bg-body); border-radius: var(--border-radius); display: inline-block;';
       link.onclick = async (e) => {
         e.preventDefault();
         e.stopPropagation();
@@ -166,12 +166,12 @@ export async function render(value, options, api) {
     } else if (itemId) {
       const span = api.createElement('span');
       span.textContent = currentName;
-      span.style.cssText = 'padding: 8px; background: #fff3cd; border-radius: 4px; font-size: 14px; color: #856404;';
+      span.style.cssText = 'padding: 8px; background: var(--color-warning-light); border-radius: var(--border-radius); font-size: 14px; color: var(--color-text);';
       wrapper.appendChild(span);
     } else {
       const span = api.createElement('span');
       span.textContent = '(none)';
-      span.style.cssText = 'padding: 8px; background: #f5f5f5; border-radius: 4px; font-size: 14px; color: #999;';
+      span.style.cssText = 'padding: 8px; background: var(--color-bg-body); border-radius: var(--border-radius); font-size: 14px; color: var(--color-border-dark);';
       wrapper.appendChild(span);
     }
   }
