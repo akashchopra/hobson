@@ -1,3 +1,7 @@
+// Item: field-view-item-ref
+// ID: b0dd6871-7ac2-49c0-8caf-33ac416d784c
+// Type: cccccccc-0000-0000-0000-000000000000
+
 
 export async function render(value, options, api) {
   const { mode, onChange, label } = options;

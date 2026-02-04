@@ -6,6 +6,10 @@
 // ID: bd74da77-a459-454a-b001-48685d4b536d
 // Type: aaaaaaaa-0000-0000-0000-000000000000
 
+// Item: system:viewport-view
+// ID: bd74da77-a459-454a-b001-48685d4b536d
+// Type: aaaaaaaa-0000-0000-0000-000000000000
+
 
 export async function render(item, api) {
   // Load dependencies
@@ -37,7 +41,7 @@ export async function render(item, api) {
       
       // Update viewport item to match URL (for consistency on next render)
       // Do this silently via api.set to avoid re-render loop
-      const updatedViewport = { ...item, children: [{ id: urlRoot }], modified: Date.now() };
+      const updatedViewport = { ...item, attachments: [{ id: urlRoot }], modified: Date.now() };
       await api.set(updatedViewport);
     } catch {
       // URL root doesn't exist - fall back to stored root
@@ -81,7 +85,7 @@ export async function render(item, api) {
       type: selectedType,
       created: Date.now(),
       modified: Date.now(),
-      children: [],
+      attachments: [],
       content: {}
     };
 
@@ -398,7 +402,7 @@ export async function render(item, api) {
 
   // Helper: set child view
   const setChildView = async (parentId, childId, viewId) => {
-    await api.setChildView(parentId, childId, viewId);
+    await api.setAttachmentView(parentId, childId, viewId);
   };
 
   // Helper: set root view
@@ -557,7 +561,7 @@ export async function render(item, api) {
       contextualViewId ? async () => {
         // Clear contextual override
         if (parentId) {
-          await api.setChildView(parentId, itemId, null);
+          await api.setAttachmentView(parentId, itemId, null);
           await api.rerenderItem(itemId);
         } else {
           await api.viewport.setRootView(null);

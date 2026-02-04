@@ -1,3 +1,7 @@
+// Item: field-view-script-code
+// ID: 7d55ee6d-a36e-4e8d-bdc3-47966dcaa587
+// Type: cccccccc-0000-0000-0000-000000000000
+
 
 // Script code field view (readonly with run/copy buttons)
 export async function render(value, options, api) {

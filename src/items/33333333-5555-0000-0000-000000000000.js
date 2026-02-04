@@ -1,3 +1,7 @@
+// Item: kernel:rendering
+// ID: 33333333-5555-0000-0000-000000000000
+// Type: 33333333-0000-0000-0000-000000000000
+
 
 // Parse stack trace to extract source item name and line number
 function parseSourceLocation(stack) {

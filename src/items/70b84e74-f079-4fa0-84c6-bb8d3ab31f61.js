@@ -1,3 +1,7 @@
+// Item: field-view-checkbox
+// ID: 70b84e74-f079-4fa0-84c6-bb8d3ab31f61
+// Type: cccccccc-0000-0000-0000-000000000000
+
 
 export function render(value, options, api) {
   const { mode, onChange, label } = options;

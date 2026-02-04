@@ -1,3 +1,7 @@
+// Item: kernel:module-system
+// ID: 33333333-4444-0000-0000-000000000000
+// Type: 33333333-0000-0000-0000-000000000000
+
 // Module System - See [Core Concepts - Code as Data](item://a0a0a0a0-d0c0-4000-8000-000000000002#description?region=Code)
 
 // [BEGIN:ModuleSystem]

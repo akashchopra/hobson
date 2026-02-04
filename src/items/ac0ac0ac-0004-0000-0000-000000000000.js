@@ -1,3 +1,7 @@
+// Item: symbol-indexer-watch
+// ID: ac0ac0ac-0004-0000-0000-000000000000
+// Type: 66666666-0000-0000-0000-000000000000
+
 // Symbol indexer - extracts and stores symbol definitions from code items
 
 export async function onItemCreated({ item }, api) {

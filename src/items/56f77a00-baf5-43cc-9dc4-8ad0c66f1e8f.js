@@ -1,3 +1,7 @@
+// Item: field-view-markdown-editable
+// ID: 56f77a00-baf5-43cc-9dc4-8ad0c66f1e8f
+// Type: cccccccc-0000-0000-0000-000000000000
+
 
 // Helper: Find the line number where a region starts
 function findRegionStartLine(text, regionName) {

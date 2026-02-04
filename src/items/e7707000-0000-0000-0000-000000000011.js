@@ -1,3 +1,7 @@
+// Item: system:error-list-view
+// ID: e7707000-0000-0000-0000-000000000011
+// Type: aaaaaaaa-0000-0000-0000-000000000000
+
 
 // Error List View - displays all errors newest first with clear all option
 

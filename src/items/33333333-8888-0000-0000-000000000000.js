@@ -1,3 +1,7 @@
+// Item: kernel:styles
+// ID: 33333333-8888-0000-0000-000000000000
+// Type: 33333333-0000-0000-0000-000000000000
+
 /* === THEME CONFIGURATION === */
 /* Change these two values to theme the entire UI */
 :root {

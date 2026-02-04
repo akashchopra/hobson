@@ -3,10 +3,10 @@
   "type": "33333333-0000-0000-0000-000000000000",
   "name": "kernel:rendering",
   "created": 1769021393717,
-  "modified": 1770215911201,
+  "modified": 1770216042312,
   "content": {
     "description": "The rendering engine that turns items into DOM trees. Manages view lookup, the renderer API, and render instance tracking.\n\n## View Resolution\n\nWhen rendering an item, views are resolved via preference hierarchy:\n1. Explicit view ID passed to `renderItem()`\n2. Item's `preferredView` field\n3. Item's type's `preferredView` field\n4. Type chain lookup (walk `extends` chain, find view with matching `for_type`)\n5. Fall back to [system:default-view](item://aaaaaaaa-1111-0000-0000-000000000000)\n\n## Render Instance Registry\n\nTracks every rendered DOM node with indexes by:\n- **Item ID**: Find all places an item is currently displayed\n- **View ID**: Re-render when view code changes\n- **Parent ID**: Clean up attachments when parent re-renders\n\nEnables partial re-rendering via `rerenderItem()`, `rerenderByView()`, `rerenderByType()`.\n\n## Renderer API\n\nViews receive a comprehensive API object including:\n- DOM creation (`createElement`)\n- Item operations (`get`, `query`, `create`, `update`, `delete`)\n- Rendering (`renderItem`, `rerenderItem`)\n- Navigation (`navigate`, `siblingContainer`)\n- View management (`getViews`, `setPreferredView`, `updateViewConfig`)\n- Events (`events.on/off` - subscribe only, no emit)\n\n## Cycle Detection\n\nRender path is tracked; if same item appears twice in path, either calls `onCycle` callback or throws descriptive error.",
-    "code": "\n// Parse stack trace to extract source item name and line number\nfunction parseSourceLocation(stack) {\n  const lines = stack.split('\\n');\n  for (const line of lines) {\n    const match = line.match(/\\((.+?):(\\d+):\\d+\\)/) ||  // Chrome\n                  line.match(/@(.+?):(\\d+):\\d+/);        // Firefox/Safari\n    if (match) {\n      const [, itemName, lineNum] = match;\n      // Strip .js suffix and skip kernel-rendering itself\n      const cleanName = itemName.replace(/\\.js$/, '');\n      if (cleanName !== 'kernel:rendering') {\n        return { itemName: cleanName, line: parseInt(lineNum, 10) };\n      }\n    }\n  }\n  return null;\n}\n\n// Render Instance Registry - tracks what's currently rendered\nclass RenderInstanceRegistry {\n  constructor() {\n    this.instances = new Map();      // instanceId -> InstanceInfo\n    this.byItemId = new Map();       // itemId -> Set<instanceId>\n    this.byViewId = new Map();       // viewId -> Set<instanceId>\n    this.byParentId = new Map();     // parentId -> Set<instanceId>\n    this.nextId = 1;\n  }\n\n  register(domNode, itemId, viewId, parentId, siblingContainer = null) {\n    const instanceId = this.nextId++;\n\n    const info = {\n      instanceId,\n      domNode,\n      itemId,\n      viewId,\n      parentId,\n      siblingContainer,\n      timestamp: Date.now()\n    };\n\n    this.instances.set(instanceId, info);\n\n    // Index by itemId\n    if (!this.byItemId.has(itemId)) {\n      this.byItemId.set(itemId, new Set());\n    }\n    this.byItemId.get(itemId).add(instanceId);\n\n    // Index by viewId\n    if (!this.byViewId.has(viewId)) {\n      this.byViewId.set(viewId, new Set());\n    }\n    this.byViewId.get(viewId).add(instanceId);\n\n    // Index by parentId\n    const parentKey = parentId || '__root__';\n    if (!this.byParentId.has(parentKey)) {\n      this.byParentId.set(parentKey, new Set());\n    }\n    this.byParentId.get(parentKey).add(instanceId);\n\n    // Add data attribute to DOM for debugging and Phase 3 lookup\n    if (domNode && domNode.setAttribute) {\n      domNode.setAttribute('data-render-instance', instanceId);\n    }\n\n    return instanceId;\n  }\n\n  unregister(instanceId) {\n    const info = this.instances.get(instanceId);\n    if (!info) return false;\n\n    // Remove from all indexes\n    this.instances.delete(instanceId);\n\n    const itemSet = this.byItemId.get(info.itemId);\n    if (itemSet) {\n      itemSet.delete(instanceId);\n      if (itemSet.size === 0) this.byItemId.delete(info.itemId);\n    }\n\n    const viewSet = this.byViewId.get(info.viewId);\n    if (viewSet) {\n      viewSet.delete(instanceId);\n      if (viewSet.size === 0) this.byViewId.delete(info.viewId);\n    }\n\n    const parentKey = info.parentId || '__root__';\n    const parentSet = this.byParentId.get(parentKey);\n    if (parentSet) {\n      parentSet.delete(instanceId);\n      if (parentSet.size === 0) this.byParentId.delete(parentKey);\n    }\n\n    return true;\n  }\n\n  unregisterByParent(parentId) {\n    const parentKey = parentId || '__root__';\n    const instanceIds = this.byParentId.get(parentKey);\n    if (!instanceIds) return 0;\n\n    let count = 0;\n    for (const instanceId of [...instanceIds]) {\n      if (this.unregister(instanceId)) count++;\n    }\n    return count;\n  }\n\n  clear() {\n    const count = this.instances.size;\n    this.instances.clear();\n    this.byItemId.clear();\n    this.byViewId.clear();\n    this.byParentId.clear();\n    return count;\n  }\n\n  get(instanceId) {\n    return this.instances.get(instanceId) || null;\n  }\n\n  getByItemId(itemId) {\n    const instanceIds = this.byItemId.get(itemId);\n    if (!instanceIds) return [];\n    return [...instanceIds].map(id => this.instances.get(id)).filter(Boolean);\n  }\n\n  getByViewId(viewId) {\n    const instanceIds = this.byViewId.get(viewId);\n    if (!instanceIds) return [];\n    return [...instanceIds].map(id => this.instances.get(id)).filter(Boolean);\n  }\n\n  getByParentId(parentId) {\n    const parentKey = parentId || '__root__';\n    const instanceIds = this.byParentId.get(parentKey);\n    if (!instanceIds) return [];\n    return [...instanceIds].map(id => this.instances.get(id)).filter(Boolean);\n  }\n\n  getAll() {\n    return [...this.instances.values()];\n  }\n\n  // For debugging: summary of current state\n  getSummary() {\n    return {\n      totalInstances: this.instances.size,\n      uniqueItems: this.byItemId.size,\n      uniqueViews: this.byViewId.size,\n      uniqueParents: this.byParentId.size\n    };\n  }\n}\n\n// kernel-rendering module\nexport class RenderingSystem {\n  constructor(kernel) {\n    this.kernel = kernel;\n    this.registry = new RenderInstanceRegistry();\n  }\n\n  // Clear all render instances (called before full re-render)\n  clearInstances() {\n    return this.registry.clear();\n  }\n\n  // Partial re-render: update specific item(s) in place without full viewport re-render (Phase 3)\n  async rerenderItem(itemId) {\n    // Find existing instance(s) for this item\n    const instances = this.registry.getByItemId(itemId);\n\n    if (instances.length === 0) {\n      // Not currently rendered - nothing to update\n      return { updated: 0, notFound: true };\n    }\n\n    let updated = 0;\n    for (const instance of instances) {\n      try {\n        // Look up current view config from parent's attachments array (may have changed via setAttachmentView)\n        // We need the FULL view config object (not just type) so views can access innerView, etc.\n        let currentViewId = instance.viewId;\n        let viewConfig = null;\n        if (instance.parentId) {\n          const parent = await this.kernel.storage.get(instance.parentId);\n          const childEntry = parent?.attachments?.find(c => c.id === itemId);\n          if (childEntry?.view) {\n            viewConfig = childEntry.view;  // Full view config object\n            currentViewId = childEntry.view.type || currentViewId;\n          }\n        } else {\n          // For root items (no parentId), get full view config from viewport-manager\n          const vpMgr = this.kernel.moduleSystem.getCached('viewport-manager');\n          if (vpMgr && vpMgr.getRootViewConfig) {\n            viewConfig = await vpMgr.getRootViewConfig();\n            currentViewId = viewConfig?.type || currentViewId;\n          }\n        }\n\n        // Re-render with current view and parent context\n        // Pass viewConfig in context so views can access innerView, etc.\n        const newDom = await this.renderItem(itemId, currentViewId, {}, {\n          parentId: instance.parentId,\n          siblingContainer: instance.siblingContainer,\n          viewConfig: viewConfig\n        });\n\n        // Replace content in existing container\n        const oldDom = instance.domNode;\n        if (oldDom && oldDom.parentNode) {\n          // Unregister all instances in the old DOM subtree (including nested children)\n          const nestedInstances = oldDom.querySelectorAll('[data-render-instance]');\n          for (const el of nestedInstances) {\n            this.registry.unregister(parseInt(el.dataset.renderInstance, 10));\n          }\n          // Unregister the root instance itself\n          this.registry.unregister(instance.instanceId);\n\n          oldDom.parentNode.replaceChild(newDom, oldDom);\n          updated++;\n        } else {\n          // DOM not in document, just unregister\n          this.registry.unregister(instance.instanceId);\n        }\n      } catch (error) {\n        console.error(`[Partial Re-render Error] Item ${itemId}:`, error);\n        // Continue with other instances even if one fails\n      }\n    }\n\n    return { updated, total: instances.length };\n  }\n\n  // Re-render all items using a specific view (useful when view code changes)\n  async rerenderByView(viewId) {\n    const instances = this.registry.getByViewId(viewId);\n\n    if (instances.length === 0) {\n      return { updated: 0, notFound: true };\n    }\n\n    // Track which items we've already processed to avoid duplicate re-renders\n    // (same item can have multiple instances if rendered in multiple places)\n    const processedItems = new Set();\n    let updated = 0;\n\n    for (const instance of instances) {\n      if (processedItems.has(instance.itemId)) continue;\n      processedItems.add(instance.itemId);\n\n      try {\n        const result = await this.rerenderItem(instance.itemId);\n        updated += result.updated;\n      } catch (error) {\n        console.error(`[rerenderByView] Error re-rendering item ${instance.itemId}:`, error);\n      }\n    }\n\n    return { updated, items: processedItems.size };\n  }\n\n  // Re-render all items of a given type (for when type preference changes)\n  async rerenderByType(typeId) {\n    const instances = this.registry.getAll();\n    let updated = 0;\n\n    for (const instance of instances) {\n      try {\n        const item = await this.kernel.storage.get(instance.itemId);\n        // Only re-render if item is of this type AND doesn't have its own preference\n        if (item.type === typeId && !item.preferredView) {\n          await this.rerenderItem(instance.itemId);\n          updated++;\n        }\n      } catch (e) {\n        // Item may have been deleted - skip\n      }\n    }\n\n    return { updated };\n  }\n\n  async renderItem(itemId, viewId = null, options = {}, context = {}) {\n    const IDS = this.kernel.IDS;\n    const renderPath = context.renderPath || [];\n    const perf = window.hobsonPerf;\n    const isRoot = renderPath.length === 0;\n    const perfPrefix = isRoot ? 'root' : `child-${renderPath.length}`;\n\n    // Cycle detection\n    if (renderPath.includes(itemId)) {\n      if (options.onCycle) {\n        const item = await this.kernel.storage.get(itemId);\n        return options.onCycle(item);\n      } else {\n        throw new Error(\n          `Cycle detected rendering item ${itemId}. ` +\n          `Render path: ${renderPath.join(' \u2192 ')} \u2192 ${itemId}. ` +\n          `Provide onCycle callback to handle cycles.`\n        );\n      }\n    }\n\n    if (isRoot) perf?.mark(`${perfPrefix}-item-fetch-start`);\n    const item = await this.kernel.storage.get(itemId);\n    if (isRoot) {\n      perf?.mark(`${perfPrefix}-item-fetch-end`);\n      perf?.measure(`${perfPrefix}-item-fetch`, `${perfPrefix}-item-fetch-start`, `${perfPrefix}-item-fetch-end`);\n    }\n\n    // Use specified view or find default via preference hierarchy\n    let view;\n    if (isRoot) perf?.mark(`${perfPrefix}-view-resolve-start`);\n    if (viewId) {\n      // Explicit view specified by caller (highest priority)\n      view = await this.kernel.storage.get(viewId);\n    } else {\n      // Use preference hierarchy: item.preferredView \u2192 type.preferredView \u2192 type chain\n      view = await this.resolveView(item);\n    }\n    if (isRoot) {\n      perf?.mark(`${perfPrefix}-view-resolve-end`);\n      perf?.measure(`${perfPrefix}-view-resolve`, `${perfPrefix}-view-resolve-start`, `${perfPrefix}-view-resolve-end`);\n    }\n\n    // Build new context with updated render path\n    const newContext = {\n      ...context,\n      renderPath: [...renderPath, itemId],\n      viewId: view.id,\n      debug: context.debug || this.kernel.debugMode\n    };\n\n    // Load and execute view\n    try {\n      if (isRoot) perf?.mark(`${perfPrefix}-view-load-start`);\n      const viewModule = await this.kernel.moduleSystem.require(view.id);\n      if (isRoot) {\n        perf?.mark(`${perfPrefix}-view-load-end`);\n        perf?.measure(`${perfPrefix}-view-load`, `${perfPrefix}-view-load-start`, `${perfPrefix}-view-load-end`);\n      }\n\n      const api = this.createRendererAPI(item, newContext);\n\n      if (isRoot) perf?.mark(`${perfPrefix}-render-exec-start`);\n      const domNode = await viewModule.render(item, api);\n      if (isRoot) {\n        perf?.mark(`${perfPrefix}-render-exec-end`);\n        perf?.measure(`${perfPrefix}-render-exec`, `${perfPrefix}-render-exec-start`, `${perfPrefix}-render-exec-end`);\n      }\n\n      // Register render instance (Phase 2)\n      if (domNode) {\n        const parentId = context.parentId || null;\n        const siblingContainer = context.siblingContainer || null;\n        this.registry.register(domNode, itemId, view.id, parentId, siblingContainer);\n      }\n\n      return domNode;\n    } catch (error) {\n      // Log to console for full async stack trace (dev tools show more than error.stack)\n      console.error('[Render Error]', error);\n\n      // Capture error for logging/notification\n      await this.kernel.captureError(error, {\n        operation: 'render',\n        itemId,\n        itemName: item?.name,\n        viewId: view?.id,\n        viewName: view?.name\n      });\n      return this.createErrorView(error, itemId);\n    }\n  }\n\n  // Resolve view using preference hierarchy: item.preferredView \u2192 type.preferredView \u2192 type chain\n  async resolveView(item) {\n    // 1. Check item's preferred view\n    if (item.preferredView) {\n      try {\n        const view = await this.kernel.storage.get(item.preferredView);\n        if (view) return view;\n      } catch (e) {\n        console.warn(`Preferred view ${item.preferredView} not found for item ${item.id}, checking type preference`);\n      }\n    }\n\n    // 2. Check type definition's preferred view\n    try {\n      const typeItem = await this.kernel.storage.get(item.type);\n      if (typeItem.preferredView) {\n        try {\n          const view = await this.kernel.storage.get(typeItem.preferredView);\n          if (view) return view;\n        } catch (e) {\n          console.warn(`Preferred view ${typeItem.preferredView} not found for type ${typeItem.name}, using type chain lookup`);\n        }\n      }\n    } catch (e) {\n      // Type not found - fall through to type chain lookup\n    }\n\n    // 3. Fall back to extends chain lookup\n    return await this.findView(item.type);\n  }\n\n  // Find view for a type (walks up extends chain, falls back to type chain for backwards compat)\n  async findView(typeId) {\n    const IDS = this.kernel.IDS;\n\n    // Query all views once at the beginning (not per type in chain)\n    const allViews = await this.kernel.storage.query({ type: IDS.VIEW });\n\n    let currentType = typeId;\n    const visited = new Set();\n\n    while (currentType && !visited.has(currentType)) {\n      visited.add(currentType);\n\n      // Look for VIEW items\n      const view = allViews.find(v => v.content?.for_type === currentType);\n      if (view) {\n        return view;\n      }\n\n      // Stop at ITEM (root)\n      if (currentType === IDS.ITEM || currentType === IDS.ATOM) {\n        break;\n      }\n\n      // Move up the extends chain (or fall back to type chain)\n      try {\n        const typeItem = await this.kernel.storage.get(currentType);\n        \n        // Prefer 'extends' field (new model)\n        if (typeItem.extends !== undefined) {\n          // null means root reached\n          if (typeItem.extends === null) break;\n          currentType = typeItem.extends;\n        } else {\n          // Fallback to 'type' field (old model) for backwards compatibility\n          // Stop at TYPE_DEFINITION boundary to avoid meta-level (old heuristic)\n          if (typeItem.type === IDS.TYPE_DEFINITION) break;\n          currentType = typeItem.type;\n        }\n      } catch {\n        break;\n      }\n    }\n\n    // Fall back to default view\n    return await this.kernel.storage.get(IDS.DEFAULT_VIEW);\n  }\n\n  // Get all views for a type (including inherited from extends chain)\n  async getViews(typeId) {\n    const IDS = this.kernel.IDS;\n    const result = [];\n    const seenIds = new Set();\n\n    // Query all views once at the beginning (not per type in chain)\n    const allViews = await this.kernel.storage.query({ type: IDS.VIEW });\n\n    let currentType = typeId;\n    const visited = new Set();\n\n    while (currentType && !visited.has(currentType)) {\n      visited.add(currentType);\n\n      // Include views (filter locally)\n      const viewsForType = allViews.filter(v => v.content?.for_type === currentType);\n      for (const view of viewsForType) {\n        if (!seenIds.has(view.id)) {\n          seenIds.add(view.id);\n          result.push({\n            view,\n            forType: currentType,\n            inherited: currentType !== typeId\n          });\n        }\n      }\n\n      // Stop at ITEM (root)\n      if (currentType === IDS.ITEM || currentType === IDS.ATOM) {\n        break;\n      }\n\n      // Move up the extends chain (or fall back to type chain)\n      try {\n        const typeItem = await this.kernel.storage.get(currentType);\n        \n        // Prefer 'extends' field (new model)\n        if (typeItem.extends !== undefined) {\n          // null means root reached\n          if (typeItem.extends === null) break;\n          currentType = typeItem.extends;\n        } else {\n          // Fallback to 'type' field (old model) for backwards compatibility\n          // Stop at TYPE_DEFINITION boundary to avoid meta-level (old heuristic)\n          if (typeItem.type === IDS.TYPE_DEFINITION) break;\n          currentType = typeItem.type;\n        }\n      } catch {\n        break;\n      }\n    }\n\n    // Always include default view as fallback option\n    const defaultView = await this.kernel.storage.get(IDS.DEFAULT_VIEW);\n    if (defaultView && !seenIds.has(defaultView.id)) {\n      result.push({\n        view: defaultView,\n        forType: IDS.ITEM,\n        inherited: true,\n        isDefault: true\n      });\n    }\n\n    return result;\n  }\n\n  // Get the default view for a type\n  async getDefaultView(typeId) {\n    const views = await this.getViews(typeId);\n    return views.length > 0 ? views[0].view : null;\n  }\n\n  // Get the view that would be used for a specific item (full preference hierarchy)\n  async getEffectiveView(itemId) {\n    const item = await this.kernel.storage.get(itemId);\n    return await this.resolveView(item);\n  }\n\n  // Get the type-level preferred view (for showing in modal)\n  async getTypePreferredView(typeId) {\n    try {\n      const typeItem = await this.kernel.storage.get(typeId);\n      if (typeItem.preferredView) {\n        return await this.kernel.storage.get(typeItem.preferredView);\n      }\n    } catch (e) {\n      // Fall through\n    }\n    return await this.findView(typeId);\n  }\n\n  createRendererAPI(containerItem, context = {}) {\n    const kernel = this.kernel;\n    const IDS = kernel.IDS;\n    const EVENT_IDS = kernel.EVENT_IDS;\n    const rendering = this;\n\n    const api = {\n      // Create DOM elements\n      createElement(tag, props = {}, children = []) {\n        const element = document.createElement(tag);\n\n        // Debug attribution\n        const debugActive = context.debug || kernel.debugMode;\n        if (debugActive) {\n          if (context.viewId) {\n            element.setAttribute('data-view-id', context.viewId);\n          }\n          element.setAttribute('data-for-item', containerItem.id);\n          try {\n            const stack = new Error().stack;\n            const location = parseSourceLocation(stack);\n            if (location) {\n              element.setAttribute('data-source', location.itemName);\n              element.setAttribute('data-source-line', String(location.line));\n            }\n          } catch (e) { /* ignore */ }\n        }\n\n        for (const [key, value] of Object.entries(props)) {\n          if (key.startsWith(\"on\") && typeof value === \"function\") {\n            const eventName = key.substring(2).toLowerCase();\n            element.addEventListener(eventName, value);\n          } else if (key === \"class\") {\n            element.className = value;\n          } else if (key === \"style\" && typeof value === \"string\") {\n            element.style.cssText = value;\n          } else {\n            element.setAttribute(key, value);\n          }\n        }\n\n        for (const child of children) {\n          if (typeof child === \"string\") {\n            element.appendChild(document.createTextNode(child));\n          } else if (child instanceof Node) {\n            element.appendChild(child);\n          } else if (Array.isArray(child)) {\n            // Handle array shorthand: [tag, props, children]\n            const [childTag, childProps = {}, childChildren = []] = child;\n            const childElement = api.createElement(childTag, childProps, childChildren);\n            element.appendChild(childElement);\n          }\n        }\n\n        return element;\n      },\n\n      // Query items (read-only)\n      query: (filter) => kernel.storage.query(filter),\n\n      // Get single item (read-only)\n      get: (itemId) => kernel.storage.get(itemId),\n\n      // Get all items\n      getAll: () => kernel.storage.getAll(),\n\n      // Get all items including nested instance items\n      getAllRaw: () => kernel.storage.getAllRaw(),\n\n      // Load code module\n      require: (nameOrId) => kernel.moduleSystem.require(nameOrId),\n\n      // Render another item (for containers) - passes context for cycle detection\n      // Supports optional decorator for viewport-specific attributes (data-item-id, tooltips)\n      // viewIdOrConfig can be: null, string (view GUID), or object { type, ...viewProps }\n      renderItem: async (itemId, viewIdOrConfig, options) => {\n        // Extract view ID and config from the parameter\n        let viewId = null;\n        let viewConfig = null;\n        if (typeof viewIdOrConfig === 'string') {\n          viewId = viewIdOrConfig;\n        } else if (viewIdOrConfig && typeof viewIdOrConfig === 'object') {\n          viewId = viewIdOrConfig.type || null;\n          viewConfig = viewIdOrConfig;\n        }\n\n        // Merge decorator and viewConfig into context for propagation\n        const decorator = options?.decorator || context.decorator;\n        // siblingContainer: if explicitly passed in options, use that; otherwise pass through from context\n        const siblingContainer = options?.siblingContainer !== undefined\n          ? options.siblingContainer\n          : context.siblingContainer;\n        // navigateTo: if explicitly passed in options, use that; otherwise pass through from context\n        const navigateTo = options?.navigateTo !== undefined\n          ? options.navigateTo\n          : context.navigateTo;\n        const mergedContext = {\n          ...context,\n          decorator,\n          viewConfig,\n          parentId: containerItem.id,  // Pass parent ID for updateViewConfig\n          siblingContainer,  // Pass sibling container for openSibling\n          navigateTo  // Pass navigation params for scroll-to-line/region\n        };\n\n        const domNode = await rendering.renderItem(itemId, viewId, options || {}, mergedContext);\n\n        // Apply decorator if present (from options or inherited context)\n        if (domNode && decorator) {\n          try {\n            const item = await kernel.storage.get(itemId);\n            await decorator(domNode, itemId, item);\n          } catch (e) {\n            console.warn('Decorator error:', e);\n          }\n        }\n        return domNode;\n      },\n\n      // Get the view config for the current item (passed from parent via renderItem)\n      // For root items (rendered by viewport), returns the viewport's root view config\n      getViewConfig: async () => {\n        // If we have a viewConfig from context (nested item), use that\n        if (context.viewConfig) {\n          return context.viewConfig;\n        }\n        // For viewport root items (parent is the viewport itself), get config from viewport-manager\n        if (context.parentId === IDS.VIEWPORT) {\n          const vpMgr = await kernel.moduleSystem.require('viewport-manager');\n          if (vpMgr.getRoot() === containerItem.id) {\n            return await vpMgr.getRootViewConfig();\n          }\n        }\n        return null;\n      },\n\n      // Get the parent ID that rendered this item\n      getParentId: () => context.parentId || null,\n\n      // Get the ID of the view being used to render this item\n      getViewId: () => context.viewId || null,\n\n      // Get navigation params passed from parent (for scroll-to-line/region)\n      // Returns { field, line, region } or null\n      getNavigateTo: () => context.navigateTo || null,\n\n      // Update the view config for the current item in the parent's attachments array\n      // This persists view-specific state like banner position, sort order, etc.\n      // For root items (rendered by viewport), updates the viewport's root view config instead.\n      updateViewConfig: async (updates) => {\n        const parentId = context.parentId;\n\n        // For viewport root items (parent is the viewport itself), update viewport-manager's root view config\n        if (parentId === IDS.VIEWPORT) {\n          const vpMgr = await kernel.moduleSystem.require('viewport-manager');\n          if (vpMgr.getRoot() === containerItem.id) {\n            await vpMgr.updateRootViewConfig(updates);\n            return true;\n          }\n        }\n\n        if (!parentId) {\n          console.warn('updateViewConfig: no parent ID in context');\n          return false;\n        }\n\n        const parent = await kernel.storage.get(parentId);\n        const childIndex = parent.attachments?.findIndex(c => c.id === containerItem.id);\n        if (childIndex < 0) {\n          console.warn('updateViewConfig: item not found in parent attachments');\n          return false;\n        }\n\n        // Merge updates into existing view config\n        const currentChild = parent.attachments[childIndex];\n        parent.attachments[childIndex] = {\n          ...currentChild,\n          view: { ...(currentChild.view || {}), ...updates }\n        };\n        parent.modified = Date.now();\n\n        await kernel.saveItem(parent);\n        return true;\n      },\n\n      // View discovery\n      getViews: (typeId) => kernel.rendering.getViews(typeId),\n      getDefaultView: (typeId) => kernel.rendering.getDefaultView(typeId),\n      findView: (typeId) => kernel.rendering.findView(typeId),\n\n      // Preferred view management\n      setPreferredView: async (itemId, viewId) => {\n        const item = await kernel.storage.get(itemId);\n        if (viewId) {\n          item.preferredView = viewId;\n        } else {\n          delete item.preferredView;\n        }\n        item.modified = Date.now();\n        await kernel.saveItem(item);\n\n        // If this is a type definition, re-render all items of this type\n        if (item.type === kernel.IDS.TYPE_DEFINITION) {\n          await rendering.rerenderByType(itemId);\n        } else {\n          await rendering.rerenderItem(itemId);\n        }\n      },\n\n      getPreferredView: async (itemId) => {\n        const item = await kernel.storage.get(itemId);\n        return item.preferredView || null;\n      },\n\n      // Convenience method: set preferred view for an item's type\n      setTypePreferredView: async (itemId, viewId) => {\n        const item = await kernel.storage.get(itemId);\n        const typeItem = await kernel.storage.get(item.type);\n        if (viewId) {\n          typeItem.preferredView = viewId;\n        } else {\n          delete typeItem.preferredView;\n        }\n        typeItem.modified = Date.now();\n        await kernel.saveItem(typeItem);\n        await rendering.rerenderByType(item.type);\n      },\n\n      getTypePreferredView: async (itemId) => {\n        const item = await kernel.storage.get(itemId);\n        const typeItem = await kernel.storage.get(item.type);\n        return typeItem.preferredView || null;\n      },\n\n      // Get the effective view for an item (full hierarchy)\n      getEffectiveView: (itemId) => rendering.getEffectiveView(itemId),\n\n      // Get the type name for an item (for modal labels)\n      getTypeName: async (itemId) => {\n        const item = await kernel.storage.get(itemId);\n        const typeItem = await kernel.storage.get(item.type);\n        return typeItem.name || typeItem.id.slice(0, 8);\n      },\n\n      // Get contextual view override (from parent's child spec)\n      getContextualView: async (itemId, parentId) => {\n        if (!parentId) return null;\n        try {\n          const parent = await kernel.storage.get(parentId);\n          const childSpec = parent.attachments?.find(c =>\n            (typeof c === 'string' ? c : c.id) === itemId\n          );\n          if (childSpec && typeof childSpec === 'object' && childSpec.view?.type) {\n            return childSpec.view.type;\n          }\n        } catch (e) {\n          // Parent not found\n        }\n        return null;\n      },\n\n      // Navigation (params: { field, line, col } for line highlighting)\n      navigate: async (itemId, params) => {\n        const vpMgr = await kernel.moduleSystem.require('viewport-manager');\n        return vpMgr.navigate(itemId, params);\n      },\n      getCurrentRoot: () => {\n        const vpMgr = kernel.moduleSystem.getCached('viewport-manager');\n        return vpMgr?.getRoot() || null;\n      },\n\n      // Sibling container object (provided by container views like container_view)\n      // Use api.siblingContainer.addSibling(itemId) to add items to the current container\n      get siblingContainer() {\n        return context.siblingContainer || null;\n      },\n\n      // Create new item\n      create: async (item, addAsChild = false) => {\n        const newItem = {\n          ...item,\n          id: item.id || crypto.randomUUID(),\n          attachments: item.attachments || []\n        };\n\n        await kernel.saveItem(newItem);\n\n        if (addAsChild) {\n          await kernel.attach(containerItem.id, newItem.id);\n        }\n\n        return newItem.id;\n      },\n\n      // Simplified child creation\n      createChild: async (type, content = {}) => {\n        const newItem = {\n          type,\n          content,\n          attachments: []\n        };\n        const id = await api.create(newItem, true);\n        // Trigger re-render to show the new child\n        await kernel.renderViewport();\n        return id;\n      },\n\n      // Save without triggering re-render\n      set: async (item) => {\n        await kernel.saveItem(item);\n        return item.id;\n      },\n\n      // Save and trigger re-render\n      update: async (item) => {\n        await kernel.saveItem(item);\n        await kernel.renderViewport();\n        return item.id;\n      },\n\n      // Deprecated: use set() instead\n      updateSilent: async (item) => {\n        await kernel.saveItem(item);\n        return item.id;\n      },\n\n      // Add child to current container\n      attach: async (itemId) => {\n        await kernel.attach(containerItem.id, itemId);\n      },\n\n      // Remove child from current container\n      detach: async (itemId) => {\n        await kernel.detach(containerItem.id, itemId);\n      },\n\n      // Set view for a child in current container (2 params)\n      // or in any container (3 params: parentId, childId, viewId)\n      setAttachmentView: async (itemIdOrParentId, viewIdOrItemId, optionalViewId) => {\n        if (optionalViewId !== undefined) {\n          // 3-parameter version: setAttachmentView(parentId, itemId, viewId)\n          await kernel.setAttachmentView(itemIdOrParentId, viewIdOrItemId, optionalViewId);\n        } else {\n          // 2-parameter version: setAttachmentView(itemId, viewId)\n          await kernel.setAttachmentView(containerItem.id, itemIdOrParentId, viewIdOrItemId);\n        }\n      },\n\n      // Restore previous view for an item\n      restorePreviousView: async (itemId) => {\n        // Check if item is the viewport root FIRST (regardless of data hierarchy)\n        const vpMgr = kernel.moduleSystem.getCached('viewport-manager');\n        const isViewportRoot = vpMgr && vpMgr.getRoot() === itemId;\n\n        if (isViewportRoot) {\n          // It's the viewport root - restore from viewport-manager\n          if (vpMgr.restorePreviousRootView) {\n            const restored = await vpMgr.restorePreviousRootView();\n            if (restored) {\n              await kernel.renderViewport();\n              return true;\n            }\n          }\n          // No previous view, but we can still clear the current view override\n          if (await vpMgr.getRootView()) {\n            await vpMgr.setRootView(null, false);  // Don't store previous\n            await kernel.renderViewport();\n            return true;\n          }\n          return false;\n        }\n\n        // Not the viewport root - use rendering parent from context, fall back to data hierarchy\n        const renderingParentId = context.parentId;\n        const parent = renderingParentId\n          ? await kernel.storage.get(renderingParentId)\n          : await kernel.findParentOf(itemId);\n        if (!parent) {\n          return false;\n        }\n\n        // Find the child spec\n        const childIndex = parent.attachments.findIndex(c => c.id === itemId);\n        if (childIndex < 0) return false;\n\n        const childSpec = parent.attachments[childIndex];\n        if (childSpec.previousView) {\n          // Restore previous view (complete snapshot)\n          parent.attachments[childIndex] = {\n            ...childSpec,\n            view: { ...childSpec.previousView },\n            previousView: undefined\n          };\n        } else if (childSpec.view && 'type' in childSpec.view) {\n          // No previous view stored, but there's a current view override\n          // Remove the type to revert to default view, keeping spatial props\n          const { type, ...viewWithoutType } = childSpec.view;\n          parent.attachments[childIndex] = {\n            ...childSpec,\n            view: Object.keys(viewWithoutType).length > 0 ? viewWithoutType : undefined,\n            previousView: undefined\n          };\n        } else {\n          // No view override to restore from\n          return false;\n        }\n        await kernel.saveItem(parent);\n        await kernel.renderViewport();\n        return true;\n      },\n\n      // Find parent of an item\n      findContainerOf: (itemId) => kernel.findContainerOf(itemId),\n\n      // Delete item entirely\n      delete: async (itemId) => {\n        await kernel.deleteItem(itemId);\n      },\n\n      // Get the current container item\n      getCurrentItem: () => containerItem,\n\n      // Type chain utilities (uses extends chain with fallback)\n      typeChainIncludes: (typeId, targetId) => kernel.moduleSystem.typeChainIncludes(typeId, targetId),\n\n      // UI operations\n      editRaw: (itemId) => kernel.editItemRaw(itemId),\n      showItemList: () => kernel.showItemList(),\n\n      // For script execution - returns REPL API for code evaluation\n      createREPLContext: () => kernel.createREPLAPI(),\n\n      // Well-known IDs\n      IDS,\n      EVENT_IDS,\n\n      // Instance ID (for nested Hobson instances)\n      getInstanceId: () => kernel.storage.instanceId,\n\n      // Debug mode check\n      isDebugMode: () => context.debug || kernel.debugMode,\n\n      // Helper functions (same as REPL API)\n      helpers: {\n        findByName: async (name) => {\n          const items = await kernel.storage.query({ name });\n          return items.length > 0 ? items[0] : null;\n        },\n        listByType: async (typeId) => {\n          return await kernel.storage.query({ type: typeId });\n        },\n        createType: async (name, description) => {\n          const IDS = kernel.IDS;\n          const id = crypto.randomUUID();\n          await kernel.saveItem({\n            id,\n            name,\n            type: IDS.TYPE_DEFINITION,\n            attachments: [],\n            content: { description }\n          });\n          return id;\n        }\n      },\n\n      // Viewport API for view state management - delegates to userland managers\n      viewport: {\n        select: async (itemId, parentId) => {\n          const selMgr = await kernel.moduleSystem.require('selection-manager');\n          selMgr.select(itemId, parentId);\n        },\n        clearSelection: async () => {\n          const selMgr = await kernel.moduleSystem.require('selection-manager');\n          selMgr.clearSelection();\n        },\n        getSelection: () => {\n          const selMgr = kernel.moduleSystem.getCached('selection-manager');\n          return selMgr?.getSelection() || null;\n        },\n        getSelectionParent: () => {\n          const selMgr = kernel.moduleSystem.getCached('selection-manager');\n          return selMgr?.getSelectionParent() || null;\n        },\n        getRoot: () => {\n          // Sync: reads from URL\n          const params = new URLSearchParams(window.location.search);\n          return params.get('root');\n        },\n        getRootView: async () => {\n          const vpMgr = await kernel.moduleSystem.require('viewport-manager');\n          return await vpMgr.getRootView();\n        },\n        setRootView: async (viewId) => {\n          const vpMgr = await kernel.moduleSystem.require('viewport-manager');\n          await vpMgr.setRootView(viewId);\n        },\n        restorePreviousRootView: async () => {\n          const vpMgr = await kernel.moduleSystem.require('viewport-manager');\n          return await vpMgr.restorePreviousRootView();\n        },\n        getRootViewConfig: async () => {\n          const vpMgr = await kernel.moduleSystem.require('viewport-manager');\n          return await vpMgr.getRootViewConfig();\n        },\n        updateRootViewConfig: async (updates) => {\n          const vpMgr = await kernel.moduleSystem.require('viewport-manager');\n          await vpMgr.updateRootViewConfig(updates);\n        }\n      },\n\n      // Events API (read-only for renderers - can subscribe but not emit)\n      events: {\n        on: (event, handler) => kernel.events.on(event, handler),\n        off: (event, handler) => kernel.events.off(event, handler)\n      },\n\n      // Partial re-render (Phase 3) - update specific item in place\n      rerenderItem: (itemId) => rendering.rerenderItem(itemId),\n\n      // Re-render all items using a specific view (useful when view code changes)\n      rerenderByView: (viewId) => rendering.rerenderByView(viewId),\n\n      // Re-render all items of a given type (useful when type preference changes)\n      rerenderByType: (typeId) => rendering.rerenderByType(typeId),\n\n      // Render instances API (read-only for renderers)\n      instances: {\n        getByItemId: (itemId) => rendering.registry.getByItemId(itemId),\n        getAll: () => rendering.registry.getAll(),\n        getSummary: () => rendering.registry.getSummary()\n      }\n    };\n\n    return api;\n  }\n\n  createErrorView(error, itemId) {\n    const container = document.createElement(\"div\");\n    container.className = \"render-error\";\n\n    const heading = document.createElement(\"h3\");\n    heading.textContent = `Error rendering: ${itemId}`;\n    container.appendChild(heading);\n\n    const message = document.createElement(\"pre\");\n    message.textContent = error.message;\n    container.appendChild(message);\n\n    const stack = document.createElement(\"pre\");\n    stack.textContent = error.stack || \"(no stack trace)\";\n    container.appendChild(stack);\n\n    const editBtn = document.createElement(\"button\");\n    editBtn.textContent = \"Edit Item\";\n    editBtn.onclick = () => this.kernel.editItemRaw(itemId);\n    container.appendChild(editBtn);\n\n    return container;\n  }\n}\n",
+    "code": "\n// Parse stack trace to extract source item name and line number\nfunction parseSourceLocation(stack) {\n  const lines = stack.split('\\n');\n  for (const line of lines) {\n    const match = line.match(/\\((.+?):(\\d+):\\d+\\)/) ||  // Chrome\n                  line.match(/@(.+?):(\\d+):\\d+/);        // Firefox/Safari\n    if (match) {\n      const [, itemName, lineNum] = match;\n      // Strip .js suffix and skip kernel-rendering itself\n      const cleanName = itemName.replace(/\\.js$/, '');\n      if (cleanName !== 'kernel:rendering') {\n        return { itemName: cleanName, line: parseInt(lineNum, 10) };\n      }\n    }\n  }\n  return null;\n}\n\n// Render Instance Registry - tracks what's currently rendered\nclass RenderInstanceRegistry {\n  constructor() {\n    this.instances = new Map();      // instanceId -> InstanceInfo\n    this.byItemId = new Map();       // itemId -> Set<instanceId>\n    this.byViewId = new Map();       // viewId -> Set<instanceId>\n    this.byParentId = new Map();     // parentId -> Set<instanceId>\n    this.nextId = 1;\n  }\n\n  register(domNode, itemId, viewId, parentId, siblingContainer = null) {\n    const instanceId = this.nextId++;\n\n    const info = {\n      instanceId,\n      domNode,\n      itemId,\n      viewId,\n      parentId,\n      siblingContainer,\n      timestamp: Date.now()\n    };\n\n    this.instances.set(instanceId, info);\n\n    // Index by itemId\n    if (!this.byItemId.has(itemId)) {\n      this.byItemId.set(itemId, new Set());\n    }\n    this.byItemId.get(itemId).add(instanceId);\n\n    // Index by viewId\n    if (!this.byViewId.has(viewId)) {\n      this.byViewId.set(viewId, new Set());\n    }\n    this.byViewId.get(viewId).add(instanceId);\n\n    // Index by parentId\n    const parentKey = parentId || '__root__';\n    if (!this.byParentId.has(parentKey)) {\n      this.byParentId.set(parentKey, new Set());\n    }\n    this.byParentId.get(parentKey).add(instanceId);\n\n    // Add data attribute to DOM for debugging and Phase 3 lookup\n    if (domNode && domNode.setAttribute) {\n      domNode.setAttribute('data-render-instance', instanceId);\n    }\n\n    return instanceId;\n  }\n\n  unregister(instanceId) {\n    const info = this.instances.get(instanceId);\n    if (!info) return false;\n\n    // Remove from all indexes\n    this.instances.delete(instanceId);\n\n    const itemSet = this.byItemId.get(info.itemId);\n    if (itemSet) {\n      itemSet.delete(instanceId);\n      if (itemSet.size === 0) this.byItemId.delete(info.itemId);\n    }\n\n    const viewSet = this.byViewId.get(info.viewId);\n    if (viewSet) {\n      viewSet.delete(instanceId);\n      if (viewSet.size === 0) this.byViewId.delete(info.viewId);\n    }\n\n    const parentKey = info.parentId || '__root__';\n    const parentSet = this.byParentId.get(parentKey);\n    if (parentSet) {\n      parentSet.delete(instanceId);\n      if (parentSet.size === 0) this.byParentId.delete(parentKey);\n    }\n\n    return true;\n  }\n\n  unregisterByParent(parentId) {\n    const parentKey = parentId || '__root__';\n    const instanceIds = this.byParentId.get(parentKey);\n    if (!instanceIds) return 0;\n\n    let count = 0;\n    for (const instanceId of [...instanceIds]) {\n      if (this.unregister(instanceId)) count++;\n    }\n    return count;\n  }\n\n  clear() {\n    const count = this.instances.size;\n    this.instances.clear();\n    this.byItemId.clear();\n    this.byViewId.clear();\n    this.byParentId.clear();\n    return count;\n  }\n\n  get(instanceId) {\n    return this.instances.get(instanceId) || null;\n  }\n\n  getByItemId(itemId) {\n    const instanceIds = this.byItemId.get(itemId);\n    if (!instanceIds) return [];\n    return [...instanceIds].map(id => this.instances.get(id)).filter(Boolean);\n  }\n\n  getByViewId(viewId) {\n    const instanceIds = this.byViewId.get(viewId);\n    if (!instanceIds) return [];\n    return [...instanceIds].map(id => this.instances.get(id)).filter(Boolean);\n  }\n\n  getByParentId(parentId) {\n    const parentKey = parentId || '__root__';\n    const instanceIds = this.byParentId.get(parentKey);\n    if (!instanceIds) return [];\n    return [...instanceIds].map(id => this.instances.get(id)).filter(Boolean);\n  }\n\n  getAll() {\n    return [...this.instances.values()];\n  }\n\n  // For debugging: summary of current state\n  getSummary() {\n    return {\n      totalInstances: this.instances.size,\n      uniqueItems: this.byItemId.size,\n      uniqueViews: this.byViewId.size,\n      uniqueParents: this.byParentId.size\n    };\n  }\n}\n\n// kernel-rendering module\nexport class RenderingSystem {\n  constructor(kernel) {\n    this.kernel = kernel;\n    this.registry = new RenderInstanceRegistry();\n  }\n\n  // Clear all render instances (called before full re-render)\n  clearInstances() {\n    return this.registry.clear();\n  }\n\n  // Partial re-render: update specific item(s) in place without full viewport re-render (Phase 3)\n  async rerenderItem(itemId) {\n    // Find existing instance(s) for this item\n    const instances = this.registry.getByItemId(itemId);\n\n    if (instances.length === 0) {\n      // Not currently rendered - nothing to update\n      return { updated: 0, notFound: true };\n    }\n\n    let updated = 0;\n    for (const instance of instances) {\n      try {\n        // Look up current view config from parent's attachments array (may have changed via setAttachmentView)\n        // We need the FULL view config object (not just type) so views can access innerView, etc.\n        let currentViewId = instance.viewId;\n        let viewConfig = null;\n        if (instance.parentId) {\n          const parent = await this.kernel.storage.get(instance.parentId);\n          const childEntry = parent?.attachments?.find(c => c.id === itemId);\n          if (childEntry?.view) {\n            viewConfig = childEntry.view;  // Full view config object\n            currentViewId = childEntry.view.type || currentViewId;\n          }\n        } else {\n          // For root items (no parentId), get full view config from viewport-manager\n          const vpMgr = this.kernel.moduleSystem.getCached('viewport-manager');\n          if (vpMgr && vpMgr.getRootViewConfig) {\n            viewConfig = await vpMgr.getRootViewConfig();\n            currentViewId = viewConfig?.type || currentViewId;\n          }\n        }\n\n        // Re-render with current view and parent context\n        // Pass viewConfig in context so views can access innerView, etc.\n        const newDom = await this.renderItem(itemId, currentViewId, {}, {\n          parentId: instance.parentId,\n          siblingContainer: instance.siblingContainer,\n          viewConfig: viewConfig\n        });\n\n        // Replace content in existing container\n        const oldDom = instance.domNode;\n        if (oldDom && oldDom.parentNode) {\n          // Unregister all instances in the old DOM subtree (including nested children)\n          const nestedInstances = oldDom.querySelectorAll('[data-render-instance]');\n          for (const el of nestedInstances) {\n            this.registry.unregister(parseInt(el.dataset.renderInstance, 10));\n          }\n          // Unregister the root instance itself\n          this.registry.unregister(instance.instanceId);\n\n          oldDom.parentNode.replaceChild(newDom, oldDom);\n          updated++;\n        } else {\n          // DOM not in document, just unregister\n          this.registry.unregister(instance.instanceId);\n        }\n      } catch (error) {\n        console.error(`[Partial Re-render Error] Item ${itemId}:`, error);\n        // Continue with other instances even if one fails\n      }\n    }\n\n    return { updated, total: instances.length };\n  }\n\n  // Re-render all items using a specific view (useful when view code changes)\n  async rerenderByView(viewId) {\n    const instances = this.registry.getByViewId(viewId);\n\n    if (instances.length === 0) {\n      return { updated: 0, notFound: true };\n    }\n\n    // Track which items we've already processed to avoid duplicate re-renders\n    // (same item can have multiple instances if rendered in multiple places)\n    const processedItems = new Set();\n    let updated = 0;\n\n    for (const instance of instances) {\n      if (processedItems.has(instance.itemId)) continue;\n      processedItems.add(instance.itemId);\n\n      try {\n        const result = await this.rerenderItem(instance.itemId);\n        updated += result.updated;\n      } catch (error) {\n        console.error(`[rerenderByView] Error re-rendering item ${instance.itemId}:`, error);\n      }\n    }\n\n    return { updated, items: processedItems.size };\n  }\n\n  // Re-render all items of a given type (for when type preference changes)\n  async rerenderByType(typeId) {\n    const instances = this.registry.getAll();\n    let updated = 0;\n\n    for (const instance of instances) {\n      try {\n        const item = await this.kernel.storage.get(instance.itemId);\n        // Only re-render if item is of this type AND doesn't have its own preference\n        if (item.type === typeId && !item.preferredView) {\n          await this.rerenderItem(instance.itemId);\n          updated++;\n        }\n      } catch (e) {\n        // Item may have been deleted - skip\n      }\n    }\n\n    return { updated };\n  }\n\n  async renderItem(itemId, viewId = null, options = {}, context = {}) {\n    const IDS = this.kernel.IDS;\n    const renderPath = context.renderPath || [];\n    const perf = window.hobsonPerf;\n    const isRoot = renderPath.length === 0;\n    const perfPrefix = isRoot ? 'root' : `child-${renderPath.length}`;\n\n    // Cycle detection\n    if (renderPath.includes(itemId)) {\n      if (options.onCycle) {\n        const item = await this.kernel.storage.get(itemId);\n        return options.onCycle(item);\n      } else {\n        throw new Error(\n          `Cycle detected rendering item ${itemId}. ` +\n          `Render path: ${renderPath.join(' → ')} → ${itemId}. ` +\n          `Provide onCycle callback to handle cycles.`\n        );\n      }\n    }\n\n    if (isRoot) perf?.mark(`${perfPrefix}-item-fetch-start`);\n    const item = await this.kernel.storage.get(itemId);\n    if (isRoot) {\n      perf?.mark(`${perfPrefix}-item-fetch-end`);\n      perf?.measure(`${perfPrefix}-item-fetch`, `${perfPrefix}-item-fetch-start`, `${perfPrefix}-item-fetch-end`);\n    }\n\n    // Use specified view or find default via preference hierarchy\n    let view;\n    if (isRoot) perf?.mark(`${perfPrefix}-view-resolve-start`);\n    if (viewId) {\n      // Explicit view specified by caller (highest priority)\n      view = await this.kernel.storage.get(viewId);\n    } else {\n      // Use preference hierarchy: item.preferredView → type.preferredView → type chain\n      view = await this.resolveView(item);\n    }\n    if (isRoot) {\n      perf?.mark(`${perfPrefix}-view-resolve-end`);\n      perf?.measure(`${perfPrefix}-view-resolve`, `${perfPrefix}-view-resolve-start`, `${perfPrefix}-view-resolve-end`);\n    }\n\n    // Build new context with updated render path\n    const newContext = {\n      ...context,\n      renderPath: [...renderPath, itemId],\n      viewId: view.id,\n      debug: context.debug || this.kernel.debugMode\n    };\n\n    // Load and execute view\n    try {\n      if (isRoot) perf?.mark(`${perfPrefix}-view-load-start`);\n      const viewModule = await this.kernel.moduleSystem.require(view.id);\n      if (isRoot) {\n        perf?.mark(`${perfPrefix}-view-load-end`);\n        perf?.measure(`${perfPrefix}-view-load`, `${perfPrefix}-view-load-start`, `${perfPrefix}-view-load-end`);\n      }\n\n      const api = this.createRendererAPI(item, newContext);\n\n      if (isRoot) perf?.mark(`${perfPrefix}-render-exec-start`);\n      const domNode = await viewModule.render(item, api);\n      if (isRoot) {\n        perf?.mark(`${perfPrefix}-render-exec-end`);\n        perf?.measure(`${perfPrefix}-render-exec`, `${perfPrefix}-render-exec-start`, `${perfPrefix}-render-exec-end`);\n      }\n\n      // Register render instance (Phase 2)\n      if (domNode) {\n        const parentId = context.parentId || null;\n        const siblingContainer = context.siblingContainer || null;\n        this.registry.register(domNode, itemId, view.id, parentId, siblingContainer);\n      }\n\n      return domNode;\n    } catch (error) {\n      // Log to console for full async stack trace (dev tools show more than error.stack)\n      console.error('[Render Error]', error);\n\n      // Capture error for logging/notification\n      await this.kernel.captureError(error, {\n        operation: 'render',\n        itemId,\n        itemName: item?.name,\n        viewId: view?.id,\n        viewName: view?.name\n      });\n      return this.createErrorView(error, itemId);\n    }\n  }\n\n  // Resolve view using preference hierarchy: item.preferredView → type.preferredView → type chain\n  async resolveView(item) {\n    // 1. Check item's preferred view\n    if (item.preferredView) {\n      try {\n        const view = await this.kernel.storage.get(item.preferredView);\n        if (view) return view;\n      } catch (e) {\n        console.warn(`Preferred view ${item.preferredView} not found for item ${item.id}, checking type preference`);\n      }\n    }\n\n    // 2. Check type definition's preferred view\n    try {\n      const typeItem = await this.kernel.storage.get(item.type);\n      if (typeItem.preferredView) {\n        try {\n          const view = await this.kernel.storage.get(typeItem.preferredView);\n          if (view) return view;\n        } catch (e) {\n          console.warn(`Preferred view ${typeItem.preferredView} not found for type ${typeItem.name}, using type chain lookup`);\n        }\n      }\n    } catch (e) {\n      // Type not found - fall through to type chain lookup\n    }\n\n    // 3. Fall back to extends chain lookup\n    return await this.findView(item.type);\n  }\n\n  // Find view for a type (walks up extends chain, falls back to type chain for backwards compat)\n  async findView(typeId) {\n    const IDS = this.kernel.IDS;\n\n    // Query all views once at the beginning (not per type in chain)\n    const allViews = await this.kernel.storage.query({ type: IDS.VIEW });\n\n    let currentType = typeId;\n    const visited = new Set();\n\n    while (currentType && !visited.has(currentType)) {\n      visited.add(currentType);\n\n      // Look for VIEW items\n      const view = allViews.find(v => v.content?.for_type === currentType);\n      if (view) {\n        return view;\n      }\n\n      // Stop at ITEM (root)\n      if (currentType === IDS.ITEM || currentType === IDS.ATOM) {\n        break;\n      }\n\n      // Move up the extends chain (or fall back to type chain)\n      try {\n        const typeItem = await this.kernel.storage.get(currentType);\n        \n        // Prefer 'extends' field (new model)\n        if (typeItem.extends !== undefined) {\n          // null means root reached\n          if (typeItem.extends === null) break;\n          currentType = typeItem.extends;\n        } else {\n          // Fallback to 'type' field (old model) for backwards compatibility\n          // Stop at TYPE_DEFINITION boundary to avoid meta-level (old heuristic)\n          if (typeItem.type === IDS.TYPE_DEFINITION) break;\n          currentType = typeItem.type;\n        }\n      } catch {\n        break;\n      }\n    }\n\n    // Fall back to default view\n    return await this.kernel.storage.get(IDS.DEFAULT_VIEW);\n  }\n\n  // Get all views for a type (including inherited from extends chain)\n  async getViews(typeId) {\n    const IDS = this.kernel.IDS;\n    const result = [];\n    const seenIds = new Set();\n\n    // Query all views once at the beginning (not per type in chain)\n    const allViews = await this.kernel.storage.query({ type: IDS.VIEW });\n\n    let currentType = typeId;\n    const visited = new Set();\n\n    while (currentType && !visited.has(currentType)) {\n      visited.add(currentType);\n\n      // Include views (filter locally)\n      const viewsForType = allViews.filter(v => v.content?.for_type === currentType);\n      for (const view of viewsForType) {\n        if (!seenIds.has(view.id)) {\n          seenIds.add(view.id);\n          result.push({\n            view,\n            forType: currentType,\n            inherited: currentType !== typeId\n          });\n        }\n      }\n\n      // Stop at ITEM (root)\n      if (currentType === IDS.ITEM || currentType === IDS.ATOM) {\n        break;\n      }\n\n      // Move up the extends chain (or fall back to type chain)\n      try {\n        const typeItem = await this.kernel.storage.get(currentType);\n        \n        // Prefer 'extends' field (new model)\n        if (typeItem.extends !== undefined) {\n          // null means root reached\n          if (typeItem.extends === null) break;\n          currentType = typeItem.extends;\n        } else {\n          // Fallback to 'type' field (old model) for backwards compatibility\n          // Stop at TYPE_DEFINITION boundary to avoid meta-level (old heuristic)\n          if (typeItem.type === IDS.TYPE_DEFINITION) break;\n          currentType = typeItem.type;\n        }\n      } catch {\n        break;\n      }\n    }\n\n    // Always include default view as fallback option\n    const defaultView = await this.kernel.storage.get(IDS.DEFAULT_VIEW);\n    if (defaultView && !seenIds.has(defaultView.id)) {\n      result.push({\n        view: defaultView,\n        forType: IDS.ITEM,\n        inherited: true,\n        isDefault: true\n      });\n    }\n\n    return result;\n  }\n\n  // Get the default view for a type\n  async getDefaultView(typeId) {\n    const views = await this.getViews(typeId);\n    return views.length > 0 ? views[0].view : null;\n  }\n\n  // Get the view that would be used for a specific item (full preference hierarchy)\n  async getEffectiveView(itemId) {\n    const item = await this.kernel.storage.get(itemId);\n    return await this.resolveView(item);\n  }\n\n  // Get the type-level preferred view (for showing in modal)\n  async getTypePreferredView(typeId) {\n    try {\n      const typeItem = await this.kernel.storage.get(typeId);\n      if (typeItem.preferredView) {\n        return await this.kernel.storage.get(typeItem.preferredView);\n      }\n    } catch (e) {\n      // Fall through\n    }\n    return await this.findView(typeId);\n  }\n\n  createRendererAPI(containerItem, context = {}) {\n    const kernel = this.kernel;\n    const IDS = kernel.IDS;\n    const EVENT_IDS = kernel.EVENT_IDS;\n    const rendering = this;\n\n    const api = {\n      // Create DOM elements\n      createElement(tag, props = {}, children = []) {\n        const element = document.createElement(tag);\n\n        // Debug attribution\n        const debugActive = context.debug || kernel.debugMode;\n        if (debugActive) {\n          if (context.viewId) {\n            element.setAttribute('data-view-id', context.viewId);\n          }\n          element.setAttribute('data-for-item', containerItem.id);\n          try {\n            const stack = new Error().stack;\n            const location = parseSourceLocation(stack);\n            if (location) {\n              element.setAttribute('data-source', location.itemName);\n              element.setAttribute('data-source-line', String(location.line));\n            }\n          } catch (e) { /* ignore */ }\n        }\n\n        for (const [key, value] of Object.entries(props)) {\n          if (key.startsWith(\"on\") && typeof value === \"function\") {\n            const eventName = key.substring(2).toLowerCase();\n            element.addEventListener(eventName, value);\n          } else if (key === \"class\") {\n            element.className = value;\n          } else if (key === \"style\" && typeof value === \"string\") {\n            element.style.cssText = value;\n          } else {\n            element.setAttribute(key, value);\n          }\n        }\n\n        for (const child of children) {\n          if (typeof child === \"string\") {\n            element.appendChild(document.createTextNode(child));\n          } else if (child instanceof Node) {\n            element.appendChild(child);\n          } else if (Array.isArray(child)) {\n            // Handle array shorthand: [tag, props, children]\n            const [childTag, childProps = {}, childChildren = []] = child;\n            const childElement = api.createElement(childTag, childProps, childChildren);\n            element.appendChild(childElement);\n          }\n        }\n\n        return element;\n      },\n\n      // Query items (read-only)\n      query: (filter) => kernel.storage.query(filter),\n\n      // Get single item (read-only)\n      get: (itemId) => kernel.storage.get(itemId),\n\n      // Get all items\n      getAll: () => kernel.storage.getAll(),\n\n      // Get all items including nested instance items\n      getAllRaw: () => kernel.storage.getAllRaw(),\n\n      // Load code module\n      require: (nameOrId) => kernel.moduleSystem.require(nameOrId),\n\n      // Render another item (for containers) - passes context for cycle detection\n      // Supports optional decorator for viewport-specific attributes (data-item-id, tooltips)\n      // viewIdOrConfig can be: null, string (view GUID), or object { type, ...viewProps }\n      renderItem: async (itemId, viewIdOrConfig, options) => {\n        // Extract view ID and config from the parameter\n        let viewId = null;\n        let viewConfig = null;\n        if (typeof viewIdOrConfig === 'string') {\n          viewId = viewIdOrConfig;\n        } else if (viewIdOrConfig && typeof viewIdOrConfig === 'object') {\n          viewId = viewIdOrConfig.type || null;\n          viewConfig = viewIdOrConfig;\n        }\n\n        // Merge decorator and viewConfig into context for propagation\n        const decorator = options?.decorator || context.decorator;\n        // siblingContainer: if explicitly passed in options, use that; otherwise pass through from context\n        const siblingContainer = options?.siblingContainer !== undefined\n          ? options.siblingContainer\n          : context.siblingContainer;\n        // navigateTo: if explicitly passed in options, use that; otherwise pass through from context\n        const navigateTo = options?.navigateTo !== undefined\n          ? options.navigateTo\n          : context.navigateTo;\n        const mergedContext = {\n          ...context,\n          decorator,\n          viewConfig,\n          parentId: containerItem.id,  // Pass parent ID for updateViewConfig\n          siblingContainer,  // Pass sibling container for openSibling\n          navigateTo  // Pass navigation params for scroll-to-line/region\n        };\n\n        const domNode = await rendering.renderItem(itemId, viewId, options || {}, mergedContext);\n\n        // Apply decorator if present (from options or inherited context)\n        if (domNode && decorator) {\n          try {\n            const item = await kernel.storage.get(itemId);\n            await decorator(domNode, itemId, item);\n          } catch (e) {\n            console.warn('Decorator error:', e);\n          }\n        }\n        return domNode;\n      },\n\n      // Get the view config for the current item (passed from parent via renderItem)\n      // For root items (rendered by viewport), returns the viewport's root view config\n      getViewConfig: async () => {\n        // If we have a viewConfig from context (nested item), use that\n        if (context.viewConfig) {\n          return context.viewConfig;\n        }\n        // For viewport root items (parent is the viewport itself), get config from viewport-manager\n        if (context.parentId === IDS.VIEWPORT) {\n          const vpMgr = await kernel.moduleSystem.require('viewport-manager');\n          if (vpMgr.getRoot() === containerItem.id) {\n            return await vpMgr.getRootViewConfig();\n          }\n        }\n        return null;\n      },\n\n      // Get the parent ID that rendered this item\n      getParentId: () => context.parentId || null,\n\n      // Get the ID of the view being used to render this item\n      getViewId: () => context.viewId || null,\n\n      // Get navigation params passed from parent (for scroll-to-line/region)\n      // Returns { field, line, region } or null\n      getNavigateTo: () => context.navigateTo || null,\n\n      // Update the view config for the current item in the parent's attachments array\n      // This persists view-specific state like banner position, sort order, etc.\n      // For root items (rendered by viewport), updates the viewport's root view config instead.\n      updateViewConfig: async (updates) => {\n        const parentId = context.parentId;\n\n        // For viewport root items (parent is the viewport itself), update viewport-manager's root view config\n        if (parentId === IDS.VIEWPORT) {\n          const vpMgr = await kernel.moduleSystem.require('viewport-manager');\n          if (vpMgr.getRoot() === containerItem.id) {\n            await vpMgr.updateRootViewConfig(updates);\n            return true;\n          }\n        }\n\n        if (!parentId) {\n          console.warn('updateViewConfig: no parent ID in context');\n          return false;\n        }\n\n        const parent = await kernel.storage.get(parentId);\n        const childIndex = parent.attachments?.findIndex(c => c.id === containerItem.id);\n        if (childIndex < 0) {\n          console.warn('updateViewConfig: item not found in parent attachments');\n          return false;\n        }\n\n        // Merge updates into existing view config\n        const currentChild = parent.attachments[childIndex];\n        parent.attachments[childIndex] = {\n          ...currentChild,\n          view: { ...(currentChild.view || {}), ...updates }\n        };\n        parent.modified = Date.now();\n\n        await kernel.saveItem(parent);\n        return true;\n      },\n\n      // View discovery\n      getViews: (typeId) => kernel.rendering.getViews(typeId),\n      getDefaultView: (typeId) => kernel.rendering.getDefaultView(typeId),\n      findView: (typeId) => kernel.rendering.findView(typeId),\n\n      // Preferred view management\n      setPreferredView: async (itemId, viewId) => {\n        const item = await kernel.storage.get(itemId);\n        if (viewId) {\n          item.preferredView = viewId;\n        } else {\n          delete item.preferredView;\n        }\n        item.modified = Date.now();\n        await kernel.saveItem(item);\n\n        // If this is a type definition, re-render all items of this type\n        if (item.type === kernel.IDS.TYPE_DEFINITION) {\n          await rendering.rerenderByType(itemId);\n        } else {\n          await rendering.rerenderItem(itemId);\n        }\n      },\n\n      getPreferredView: async (itemId) => {\n        const item = await kernel.storage.get(itemId);\n        return item.preferredView || null;\n      },\n\n      // Convenience method: set preferred view for an item's type\n      setTypePreferredView: async (itemId, viewId) => {\n        const item = await kernel.storage.get(itemId);\n        const typeItem = await kernel.storage.get(item.type);\n        if (viewId) {\n          typeItem.preferredView = viewId;\n        } else {\n          delete typeItem.preferredView;\n        }\n        typeItem.modified = Date.now();\n        await kernel.saveItem(typeItem);\n        await rendering.rerenderByType(item.type);\n      },\n\n      getTypePreferredView: async (itemId) => {\n        const item = await kernel.storage.get(itemId);\n        const typeItem = await kernel.storage.get(item.type);\n        return typeItem.preferredView || null;\n      },\n\n      // Get the effective view for an item (full hierarchy)\n      getEffectiveView: (itemId) => rendering.getEffectiveView(itemId),\n\n      // Get the type name for an item (for modal labels)\n      getTypeName: async (itemId) => {\n        const item = await kernel.storage.get(itemId);\n        const typeItem = await kernel.storage.get(item.type);\n        return typeItem.name || typeItem.id.slice(0, 8);\n      },\n\n      // Get contextual view override (from parent's child spec)\n      getContextualView: async (itemId, parentId) => {\n        if (!parentId) return null;\n        try {\n          const parent = await kernel.storage.get(parentId);\n          const childSpec = parent.attachments?.find(c =>\n            (typeof c === 'string' ? c : c.id) === itemId\n          );\n          if (childSpec && typeof childSpec === 'object' && childSpec.view?.type) {\n            return childSpec.view.type;\n          }\n        } catch (e) {\n          // Parent not found\n        }\n        return null;\n      },\n\n      // Navigation (params: { field, line, col } for line highlighting)\n      navigate: async (itemId, params) => {\n        const vpMgr = await kernel.moduleSystem.require('viewport-manager');\n        return vpMgr.navigate(itemId, params);\n      },\n      getCurrentRoot: () => {\n        const vpMgr = kernel.moduleSystem.getCached('viewport-manager');\n        return vpMgr?.getRoot() || null;\n      },\n\n      // Sibling container object (provided by container views like container_view)\n      // Use api.siblingContainer.addSibling(itemId) to add items to the current container\n      get siblingContainer() {\n        return context.siblingContainer || null;\n      },\n\n      // Create new item\n      create: async (item, addAsChild = false) => {\n        const newItem = {\n          ...item,\n          id: item.id || crypto.randomUUID(),\n          attachments: item.attachments || []\n        };\n\n        await kernel.saveItem(newItem);\n\n        if (addAsChild) {\n          await kernel.attach(containerItem.id, newItem.id);\n        }\n\n        return newItem.id;\n      },\n\n      // Simplified child creation\n      createChild: async (type, content = {}) => {\n        const newItem = {\n          type,\n          content,\n          attachments: []\n        };\n        const id = await api.create(newItem, true);\n        // Trigger re-render to show the new child\n        await kernel.renderViewport();\n        return id;\n      },\n\n      // Save without triggering re-render\n      set: async (item) => {\n        await kernel.saveItem(item);\n        return item.id;\n      },\n\n      // Save and trigger re-render\n      update: async (item) => {\n        await kernel.saveItem(item);\n        await kernel.renderViewport();\n        return item.id;\n      },\n\n      // Deprecated: use set() instead\n      updateSilent: async (item) => {\n        await kernel.saveItem(item);\n        return item.id;\n      },\n\n      // Add child to current container\n      attach: async (itemId) => {\n        await kernel.attach(containerItem.id, itemId);\n      },\n\n      // Remove child from current container\n      detach: async (itemId) => {\n        await kernel.detach(containerItem.id, itemId);\n      },\n\n      // Set view for a child in current container (2 params)\n      // or in any container (3 params: parentId, childId, viewId)\n      setAttachmentView: async (itemIdOrParentId, viewIdOrItemId, optionalViewId) => {\n        if (optionalViewId !== undefined) {\n          // 3-parameter version: setAttachmentView(parentId, itemId, viewId)\n          await kernel.setAttachmentView(itemIdOrParentId, viewIdOrItemId, optionalViewId);\n        } else {\n          // 2-parameter version: setAttachmentView(itemId, viewId)\n          await kernel.setAttachmentView(containerItem.id, itemIdOrParentId, viewIdOrItemId);\n        }\n      },\n\n      // Restore previous view for an item\n      restorePreviousView: async (itemId) => {\n        // Check if item is the viewport root FIRST (regardless of data hierarchy)\n        const vpMgr = kernel.moduleSystem.getCached('viewport-manager');\n        const isViewportRoot = vpMgr && vpMgr.getRoot() === itemId;\n\n        if (isViewportRoot) {\n          // It's the viewport root - restore from viewport-manager\n          if (vpMgr.restorePreviousRootView) {\n            const restored = await vpMgr.restorePreviousRootView();\n            if (restored) {\n              await kernel.renderViewport();\n              return true;\n            }\n          }\n          // No previous view, but we can still clear the current view override\n          if (await vpMgr.getRootView()) {\n            await vpMgr.setRootView(null, false);  // Don't store previous\n            await kernel.renderViewport();\n            return true;\n          }\n          return false;\n        }\n\n        // Not the viewport root - use rendering parent from context, fall back to data hierarchy\n        const renderingParentId = context.parentId;\n        const parent = renderingParentId\n          ? await kernel.storage.get(renderingParentId)\n          : await kernel.findParentOf(itemId);\n        if (!parent) {\n          return false;\n        }\n\n        // Find the child spec\n        const childIndex = parent.attachments.findIndex(c => c.id === itemId);\n        if (childIndex < 0) return false;\n\n        const childSpec = parent.attachments[childIndex];\n        if (childSpec.previousView) {\n          // Restore previous view (complete snapshot)\n          parent.attachments[childIndex] = {\n            ...childSpec,\n            view: { ...childSpec.previousView },\n            previousView: undefined\n          };\n        } else if (childSpec.view && 'type' in childSpec.view) {\n          // No previous view stored, but there's a current view override\n          // Remove the type to revert to default view, keeping spatial props\n          const { type, ...viewWithoutType } = childSpec.view;\n          parent.attachments[childIndex] = {\n            ...childSpec,\n            view: Object.keys(viewWithoutType).length > 0 ? viewWithoutType : undefined,\n            previousView: undefined\n          };\n        } else {\n          // No view override to restore from\n          return false;\n        }\n        await kernel.saveItem(parent);\n        await kernel.renderViewport();\n        return true;\n      },\n\n      // Find parent of an item\n      findContainerOf: (itemId) => kernel.findContainerOf(itemId),\n\n      // Delete item entirely\n      delete: async (itemId) => {\n        await kernel.deleteItem(itemId);\n      },\n\n      // Get the current container item\n      getCurrentItem: () => containerItem,\n\n      // Type chain utilities (uses extends chain with fallback)\n      typeChainIncludes: (typeId, targetId) => kernel.moduleSystem.typeChainIncludes(typeId, targetId),\n\n      // UI operations\n      editRaw: (itemId) => kernel.editItemRaw(itemId),\n      showItemList: () => kernel.showItemList(),\n\n      // For script execution - returns REPL API for code evaluation\n      createREPLContext: () => kernel.createREPLAPI(),\n\n      // Well-known IDs\n      IDS,\n      EVENT_IDS,\n\n      // Instance ID (for nested Hobson instances)\n      getInstanceId: () => kernel.storage.instanceId,\n\n      // Debug mode check\n      isDebugMode: () => context.debug || kernel.debugMode,\n\n      // Helper functions (same as REPL API)\n      helpers: {\n        findByName: async (name) => {\n          const items = await kernel.storage.query({ name });\n          return items.length > 0 ? items[0] : null;\n        },\n        listByType: async (typeId) => {\n          return await kernel.storage.query({ type: typeId });\n        },\n        createType: async (name, description) => {\n          const IDS = kernel.IDS;\n          const id = crypto.randomUUID();\n          await kernel.saveItem({\n            id,\n            name,\n            type: IDS.TYPE_DEFINITION,\n            attachments: [],\n            content: { description }\n          });\n          return id;\n        }\n      },\n\n      // Viewport API for view state management - delegates to userland managers\n      viewport: {\n        select: async (itemId, parentId) => {\n          const selMgr = await kernel.moduleSystem.require('selection-manager');\n          selMgr.select(itemId, parentId);\n        },\n        clearSelection: async () => {\n          const selMgr = await kernel.moduleSystem.require('selection-manager');\n          selMgr.clearSelection();\n        },\n        getSelection: () => {\n          const selMgr = kernel.moduleSystem.getCached('selection-manager');\n          return selMgr?.getSelection() || null;\n        },\n        getSelectionParent: () => {\n          const selMgr = kernel.moduleSystem.getCached('selection-manager');\n          return selMgr?.getSelectionParent() || null;\n        },\n        getRoot: () => {\n          // Sync: reads from URL\n          const params = new URLSearchParams(window.location.search);\n          return params.get('root');\n        },\n        getRootView: async () => {\n          const vpMgr = await kernel.moduleSystem.require('viewport-manager');\n          return await vpMgr.getRootView();\n        },\n        setRootView: async (viewId) => {\n          const vpMgr = await kernel.moduleSystem.require('viewport-manager');\n          await vpMgr.setRootView(viewId);\n        },\n        restorePreviousRootView: async () => {\n          const vpMgr = await kernel.moduleSystem.require('viewport-manager');\n          return await vpMgr.restorePreviousRootView();\n        },\n        getRootViewConfig: async () => {\n          const vpMgr = await kernel.moduleSystem.require('viewport-manager');\n          return await vpMgr.getRootViewConfig();\n        },\n        updateRootViewConfig: async (updates) => {\n          const vpMgr = await kernel.moduleSystem.require('viewport-manager');\n          await vpMgr.updateRootViewConfig(updates);\n        }\n      },\n\n      // Events API (read-only for renderers - can subscribe but not emit)\n      events: {\n        on: (event, handler) => kernel.events.on(event, handler),\n        off: (event, handler) => kernel.events.off(event, handler)\n      },\n\n      // Partial re-render (Phase 3) - update specific item in place\n      rerenderItem: (itemId) => rendering.rerenderItem(itemId),\n\n      // Re-render all items using a specific view (useful when view code changes)\n      rerenderByView: (viewId) => rendering.rerenderByView(viewId),\n\n      // Re-render all items of a given type (useful when type preference changes)\n      rerenderByType: (typeId) => rendering.rerenderByType(typeId),\n\n      // Render instances API (read-only for renderers)\n      instances: {\n        getByItemId: (itemId) => rendering.registry.getByItemId(itemId),\n        getAll: () => rendering.registry.getAll(),\n        getSummary: () => rendering.registry.getSummary()\n      }\n    };\n\n    return api;\n  }\n\n  createErrorView(error, itemId) {\n    const container = document.createElement(\"div\");\n    container.className = \"render-error\";\n\n    const heading = document.createElement(\"h3\");\n    heading.textContent = `Error rendering: ${itemId}`;\n    container.appendChild(heading);\n\n    const message = document.createElement(\"pre\");\n    message.textContent = error.message;\n    container.appendChild(message);\n\n    const stack = document.createElement(\"pre\");\n    stack.textContent = error.stack || \"(no stack trace)\";\n    container.appendChild(stack);\n\n    const editBtn = document.createElement(\"button\");\n    editBtn.textContent = \"Edit Item\";\n    editBtn.onclick = () => this.kernel.editItemRaw(itemId);\n    container.appendChild(editBtn);\n\n    return container;\n  }\n}\n",
     "_symbols": {
       "parseSourceLocation": {
         "name": "parseSourceLocation",
@@ -15,7 +15,8 @@
         "endLine": 18,
         "endCol": 1,
         "kind": "function",
-        "scope": null
+        "scope": null,
+        "signature": "(stack)"
       },
       "parseSourceLocation.lines": {
         "name": "lines",
@@ -78,7 +79,8 @@
         "endLine": 28,
         "endCol": 3,
         "kind": "method",
-        "scope": "RenderInstanceRegistry"
+        "scope": "RenderInstanceRegistry",
+        "signature": "()"
       },
       "RenderInstanceRegistry.register": {
         "name": "register",
@@ -87,7 +89,8 @@
         "endLine": 70,
         "endCol": 3,
         "kind": "method",
-        "scope": "RenderInstanceRegistry"
+        "scope": "RenderInstanceRegistry",
+        "signature": "(domNode, itemId, viewId, parentId, siblingContainer = ...)"
       },
       "RenderInstanceRegistry.register.instanceId": {
         "name": "instanceId",
@@ -186,7 +189,8 @@
         "endLine": 99,
         "endCol": 3,
         "kind": "method",
-        "scope": "RenderInstanceRegistry"
+        "scope": "RenderInstanceRegistry",
+        "signature": "(instanceId)"
       },
       "RenderInstanceRegistry.unregister.info": {
         "name": "info",
@@ -240,7 +244,8 @@
         "endLine": 111,
         "endCol": 3,
         "kind": "method",
-        "scope": "RenderInstanceRegistry"
+        "scope": "RenderInstanceRegistry",
+        "signature": "(parentId)"
       },
       "RenderInstanceRegistry.unregisterByParent.parentKey": {
         "name": "parentKey",
@@ -285,7 +290,8 @@
         "endLine": 120,
         "endCol": 3,
         "kind": "method",
-        "scope": "RenderInstanceRegistry"
+        "scope": "RenderInstanceRegistry",
+        "signature": "()"
       },
       "RenderInstanceRegistry.clear.count": {
         "name": "count",
@@ -303,7 +309,8 @@
         "endLine": 124,
         "endCol": 3,
         "kind": "method",
-        "scope": "RenderInstanceRegistry"
+        "scope": "RenderInstanceRegistry",
+        "signature": "(instanceId)"
       },
       "RenderInstanceRegistry.getByItemId": {
         "name": "getByItemId",
@@ -312,7 +319,8 @@
         "endLine": 130,
         "endCol": 3,
         "kind": "method",
-        "scope": "RenderInstanceRegistry"
+        "scope": "RenderInstanceRegistry",
+        "signature": "(itemId)"
       },
       "RenderInstanceRegistry.getByItemId.instanceIds": {
         "name": "instanceIds",
@@ -330,7 +338,8 @@
         "endLine": 136,
         "endCol": 3,
         "kind": "method",
-        "scope": "RenderInstanceRegistry"
+        "scope": "RenderInstanceRegistry",
+        "signature": "(viewId)"
       },
       "RenderInstanceRegistry.getByViewId.instanceIds": {
         "name": "instanceIds",
@@ -348,7 +357,8 @@
         "endLine": 143,
         "endCol": 3,
         "kind": "method",
-        "scope": "RenderInstanceRegistry"
+        "scope": "RenderInstanceRegistry",
+        "signature": "(parentId)"
       },
       "RenderInstanceRegistry.getByParentId.parentKey": {
         "name": "parentKey",
@@ -375,7 +385,8 @@
         "endLine": 147,
         "endCol": 3,
         "kind": "method",
-        "scope": "RenderInstanceRegistry"
+        "scope": "RenderInstanceRegistry",
+        "signature": "()"
       },
       "RenderInstanceRegistry.getSummary": {
         "name": "getSummary",
@@ -384,7 +395,8 @@
         "endLine": 157,
         "endCol": 3,
         "kind": "method",
-        "scope": "RenderInstanceRegistry"
+        "scope": "RenderInstanceRegistry",
+        "signature": "()"
       },
       "RenderInstanceRegistry.getSummary.totalInstances": {
         "name": "totalInstances",
@@ -426,7 +438,7 @@
         "name": "RenderingSystem",
         "line": 161,
         "col": 7,
-        "endLine": 1086,
+        "endLine": 1111,
         "endCol": 1,
         "kind": "class",
         "scope": null
@@ -438,7 +450,8 @@
         "endLine": 165,
         "endCol": 3,
         "kind": "method",
-        "scope": "RenderingSystem"
+        "scope": "RenderingSystem",
+        "signature": "(kernel)"
       },
       "RenderingSystem.clearInstances": {
         "name": "clearInstances",
@@ -447,7 +460,8 @@
         "endLine": 170,
         "endCol": 3,
         "kind": "method",
-        "scope": "RenderingSystem"
+        "scope": "RenderingSystem",
+        "signature": "()"
       },
       "RenderingSystem.rerenderItem": {
         "name": "rerenderItem",
@@ -456,7 +470,8 @@
         "endLine": 237,
         "endCol": 3,
         "kind": "method",
-        "scope": "RenderingSystem"
+        "scope": "RenderingSystem",
+        "signature": "(itemId)"
       },
       "RenderingSystem.rerenderItem.instances": {
         "name": "instances",
@@ -526,7 +541,7 @@
         "line": 191,
         "col": 16,
         "endLine": 191,
-        "endCol": 73,
+        "endCol": 76,
         "kind": "variable",
         "scope": "RenderingSystem.rerenderItem"
       },
@@ -591,7 +606,8 @@
         "endLine": 265,
         "endCol": 3,
         "kind": "method",
-        "scope": "RenderingSystem"
+        "scope": "RenderingSystem",
+        "signature": "(viewId)"
       },
       "RenderingSystem.rerenderByView.instances": {
         "name": "instances",
@@ -663,7 +679,8 @@
         "endLine": 286,
         "endCol": 3,
         "kind": "method",
-        "scope": "RenderingSystem"
+        "scope": "RenderingSystem",
+        "signature": "(typeId)"
       },
       "RenderingSystem.rerenderByType.instances": {
         "name": "instances",
@@ -705,10 +722,11 @@
         "name": "renderItem",
         "line": 288,
         "col": 2,
-        "endLine": 354,
+        "endLine": 379,
         "endCol": 3,
         "kind": "method",
-        "scope": "RenderingSystem"
+        "scope": "RenderingSystem",
+        "signature": "(itemId, viewId = ..., options = ..., context = ...)"
       },
       "RenderingSystem.renderItem.IDS": {
         "name": "IDS",
@@ -728,1820 +746,1919 @@
         "kind": "variable",
         "scope": "RenderingSystem.renderItem"
       },
+      "RenderingSystem.renderItem.perf": {
+        "name": "perf",
+        "line": 291,
+        "col": 10,
+        "endLine": 291,
+        "endCol": 34,
+        "kind": "variable",
+        "scope": "RenderingSystem.renderItem"
+      },
+      "RenderingSystem.renderItem.isRoot": {
+        "name": "isRoot",
+        "line": 292,
+        "col": 10,
+        "endLine": 292,
+        "endCol": 42,
+        "kind": "variable",
+        "scope": "RenderingSystem.renderItem"
+      },
+      "RenderingSystem.renderItem.perfPrefix": {
+        "name": "perfPrefix",
+        "line": 293,
+        "col": 10,
+        "endLine": 293,
+        "endCol": 69,
+        "kind": "variable",
+        "scope": "RenderingSystem.renderItem"
+      },
       "RenderingSystem.renderItem.item": {
         "name": "item",
-        "line": 306,
+        "line": 310,
         "col": 10,
-        "endLine": 306,
+        "endLine": 310,
         "endCol": 54,
         "kind": "variable",
         "scope": "RenderingSystem.renderItem"
       },
       "RenderingSystem.renderItem.view": {
         "name": "view",
-        "line": 309,
+        "line": 317,
         "col": 8,
-        "endLine": 309,
+        "endLine": 317,
         "endCol": 12,
         "kind": "variable",
         "scope": "RenderingSystem.renderItem"
       },
       "RenderingSystem.renderItem.newContext": {
         "name": "newContext",
-        "line": 319,
+        "line": 332,
         "col": 10,
-        "endLine": 324,
+        "endLine": 337,
         "endCol": 5,
         "kind": "variable",
         "scope": "RenderingSystem.renderItem"
       },
       "newContext.renderPath": {
         "name": "renderPath",
-        "line": 321,
+        "line": 334,
         "col": 6,
-        "endLine": 321,
+        "endLine": 334,
         "endCol": 41,
         "kind": "property",
         "scope": "newContext"
       },
       "newContext.viewId": {
         "name": "viewId",
-        "line": 322,
+        "line": 335,
         "col": 6,
-        "endLine": 322,
+        "endLine": 335,
         "endCol": 21,
         "kind": "property",
         "scope": "newContext"
       },
       "newContext.debug": {
         "name": "debug",
-        "line": 323,
+        "line": 336,
         "col": 6,
-        "endLine": 323,
+        "endLine": 336,
         "endCol": 51,
         "kind": "property",
         "scope": "newContext"
       },
       "RenderingSystem.renderItem.viewModule": {
         "name": "viewModule",
-        "line": 328,
+        "line": 342,
         "col": 12,
-        "endLine": 328,
+        "endLine": 342,
         "endCol": 72,
         "kind": "variable",
         "scope": "RenderingSystem.renderItem"
       },
       "RenderingSystem.renderItem.api": {
         "name": "api",
-        "line": 329,
+        "line": 348,
         "col": 12,
-        "endLine": 329,
+        "endLine": 348,
         "endCol": 58,
         "kind": "variable",
         "scope": "RenderingSystem.renderItem"
       },
       "RenderingSystem.renderItem.domNode": {
         "name": "domNode",
-        "line": 330,
+        "line": 351,
         "col": 12,
-        "endLine": 330,
+        "endLine": 351,
         "endCol": 56,
         "kind": "variable",
         "scope": "RenderingSystem.renderItem"
       },
       "RenderingSystem.renderItem.parentId": {
         "name": "parentId",
-        "line": 334,
+        "line": 359,
         "col": 14,
-        "endLine": 334,
+        "endLine": 359,
         "endCol": 49,
         "kind": "variable",
         "scope": "RenderingSystem.renderItem"
       },
       "RenderingSystem.renderItem.siblingContainer": {
         "name": "siblingContainer",
-        "line": 335,
+        "line": 360,
         "col": 14,
-        "endLine": 335,
+        "endLine": 360,
         "endCol": 65,
         "kind": "variable",
         "scope": "RenderingSystem.renderItem"
       },
       "RenderingSystem.renderItem.operation": {
         "name": "operation",
-        "line": 346,
+        "line": 371,
         "col": 8,
-        "endLine": 346,
+        "endLine": 371,
         "endCol": 27,
         "kind": "property",
         "scope": "RenderingSystem.renderItem"
       },
       "RenderingSystem.renderItem.itemId": {
         "name": "itemId",
-        "line": 347,
+        "line": 372,
         "col": 8,
-        "endLine": 347,
+        "endLine": 372,
         "endCol": 14,
         "kind": "property",
         "scope": "RenderingSystem.renderItem"
       },
       "RenderingSystem.renderItem.itemName": {
         "name": "itemName",
-        "line": 348,
+        "line": 373,
         "col": 8,
-        "endLine": 348,
+        "endLine": 373,
         "endCol": 28,
         "kind": "property",
         "scope": "RenderingSystem.renderItem"
       },
       "RenderingSystem.renderItem.viewId": {
         "name": "viewId",
-        "line": 349,
+        "line": 374,
         "col": 8,
-        "endLine": 349,
+        "endLine": 374,
         "endCol": 24,
         "kind": "property",
         "scope": "RenderingSystem.renderItem"
       },
       "RenderingSystem.renderItem.viewName": {
         "name": "viewName",
-        "line": 350,
+        "line": 375,
         "col": 8,
-        "endLine": 350,
+        "endLine": 375,
         "endCol": 28,
         "kind": "property",
         "scope": "RenderingSystem.renderItem"
       },
       "RenderingSystem.resolveView": {
         "name": "resolveView",
-        "line": 357,
+        "line": 382,
         "col": 2,
-        "endLine": 385,
+        "endLine": 410,
         "endCol": 3,
         "kind": "method",
-        "scope": "RenderingSystem"
+        "scope": "RenderingSystem",
+        "signature": "(item)"
       },
       "RenderingSystem.resolveView.view": {
         "name": "view",
-        "line": 373,
+        "line": 398,
         "col": 16,
-        "endLine": 373,
+        "endLine": 398,
         "endCol": 76,
         "kind": "variable",
         "scope": "RenderingSystem.resolveView"
       },
       "RenderingSystem.resolveView.typeItem": {
         "name": "typeItem",
-        "line": 370,
+        "line": 395,
         "col": 12,
-        "endLine": 370,
+        "endLine": 395,
         "endCol": 63,
         "kind": "variable",
         "scope": "RenderingSystem.resolveView"
       },
       "RenderingSystem.findView": {
         "name": "findView",
-        "line": 388,
+        "line": 413,
         "col": 2,
-        "endLine": 433,
+        "endLine": 458,
         "endCol": 3,
         "kind": "method",
-        "scope": "RenderingSystem"
+        "scope": "RenderingSystem",
+        "signature": "(typeId)"
       },
       "RenderingSystem.findView.IDS": {
         "name": "IDS",
-        "line": 389,
+        "line": 414,
         "col": 10,
-        "endLine": 389,
+        "endLine": 414,
         "endCol": 31,
         "kind": "variable",
         "scope": "RenderingSystem.findView"
       },
       "RenderingSystem.findView.allViews": {
         "name": "allViews",
-        "line": 392,
+        "line": 417,
         "col": 10,
-        "endLine": 392,
+        "endLine": 417,
         "endCol": 72,
         "kind": "variable",
         "scope": "RenderingSystem.findView"
       },
       "RenderingSystem.findView.currentType": {
         "name": "currentType",
-        "line": 394,
+        "line": 419,
         "col": 8,
-        "endLine": 394,
+        "endLine": 419,
         "endCol": 28,
         "kind": "variable",
         "scope": "RenderingSystem.findView"
       },
       "RenderingSystem.findView.visited": {
         "name": "visited",
-        "line": 395,
+        "line": 420,
         "col": 10,
-        "endLine": 395,
+        "endLine": 420,
         "endCol": 29,
         "kind": "variable",
         "scope": "RenderingSystem.findView"
       },
       "RenderingSystem.findView.view": {
         "name": "view",
-        "line": 401,
+        "line": 426,
         "col": 12,
-        "endLine": 401,
+        "endLine": 426,
         "endCol": 74,
         "kind": "variable",
         "scope": "RenderingSystem.findView"
       },
       "RenderingSystem.findView.typeItem": {
         "name": "typeItem",
-        "line": 413,
+        "line": 438,
         "col": 14,
-        "endLine": 413,
+        "endLine": 438,
         "endCol": 67,
         "kind": "variable",
         "scope": "RenderingSystem.findView"
       },
       "RenderingSystem.getViews": {
         "name": "getViews",
-        "line": 436,
+        "line": 461,
         "col": 2,
-        "endLine": 500,
+        "endLine": 525,
         "endCol": 3,
         "kind": "method",
-        "scope": "RenderingSystem"
+        "scope": "RenderingSystem",
+        "signature": "(typeId)"
       },
       "RenderingSystem.getViews.IDS": {
         "name": "IDS",
-        "line": 437,
+        "line": 462,
         "col": 10,
-        "endLine": 437,
+        "endLine": 462,
         "endCol": 31,
         "kind": "variable",
         "scope": "RenderingSystem.getViews"
       },
       "RenderingSystem.getViews.result": {
         "name": "result",
-        "line": 438,
+        "line": 463,
         "col": 10,
-        "endLine": 438,
+        "endLine": 463,
         "endCol": 21,
         "kind": "variable",
         "scope": "RenderingSystem.getViews"
       },
       "RenderingSystem.getViews.seenIds": {
         "name": "seenIds",
-        "line": 439,
+        "line": 464,
         "col": 10,
-        "endLine": 439,
+        "endLine": 464,
         "endCol": 29,
         "kind": "variable",
         "scope": "RenderingSystem.getViews"
       },
       "RenderingSystem.getViews.allViews": {
         "name": "allViews",
-        "line": 442,
+        "line": 467,
         "col": 10,
-        "endLine": 442,
+        "endLine": 467,
         "endCol": 72,
         "kind": "variable",
         "scope": "RenderingSystem.getViews"
       },
       "RenderingSystem.getViews.currentType": {
         "name": "currentType",
-        "line": 444,
+        "line": 469,
         "col": 8,
-        "endLine": 444,
+        "endLine": 469,
         "endCol": 28,
         "kind": "variable",
         "scope": "RenderingSystem.getViews"
       },
       "RenderingSystem.getViews.visited": {
         "name": "visited",
-        "line": 445,
+        "line": 470,
         "col": 10,
-        "endLine": 445,
+        "endLine": 470,
         "endCol": 29,
         "kind": "variable",
         "scope": "RenderingSystem.getViews"
       },
       "RenderingSystem.getViews.viewsForType": {
         "name": "viewsForType",
-        "line": 451,
+        "line": 476,
         "col": 12,
-        "endLine": 451,
+        "endLine": 476,
         "endCol": 84,
         "kind": "variable",
         "scope": "RenderingSystem.getViews"
       },
       "RenderingSystem.getViews.view": {
         "name": "view",
-        "line": 492,
+        "line": 517,
         "col": 8,
-        "endLine": 492,
+        "endLine": 517,
         "endCol": 25,
         "kind": "property",
         "scope": "RenderingSystem.getViews"
       },
       "RenderingSystem.getViews.forType": {
         "name": "forType",
-        "line": 493,
+        "line": 518,
         "col": 8,
-        "endLine": 493,
+        "endLine": 518,
         "endCol": 25,
         "kind": "property",
         "scope": "RenderingSystem.getViews"
       },
       "RenderingSystem.getViews.inherited": {
         "name": "inherited",
-        "line": 494,
+        "line": 519,
         "col": 8,
-        "endLine": 494,
+        "endLine": 519,
         "endCol": 23,
         "kind": "property",
         "scope": "RenderingSystem.getViews"
       },
       "RenderingSystem.getViews.typeItem": {
         "name": "typeItem",
-        "line": 470,
+        "line": 495,
         "col": 14,
-        "endLine": 470,
+        "endLine": 495,
         "endCol": 67,
         "kind": "variable",
         "scope": "RenderingSystem.getViews"
       },
       "RenderingSystem.getViews.defaultView": {
         "name": "defaultView",
-        "line": 489,
+        "line": 514,
         "col": 10,
-        "endLine": 489,
+        "endLine": 514,
         "endCol": 71,
         "kind": "variable",
         "scope": "RenderingSystem.getViews"
       },
       "RenderingSystem.getViews.isDefault": {
         "name": "isDefault",
-        "line": 495,
+        "line": 520,
         "col": 8,
-        "endLine": 495,
+        "endLine": 520,
         "endCol": 23,
         "kind": "property",
         "scope": "RenderingSystem.getViews"
       },
       "RenderingSystem.getDefaultView": {
         "name": "getDefaultView",
-        "line": 503,
+        "line": 528,
         "col": 2,
-        "endLine": 506,
+        "endLine": 531,
         "endCol": 3,
         "kind": "method",
-        "scope": "RenderingSystem"
+        "scope": "RenderingSystem",
+        "signature": "(typeId)"
       },
       "RenderingSystem.getDefaultView.views": {
         "name": "views",
-        "line": 504,
+        "line": 529,
         "col": 10,
-        "endLine": 504,
+        "endLine": 529,
         "endCol": 45,
         "kind": "variable",
         "scope": "RenderingSystem.getDefaultView"
       },
       "RenderingSystem.getEffectiveView": {
         "name": "getEffectiveView",
-        "line": 509,
+        "line": 534,
         "col": 2,
-        "endLine": 512,
+        "endLine": 537,
         "endCol": 3,
         "kind": "method",
-        "scope": "RenderingSystem"
+        "scope": "RenderingSystem",
+        "signature": "(itemId)"
       },
       "RenderingSystem.getEffectiveView.item": {
         "name": "item",
-        "line": 510,
+        "line": 535,
         "col": 10,
-        "endLine": 510,
+        "endLine": 535,
         "endCol": 54,
         "kind": "variable",
         "scope": "RenderingSystem.getEffectiveView"
       },
       "RenderingSystem.getTypePreferredView": {
         "name": "getTypePreferredView",
-        "line": 515,
+        "line": 540,
         "col": 2,
-        "endLine": 525,
+        "endLine": 550,
         "endCol": 3,
         "kind": "method",
-        "scope": "RenderingSystem"
+        "scope": "RenderingSystem",
+        "signature": "(typeId)"
       },
       "RenderingSystem.getTypePreferredView.typeItem": {
         "name": "typeItem",
-        "line": 517,
+        "line": 542,
         "col": 12,
-        "endLine": 517,
+        "endLine": 542,
         "endCol": 60,
         "kind": "variable",
         "scope": "RenderingSystem.getTypePreferredView"
       },
       "RenderingSystem.createRendererAPI": {
         "name": "createRendererAPI",
-        "line": 527,
+        "line": 552,
         "col": 2,
-        "endLine": 1061,
+        "endLine": 1086,
         "endCol": 3,
         "kind": "method",
-        "scope": "RenderingSystem"
+        "scope": "RenderingSystem",
+        "signature": "(containerItem, context = ...)"
       },
       "RenderingSystem.createRendererAPI.kernel": {
         "name": "kernel",
-        "line": 528,
+        "line": 553,
         "col": 10,
-        "endLine": 528,
+        "endLine": 553,
         "endCol": 30,
         "kind": "variable",
         "scope": "RenderingSystem.createRendererAPI"
       },
       "RenderingSystem.createRendererAPI.IDS": {
         "name": "IDS",
-        "line": 529,
+        "line": 554,
         "col": 10,
-        "endLine": 529,
+        "endLine": 554,
         "endCol": 26,
         "kind": "variable",
         "scope": "RenderingSystem.createRendererAPI"
       },
       "RenderingSystem.createRendererAPI.EVENT_IDS": {
         "name": "EVENT_IDS",
-        "line": 530,
+        "line": 555,
         "col": 10,
-        "endLine": 530,
+        "endLine": 555,
         "endCol": 38,
         "kind": "variable",
         "scope": "RenderingSystem.createRendererAPI"
       },
       "RenderingSystem.createRendererAPI.rendering": {
         "name": "rendering",
-        "line": 531,
+        "line": 556,
         "col": 10,
-        "endLine": 531,
+        "endLine": 556,
         "endCol": 26,
         "kind": "variable",
         "scope": "RenderingSystem.createRendererAPI"
       },
       "RenderingSystem.createRendererAPI.api": {
         "name": "api",
-        "line": 533,
+        "line": 558,
         "col": 10,
-        "endLine": 1058,
+        "endLine": 1083,
         "endCol": 5,
         "kind": "variable",
         "scope": "RenderingSystem.createRendererAPI"
       },
       "api.createElement": {
         "name": "createElement",
-        "line": 535,
+        "line": 560,
         "col": 6,
-        "endLine": 582,
+        "endLine": 607,
         "endCol": 7,
         "kind": "property-function",
-        "scope": "api"
+        "scope": "api",
+        "signature": "(tag, props = ..., children = ...)"
       },
       "api.createElement.element": {
         "name": "element",
-        "line": 536,
+        "line": 561,
         "col": 14,
-        "endLine": 536,
+        "endLine": 561,
         "endCol": 51,
         "kind": "variable",
         "scope": "api.createElement"
       },
       "api.createElement.debugActive": {
         "name": "debugActive",
-        "line": 539,
+        "line": 564,
         "col": 14,
-        "endLine": 539,
+        "endLine": 564,
         "endCol": 61,
         "kind": "variable",
         "scope": "api.createElement"
       },
       "api.createElement.stack": {
         "name": "stack",
-        "line": 546,
+        "line": 571,
         "col": 18,
-        "endLine": 546,
+        "endLine": 571,
         "endCol": 43,
         "kind": "variable",
         "scope": "api.createElement"
       },
       "api.createElement.location": {
         "name": "location",
-        "line": 547,
+        "line": 572,
         "col": 18,
-        "endLine": 547,
+        "endLine": 572,
         "endCol": 55,
         "kind": "variable",
         "scope": "api.createElement"
       },
       "api.createElement.eventName": {
         "name": "eventName",
-        "line": 557,
+        "line": 582,
         "col": 18,
-        "endLine": 557,
+        "endLine": 582,
         "endCol": 60,
         "kind": "variable",
         "scope": "api.createElement"
       },
       "api.createElement.child": {
         "name": "child",
-        "line": 568,
+        "line": 593,
         "col": 19,
-        "endLine": 568,
+        "endLine": 593,
         "endCol": 24,
         "kind": "variable",
         "scope": "api.createElement"
       },
       "api.createElement.childElement": {
         "name": "childElement",
-        "line": 576,
+        "line": 601,
         "col": 18,
-        "endLine": 576,
+        "endLine": 601,
         "endCol": 87,
         "kind": "variable",
         "scope": "api.createElement"
       },
       "api.query": {
         "name": "query",
-        "line": 585,
+        "line": 610,
         "col": 6,
-        "endLine": 585,
+        "endLine": 610,
         "endCol": 53,
         "kind": "property-function",
-        "scope": "api"
+        "scope": "api",
+        "signature": "(filter)"
       },
       "api.get": {
         "name": "get",
-        "line": 588,
+        "line": 613,
         "col": 6,
-        "endLine": 588,
+        "endLine": 613,
         "endCol": 49,
         "kind": "property-function",
-        "scope": "api"
+        "scope": "api",
+        "signature": "(itemId)"
       },
       "api.getAll": {
         "name": "getAll",
-        "line": 591,
+        "line": 616,
         "col": 6,
-        "endLine": 591,
+        "endLine": 616,
         "endCol": 43,
         "kind": "property-function",
-        "scope": "api"
+        "scope": "api",
+        "signature": "()"
       },
       "api.getAllRaw": {
         "name": "getAllRaw",
-        "line": 594,
+        "line": 619,
         "col": 6,
-        "endLine": 594,
+        "endLine": 619,
         "endCol": 49,
         "kind": "property-function",
-        "scope": "api"
+        "scope": "api",
+        "signature": "()"
       },
       "api.require": {
         "name": "require",
-        "line": 597,
+        "line": 622,
         "col": 6,
-        "endLine": 597,
+        "endLine": 622,
         "endCol": 66,
         "kind": "property-function",
-        "scope": "api"
+        "scope": "api",
+        "signature": "(nameOrId)"
       },
       "api.renderItem": {
         "name": "renderItem",
-        "line": 602,
+        "line": 627,
         "col": 6,
-        "endLine": 644,
+        "endLine": 669,
         "endCol": 7,
         "kind": "property-function",
-        "scope": "api"
+        "scope": "api",
+        "signature": "(itemId, viewIdOrConfig, options)"
       },
       "api.renderItem.viewId": {
         "name": "viewId",
-        "line": 604,
+        "line": 629,
         "col": 12,
-        "endLine": 604,
+        "endLine": 629,
         "endCol": 25,
         "kind": "variable",
         "scope": "api.renderItem"
       },
       "api.renderItem.viewConfig": {
         "name": "viewConfig",
-        "line": 605,
+        "line": 630,
         "col": 12,
-        "endLine": 605,
+        "endLine": 630,
         "endCol": 29,
         "kind": "variable",
         "scope": "api.renderItem"
       },
       "api.renderItem.decorator": {
         "name": "decorator",
-        "line": 614,
+        "line": 639,
         "col": 14,
-        "endLine": 614,
+        "endLine": 639,
         "endCol": 65,
         "kind": "variable",
         "scope": "api.renderItem"
       },
       "api.renderItem.siblingContainer": {
         "name": "siblingContainer",
-        "line": 616,
+        "line": 641,
         "col": 14,
-        "endLine": 618,
+        "endLine": 643,
         "endCol": 36,
         "kind": "variable",
         "scope": "api.renderItem"
       },
       "api.renderItem.navigateTo": {
         "name": "navigateTo",
-        "line": 620,
+        "line": 645,
         "col": 14,
-        "endLine": 622,
+        "endLine": 647,
         "endCol": 30,
         "kind": "variable",
         "scope": "api.renderItem"
       },
       "api.renderItem.mergedContext": {
         "name": "mergedContext",
-        "line": 623,
+        "line": 648,
         "col": 14,
-        "endLine": 630,
+        "endLine": 655,
         "endCol": 9,
         "kind": "variable",
         "scope": "api.renderItem"
       },
       "mergedContext.decorator": {
         "name": "decorator",
-        "line": 625,
+        "line": 650,
         "col": 10,
-        "endLine": 625,
+        "endLine": 650,
         "endCol": 19,
         "kind": "property",
         "scope": "mergedContext"
       },
       "mergedContext.viewConfig": {
         "name": "viewConfig",
-        "line": 626,
+        "line": 651,
         "col": 10,
-        "endLine": 626,
+        "endLine": 651,
         "endCol": 20,
         "kind": "property",
         "scope": "mergedContext"
       },
       "mergedContext.parentId": {
         "name": "parentId",
-        "line": 627,
+        "line": 652,
         "col": 10,
-        "endLine": 627,
+        "endLine": 652,
         "endCol": 36,
         "kind": "property",
         "scope": "mergedContext"
       },
       "mergedContext.siblingContainer": {
         "name": "siblingContainer",
-        "line": 628,
+        "line": 653,
         "col": 10,
-        "endLine": 628,
+        "endLine": 653,
         "endCol": 26,
         "kind": "property",
         "scope": "mergedContext"
       },
       "mergedContext.navigateTo": {
         "name": "navigateTo",
-        "line": 629,
+        "line": 654,
         "col": 10,
-        "endLine": 629,
+        "endLine": 654,
         "endCol": 20,
         "kind": "property",
         "scope": "mergedContext"
       },
       "api.renderItem.domNode": {
         "name": "domNode",
-        "line": 632,
+        "line": 657,
         "col": 14,
-        "endLine": 632,
+        "endLine": 657,
         "endCol": 96,
         "kind": "variable",
         "scope": "api.renderItem"
       },
       "api.renderItem.item": {
         "name": "item",
-        "line": 637,
+        "line": 662,
         "col": 18,
-        "endLine": 637,
+        "endLine": 662,
         "endCol": 57,
         "kind": "variable",
         "scope": "api.renderItem"
       },
       "api.getViewConfig": {
         "name": "getViewConfig",
-        "line": 648,
+        "line": 673,
         "col": 6,
-        "endLine": 661,
+        "endLine": 686,
         "endCol": 7,
         "kind": "property-function",
-        "scope": "api"
+        "scope": "api",
+        "signature": "()"
       },
       "api.getViewConfig.vpMgr": {
         "name": "vpMgr",
-        "line": 655,
+        "line": 680,
         "col": 16,
-        "endLine": 655,
+        "endLine": 680,
         "endCol": 77,
         "kind": "variable",
         "scope": "api.getViewConfig"
       },
       "api.getParentId": {
         "name": "getParentId",
-        "line": 664,
+        "line": 689,
         "col": 6,
-        "endLine": 664,
+        "endLine": 689,
         "endCol": 49,
         "kind": "property-function",
-        "scope": "api"
+        "scope": "api",
+        "signature": "()"
       },
       "api.getViewId": {
         "name": "getViewId",
-        "line": 667,
+        "line": 692,
         "col": 6,
-        "endLine": 667,
+        "endLine": 692,
         "endCol": 45,
         "kind": "property-function",
-        "scope": "api"
+        "scope": "api",
+        "signature": "()"
       },
       "api.getNavigateTo": {
         "name": "getNavigateTo",
-        "line": 671,
+        "line": 696,
         "col": 6,
-        "endLine": 671,
+        "endLine": 696,
         "endCol": 53,
         "kind": "property-function",
-        "scope": "api"
+        "scope": "api",
+        "signature": "()"
       },
       "api.updateViewConfig": {
         "name": "updateViewConfig",
-        "line": 676,
+        "line": 701,
         "col": 6,
-        "endLine": 710,
+        "endLine": 735,
         "endCol": 7,
         "kind": "property-function",
-        "scope": "api"
+        "scope": "api",
+        "signature": "(updates)"
       },
       "api.updateViewConfig.parentId": {
         "name": "parentId",
-        "line": 677,
+        "line": 702,
         "col": 14,
-        "endLine": 677,
+        "endLine": 702,
         "endCol": 41,
         "kind": "variable",
         "scope": "api.updateViewConfig"
       },
       "api.updateViewConfig.vpMgr": {
         "name": "vpMgr",
-        "line": 681,
+        "line": 706,
         "col": 16,
-        "endLine": 681,
+        "endLine": 706,
         "endCol": 77,
         "kind": "variable",
         "scope": "api.updateViewConfig"
       },
       "api.updateViewConfig.parent": {
         "name": "parent",
-        "line": 693,
+        "line": 718,
         "col": 14,
-        "endLine": 693,
+        "endLine": 718,
         "endCol": 57,
         "kind": "variable",
         "scope": "api.updateViewConfig"
       },
       "api.updateViewConfig.childIndex": {
         "name": "childIndex",
-        "line": 694,
+        "line": 719,
         "col": 14,
-        "endLine": 694,
-        "endCol": 85,
+        "endLine": 719,
+        "endCol": 88,
         "kind": "variable",
         "scope": "api.updateViewConfig"
       },
       "api.updateViewConfig.currentChild": {
         "name": "currentChild",
-        "line": 701,
+        "line": 726,
         "col": 14,
-        "endLine": 701,
-        "endCol": 56,
+        "endLine": 726,
+        "endCol": 59,
         "kind": "variable",
         "scope": "api.updateViewConfig"
       },
       "api.updateViewConfig.view": {
         "name": "view",
-        "line": 704,
+        "line": 729,
         "col": 10,
-        "endLine": 704,
+        "endLine": 729,
         "endCol": 60,
         "kind": "property",
         "scope": "api.updateViewConfig"
       },
       "api.getViews": {
         "name": "getViews",
-        "line": 713,
+        "line": 738,
         "col": 6,
-        "endLine": 713,
+        "endLine": 738,
         "endCol": 61,
         "kind": "property-function",
-        "scope": "api"
+        "scope": "api",
+        "signature": "(typeId)"
       },
       "api.getDefaultView": {
         "name": "getDefaultView",
-        "line": 714,
+        "line": 739,
         "col": 6,
-        "endLine": 714,
+        "endLine": 739,
         "endCol": 73,
         "kind": "property-function",
-        "scope": "api"
+        "scope": "api",
+        "signature": "(typeId)"
       },
       "api.findView": {
         "name": "findView",
-        "line": 715,
+        "line": 740,
         "col": 6,
-        "endLine": 715,
+        "endLine": 740,
         "endCol": 61,
         "kind": "property-function",
-        "scope": "api"
+        "scope": "api",
+        "signature": "(typeId)"
       },
       "api.setPreferredView": {
         "name": "setPreferredView",
-        "line": 718,
+        "line": 743,
         "col": 6,
-        "endLine": 734,
+        "endLine": 759,
         "endCol": 7,
         "kind": "property-function",
-        "scope": "api"
+        "scope": "api",
+        "signature": "(itemId, viewId)"
       },
       "api.setPreferredView.item": {
         "name": "item",
-        "line": 719,
+        "line": 744,
         "col": 14,
-        "endLine": 719,
+        "endLine": 744,
         "endCol": 53,
         "kind": "variable",
         "scope": "api.setPreferredView"
       },
       "api.getPreferredView": {
         "name": "getPreferredView",
-        "line": 736,
+        "line": 761,
         "col": 6,
-        "endLine": 739,
+        "endLine": 764,
         "endCol": 7,
         "kind": "property-function",
-        "scope": "api"
+        "scope": "api",
+        "signature": "(itemId)"
       },
       "api.getPreferredView.item": {
         "name": "item",
-        "line": 737,
+        "line": 762,
         "col": 14,
-        "endLine": 737,
+        "endLine": 762,
         "endCol": 53,
         "kind": "variable",
         "scope": "api.getPreferredView"
       },
       "api.setTypePreferredView": {
         "name": "setTypePreferredView",
-        "line": 742,
+        "line": 767,
         "col": 6,
-        "endLine": 753,
+        "endLine": 778,
         "endCol": 7,
         "kind": "property-function",
-        "scope": "api"
+        "scope": "api",
+        "signature": "(itemId, viewId)"
       },
       "api.setTypePreferredView.item": {
         "name": "item",
-        "line": 743,
+        "line": 768,
         "col": 14,
-        "endLine": 743,
+        "endLine": 768,
         "endCol": 53,
         "kind": "variable",
         "scope": "api.setTypePreferredView"
       },
       "api.setTypePreferredView.typeItem": {
         "name": "typeItem",
-        "line": 744,
+        "line": 769,
         "col": 14,
-        "endLine": 744,
+        "endLine": 769,
         "endCol": 60,
         "kind": "variable",
         "scope": "api.setTypePreferredView"
       },
       "api.getTypePreferredView": {
         "name": "getTypePreferredView",
-        "line": 755,
+        "line": 780,
         "col": 6,
-        "endLine": 759,
+        "endLine": 784,
         "endCol": 7,
         "kind": "property-function",
-        "scope": "api"
+        "scope": "api",
+        "signature": "(itemId)"
       },
       "api.getTypePreferredView.item": {
         "name": "item",
-        "line": 756,
+        "line": 781,
         "col": 14,
-        "endLine": 756,
+        "endLine": 781,
         "endCol": 53,
         "kind": "variable",
         "scope": "api.getTypePreferredView"
       },
       "api.getTypePreferredView.typeItem": {
         "name": "typeItem",
-        "line": 757,
+        "line": 782,
         "col": 14,
-        "endLine": 757,
+        "endLine": 782,
         "endCol": 60,
         "kind": "variable",
         "scope": "api.getTypePreferredView"
       },
       "api.getEffectiveView": {
         "name": "getEffectiveView",
-        "line": 762,
+        "line": 787,
         "col": 6,
-        "endLine": 762,
+        "endLine": 787,
         "endCol": 70,
         "kind": "property-function",
-        "scope": "api"
+        "scope": "api",
+        "signature": "(itemId)"
       },
       "api.getTypeName": {
         "name": "getTypeName",
-        "line": 765,
+        "line": 790,
         "col": 6,
-        "endLine": 769,
+        "endLine": 794,
         "endCol": 7,
         "kind": "property-function",
-        "scope": "api"
+        "scope": "api",
+        "signature": "(itemId)"
       },
       "api.getTypeName.item": {
         "name": "item",
-        "line": 766,
+        "line": 791,
         "col": 14,
-        "endLine": 766,
+        "endLine": 791,
         "endCol": 53,
         "kind": "variable",
         "scope": "api.getTypeName"
       },
       "api.getTypeName.typeItem": {
         "name": "typeItem",
-        "line": 767,
+        "line": 792,
         "col": 14,
-        "endLine": 767,
+        "endLine": 792,
         "endCol": 60,
         "kind": "variable",
         "scope": "api.getTypeName"
       },
       "api.getContextualView": {
         "name": "getContextualView",
-        "line": 772,
+        "line": 797,
         "col": 6,
-        "endLine": 786,
+        "endLine": 811,
         "endCol": 7,
         "kind": "property-function",
-        "scope": "api"
+        "scope": "api",
+        "signature": "(itemId, parentId)"
       },
       "api.getContextualView.parent": {
         "name": "parent",
-        "line": 775,
+        "line": 800,
         "col": 16,
-        "endLine": 775,
+        "endLine": 800,
         "endCol": 59,
         "kind": "variable",
         "scope": "api.getContextualView"
       },
       "api.getContextualView.childSpec": {
         "name": "childSpec",
-        "line": 776,
+        "line": 801,
         "col": 16,
-        "endLine": 778,
+        "endLine": 803,
         "endCol": 11,
         "kind": "variable",
         "scope": "api.getContextualView"
       },
       "api.navigate": {
         "name": "navigate",
-        "line": 789,
+        "line": 814,
         "col": 6,
-        "endLine": 792,
+        "endLine": 817,
         "endCol": 7,
         "kind": "property-function",
-        "scope": "api"
+        "scope": "api",
+        "signature": "(itemId, params)"
       },
       "api.navigate.vpMgr": {
         "name": "vpMgr",
-        "line": 790,
+        "line": 815,
         "col": 14,
-        "endLine": 790,
+        "endLine": 815,
         "endCol": 75,
         "kind": "variable",
         "scope": "api.navigate"
       },
       "api.getCurrentRoot": {
         "name": "getCurrentRoot",
-        "line": 793,
+        "line": 818,
         "col": 6,
-        "endLine": 796,
+        "endLine": 821,
         "endCol": 7,
         "kind": "property-function",
-        "scope": "api"
+        "scope": "api",
+        "signature": "()"
       },
       "api.getCurrentRoot.vpMgr": {
         "name": "vpMgr",
-        "line": 794,
+        "line": 819,
         "col": 14,
-        "endLine": 794,
+        "endLine": 819,
         "endCol": 71,
         "kind": "variable",
         "scope": "api.getCurrentRoot"
       },
       "api.siblingContainer": {
         "name": "siblingContainer",
-        "line": 800,
+        "line": 825,
         "col": 6,
-        "endLine": 802,
+        "endLine": 827,
         "endCol": 7,
         "kind": "property-function",
-        "scope": "api"
+        "scope": "api",
+        "signature": "()"
       },
       "api.create": {
         "name": "create",
-        "line": 805,
+        "line": 830,
         "col": 6,
-        "endLine": 819,
+        "endLine": 844,
         "endCol": 7,
         "kind": "property-function",
-        "scope": "api"
+        "scope": "api",
+        "signature": "(item, addAsChild = ...)"
       },
       "api.create.newItem": {
         "name": "newItem",
-        "line": 806,
+        "line": 831,
         "col": 14,
-        "endLine": 810,
+        "endLine": 835,
         "endCol": 9,
         "kind": "variable",
         "scope": "api.create"
       },
       "newItem.id": {
         "name": "id",
-        "line": 808,
+        "line": 833,
         "col": 10,
-        "endLine": 808,
+        "endLine": 833,
         "endCol": 44,
         "kind": "property",
         "scope": "newItem"
       },
-      "newItem.children": {
-        "name": "children",
-        "line": 826,
+      "newItem.attachments": {
+        "name": "attachments",
+        "line": 851,
         "col": 10,
-        "endLine": 826,
-        "endCol": 22,
+        "endLine": 851,
+        "endCol": 25,
         "kind": "property",
         "scope": "newItem"
       },
       "api.createChild": {
         "name": "createChild",
-        "line": 822,
+        "line": 847,
         "col": 6,
-        "endLine": 832,
+        "endLine": 857,
         "endCol": 7,
         "kind": "property-function",
-        "scope": "api"
+        "scope": "api",
+        "signature": "(type, content = ...)"
       },
       "api.createChild.newItem": {
         "name": "newItem",
-        "line": 823,
+        "line": 848,
         "col": 14,
-        "endLine": 827,
+        "endLine": 852,
         "endCol": 9,
         "kind": "variable",
         "scope": "api.createChild"
       },
       "newItem.type": {
         "name": "type",
-        "line": 824,
+        "line": 849,
         "col": 10,
-        "endLine": 824,
+        "endLine": 849,
         "endCol": 14,
         "kind": "property",
         "scope": "newItem"
       },
       "newItem.content": {
         "name": "content",
-        "line": 825,
+        "line": 850,
         "col": 10,
-        "endLine": 825,
+        "endLine": 850,
         "endCol": 17,
         "kind": "property",
         "scope": "newItem"
       },
       "api.createChild.id": {
         "name": "id",
-        "line": 828,
+        "line": 853,
         "col": 14,
-        "endLine": 828,
+        "endLine": 853,
         "endCol": 50,
         "kind": "variable",
         "scope": "api.createChild"
       },
       "api.set": {
         "name": "set",
-        "line": 835,
+        "line": 860,
         "col": 6,
-        "endLine": 838,
+        "endLine": 863,
         "endCol": 7,
         "kind": "property-function",
-        "scope": "api"
+        "scope": "api",
+        "signature": "(item)"
       },
       "api.update": {
         "name": "update",
-        "line": 841,
+        "line": 866,
         "col": 6,
-        "endLine": 845,
+        "endLine": 870,
         "endCol": 7,
         "kind": "property-function",
-        "scope": "api"
+        "scope": "api",
+        "signature": "(item)"
       },
       "api.updateSilent": {
         "name": "updateSilent",
-        "line": 848,
+        "line": 873,
         "col": 6,
-        "endLine": 851,
+        "endLine": 876,
         "endCol": 7,
         "kind": "property-function",
-        "scope": "api"
+        "scope": "api",
+        "signature": "(item)"
       },
-      "api.addChild": {
-        "name": "addChild",
-        "line": 854,
+      "api.attach": {
+        "name": "attach",
+        "line": 879,
         "col": 6,
-        "endLine": 856,
+        "endLine": 881,
         "endCol": 7,
         "kind": "property-function",
-        "scope": "api"
+        "scope": "api",
+        "signature": "(itemId)"
       },
-      "api.removeChild": {
-        "name": "removeChild",
-        "line": 859,
+      "api.detach": {
+        "name": "detach",
+        "line": 884,
         "col": 6,
-        "endLine": 861,
+        "endLine": 886,
         "endCol": 7,
         "kind": "property-function",
-        "scope": "api"
+        "scope": "api",
+        "signature": "(itemId)"
       },
-      "api.setChildView": {
-        "name": "setChildView",
-        "line": 865,
+      "api.setAttachmentView": {
+        "name": "setAttachmentView",
+        "line": 890,
         "col": 6,
-        "endLine": 873,
+        "endLine": 898,
         "endCol": 7,
         "kind": "property-function",
-        "scope": "api"
+        "scope": "api",
+        "signature": "(itemIdOrParentId, viewIdOrItemId, optionalViewId)"
       },
       "api.restorePreviousView": {
         "name": "restorePreviousView",
-        "line": 876,
+        "line": 901,
         "col": 6,
-        "endLine": 936,
+        "endLine": 961,
         "endCol": 7,
         "kind": "property-function",
-        "scope": "api"
+        "scope": "api",
+        "signature": "(itemId)"
       },
       "api.restorePreviousView.vpMgr": {
         "name": "vpMgr",
-        "line": 878,
+        "line": 903,
         "col": 14,
-        "endLine": 878,
+        "endLine": 903,
         "endCol": 71,
         "kind": "variable",
         "scope": "api.restorePreviousView"
       },
       "api.restorePreviousView.isViewportRoot": {
         "name": "isViewportRoot",
-        "line": 879,
+        "line": 904,
         "col": 14,
-        "endLine": 879,
+        "endLine": 904,
         "endCol": 66,
         "kind": "variable",
         "scope": "api.restorePreviousView"
       },
       "api.restorePreviousView.restored": {
         "name": "restored",
-        "line": 884,
+        "line": 909,
         "col": 18,
-        "endLine": 884,
+        "endLine": 909,
         "endCol": 66,
         "kind": "variable",
         "scope": "api.restorePreviousView"
       },
       "api.restorePreviousView.renderingParentId": {
         "name": "renderingParentId",
-        "line": 900,
+        "line": 925,
         "col": 14,
-        "endLine": 900,
+        "endLine": 925,
         "endCol": 50,
         "kind": "variable",
         "scope": "api.restorePreviousView"
       },
       "api.restorePreviousView.parent": {
         "name": "parent",
-        "line": 901,
+        "line": 926,
         "col": 14,
-        "endLine": 903,
+        "endLine": 928,
         "endCol": 45,
         "kind": "variable",
         "scope": "api.restorePreviousView"
       },
       "api.restorePreviousView.childIndex": {
         "name": "childIndex",
-        "line": 909,
+        "line": 934,
         "col": 14,
-        "endLine": 909,
-        "endCol": 74,
+        "endLine": 934,
+        "endCol": 77,
         "kind": "variable",
         "scope": "api.restorePreviousView"
       },
       "api.restorePreviousView.childSpec": {
         "name": "childSpec",
-        "line": 912,
+        "line": 937,
         "col": 14,
-        "endLine": 912,
-        "endCol": 53,
+        "endLine": 937,
+        "endCol": 56,
         "kind": "variable",
         "scope": "api.restorePreviousView"
       },
       "api.restorePreviousView.view": {
         "name": "view",
-        "line": 926,
+        "line": 951,
         "col": 12,
-        "endLine": 926,
+        "endLine": 951,
         "endCol": 87,
         "kind": "property",
         "scope": "api.restorePreviousView"
       },
       "api.restorePreviousView.previousView": {
         "name": "previousView",
-        "line": 927,
+        "line": 952,
         "col": 12,
-        "endLine": 927,
+        "endLine": 952,
         "endCol": 35,
         "kind": "property",
         "scope": "api.restorePreviousView"
       },
-      "api.findParentOf": {
-        "name": "findParentOf",
-        "line": 939,
+      "api.findContainerOf": {
+        "name": "findContainerOf",
+        "line": 964,
         "col": 6,
-        "endLine": 939,
-        "endCol": 59,
+        "endLine": 964,
+        "endCol": 65,
         "kind": "property-function",
-        "scope": "api"
+        "scope": "api",
+        "signature": "(itemId)"
       },
       "api.delete": {
         "name": "delete",
-        "line": 942,
+        "line": 967,
         "col": 6,
-        "endLine": 944,
+        "endLine": 969,
         "endCol": 7,
         "kind": "property-function",
-        "scope": "api"
+        "scope": "api",
+        "signature": "(itemId)"
       },
       "api.getCurrentItem": {
         "name": "getCurrentItem",
-        "line": 947,
+        "line": 972,
         "col": 6,
-        "endLine": 947,
+        "endLine": 972,
         "endCol": 41,
         "kind": "property-function",
-        "scope": "api"
+        "scope": "api",
+        "signature": "()"
       },
       "api.typeChainIncludes": {
         "name": "typeChainIncludes",
-        "line": 950,
+        "line": 975,
         "col": 6,
-        "endLine": 950,
+        "endLine": 975,
         "endCol": 102,
         "kind": "property-function",
-        "scope": "api"
+        "scope": "api",
+        "signature": "(typeId, targetId)"
       },
       "api.editRaw": {
         "name": "editRaw",
-        "line": 953,
+        "line": 978,
         "col": 6,
-        "endLine": 953,
+        "endLine": 978,
         "endCol": 53,
         "kind": "property-function",
-        "scope": "api"
+        "scope": "api",
+        "signature": "(itemId)"
       },
       "api.showItemList": {
         "name": "showItemList",
-        "line": 954,
+        "line": 979,
         "col": 6,
-        "endLine": 954,
+        "endLine": 979,
         "endCol": 47,
         "kind": "property-function",
-        "scope": "api"
+        "scope": "api",
+        "signature": "()"
       },
       "api.createREPLContext": {
         "name": "createREPLContext",
-        "line": 957,
+        "line": 982,
         "col": 6,
-        "endLine": 957,
+        "endLine": 982,
         "endCol": 53,
         "kind": "property-function",
-        "scope": "api"
+        "scope": "api",
+        "signature": "()"
       },
       "api.IDS": {
         "name": "IDS",
-        "line": 960,
+        "line": 985,
         "col": 6,
-        "endLine": 960,
+        "endLine": 985,
         "endCol": 9,
         "kind": "property",
         "scope": "api"
       },
       "api.EVENT_IDS": {
         "name": "EVENT_IDS",
-        "line": 961,
+        "line": 986,
         "col": 6,
-        "endLine": 961,
+        "endLine": 986,
         "endCol": 15,
         "kind": "property",
         "scope": "api"
       },
       "api.getInstanceId": {
         "name": "getInstanceId",
-        "line": 964,
+        "line": 989,
         "col": 6,
-        "endLine": 964,
+        "endLine": 989,
         "endCol": 52,
         "kind": "property-function",
-        "scope": "api"
+        "scope": "api",
+        "signature": "()"
       },
       "api.isDebugMode": {
         "name": "isDebugMode",
-        "line": 967,
+        "line": 992,
         "col": 6,
-        "endLine": 967,
+        "endLine": 992,
         "endCol": 58,
         "kind": "property-function",
-        "scope": "api"
+        "scope": "api",
+        "signature": "()"
       },
       "api.helpers": {
         "name": "helpers",
-        "line": 970,
+        "line": 995,
         "col": 6,
-        "endLine": 990,
+        "endLine": 1015,
         "endCol": 7,
         "kind": "property",
         "scope": "api"
       },
       "api.helpers.findByName": {
         "name": "findByName",
-        "line": 971,
+        "line": 996,
         "col": 8,
-        "endLine": 974,
+        "endLine": 999,
         "endCol": 9,
         "kind": "property-function",
-        "scope": "api.helpers"
+        "scope": "api.helpers",
+        "signature": "(name)"
       },
       "api.helpers.findByName.items": {
         "name": "items",
-        "line": 972,
+        "line": 997,
         "col": 16,
-        "endLine": 972,
+        "endLine": 997,
         "endCol": 60,
         "kind": "variable",
         "scope": "api.helpers.findByName"
       },
       "api.helpers.listByType": {
         "name": "listByType",
-        "line": 975,
+        "line": 1000,
         "col": 8,
-        "endLine": 977,
+        "endLine": 1002,
         "endCol": 9,
         "kind": "property-function",
-        "scope": "api.helpers"
+        "scope": "api.helpers",
+        "signature": "(typeId)"
       },
       "api.helpers.listByType.type": {
         "name": "type",
-        "line": 976,
+        "line": 1001,
         "col": 46,
-        "endLine": 976,
+        "endLine": 1001,
         "endCol": 58,
         "kind": "property",
         "scope": "api.helpers.listByType"
       },
       "api.helpers.createType": {
         "name": "createType",
-        "line": 978,
+        "line": 1003,
         "col": 8,
-        "endLine": 989,
+        "endLine": 1014,
         "endCol": 9,
         "kind": "property-function",
-        "scope": "api.helpers"
+        "scope": "api.helpers",
+        "signature": "(name, description)"
       },
       "api.helpers.createType.IDS": {
         "name": "IDS",
-        "line": 979,
+        "line": 1004,
         "col": 16,
-        "endLine": 979,
+        "endLine": 1004,
         "endCol": 32,
         "kind": "variable",
         "scope": "api.helpers.createType"
       },
       "api.helpers.createType.id": {
         "name": "id",
-        "line": 982,
+        "line": 1007,
         "col": 12,
-        "endLine": 982,
+        "endLine": 1007,
         "endCol": 14,
         "kind": "property",
         "scope": "api.helpers.createType"
       },
       "api.helpers.createType.name": {
         "name": "name",
-        "line": 983,
+        "line": 1008,
         "col": 12,
-        "endLine": 983,
+        "endLine": 1008,
         "endCol": 16,
         "kind": "property",
         "scope": "api.helpers.createType"
       },
       "api.helpers.createType.type": {
         "name": "type",
-        "line": 984,
+        "line": 1009,
         "col": 12,
-        "endLine": 984,
+        "endLine": 1009,
         "endCol": 37,
         "kind": "property",
         "scope": "api.helpers.createType"
       },
-      "api.helpers.createType.children": {
-        "name": "children",
-        "line": 985,
+      "api.helpers.createType.attachments": {
+        "name": "attachments",
+        "line": 1010,
         "col": 12,
-        "endLine": 985,
-        "endCol": 24,
+        "endLine": 1010,
+        "endCol": 27,
         "kind": "property",
         "scope": "api.helpers.createType"
       },
       "api.helpers.createType.content": {
         "name": "content",
-        "line": 986,
+        "line": 1011,
         "col": 12,
-        "endLine": 986,
+        "endLine": 1011,
         "endCol": 36,
         "kind": "property",
         "scope": "api.helpers.createType"
       },
       "api.helpers.createType.content.description": {
         "name": "description",
-        "line": 986,
+        "line": 1011,
         "col": 23,
-        "endLine": 986,
+        "endLine": 1011,
         "endCol": 34,
         "kind": "property",
         "scope": "api.helpers.createType.content"
       },
       "api.viewport": {
         "name": "viewport",
-        "line": 993,
+        "line": 1018,
         "col": 6,
-        "endLine": 1035,
+        "endLine": 1060,
         "endCol": 7,
         "kind": "property",
         "scope": "api"
       },
       "api.viewport.select": {
         "name": "select",
-        "line": 994,
+        "line": 1019,
         "col": 8,
-        "endLine": 997,
+        "endLine": 1022,
         "endCol": 9,
         "kind": "property-function",
-        "scope": "api.viewport"
+        "scope": "api.viewport",
+        "signature": "(itemId, parentId)"
       },
       "api.viewport.select.selMgr": {
         "name": "selMgr",
-        "line": 995,
+        "line": 1020,
         "col": 16,
-        "endLine": 995,
+        "endLine": 1020,
         "endCol": 79,
         "kind": "variable",
         "scope": "api.viewport.select"
       },
       "api.viewport.clearSelection": {
         "name": "clearSelection",
-        "line": 998,
+        "line": 1023,
         "col": 8,
-        "endLine": 1001,
+        "endLine": 1026,
         "endCol": 9,
         "kind": "property-function",
-        "scope": "api.viewport"
+        "scope": "api.viewport",
+        "signature": "()"
       },
       "api.viewport.clearSelection.selMgr": {
         "name": "selMgr",
-        "line": 999,
+        "line": 1024,
         "col": 16,
-        "endLine": 999,
+        "endLine": 1024,
         "endCol": 79,
         "kind": "variable",
         "scope": "api.viewport.clearSelection"
       },
       "api.viewport.getSelection": {
         "name": "getSelection",
-        "line": 1002,
+        "line": 1027,
         "col": 8,
-        "endLine": 1005,
+        "endLine": 1030,
         "endCol": 9,
         "kind": "property-function",
-        "scope": "api.viewport"
+        "scope": "api.viewport",
+        "signature": "()"
       },
       "api.viewport.getSelection.selMgr": {
         "name": "selMgr",
-        "line": 1003,
+        "line": 1028,
         "col": 16,
-        "endLine": 1003,
+        "endLine": 1028,
         "endCol": 75,
         "kind": "variable",
         "scope": "api.viewport.getSelection"
       },
       "api.viewport.getSelectionParent": {
         "name": "getSelectionParent",
-        "line": 1006,
+        "line": 1031,
         "col": 8,
-        "endLine": 1009,
+        "endLine": 1034,
         "endCol": 9,
         "kind": "property-function",
-        "scope": "api.viewport"
+        "scope": "api.viewport",
+        "signature": "()"
       },
       "api.viewport.getSelectionParent.selMgr": {
         "name": "selMgr",
-        "line": 1007,
+        "line": 1032,
         "col": 16,
-        "endLine": 1007,
+        "endLine": 1032,
         "endCol": 75,
         "kind": "variable",
         "scope": "api.viewport.getSelectionParent"
       },
       "api.viewport.getRoot": {
         "name": "getRoot",
-        "line": 1010,
+        "line": 1035,
         "col": 8,
-        "endLine": 1014,
+        "endLine": 1039,
         "endCol": 9,
         "kind": "property-function",
-        "scope": "api.viewport"
+        "scope": "api.viewport",
+        "signature": "()"
       },
       "api.viewport.getRoot.params": {
         "name": "params",
-        "line": 1012,
+        "line": 1037,
         "col": 16,
-        "endLine": 1012,
+        "endLine": 1037,
         "endCol": 68,
         "kind": "variable",
         "scope": "api.viewport.getRoot"
       },
       "api.viewport.getRootView": {
         "name": "getRootView",
-        "line": 1015,
+        "line": 1040,
         "col": 8,
-        "endLine": 1018,
+        "endLine": 1043,
         "endCol": 9,
         "kind": "property-function",
-        "scope": "api.viewport"
+        "scope": "api.viewport",
+        "signature": "()"
       },
       "api.viewport.getRootView.vpMgr": {
         "name": "vpMgr",
-        "line": 1016,
+        "line": 1041,
         "col": 16,
-        "endLine": 1016,
+        "endLine": 1041,
         "endCol": 77,
         "kind": "variable",
         "scope": "api.viewport.getRootView"
       },
       "api.viewport.setRootView": {
         "name": "setRootView",
-        "line": 1019,
+        "line": 1044,
         "col": 8,
-        "endLine": 1022,
+        "endLine": 1047,
         "endCol": 9,
         "kind": "property-function",
-        "scope": "api.viewport"
+        "scope": "api.viewport",
+        "signature": "(viewId)"
       },
       "api.viewport.setRootView.vpMgr": {
         "name": "vpMgr",
-        "line": 1020,
+        "line": 1045,
         "col": 16,
-        "endLine": 1020,
+        "endLine": 1045,
         "endCol": 77,
         "kind": "variable",
         "scope": "api.viewport.setRootView"
       },
       "api.viewport.restorePreviousRootView": {
         "name": "restorePreviousRootView",
-        "line": 1023,
+        "line": 1048,
         "col": 8,
-        "endLine": 1026,
+        "endLine": 1051,
         "endCol": 9,
         "kind": "property-function",
-        "scope": "api.viewport"
+        "scope": "api.viewport",
+        "signature": "()"
       },
       "api.viewport.restorePreviousRootView.vpMgr": {
         "name": "vpMgr",
-        "line": 1024,
+        "line": 1049,
         "col": 16,
-        "endLine": 1024,
+        "endLine": 1049,
         "endCol": 77,
         "kind": "variable",
         "scope": "api.viewport.restorePreviousRootView"
       },
       "api.viewport.getRootViewConfig": {
         "name": "getRootViewConfig",
-        "line": 1027,
+        "line": 1052,
         "col": 8,
-        "endLine": 1030,
+        "endLine": 1055,
         "endCol": 9,
         "kind": "property-function",
-        "scope": "api.viewport"
+        "scope": "api.viewport",
+        "signature": "()"
       },
       "api.viewport.getRootViewConfig.vpMgr": {
         "name": "vpMgr",
-        "line": 1028,
+        "line": 1053,
         "col": 16,
-        "endLine": 1028,
+        "endLine": 1053,
         "endCol": 77,
         "kind": "variable",
         "scope": "api.viewport.getRootViewConfig"
       },
       "api.viewport.updateRootViewConfig": {
         "name": "updateRootViewConfig",
-        "line": 1031,
+        "line": 1056,
         "col": 8,
-        "endLine": 1034,
+        "endLine": 1059,
         "endCol": 9,
         "kind": "property-function",
-        "scope": "api.viewport"
+        "scope": "api.viewport",
+        "signature": "(updates)"
       },
       "api.viewport.updateRootViewConfig.vpMgr": {
         "name": "vpMgr",
-        "line": 1032,
+        "line": 1057,
         "col": 16,
-        "endLine": 1032,
+        "endLine": 1057,
         "endCol": 77,
         "kind": "variable",
         "scope": "api.viewport.updateRootViewConfig"
       },
       "api.events": {
         "name": "events",
-        "line": 1038,
+        "line": 1063,
         "col": 6,
-        "endLine": 1041,
+        "endLine": 1066,
         "endCol": 7,
         "kind": "property",
         "scope": "api"
       },
       "api.events.on": {
         "name": "on",
-        "line": 1039,
+        "line": 1064,
         "col": 8,
-        "endLine": 1039,
+        "endLine": 1064,
         "endCol": 64,
         "kind": "property-function",
-        "scope": "api.events"
+        "scope": "api.events",
+        "signature": "(event, handler)"
       },
       "api.events.off": {
         "name": "off",
-        "line": 1040,
+        "line": 1065,
         "col": 8,
-        "endLine": 1040,
+        "endLine": 1065,
         "endCol": 66,
         "kind": "property-function",
-        "scope": "api.events"
+        "scope": "api.events",
+        "signature": "(event, handler)"
       },
       "api.rerenderItem": {
         "name": "rerenderItem",
-        "line": 1044,
+        "line": 1069,
         "col": 6,
-        "endLine": 1044,
+        "endLine": 1069,
         "endCol": 62,
         "kind": "property-function",
-        "scope": "api"
+        "scope": "api",
+        "signature": "(itemId)"
       },
       "api.rerenderByView": {
         "name": "rerenderByView",
-        "line": 1047,
+        "line": 1072,
         "col": 6,
-        "endLine": 1047,
+        "endLine": 1072,
         "endCol": 66,
         "kind": "property-function",
-        "scope": "api"
+        "scope": "api",
+        "signature": "(viewId)"
       },
       "api.rerenderByType": {
         "name": "rerenderByType",
-        "line": 1050,
+        "line": 1075,
         "col": 6,
-        "endLine": 1050,
+        "endLine": 1075,
         "endCol": 66,
         "kind": "property-function",
-        "scope": "api"
+        "scope": "api",
+        "signature": "(typeId)"
       },
       "api.instances": {
         "name": "instances",
-        "line": 1053,
+        "line": 1078,
         "col": 6,
-        "endLine": 1057,
+        "endLine": 1082,
         "endCol": 7,
         "kind": "property",
         "scope": "api"
       },
       "api.instances.getByItemId": {
         "name": "getByItemId",
-        "line": 1054,
+        "line": 1079,
         "col": 8,
-        "endLine": 1054,
+        "endLine": 1079,
         "endCol": 71,
         "kind": "property-function",
-        "scope": "api.instances"
+        "scope": "api.instances",
+        "signature": "(itemId)"
       },
       "api.instances.getAll": {
         "name": "getAll",
-        "line": 1055,
+        "line": 1080,
         "col": 8,
-        "endLine": 1055,
+        "endLine": 1080,
         "endCol": 49,
         "kind": "property-function",
-        "scope": "api.instances"
+        "scope": "api.instances",
+        "signature": "()"
       },
       "api.instances.getSummary": {
         "name": "getSummary",
-        "line": 1056,
+        "line": 1081,
         "col": 8,
-        "endLine": 1056,
+        "endLine": 1081,
         "endCol": 57,
         "kind": "property-function",
-        "scope": "api.instances"
+        "scope": "api.instances",
+        "signature": "()"
       },
       "RenderingSystem.createErrorView": {
         "name": "createErrorView",
-        "line": 1063,
+        "line": 1088,
         "col": 2,
-        "endLine": 1085,
+        "endLine": 1110,
         "endCol": 3,
         "kind": "method",
-        "scope": "RenderingSystem"
+        "scope": "RenderingSystem",
+        "signature": "(error, itemId)"
       },
       "RenderingSystem.createErrorView.container": {
         "name": "container",
-        "line": 1064,
+        "line": 1089,
         "col": 10,
-        "endLine": 1064,
+        "endLine": 1089,
         "endCol": 51,
         "kind": "variable",
         "scope": "RenderingSystem.createErrorView"
       },
       "RenderingSystem.createErrorView.heading": {
         "name": "heading",
-        "line": 1067,
+        "line": 1092,
         "col": 10,
-        "endLine": 1067,
+        "endLine": 1092,
         "endCol": 48,
         "kind": "variable",
         "scope": "RenderingSystem.createErrorView"
       },
       "RenderingSystem.createErrorView.message": {
         "name": "message",
-        "line": 1071,
+        "line": 1096,
         "col": 10,
-        "endLine": 1071,
+        "endLine": 1096,
         "endCol": 49,
         "kind": "variable",
         "scope": "RenderingSystem.createErrorView"
       },
       "RenderingSystem.createErrorView.stack": {
         "name": "stack",
-        "line": 1075,
+        "line": 1100,
         "col": 10,
-        "endLine": 1075,
+        "endLine": 1100,
         "endCol": 47,
         "kind": "variable",
         "scope": "RenderingSystem.createErrorView"
       },
       "RenderingSystem.createErrorView.editBtn": {
         "name": "editBtn",
-        "line": 1079,
+        "line": 1104,
         "col": 10,
-        "endLine": 1079,
+        "endLine": 1104,
         "endCol": 52,
         "kind": "variable",
         "scope": "RenderingSystem.createErrorView"

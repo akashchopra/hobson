@@ -1,3 +1,7 @@
+// Item: acorn
+// ID: ac0ac0ac-0001-0000-0000-000000000000
+// Type: 66666666-0000-0000-0000-000000000000
+
 /**
  * Minified by jsDelivr using Terser v5.39.0.
  * Original file: /npm/acorn@8.15.0/dist/acorn.js

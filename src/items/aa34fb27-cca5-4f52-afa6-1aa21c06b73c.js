@@ -1,3 +1,7 @@
+// Item: field-view-bootloader-source
+// ID: aa34fb27-cca5-4f52-afa6-1aa21c06b73c
+// Type: cccccccc-0000-0000-0000-000000000000
+
 export async function render(value, options, api) {
   const { label } = options;
 

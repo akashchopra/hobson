@@ -1,3 +1,7 @@
+// Item: kernel-export
+// ID: aaaa0001-1000-0000-0000-000000000000
+// Type: 66666666-0000-0000-0000-000000000000
+
 // Kernel Export Library
 // Exports starter packs based on starter-pack/* tags
 

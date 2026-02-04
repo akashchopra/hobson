@@ -1,3 +1,7 @@
+// Item: system:default-error-handler
+// ID: e7707000-0000-0000-0000-000000000002
+// Type: 66666666-0000-0000-0000-000000000000
+
 
 // Default error handler - creates error items and shows toast notifications
 
@@ -17,7 +21,7 @@ export async function onSystemError({ error, context, timestamp }, api) {
       name: `Error: ${(error.message || '').substring(0, 40)}`,
       created: Date.now(),
       modified: Date.now(),
-      children: [],
+      attachments: [],
       content: {
         message: error.message,
         errorType: error.name || 'Error',
@@ -189,7 +193,7 @@ function showErrorToast(message, errorId, context, api) {
     } else {
       // Error was in child - open error as sibling of root's children
       if (currentRoot) {
-        await api.addChild(currentRoot, errorId);
+        await api.attach(currentRoot, errorId);
         await api.renderViewport();
       } else {
         await api.navigate(errorId);

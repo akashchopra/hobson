@@ -1,3 +1,7 @@
+// Item: type-picker-lib
+// ID: a1b2c3d4-type-pick-0000-000000000000
+// Type: 66666666-0000-0000-0000-000000000000
+
 
 /**
  * Shows a modal dialog for selecting an item type.

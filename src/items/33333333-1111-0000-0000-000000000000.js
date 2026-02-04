@@ -1,3 +1,7 @@
+// Item: kernel:core
+// ID: 33333333-1111-0000-0000-000000000000
+// Type: 33333333-0000-0000-0000-000000000000
+
 export async function loadKernel(require, storageBackend) {
   // Event system - Phase 2: Object-based emit with type hierarchy dispatch
   class EventBus {
@@ -1114,14 +1118,14 @@ export async function loadKernel(require, storageBackend) {
       if (!parent.attachments) parent.attachments = [];
 
       // Check if child already exists
-      if (parent.attachments.some(c => c.id === childId)) {
+      if (parent.attachments.some(c => c.id === itemId)) {
         return; // Already a child
       }
 
       // Append minimal child object - views add layout properties as needed
       const updated = {
         ...parent,
-        attachments: [...parent.attachments, { id: childId }]
+        attachments: [...parent.attachments, { id: itemId }]
       };
 
       // Save silently without triggering re-render
@@ -1132,7 +1136,7 @@ export async function loadKernel(require, storageBackend) {
       const parent = await this.storage.get(parentId);
       const updated = {
         ...parent,
-        attachments: parent.attachments.filter(c => c.id !== childId)
+        attachments: parent.attachments.filter(c => c.id !== itemId)
       };
       // Save silently without triggering re-render (consistent with addChild)
       await this.saveItem(updated);
@@ -1140,7 +1144,7 @@ export async function loadKernel(require, storageBackend) {
 
     async setAttachmentView(parentId, itemId, viewId) {
       const parent = await this.storage.get(parentId);
-      const childIndex = parent.attachments.findIndex(c => c.id === childId);
+      const childIndex = parent.attachments.findIndex(c => c.id === itemId);
 
       if (childIndex < 0) {
         const error = new Error(`Item ${itemId} not found in container ${parentId}`);

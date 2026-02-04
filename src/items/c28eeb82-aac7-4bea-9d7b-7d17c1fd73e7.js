@@ -1,3 +1,7 @@
+// Item: field-editor-select
+// ID: c28eeb82-aac7-4bea-9d7b-7d17c1fd73e7
+// Type: 66666666-0000-0000-0000-000000000000
+
 
 export function render(value, onChange, api, options = {}) {
   const select = document.createElement('select');

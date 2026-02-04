@@ -1,3 +1,7 @@
+// Item: help-dialog
+// ID: f1111111-0006-0000-0000-000000000000
+// Type: 66666666-0000-0000-0000-000000000000
+
 // Help Dialog Library
 // Provides the keyboard shortcuts help modal. Moved from kernel to userland.
 

@@ -1,3 +1,7 @@
+// Item: hobson-markdown
+// ID: a1b2c3d4-5e6f-7a8b-9c0d-e1f2a3b4c5d6
+// Type: 66666666-0000-0000-0000-000000000000
+
 
 
 // Hobson-flavored markdown renderer

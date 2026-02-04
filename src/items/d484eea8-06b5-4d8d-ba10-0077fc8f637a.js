@@ -1,3 +1,7 @@
+// Item: marked
+// ID: d484eea8-06b5-4d8d-ba10-0077fc8f637a
+// Type: 66666666-0000-0000-0000-000000000000
+
 
 // Minimal marked.js implementation - just what we need
 // Full library: https://cdn.jsdelivr.net/npm/marked@11.1.1/marked.min.js

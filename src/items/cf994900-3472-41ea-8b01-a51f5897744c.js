@@ -1,3 +1,7 @@
+// Item: codemirror-markdown
+// ID: cf994900-3472-41ea-8b01-a51f5897744c
+// Type: 66666666-0000-0000-0000-000000000000
+
 /**
  * Minified by jsDelivr using Terser v5.39.0.
  * Original file: /npm/codemirror@5.65.16/mode/markdown/markdown.js

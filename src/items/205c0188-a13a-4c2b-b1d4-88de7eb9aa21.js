@@ -1,3 +1,7 @@
+// Item: field-view-object
+// ID: 205c0188-a13a-4c2b-b1d4-88de7eb9aa21
+// Type: cccccccc-0000-0000-0000-000000000000
+
 
 export async function render(value, options, api) {
   const { mode, onChange, label, indent = 0 } = options;

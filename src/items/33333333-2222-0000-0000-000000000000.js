@@ -1,3 +1,7 @@
+// Item: kernel:storage
+// ID: 33333333-2222-0000-0000-000000000000
+// Type: 33333333-0000-0000-0000-000000000000
+
 // kernel-storage module
 // See [Architecture Overview - Storage Architecture](item://a0a0a0a0-d0c0-4000-8000-000000000003#Storage-Architecture)
 // Delegates all storage operations to the backend provided by the bootloader.

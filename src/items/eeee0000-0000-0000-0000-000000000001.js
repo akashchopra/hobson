@@ -1,3 +1,7 @@
+// Item: element-inspector
+// ID: eeee0000-0000-0000-0000-000000000001
+// Type: 66666666-0000-0000-0000-000000000000
+
 // Element Inspector Library
 // Provides tools to inspect which view/item rendered any UI element
 
@@ -262,7 +266,7 @@ async function showInspectorOverlay(info, x, y, api) {
 
       // Build navigation params for scroll-to-line support
       // Inspector links point to code, so field is 'code'
-      const navigateTo = line ? { field: 'code', line: parseInt(line, 10) } : null;
+      const navigateTo = line ? { field: 'code', lines: line } : null;
 
       // Follow same pattern as hobson-markdown: sibling if in container, else root
       if (api.siblingContainer) {
@@ -284,13 +288,13 @@ async function showInspectorOverlay(info, x, y, api) {
                 }
                 return c;
               });
-              await api.set({ ...rootItem, children: updatedChildren, modified: Date.now() });
+              await api.set({ ...rootItem, attachments: updatedChildren, modified: Date.now() });
             } else {
               // Add as new child with navigateTo in view config
               const newChild = { id: targetId, view: { navigateTo } };
               await api.set({
                 ...rootItem,
-                children: [...(rootItem.attachments || []), newChild],
+                attachments: [...(rootItem.attachments || []), newChild],
                 modified: Date.now()
               });
             }

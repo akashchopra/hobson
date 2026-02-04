@@ -1,3 +1,7 @@
+// Item: field-editor-number
+// ID: beef5317-d6dc-4287-8c6d-de2f0635f5f9
+// Type: 66666666-0000-0000-0000-000000000000
+
 
 export function render(value, onChange, api, options = {}) {
   const props = {

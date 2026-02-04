@@ -1,3 +1,7 @@
+// Item: selection-manager
+// ID: f1111111-0001-0000-0000-000000000000
+// Type: 66666666-0000-0000-0000-000000000000
+
 // Selection Manager Library
 // Handles item selection state via events, replacing kernel viewport selection
 

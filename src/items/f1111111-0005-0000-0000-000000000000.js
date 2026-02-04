@@ -1,3 +1,7 @@
+// Item: item-palette
+// ID: f1111111-0005-0000-0000-000000000000
+// Type: 66666666-0000-0000-0000-000000000000
+
 // Item Palette Library
 // Provides the item search/navigation modal. Moved from kernel to userland.
 // See [item-palette documentation](item://f1111111-0005-0000-0000-000000000000)

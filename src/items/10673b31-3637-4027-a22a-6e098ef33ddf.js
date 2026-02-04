@@ -1,3 +1,7 @@
+// Item: codemirror-css
+// ID: 10673b31-3637-4027-a22a-6e098ef33ddf
+// Type: 23b66a83-5c61-4320-9517-5aa2abad2d1f
+
 /**
  * Minified by jsDelivr using clean-css v5.3.3.
  * Original file: /npm/codemirror@5.65.16/lib/codemirror.css

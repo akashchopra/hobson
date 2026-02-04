@@ -3,7 +3,7 @@
   "name": "field-view-object",
   "type": "cccccccc-0000-0000-0000-000000000000",
   "created": 1769700000000,
-  "modified": 1770144885099,
+  "modified": 1770216046982,
   "content": {
     "description": "Renders an object's properties as individual editable fields, inferring the appropriate editor for each value type.",
     "code": "\nexport async function render(value, options, api) {\n  const { mode, onChange, label, indent = 0 } = options;\n  const obj = value || {};\n  const isEditable = mode === 'editable' && onChange;\n\n  const wrapper = api.createElement('div', { class: 'field-object' });\n  wrapper.style.cssText = 'display: flex; flex-direction: column; gap: 8px;';\n\n  if (label) {\n    const labelEl = api.createElement('div');\n    labelEl.textContent = label;\n    labelEl.style.cssText = 'font-weight: 600; font-size: 14px; color: var(--color-text); margin-bottom: 4px;';\n    wrapper.appendChild(labelEl);\n  }\n\n  const propsContainer = api.createElement('div');\n  propsContainer.style.cssText = 'display: flex; flex-direction: column; gap: 12px; padding-left: ' + (indent > 0 ? '16px' : '0') + '; border-left: ' + (indent > 0 ? '2px solid var(--color-border)' : 'none') + ';';\n\n  // Helper to update a property\n  const updateProp = (key, newValue) => {\n    const updated = { ...obj, [key]: newValue };\n    onChange(updated);\n  };\n\n  // Helper to delete a property\n  const deleteProp = (key) => {\n    const updated = { ...obj };\n    delete updated[key];\n    onChange(updated);\n  };\n\n  // Helper to rename a property\n  const renameProp = (oldKey, newKey) => {\n    if (oldKey === newKey || !newKey) return;\n    const updated = {};\n    for (const k of Object.keys(obj)) {\n      if (k === oldKey) {\n        updated[newKey] = obj[oldKey];\n      } else {\n        updated[k] = obj[k];\n      }\n    }\n    onChange(updated);\n  };\n\n  // Helper to render _ prefixed fields as collapsed JSON textarea\n  const renderInternalField = (key, val) => {\n    const container = api.createElement('div');\n    container.style.cssText = 'display: flex; flex-direction: column; gap: 4px;';\n    \n    const jsonStr = JSON.stringify(val, null, 2);\n    const lineCount = jsonStr.split('\\n').length;\n    const isLarge = lineCount > 10;\n    \n    // Collapsible header for large internal fields\n    if (isLarge) {\n      const summary = api.createElement('div');\n      summary.style.cssText = 'font-size: 12px; color: var(--color-text-tertiary); cursor: pointer; user-select: none;';\n      const keyCount = typeof val === 'object' && val !== null ? Object.keys(val).length : 0;\n      summary.textContent = '(internal, ' + keyCount + ' entries, click to expand)';\n      container.appendChild(summary);\n      \n      const textarea = api.createElement('textarea');\n      textarea.value = jsonStr;\n      textarea.style.cssText = 'display: none; width: 100%; min-height: 150px; max-height: 400px; font-family: monospace; font-size: 12px; padding: 8px; border: 1px solid var(--color-border); border-radius: var(--border-radius); resize: vertical; background: var(--color-bg-surface-alt);';\n      if (!isEditable) textarea.readOnly = true;\n      \n      if (isEditable) {\n        const errorEl = api.createElement('div');\n        errorEl.style.cssText = 'display: none; color: var(--color-danger); font-size: 12px;';\n        textarea.oninput = () => {\n          try {\n            const parsed = JSON.parse(textarea.value);\n            updateProp(key, parsed);\n            errorEl.style.display = 'none';\n            textarea.style.borderColor = 'var(--color-border)';\n          } catch (e) {\n            errorEl.textContent = 'Invalid JSON';\n            errorEl.style.display = 'block';\n            textarea.style.borderColor = 'var(--color-danger)';\n          }\n        };\n        container.appendChild(errorEl);\n      }\n      \n      container.appendChild(textarea);\n      \n      summary.onclick = () => {\n        const isHidden = textarea.style.display === 'none';\n        textarea.style.display = isHidden ? 'block' : 'none';\n        summary.textContent = isHidden \n          ? '(internal, ' + keyCount + ' entries, click to collapse)'\n          : '(internal, ' + keyCount + ' entries, click to expand)';\n      };\n    } else {\n      // Small internal field - show directly as textarea\n      const textarea = api.createElement('textarea');\n      textarea.value = jsonStr;\n      textarea.style.cssText = 'width: 100%; min-height: 60px; font-family: monospace; font-size: 12px; padding: 8px; border: 1px solid var(--color-border); border-radius: var(--border-radius); resize: vertical; background: var(--color-bg-surface-alt);';\n      if (!isEditable) textarea.readOnly = true;\n      \n      if (isEditable) {\n        const errorEl = api.createElement('div');\n        errorEl.style.cssText = 'color: var(--color-danger); font-size: 12px; min-height: 16px;';\n        textarea.oninput = () => {\n          try {\n            const parsed = JSON.parse(textarea.value);\n            updateProp(key, parsed);\n            errorEl.textContent = '';\n            textarea.style.borderColor = 'var(--color-border)';\n          } catch (e) {\n            errorEl.textContent = 'Invalid JSON';\n            textarea.style.borderColor = 'var(--color-danger)';\n          }\n        };\n        container.appendChild(textarea);\n        container.appendChild(errorEl);\n      } else {\n        container.appendChild(textarea);\n      }\n    }\n    \n    return container;\n  };\n\n  // Render each property\n  const keys = Object.keys(obj);\n  for (const key of keys) {\n    const val = obj[key];\n    const propRow = api.createElement('div', { class: 'field-object-prop' });\n    propRow.style.cssText = 'display: flex; flex-direction: column; gap: 4px;';\n\n    // Property header with key name and delete button\n    const propHeader = api.createElement('div');\n    propHeader.style.cssText = 'display: flex; align-items: center; gap: 8px;';\n\n    if (isEditable) {\n      // Editable key name\n      const keyInput = api.createElement('input', { type: 'text' });\n      keyInput.value = key;\n      keyInput.style.cssText = 'font-weight: 500; font-size: 13px; color: var(--color-text-secondary); background: transparent; border: 1px solid transparent; border-radius: 3px; padding: 2px 4px; width: auto; min-width: 80px;';\n      keyInput.onblur = () => renameProp(key, keyInput.value.trim());\n      keyInput.onkeydown = (e) => { if (e.key === 'Enter') keyInput.blur(); };\n      propHeader.appendChild(keyInput);\n\n      // Delete button\n      const deleteBtn = api.createElement('button');\n      deleteBtn.textContent = '\\u00d7';\n      deleteBtn.style.cssText = 'background: none; border: none; color: var(--color-text-tertiary); cursor: pointer; font-size: 16px; padding: 0 4px; line-height: 1;';\n      deleteBtn.onclick = () => {\n        if (confirm('Delete property \"' + key + '\"?')) {\n          deleteProp(key);\n          propRow.remove();\n        }\n      };\n      deleteBtn.title = 'Remove property';\n      propHeader.appendChild(deleteBtn);\n    } else {\n      const keyLabel = api.createElement('span');\n      keyLabel.textContent = key;\n      keyLabel.style.cssText = 'font-weight: 500; font-size: 13px; color: var(--color-text-secondary);';\n      propHeader.appendChild(keyLabel);\n    }\n\n    propRow.appendChild(propHeader);\n\n    // Handle _ prefixed fields specially - render as JSON textarea\n    if (key.startsWith('_')) {\n      const fieldEl = renderInternalField(key, val);\n      propRow.appendChild(fieldEl);\n      propsContainer.appendChild(propRow);\n      continue;\n    }\n\n    // Render value based on type\n    const valType = Array.isArray(val) ? 'array' : typeof val;\n    let fieldEl;\n\n    try {\n      if (valType === 'string') {\n        // Check if it looks like a GUID (item reference)\n        const guidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;\n        if (guidPattern.test(val)) {\n          const fieldView = await api.require('field-view-item-ref');\n          fieldEl = await fieldView.render(val, {\n            mode,\n            onChange: isEditable ? (v) => updateProp(key, v) : null\n          }, api);\n        } else if (val.length > 100 || val.includes('\\n')) {\n          // Use textarea for long strings or strings with newlines\n          const fieldView = await api.require('field-view-textarea');\n          fieldEl = await fieldView.render(val, {\n            mode,\n            onChange: isEditable ? (v) => updateProp(key, v) : null\n          }, api);\n        } else {\n          const fieldView = await api.require('field-view-text');\n          fieldEl = await fieldView.render(val, {\n            mode,\n            onChange: isEditable ? (v) => updateProp(key, v) : null\n          }, api);\n        }\n      } else if (valType === 'number') {\n        const fieldView = await api.require('field-view-number');\n        fieldEl = await fieldView.render(val, {\n          mode,\n          onChange: isEditable ? (v) => updateProp(key, v) : null\n        }, api);\n      } else if (valType === 'boolean') {\n        const fieldView = await api.require('field-view-checkbox');\n        fieldEl = await fieldView.render(val, {\n          mode,\n          onChange: isEditable ? (v) => updateProp(key, v) : null\n        }, api);\n      } else if (valType === 'object' && val !== null) {\n        // Recursively render nested objects\n        fieldEl = await render(val, {\n          mode,\n          onChange: isEditable ? (v) => updateProp(key, v) : null,\n          indent: indent + 1\n        }, api);\n      } else {\n        // Arrays and other types: fall back to JSON\n        const fieldView = await api.require('field-view-json');\n        fieldEl = await fieldView.render(val, {\n          mode,\n          onChange: isEditable ? (v) => updateProp(key, v) : null\n        }, api);\n      }\n    } catch (e) {\n      // Fallback if field view not found\n      fieldEl = api.createElement('span');\n      fieldEl.textContent = JSON.stringify(val);\n      fieldEl.style.cssText = 'font-family: monospace; font-size: 13px;';\n    }\n\n    propRow.appendChild(fieldEl);\n    propsContainer.appendChild(propRow);\n  }\n\n  wrapper.appendChild(propsContainer);\n\n  // Add property button (only in editable mode)\n  if (isEditable) {\n    const addRow = api.createElement('div');\n    addRow.style.cssText = 'margin-top: 8px;';\n\n    const addBtn = api.createElement('button');\n    addBtn.textContent = '+ Add Property';\n    addBtn.style.cssText = 'padding: 4px 12px; font-size: 12px; cursor: pointer; background: var(--color-bg-surface-alt); border: 1px solid var(--color-border-light); border-radius: var(--border-radius); color: var(--color-text-secondary);';\n    addBtn.onclick = () => {\n      // Generate unique key name\n      let newKey = 'newProperty';\n      let i = 1;\n      while (obj.hasOwnProperty(newKey)) {\n        newKey = 'newProperty' + i++;\n      }\n      onChange({ ...obj, [newKey]: '' });\n    };\n    addRow.appendChild(addBtn);\n    wrapper.appendChild(addRow);\n  }\n\n  // Show empty state\n  if (keys.length === 0 && !isEditable) {\n    const emptyEl = api.createElement('div');\n    emptyEl.textContent = '(empty object)';\n    emptyEl.style.cssText = 'color: var(--color-text-tertiary); font-style: italic; font-size: 13px;';\n    propsContainer.appendChild(emptyEl);\n  }\n\n  return wrapper;\n}\n",
@@ -12,10 +12,11 @@
         "name": "render",
         "line": 2,
         "col": 7,
-        "endLine": 181,
+        "endLine": 274,
         "endCol": 1,
         "kind": "function",
-        "scope": null
+        "scope": null,
+        "signature": "(value, options, api)"
       },
       "render.obj": {
         "name": "obj",
@@ -69,7 +70,8 @@
         "endLine": 24,
         "endCol": 3,
         "kind": "function",
-        "scope": "render"
+        "scope": "render",
+        "signature": "(key, newValue)"
       },
       "updateProp.updated": {
         "name": "updated",
@@ -96,7 +98,8 @@
         "endLine": 31,
         "endCol": 3,
         "kind": "function",
-        "scope": "render"
+        "scope": "render",
+        "signature": "(key)"
       },
       "deleteProp.updated": {
         "name": "updated",
@@ -114,7 +117,8 @@
         "endLine": 45,
         "endCol": 3,
         "kind": "function",
-        "scope": "render"
+        "scope": "render",
+        "signature": "(oldKey, newKey)"
       },
       "renameProp.updated": {
         "name": "updated",
@@ -134,182 +138,282 @@
         "kind": "variable",
         "scope": "renameProp"
       },
-      "render.keys": {
-        "name": "keys",
+      "render.renderInternalField": {
+        "name": "renderInternalField",
         "line": 48,
         "col": 8,
-        "endLine": 48,
+        "endLine": 125,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "render",
+        "signature": "(key, val)"
+      },
+      "renderInternalField.container": {
+        "name": "container",
+        "line": 49,
+        "col": 10,
+        "endLine": 49,
+        "endCol": 46,
+        "kind": "variable",
+        "scope": "renderInternalField"
+      },
+      "renderInternalField.jsonStr": {
+        "name": "jsonStr",
+        "line": 52,
+        "col": 10,
+        "endLine": 52,
+        "endCol": 48,
+        "kind": "variable",
+        "scope": "renderInternalField"
+      },
+      "renderInternalField.lineCount": {
+        "name": "lineCount",
+        "line": 53,
+        "col": 10,
+        "endLine": 53,
+        "endCol": 48,
+        "kind": "variable",
+        "scope": "renderInternalField"
+      },
+      "renderInternalField.isLarge": {
+        "name": "isLarge",
+        "line": 54,
+        "col": 10,
+        "endLine": 54,
+        "endCol": 34,
+        "kind": "variable",
+        "scope": "renderInternalField"
+      },
+      "renderInternalField.summary": {
+        "name": "summary",
+        "line": 58,
+        "col": 12,
+        "endLine": 58,
+        "endCol": 46,
+        "kind": "variable",
+        "scope": "renderInternalField"
+      },
+      "renderInternalField.keyCount": {
+        "name": "keyCount",
+        "line": 60,
+        "col": 12,
+        "endLine": 60,
+        "endCol": 92,
+        "kind": "variable",
+        "scope": "renderInternalField"
+      },
+      "renderInternalField.textarea": {
+        "name": "textarea",
+        "line": 98,
+        "col": 12,
+        "endLine": 98,
+        "endCol": 52,
+        "kind": "variable",
+        "scope": "renderInternalField"
+      },
+      "renderInternalField.errorEl": {
+        "name": "errorEl",
+        "line": 104,
+        "col": 14,
+        "endLine": 104,
+        "endCol": 48,
+        "kind": "variable",
+        "scope": "renderInternalField"
+      },
+      "renderInternalField.parsed": {
+        "name": "parsed",
+        "line": 108,
+        "col": 18,
+        "endLine": 108,
+        "endCol": 53,
+        "kind": "variable",
+        "scope": "renderInternalField"
+      },
+      "renderInternalField.isHidden": {
+        "name": "isHidden",
+        "line": 90,
+        "col": 14,
+        "endLine": 90,
+        "endCol": 58,
+        "kind": "variable",
+        "scope": "renderInternalField"
+      },
+      "render.keys": {
+        "name": "keys",
+        "line": 128,
+        "col": 8,
+        "endLine": 128,
         "endCol": 31,
         "kind": "variable",
         "scope": "render"
       },
       "render.key": {
         "name": "key",
-        "line": 49,
+        "line": 129,
         "col": 13,
-        "endLine": 49,
+        "endLine": 129,
         "endCol": 16,
         "kind": "variable",
         "scope": "render"
       },
       "render.val": {
         "name": "val",
-        "line": 50,
+        "line": 130,
         "col": 10,
-        "endLine": 50,
+        "endLine": 130,
         "endCol": 24,
         "kind": "variable",
         "scope": "render"
       },
       "render.propRow": {
         "name": "propRow",
-        "line": 51,
+        "line": 131,
         "col": 10,
-        "endLine": 51,
+        "endLine": 131,
         "endCol": 76,
         "kind": "variable",
         "scope": "render"
       },
       "render.propHeader": {
         "name": "propHeader",
-        "line": 55,
+        "line": 135,
         "col": 10,
-        "endLine": 55,
+        "endLine": 135,
         "endCol": 47,
         "kind": "variable",
         "scope": "render"
       },
       "render.keyInput": {
         "name": "keyInput",
-        "line": 60,
+        "line": 140,
         "col": 12,
-        "endLine": 60,
+        "endLine": 140,
         "endCol": 67,
         "kind": "variable",
         "scope": "render"
       },
       "render.deleteBtn": {
         "name": "deleteBtn",
-        "line": 68,
+        "line": 148,
         "col": 12,
-        "endLine": 68,
+        "endLine": 148,
         "endCol": 51,
         "kind": "variable",
         "scope": "render"
       },
       "render.keyLabel": {
         "name": "keyLabel",
-        "line": 75,
+        "line": 160,
         "col": 12,
-        "endLine": 75,
+        "endLine": 160,
         "endCol": 48,
-        "kind": "variable",
-        "scope": "render"
-      },
-      "render.valType": {
-        "name": "valType",
-        "line": 84,
-        "col": 10,
-        "endLine": 84,
-        "endCol": 61,
         "kind": "variable",
         "scope": "render"
       },
       "render.fieldEl": {
         "name": "fieldEl",
-        "line": 85,
+        "line": 178,
         "col": 8,
-        "endLine": 85,
+        "endLine": 178,
         "endCol": 15,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.valType": {
+        "name": "valType",
+        "line": 177,
+        "col": 10,
+        "endLine": 177,
+        "endCol": 61,
         "kind": "variable",
         "scope": "render"
       },
       "render.guidPattern": {
         "name": "guidPattern",
-        "line": 90,
+        "line": 183,
         "col": 14,
-        "endLine": 90,
+        "endLine": 183,
         "endCol": 93,
         "kind": "variable",
         "scope": "render"
       },
       "render.fieldView": {
         "name": "fieldView",
-        "line": 132,
+        "line": 225,
         "col": 14,
-        "endLine": 132,
+        "endLine": 225,
         "endCol": 62,
         "kind": "variable",
         "scope": "render"
       },
       "render.mode": {
         "name": "mode",
-        "line": 134,
+        "line": 227,
         "col": 10,
-        "endLine": 134,
+        "endLine": 227,
         "endCol": 14,
         "kind": "property",
         "scope": "render"
       },
       "render.onChange": {
         "name": "onChange",
-        "line": 135,
+        "line": 228,
         "col": 10,
-        "endLine": 135,
+        "endLine": 228,
         "endCol": 65,
         "kind": "property",
         "scope": "render"
       },
       "render.indent": {
         "name": "indent",
-        "line": 128,
+        "line": 221,
         "col": 10,
-        "endLine": 128,
+        "endLine": 221,
         "endCol": 28,
         "kind": "property",
         "scope": "render"
       },
       "render.addRow": {
         "name": "addRow",
-        "line": 153,
+        "line": 246,
         "col": 10,
-        "endLine": 153,
+        "endLine": 246,
         "endCol": 43,
         "kind": "variable",
         "scope": "render"
       },
       "render.addBtn": {
         "name": "addBtn",
-        "line": 156,
+        "line": 249,
         "col": 10,
-        "endLine": 156,
+        "endLine": 249,
         "endCol": 46,
         "kind": "variable",
         "scope": "render"
       },
       "render.newKey": {
         "name": "newKey",
-        "line": 166,
+        "line": 259,
         "col": 25,
-        "endLine": 166,
+        "endLine": 259,
         "endCol": 37,
         "kind": "property",
         "scope": "render"
       },
       "render.i": {
         "name": "i",
-        "line": 162,
+        "line": 255,
         "col": 10,
-        "endLine": 162,
+        "endLine": 255,
         "endCol": 15,
         "kind": "variable",
         "scope": "render"
       },
       "render.emptyEl": {
         "name": "emptyEl",
-        "line": 174,
+        "line": 267,
         "col": 10,
-        "endLine": 174,
+        "endLine": 267,
         "endCol": 44,
         "kind": "variable",
         "scope": "render"

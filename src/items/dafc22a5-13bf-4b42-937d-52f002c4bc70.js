@@ -1,3 +1,7 @@
+// Item: system:view-update-watcher
+// ID: dafc22a5-13bf-4b42-937d-52f002c4bc70
+// Type: 22222222-0000-0000-0000-000000000000
+
 // Watches for view code changes and re-renders all items using that view.
 // This ensures that when you edit a view's code, all items currently
 // rendered with that view update immediately.

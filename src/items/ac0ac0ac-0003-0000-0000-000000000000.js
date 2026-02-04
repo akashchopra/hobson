@@ -1,3 +1,7 @@
+// Item: symbol-extractor-lib
+// ID: ac0ac0ac-0003-0000-0000-000000000000
+// Type: 66666666-0000-0000-0000-000000000000
+
 // symbol-extractor-lib
 // Extracts symbol definitions from JavaScript code using Acorn
 
