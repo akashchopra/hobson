@@ -6,6 +6,10 @@
 // ID: ef793c27-2d4b-4c99-b05a-2769db5bc5a9
 // Type: aaaaaaaa-0000-0000-0000-000000000000
 
+// Item: system:spatial-canvas-view
+// ID: ef793c27-2d4b-4c99-b05a-2769db5bc5a9
+// Type: aaaaaaaa-0000-0000-0000-000000000000
+
 // Item: spatial-canvas-view
 // ID: ef793c27-2d4b-4c99-b05a-2769db5bc5a9
 // Type: aaaaaaaa-0000-0000-0000-000000000000
@@ -350,6 +354,7 @@ export async function render(item, api) {
     // Helper: Create a window wrapper for a child item
     // This is extracted so addSibling can create windows without full re-render
     const createWindowForChild = async (childId, childView = {}, navigateTo = null) => {
+      console.log('[spatial-canvas] createWindowForChild:', childId, 'navigateTo:', navigateTo);
       // Get container dimensions for anchor calculations
       const containerRect = container.getBoundingClientRect();
       const containerWidth = containerRect.width || 1000;

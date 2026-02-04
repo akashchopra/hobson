@@ -411,7 +411,7 @@ export async function loadKernel(require, storageBackend) {
       try {
         const itemPalette = await this.moduleSystem.require('item-palette');
         if (itemPalette?.show) {
-          await itemPalette.show();
+          await itemPalette.show(this.createREPLAPI());
           return;
         }
       } catch {

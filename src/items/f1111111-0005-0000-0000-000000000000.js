@@ -7,16 +7,24 @@
 // See [item-palette documentation](item://f1111111-0005-0000-0000-000000000000)
 
 let api = null;
+let searchLib = null;
 
 export async function onSystemBootComplete({ safeMode }, _api) {
   if (safeMode) return;
   api = _api;
+  searchLib = await api.require('item-search-lib');
 }
 
 // [BEGIN:show]
-export async function show() {
+export async function show(_api) {
+  // Lazy init: use passed api if module was reloaded after import
+  if (_api && !api) {
+    api = _api;
+    searchLib = await api.require('item-search-lib');
+  }
+
   if (!api) {
-    console.warn('item-palette: not initialized');
+    console.warn('item-palette: not initialized (no api available)');
     return;
   }
 
@@ -57,7 +65,7 @@ export async function show() {
 
   const searchInput = document.createElement("input");
   searchInput.type = "text";
-  searchInput.placeholder = "Search items...";
+  searchInput.placeholder = "Search items... (type:xxx, tag:xxx, #xxx)";
   searchInput.style.cssText = "width: 100%; padding: 8px 12px; font-size: 16px; border: 1px solid var(--color-border-light); border-radius: var(--border-radius); outline: none;";
   searchContainer.appendChild(searchInput);
   modal.appendChild(searchContainer);
@@ -67,16 +75,16 @@ export async function show() {
   listContainer.style.cssText = "flex: 1; overflow: auto; padding: 8px;";
   modal.appendChild(listContainer);
 
-  const items = await api.getAll();
-  items.sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id));
+  // Pre-fetch all items for empty query display
+  const allItems = await api.getAll();
+  allItems.sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id));
 
-  const renderList = (filter = "") => {
+  let searchTimeout = null;
+
+  const renderItems = (items) => {
     listContainer.innerHTML = "";
-    const filtered = filter
-      ? items.filter(i => (i.name || i.id).toLowerCase().includes(filter.toLowerCase()))
-      : items;
 
-    for (const item of filtered) {
+    for (const item of items) {
       const row = document.createElement("div");
       row.style.cssText = "padding: 8px 12px; cursor: pointer; border-radius: var(--border-radius); display: flex; justify-content: space-between; align-items: center;";
       row.onmouseenter = () => row.style.background = "var(--color-bg-hover)";
@@ -88,10 +96,12 @@ export async function show() {
       name.textContent = item.name || item.id.slice(0, 8);
       info.appendChild(name);
 
-      const typeLine = document.createElement("div");
-      typeLine.style.cssText = "font-size: 12px; color: var(--color-text-secondary);";
-      typeLine.textContent = item.type.slice(0, 8);
-      info.appendChild(typeLine);
+      // Metadata
+      const typeItem = allItems.find(i => i.id == item.type);
+      const meta = document.createElement("div");
+      meta.style.cssText = 'font-size: 12px; color: var(--color-text-secondary);';
+      meta.textContent = typeItem.name;
+      info.appendChild(meta);
 
       row.appendChild(info);
 
@@ -104,7 +114,7 @@ export async function show() {
       listContainer.appendChild(row);
     }
 
-    if (filtered.length === 0) {
+    if (items.length === 0) {
       const empty = document.createElement("div");
       empty.style.cssText = "padding: 20px; text-align: center; color: var(--color-text-secondary);";
       empty.textContent = "No items found";
@@ -112,9 +122,25 @@ export async function show() {
     }
   };
 
-  renderList();
+  const doSearch = async (query) => {
+    if (!query || query.trim().length === 0) {
+      renderItems(allItems);
+      return;
+    }
 
-  searchInput.oninput = () => renderList(searchInput.value);
+    listContainer.innerHTML = '<div style="padding: 20px; text-align: center; color: var(--color-text-secondary);">Searching...</div>';
+
+    const results = await searchLib.searchItems(query, api, { allItems });
+    renderItems(results);
+  };
+
+  // Initial render
+  renderItems(allItems);
+
+  searchInput.oninput = () => {
+    if (searchTimeout) clearTimeout(searchTimeout);
+    searchTimeout = setTimeout(() => doSearch(searchInput.value), 150);
+  };
 
   overlay.appendChild(modal);
 

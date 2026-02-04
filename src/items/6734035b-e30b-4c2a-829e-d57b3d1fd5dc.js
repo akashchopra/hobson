@@ -5,6 +5,255 @@
 // Item Search Library
 // See [item-search-lib documentation](item://6734035b-e30b-4c2a-829e-d57b3d1fd5dc)
 
+const TYPE_DEFINITION_ID = '11111111-0000-0000-0000-000000000000';
+const TAG_TYPE_ID = 'd1da8525-b0dc-4a79-8bef-0cbed1ed003d';
+
+// [BEGIN:tokenize]
+/**
+ * Tokenize a query string, respecting quoted phrases
+ */
+function tokenize(queryString) {
+  const tokens = [];
+  let current = '';
+  let inQuotes = false;
+  let quoteChar = null;
+
+  for (let i = 0; i < queryString.length; i++) {
+    const char = queryString[i];
+
+    if ((char === '"' || char === "'") && !inQuotes) {
+      inQuotes = true;
+      quoteChar = char;
+    } else if (char === quoteChar && inQuotes) {
+      inQuotes = false;
+      quoteChar = null;
+    } else if (char === ' ' && !inQuotes) {
+      if (current.length > 0) {
+        tokens.push(current);
+        current = '';
+      }
+    } else {
+      current += char;
+    }
+  }
+
+  if (current.length > 0) {
+    tokens.push(current);
+  }
+
+  return tokens;
+}
+// [END:tokenize]
+
+// [BEGIN:parseQuery]
+/**
+ * Parse a query string into structured filters
+ * @param {string} queryString - The query to parse
+ * @param {Object} caches - { typeCache: Map<name, id>, tagCache: Map<name, id> }
+ * @returns {Object} Parsed filters
+ */
+export function parseQuery(queryString, caches = {}) {
+  const { typeCache = new Map(), tagCache = new Map() } = caches;
+
+  const result = {
+    text: [],
+    negatedText: [],
+    types: {
+      include: [],
+      exclude: []
+    },
+    tags: {
+      include: [],
+      exclude: []
+    },
+    fields: {}
+  };
+
+  const tokens = tokenize(queryString);
+
+  for (const token of tokens) {
+    const isNegated = token.startsWith('-');
+    const cleanToken = isNegated ? token.slice(1) : token;
+
+    // type:xxx or type:xxx+
+    if (cleanToken.startsWith('type:')) {
+      const typeValue = cleanToken.slice(5);
+      const inherited = typeValue.endsWith('+');
+      const typeNames = (inherited ? typeValue.slice(0, -1) : typeValue).split(',');
+
+      for (const typeName of typeNames) {
+        const typeId = resolveTypeId(typeName, typeCache);
+        const typeFilter = { id: typeId, inherited };
+
+        if (isNegated) {
+          result.types.exclude.push(typeFilter);
+        } else {
+          result.types.include.push(typeFilter);
+        }
+      }
+      continue;
+    }
+
+    // tag:xxx or #xxx
+    if (cleanToken.startsWith('tag:') || cleanToken.startsWith('#')) {
+      const tagValue = cleanToken.startsWith('tag:') ? cleanToken.slice(4) : cleanToken.slice(1);
+      const tagNames = tagValue.split(',');
+      // Each name can resolve to multiple IDs, flatten them
+      const tagIdArrays = tagNames.map(name => resolveTagIds(name, tagCache));
+      const tagIds = tagIdArrays.flat();
+
+      if (isNegated) {
+        result.tags.exclude.push(...tagIds);
+      } else {
+        result.tags.include.push(tagIds);
+      }
+      continue;
+    }
+
+    // name:xxx
+    if (cleanToken.startsWith('name:')) {
+      result.fields.name = cleanToken.slice(5);
+      continue;
+    }
+
+    // title:xxx
+    if (cleanToken.startsWith('title:')) {
+      result.fields.title = cleanToken.slice(6);
+      continue;
+    }
+
+    // Plain text term
+    if (isNegated) {
+      result.negatedText.push(cleanToken.toLowerCase());
+    } else {
+      result.text.push(token.toLowerCase());
+    }
+  }
+
+  return result;
+}
+
+function resolveTypeId(name, typeCache) {
+  const lowerName = name.toLowerCase();
+  if (typeCache.has(lowerName)) {
+    return typeCache.get(lowerName);
+  }
+  if (name.match(/^[0-9a-f-]{36}$/i)) {
+    return name;
+  }
+  return name;
+}
+
+function resolveTagIds(name, tagCache) {
+  const lowerName = name.toLowerCase();
+  if (tagCache.has(lowerName)) {
+    return tagCache.get(lowerName);  // Returns array of IDs
+  }
+  if (name.match(/^[0-9a-f-]{36}$/i)) {
+    return [name];
+  }
+  return [name];
+}
+// [END:parseQuery]
+
+// [BEGIN:buildSearchableText]
+/**
+ * Build searchable text from an item
+ */
+function buildSearchableText(item) {
+  return [
+    item.id,
+    item.type,
+    item.name,
+    item.content?.title,
+    item.content?.body,
+    item.content?.description,
+    JSON.stringify(item.content)
+  ].filter(Boolean).join(' ').toLowerCase();
+}
+// [END:buildSearchableText]
+
+// [BEGIN:matchesFilters]
+/**
+ * Check if an item matches the parsed filters
+ * @param {Object} item - The item to check
+ * @param {Object} filters - Parsed filters from parseQuery
+ * @param {Object} api - The API object
+ * @returns {Promise<boolean>}
+ */
+export async function matchesFilters(item, filters, api) {
+  // Text matching
+  if (filters.text.length > 0) {
+    const searchableText = buildSearchableText(item);
+    if (!filters.text.every(term => searchableText.includes(term))) {
+      return false;
+    }
+  }
+
+  // Negated text
+  if (filters.negatedText.length > 0) {
+    const searchableText = buildSearchableText(item);
+    if (filters.negatedText.some(term => searchableText.includes(term))) {
+      return false;
+    }
+  }
+
+  // Type includes (OR across all type filters)
+  if (filters.types.include.length > 0) {
+    const matches = await Promise.all(
+      filters.types.include.map(async ({ id, inherited }) => {
+        if (inherited && api.typeChainIncludes) {
+          return api.typeChainIncludes(item.type, id);
+        }
+        return item.type === id;
+      })
+    );
+    if (!matches.some(m => m)) return false;
+  }
+
+  // Type excludes
+  for (const { id, inherited } of filters.types.exclude) {
+    if (inherited && api.typeChainIncludes) {
+      if (await api.typeChainIncludes(item.type, id)) return false;
+    } else {
+      if (item.type === id) return false;
+    }
+  }
+
+  // Tag includes - outer array is AND, inner is OR
+  const itemTags = item.tags || [];
+  for (const orGroup of filters.tags.include) {
+    if (!orGroup.some(tagId => itemTags.includes(tagId))) {
+      return false;
+    }
+  }
+
+  // Tag excludes
+  for (const tagId of filters.tags.exclude) {
+    if (itemTags.includes(tagId)) return false;
+  }
+
+  // Field-specific filters
+  for (const [field, value] of Object.entries(filters.fields)) {
+    const itemValue = (item[field] || item.content?.[field] || '').toLowerCase();
+    if (!itemValue.includes(value.toLowerCase())) {
+      return false;
+    }
+  }
+
+  return true;
+}
+// [END:matchesFilters]
+
+// [BEGIN:hasFilterSyntax]
+/**
+ * Check if a query string contains filter syntax
+ */
+function hasFilterSyntax(query) {
+  return /(?:^|\s)(?:-?(?:type:|tag:|name:|title:)|#)/.test(query);
+}
+// [END:hasFilterSyntax]
+
 // [BEGIN:searchItems]
 /**
  * Search items based on query string
@@ -37,22 +286,68 @@ export async function searchItems(query, api, options = {}) {
     itemsToSearch = await api.getAll();
   }
 
-  const queryLower = query.toLowerCase();
-  const matches = itemsToSearch.filter(item => {
-    const searchableText = [
-      item.id,
-      item.type,
-      item.name,
-      item.content?.title,
-      item.content?.body,
-      item.content?.description,
-      JSON.stringify(item.content)
-    ].filter(Boolean).join(' ').toLowerCase();
+  // Fast path: no filter syntax, use simple text matching
+  if (!hasFilterSyntax(query)) {
+    const queryLower = query.toLowerCase();
+    const matches = itemsToSearch.filter(item => {
+      const searchableText = buildSearchableText(item);
+      return searchableText.includes(queryLower);
+    });
+    matches.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+    return matches;
+  }
 
-    return searchableText.includes(queryLower);
-  });
+  // Build lookup caches for type and tag names
+  const typeCache = new Map();
+  const tagCache = new Map();  // name -> [id1, id2, ...] (multiple tags can share names)
 
-  matches.sort((a, b) => a.name.localeCompare(b.name));
+  try {
+    const allTypes = await api.query({ type: api.IDS?.TYPE_DEFINITION || TYPE_DEFINITION_ID });
+    allTypes.forEach(t => {
+      if (t.name) {
+        const fullName = t.name.toLowerCase();
+        typeCache.set(fullName, t.id);
+        // Also index without namespace prefix (kernel:code -> code)
+        if (fullName.includes(':')) {
+          const shortName = fullName.split(':').pop();
+          if (!typeCache.has(shortName)) {
+            typeCache.set(shortName, t.id);
+          }
+        }
+      }
+    });
+  } catch (err) {
+    console.warn('Could not load types for search cache:', err);
+  }
+
+  try {
+    const allTags = await api.query({ type: TAG_TYPE_ID });
+    allTags.forEach(t => {
+      const name = (t.name || t.content?.name || '').toLowerCase();
+      if (name) {
+        // Store as array since multiple tags can have same name
+        if (!tagCache.has(name)) {
+          tagCache.set(name, []);
+        }
+        tagCache.get(name).push(t.id);
+      }
+    });
+  } catch (err) {
+    console.warn('Could not load tags for search cache:', err);
+  }
+
+  // Parse the query with caches
+  const filters = parseQuery(query, { typeCache, tagCache });
+
+  // Filter items
+  const matches = [];
+  for (const item of itemsToSearch) {
+    if (await matchesFilters(item, filters, api)) {
+      matches.push(item);
+    }
+  }
+
+  matches.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
   return matches;
 }
 // [END:searchItems]

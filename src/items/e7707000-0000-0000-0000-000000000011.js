@@ -95,7 +95,7 @@ export async function render(errorList, api) {
     // Store as children
     const updated = {
       ...errorList,
-      children: errors.map(e => ({ id: e.id }))
+      attachments: errors.map(e => ({ id: e.id }))
     };
     await api.set(updated);
 
