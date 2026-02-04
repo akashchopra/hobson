@@ -31,8 +31,8 @@ No traditional build system - the project is a single HTML file (`src/bootloader
   type: String,                  // GUID of type item
   created: Timestamp,
   modified: Timestamp,
-  children: String[],            // Array of child IDs (or positioned objects)
-  content: Map<String, Any>
+  attachments: String[],         // Compositional - items attached to this item (or positioned objects)
+  content: Map<String, Any>      // content.parent for taxonomical hierarchy
 }
 ```
 
@@ -90,15 +90,24 @@ VIEWPORT: "88888888-0000-0000-0000-000000000000"
 
 ### Spatial Windowing
 
-Children can be positioned objects for 2D canvas layout:
+Attachments can be positioned objects for 2D canvas layout:
 ```javascript
-children: [{ id: "item-1", x: 20, y: 20, width: 400, height: 300, z: 0 }]
+attachments: [{ id: "item-1", x: 20, y: 20, width: 400, height: 300, z: 0 }]
 ```
+
+### Terminology Note
+
+`attachments` (top-level) and `parent` (in `content`) are **not inverses**:
+- `attachments` = compositional (items displayed within this item)
+- `content.parent` = taxonomical (where this item sits in a classification tree)
+
+See `docs/Tags_and_Classification.md` for full terminology discussion.
 
 ## Key Documentation Files
 
 - `docs/Design_Decisions_Log.md` - Source of truth for architectural decisions
 - `docs/Technical_Implementation_Notes.md` - Code-level implementation details
+- `docs/Tags_and_Classification.md` - Tagging system and `attachments`/`parent` terminology
 - `docs/PROJECT_MEMORY.md` - User preferences and working context
 
 ## Key Source Files
