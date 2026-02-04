@@ -8,8 +8,31 @@
 export class ModuleSystem {
   constructor(kernel) {
     this.kernel = kernel;
-    this.moduleCache = new Map(); // itemId -> { module, timestamp }
+    this.moduleCache = new Map(); // itemId -> { module, timestamp, name }
+    this.nameCache = new Map(); // name -> itemId (cached name resolution)
     this.loadingPromises = new Map(); // itemId -> Promise (tracks in-flight loads)
+  }
+
+  // Initialize event listeners for cache invalidation
+  // Called by kernel after event system is ready
+  initEventListeners() {
+    // Listen for item updates to invalidate module cache
+    this.kernel.events.on(this.kernel.EVENT_IDS.ITEM_UPDATED, (event) => {
+      const id = event.content?.id;
+      if (!id) return;
+
+      // Invalidate module cache for changed item
+      if (this.moduleCache.has(id)) {
+        this.moduleCache.delete(id);
+      }
+      // Invalidate name cache if this item's name was cached
+      for (const [name, cachedId] of this.nameCache) {
+        if (cachedId === id) {
+          this.nameCache.delete(name);
+          break;
+        }
+      }
+    });
   }
 
   // [BEGIN:require]
@@ -21,11 +44,18 @@ export class ModuleSystem {
 
     // Check if it's a name (not a UUID pattern)
     if (!nameOrId.includes("-") || nameOrId.length < 36) {
-      const items = await this.kernel.storage.query({ name: nameOrId });
-      if (items.length === 0) {
-        throw new Error(`Code item not found: ${nameOrId}`);
+      // Check name cache first (avoids storage.query)
+      const cachedId = this.nameCache.get(nameOrId);
+      if (cachedId) {
+        itemId = cachedId;
+      } else {
+        const items = await this.kernel.storage.query({ name: nameOrId });
+        if (items.length === 0) {
+          throw new Error(`Code item not found: ${nameOrId}`);
+        }
+        itemId = items[0].id;
+        this.nameCache.set(nameOrId, itemId);
       }
-      itemId = items[0].id;
     }
 
     // Check for circular dependencies
@@ -34,12 +64,10 @@ export class ModuleSystem {
       throw new Error(`Circular dependency detected: ${chain} -> ${itemId}`);
     }
 
-    // Check cache first
-    const item = await this.kernel.storage.get(itemId);
+    // Check module cache first (avoids storage.get for cached modules)
+    // Cache is invalidated via item:updated events, so we trust it
     const cached = this.moduleCache.get(itemId);
-
-    // Return cached module if fresh
-    if (cached && cached.timestamp >= item.modified) {
+    if (cached) {
       return cached.module;
     }
 
@@ -50,24 +78,25 @@ export class ModuleSystem {
       return inFlight;
     }
 
-    // Start loading and track the promise
+    // Create the loading promise immediately to prevent race conditions
+    // Other concurrent requires will hit the inFlight check above
     callStack.add(itemId);
-    const originalName = nameOrId !== itemId ? nameOrId : item.name;
-    const loadPromise = this.evaluateCodeItem(item, callStack)
-      .then(module => {
-        // Update cache on success, including name for getCached lookups
-        this.moduleCache.set(itemId, {
-          module,
-          timestamp: item.modified,
-          name: originalName
-        });
-        return module;
-      })
-      .finally(() => {
-        // Always clean up in-flight tracking
-        this.loadingPromises.delete(itemId);
-        callStack.delete(itemId);
+    const loadPromise = (async () => {
+      const item = await this.kernel.storage.get(itemId);
+      const originalName = nameOrId !== itemId ? nameOrId : item.name;
+      const module = await this.evaluateCodeItem(item, callStack);
+      // Update cache on success
+      this.moduleCache.set(itemId, {
+        module,
+        timestamp: item.modified,
+        name: originalName
       });
+      return module;
+    })().finally(() => {
+      // Always clean up in-flight tracking
+      this.loadingPromises.delete(itemId);
+      callStack.delete(itemId);
+    });
 
     this.loadingPromises.set(itemId, loadPromise);
     return loadPromise;
@@ -179,6 +208,7 @@ export class ModuleSystem {
 
   clearCache() {
     this.moduleCache.clear();
+    this.nameCache.clear();
     this.loadingPromises.clear();
   }
 }

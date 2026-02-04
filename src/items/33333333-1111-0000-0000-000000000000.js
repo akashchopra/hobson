@@ -140,6 +140,9 @@ export async function loadKernel(require, storageBackend) {
       this.safeMode = new SafeMode(this);
       this.events = new EventBus(this);
 
+      // Initialize module system event listeners for cache invalidation
+      this.moduleSystem.initEventListeners();
+
       // currentRoot removed - managed by userland viewport-manager
       this._safeMode = false;
       this.debugMode = false;
