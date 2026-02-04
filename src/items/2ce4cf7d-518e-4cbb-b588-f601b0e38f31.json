@@ -3,10 +3,508 @@
   "name": "field-view-tags",
   "type": "cccccccc-0000-0000-0000-000000000000",
   "created": 1769281070569,
-  "modified": 1770216046436,
+  "modified": 1770235209395,
   "content": {
     "description": "Field view for tag arrays. Displays colored pills with hierarchical paths. Editable mode includes hybrid tag picker (tree + search).",
-    "code": "\n// Tag field view - displays and edits arrays of tag IDs\nexport function render(value, options, api) {\n  const { mode, onChange, label } = options;\n  const tags = value || [];\n\n  const wrapper = api.createElement('div', { className: 'field-tags' });\n  wrapper.style.cssText = 'display: flex; flex-direction: column; gap: 8px;';\n\n  if (label) {\n    const labelEl = api.createElement('label');\n    labelEl.textContent = label;\n    labelEl.style.cssText = 'font-weight: 500; font-size: 14px; color: var(--color-text);';\n    wrapper.appendChild(labelEl);\n  }\n\n  // Container for pills\n  const pillsContainer = api.createElement('div');\n  pillsContainer.style.cssText = 'display: flex; flex-wrap: wrap; gap: 6px; align-items: center;';\n  wrapper.appendChild(pillsContainer);\n\n  // State for editable mode\n  let pendingTags = [...tags];\n  let isPickerOpen = false;\n  let pickerPanel = null;\n  const expandedState = new Map();\n\n  // Helper: get tag path\n  const getTagPath = async (tag) => {\n    const path = [];\n    let currentTag = tag;\n    while (currentTag) {\n      const tagName = currentTag.content?.name || currentTag.name || currentTag.id;\n      path.unshift(tagName);\n      if (currentTag.content?.parent) {\n        try {\n          currentTag = await api.get(currentTag.content.parent);\n        } catch { break; }\n      } else {\n        break;\n      }\n    }\n    return path.join(' / ');\n  };\n\n  // Render function (called on state changes)\n  const renderPills = async () => {\n    pillsContainer.innerHTML = '';\n    const tagsToRender = mode === 'editable' ? pendingTags : tags;\n\n    for (const tagId of tagsToRender) {\n      try {\n        const tag = await api.get(tagId);\n        const tagPath = await getTagPath(tag);\n        const tagColor = tag.content?.color || 'var(--color-primary)';\n\n        const pill = api.createElement('span');\n        pill.style.cssText = 'display: inline-flex; align-items: center; gap: 6px; padding: 4px ' +\n          (mode === 'editable' ? '8px 4px 12px' : '12px') +\n          '; background: ' + tagColor + '20; border: 1px solid ' + tagColor +\n          '; border-radius: 12px; font-size: 12px; font-weight: 500; color: ' + tagColor + ';';\n\n        const pillText = api.createElement('span');\n        pillText.textContent = tagPath;\n        pill.appendChild(pillText);\n\n        // Remove button in editable mode\n        if (mode === 'editable' && onChange) {\n          const removeBtn = api.createElement('button');\n          removeBtn.textContent = '×';\n          removeBtn.style.cssText = 'background: none; border: none; color: ' + tagColor +\n            '; cursor: pointer; padding: 0; margin: 0; font-size: 14px; line-height: 1; font-weight: bold;';\n          removeBtn.onclick = async () => {\n            pendingTags = pendingTags.filter(id => id !== tagId);\n            onChange(pendingTags);\n            await renderPills();\n          };\n          pill.appendChild(removeBtn);\n        }\n\n        pillsContainer.appendChild(pill);\n      } catch (err) {\n        // Tag not found\n        const pill = api.createElement('span');\n        pill.style.cssText = 'display: inline-block; padding: 4px 12px; background: var(--color-danger-light); border: 1px solid var(--color-danger); border-radius: 12px; font-size: 12px; color: var(--color-danger); font-family: monospace;';\n        pill.title = 'Tag not found: ' + tagId;\n        pill.textContent = tagId.substring(0, 8) + '...';\n        pillsContainer.appendChild(pill);\n      }\n    }\n\n    // Add Tag button in editable mode\n    if (mode === 'editable' && onChange) {\n      const addBtn = api.createElement('button');\n      addBtn.textContent = '+ Add Tag';\n      addBtn.style.cssText = 'padding: 4px 12px; background: var(--color-primary); color: var(--color-bg-surface); border: none; border-radius: 12px; font-size: 12px; font-weight: 500; cursor: pointer;';\n      addBtn.onclick = () => togglePicker();\n      pillsContainer.appendChild(addBtn);\n    }\n  };\n\n  // Toggle picker panel\n  const togglePicker = async () => {\n    isPickerOpen = !isPickerOpen;\n    if (isPickerOpen) {\n      await showPicker();\n    } else {\n      hidePicker();\n    }\n  };\n\n  const showPicker = async () => {\n    if (pickerPanel) pickerPanel.remove();\n\n    pickerPanel = api.createElement('div');\n    pickerPanel.style.cssText = 'margin-top: 12px; padding: 15px; background: var(--color-bg-surface-alt); border: 1px solid var(--color-border); border-radius: var(--border-radius); max-height: 400px; overflow-y: auto;';\n\n    const header = api.createElement('div');\n    header.style.cssText = 'display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;';\n\n    const title = api.createElement('div');\n    title.textContent = 'Select tags';\n    title.style.cssText = 'font-weight: 500; color: var(--color-text);';\n    header.appendChild(title);\n\n    const closeBtn = api.createElement('button');\n    closeBtn.textContent = '×';\n    closeBtn.style.cssText = 'background: none; border: none; font-size: 18px; cursor: pointer; color: var(--color-text-secondary);';\n    closeBtn.onclick = () => { isPickerOpen = false; hidePicker(); };\n    header.appendChild(closeBtn);\n\n    pickerPanel.appendChild(header);\n\n    // Load libraries and all items\n    const treeBuilder = await api.require('tag-tree-builder');\n    const tagPickerUI = await api.require('tag-picker-ui');\n    const allItems = await api.getAll();\n\n    // Discover items used as tags (same algorithm as tag browser)\n    const usedAsTag = new Set();\n    allItems.forEach(item => {\n      (item.content?.tags || []).forEach(tagId => usedAsTag.add(tagId));\n    });\n\n    // Walk up parent chains to include ancestors\n    const toInclude = new Set(usedAsTag);\n    for (const tagId of usedAsTag) {\n      let current = await api.get(tagId);\n      while (current?.content?.parent) {\n        toInclude.add(current.content.parent);\n        current = await api.get(current.content.parent);\n      }\n    }\n\n    // Build tree from discovered tags\n    const tagItems = (await Promise.all(\n      [...toInclude].map(id => api.get(id))\n    )).filter(Boolean);\n    const tree = treeBuilder.buildTagTree(tagItems);\n\n    // Helper to add tag\n    const selectTag = async (tagId) => {\n      if (!pendingTags.includes(tagId)) {\n        pendingTags.push(tagId);\n        onChange(pendingTags);\n        await renderPills();\n        renderTree();\n        searchInput.value = '';\n        searchResults.innerHTML = '';\n      }\n    };\n\n    // Search box for finding any item\n    const searchInput = api.createElement('input');\n    searchInput.type = 'text';\n    searchInput.placeholder = 'Search all items...';\n    searchInput.style.cssText = 'width: 100%; padding: 8px; margin-bottom: 12px; border: 1px solid var(--color-border); border-radius: var(--border-radius); box-sizing: border-box;';\n\n    const searchResults = api.createElement('div');\n    searchResults.style.cssText = 'margin-bottom: 12px;';\n\n    searchInput.oninput = () => {\n      const query = searchInput.value.toLowerCase().trim();\n      searchResults.innerHTML = '';\n\n      if (query.length < 2) return;\n\n      const matches = allItems.filter(item => {\n        const name = (item.name || item.content?.name || '').toLowerCase();\n        return name.includes(query) && !pendingTags.includes(item.id);\n      }).slice(0, 10);\n\n      matches.forEach(item => {\n        const row = api.createElement('div');\n        row.style.cssText = 'padding: 6px 8px; cursor: pointer; border-radius: 4px; background: var(--color-bg-surface); margin-bottom: 4px;';\n        row.textContent = item.name || item.content?.name || item.id.substring(0, 8);\n        row.onmouseover = () => { row.style.background = 'var(--color-primary-light)'; };\n        row.onmouseout = () => { row.style.background = 'var(--color-bg-surface)'; };\n        row.onclick = () => selectTag(item.id);\n        searchResults.appendChild(row);\n      });\n    };\n\n    pickerPanel.appendChild(searchInput);\n    pickerPanel.appendChild(searchResults);\n\n    // Tree section label\n    if (tagItems.length > 0) {\n      const treeLabel = api.createElement('div');\n      treeLabel.textContent = 'Previously used tags:';\n      treeLabel.style.cssText = 'font-size: 12px; color: var(--color-text-secondary); margin-bottom: 8px;';\n      pickerPanel.appendChild(treeLabel);\n    }\n\n    const treeContainer = api.createElement('div');\n    pickerPanel.appendChild(treeContainer);\n\n    wrapper.appendChild(pickerPanel);\n\n    const renderTree = () => {\n      treeContainer.innerHTML = '';\n      if (tagItems.length === 0) {\n        const emptyMsg = api.createElement('div');\n        emptyMsg.textContent = 'No tags in use yet. Search above to tag with any item.';\n        emptyMsg.style.cssText = 'color: var(--color-text-secondary); font-style: italic; font-size: 13px;';\n        treeContainer.appendChild(emptyMsg);\n        return;\n      }\n      tagPickerUI.renderTagPicker({\n        container: treeContainer,\n        tree: tree,\n        selectedTags: pendingTags,\n        expandedState: expandedState,\n        onToggle: (tagId) => selectTag(tagId),\n        onExpand: () => renderTree()\n      }, api);\n    };\n\n    renderTree();\n  };\n\n  const hidePicker = () => {\n    if (pickerPanel) {\n      pickerPanel.remove();\n      pickerPanel = null;\n    }\n  };\n\n  // Initial render\n  renderPills();\n\n  return wrapper;\n}\n"
+    "code": "\n// Tag field view - displays and edits arrays of tag IDs\nexport function render(value, options, api) {\n  const { mode, onChange, label } = options;\n  const tags = value || [];\n\n  const wrapper = api.createElement('div', { className: 'field-tags' });\n  wrapper.style.cssText = 'display: flex; flex-direction: column; gap: 8px;';\n\n  if (label) {\n    const labelEl = api.createElement('label');\n    labelEl.textContent = label;\n    labelEl.style.cssText = 'font-weight: 500; font-size: 14px; color: var(--color-text);';\n    wrapper.appendChild(labelEl);\n  }\n\n  // Container for pills\n  const pillsContainer = api.createElement('div');\n  pillsContainer.style.cssText = 'display: flex; flex-wrap: wrap; gap: 6px; align-items: center;';\n  wrapper.appendChild(pillsContainer);\n\n  // State for editable mode\n  let pendingTags = [...tags];\n  let isPickerOpen = false;\n  let pickerPanel = null;\n  const expandedState = new Map();\n\n  // Helper: get tag path\n  const getTagPath = async (tag) => {\n    const path = [];\n    let currentTag = tag;\n    while (currentTag) {\n      const tagName = currentTag.content?.name || currentTag.name || currentTag.id;\n      path.unshift(tagName);\n      if (currentTag.content?.parent) {\n        try {\n          currentTag = await api.get(currentTag.content.parent);\n        } catch { break; }\n      } else {\n        break;\n      }\n    }\n    return path.join(' / ');\n  };\n\n  // Render function (called on state changes)\n  const renderPills = async () => {\n    pillsContainer.innerHTML = '';\n    const tagsToRender = mode === 'editable' ? pendingTags : tags;\n\n    for (const tagId of tagsToRender) {\n      try {\n        const tag = await api.get(tagId);\n        const tagPath = await getTagPath(tag);\n        const tagColor = tag.content?.color || 'var(--color-primary)';\n\n        const pill = api.createElement('span');\n        pill.style.cssText = 'display: inline-flex; align-items: center; gap: 6px; padding: 4px ' +\n          (mode === 'editable' ? '8px 4px 12px' : '12px') +\n          '; background: ' + tagColor + '20; border: 1px solid ' + tagColor +\n          '; border-radius: 12px; font-size: 12px; font-weight: 500; color: ' + tagColor + ';';\n\n        const pillText = api.createElement('span');\n        pillText.textContent = tagPath;\n        pill.appendChild(pillText);\n\n        // Remove button in editable mode\n        if (mode === 'editable' && onChange) {\n          const removeBtn = api.createElement('button');\n          removeBtn.textContent = '×';\n          removeBtn.style.cssText = 'background: none; border: none; color: ' + tagColor +\n            '; cursor: pointer; padding: 0; margin: 0; font-size: 14px; line-height: 1; font-weight: bold;';\n          removeBtn.onclick = async () => {\n            pendingTags = pendingTags.filter(id => id !== tagId);\n            onChange(pendingTags);\n            await renderPills();\n          };\n          pill.appendChild(removeBtn);\n        }\n\n        pillsContainer.appendChild(pill);\n      } catch (err) {\n        // Tag not found\n        const pill = api.createElement('span');\n        pill.style.cssText = 'display: inline-block; padding: 4px 12px; background: var(--color-danger-light); border: 1px solid var(--color-danger); border-radius: 12px; font-size: 12px; color: var(--color-danger); font-family: monospace;';\n        pill.title = 'Tag not found: ' + tagId;\n        pill.textContent = tagId.substring(0, 8) + '...';\n        pillsContainer.appendChild(pill);\n      }\n    }\n\n    // Add Tag button in editable mode\n    if (mode === 'editable' && onChange) {\n      const addBtn = api.createElement('button');\n      addBtn.textContent = '+ Add Tag';\n      addBtn.style.cssText = 'padding: 4px 12px; background: var(--color-primary); color: var(--color-bg-surface); border: none; border-radius: 12px; font-size: 12px; font-weight: 500; cursor: pointer;';\n      addBtn.onclick = () => togglePicker();\n      pillsContainer.appendChild(addBtn);\n    }\n  };\n\n  // Toggle picker panel\n  const togglePicker = async () => {\n    isPickerOpen = !isPickerOpen;\n    if (isPickerOpen) {\n      await showPicker();\n    } else {\n      hidePicker();\n    }\n  };\n\n  const showPicker = async () => {\n    if (pickerPanel) pickerPanel.remove();\n\n    pickerPanel = api.createElement('div');\n    pickerPanel.style.cssText = 'margin-top: 12px; padding: 15px; background: var(--color-bg-surface-alt); border: 1px solid var(--color-border); border-radius: var(--border-radius); max-height: 400px; overflow-y: auto;';\n\n    const header = api.createElement('div');\n    header.style.cssText = 'display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;';\n\n    const title = api.createElement('div');\n    title.textContent = 'Select tags';\n    title.style.cssText = 'font-weight: 500; color: var(--color-text);';\n    header.appendChild(title);\n\n    const closeBtn = api.createElement('button');\n    closeBtn.textContent = '×';\n    closeBtn.style.cssText = 'background: none; border: none; font-size: 18px; cursor: pointer; color: var(--color-text-secondary);';\n    closeBtn.onclick = () => { isPickerOpen = false; hidePicker(); };\n    header.appendChild(closeBtn);\n\n    pickerPanel.appendChild(header);\n\n    // Load libraries and all items\n    const treeBuilder = await api.require('tag-tree-builder');\n    const tagPickerUI = await api.require('tag-picker-ui');\n    const allItems = await api.getAll();\n\n    // Discover items used as tags (same algorithm as tag browser)\n    const usedAsTag = new Set();\n    allItems.forEach(item => {\n      (item.content?.tags || []).forEach(tagId => usedAsTag.add(tagId));\n    });\n\n    // Walk up parent chains to include ancestors\n    const toInclude = new Set(usedAsTag);\n    for (const tagId of usedAsTag) {\n      let current = await api.get(tagId);\n      while (current?.content?.parent) {\n        toInclude.add(current.content.parent);\n        current = await api.get(current.content.parent);\n      }\n    }\n\n    // Build tree from discovered tags\n    const tagItems = (await Promise.all(\n      [...toInclude].map(id => api.get(id))\n    )).filter(Boolean);\n    const tree = treeBuilder.buildTagTree(tagItems);\n\n    // Helper to add tag\n    const selectTag = async (tagId) => {\n      if (!pendingTags.includes(tagId)) {\n        pendingTags.push(tagId);\n        onChange(pendingTags);\n        await renderPills();\n        renderTree();\n        searchInput.value = '';\n        searchResults.innerHTML = '';\n      }\n    };\n\n    // Search box for finding any item\n    const searchInput = api.createElement('input');\n    searchInput.type = 'text';\n    searchInput.placeholder = 'Search all items...';\n    searchInput.style.cssText = 'width: 100%; padding: 8px; margin-bottom: 12px; border: 1px solid var(--color-border); border-radius: var(--border-radius); box-sizing: border-box;';\n\n    const searchResults = api.createElement('div');\n    searchResults.style.cssText = 'margin-bottom: 12px;';\n\n    searchInput.oninput = () => {\n      const query = searchInput.value.toLowerCase().trim();\n      searchResults.innerHTML = '';\n\n      if (query.length < 2) return;\n\n      const matches = allItems.filter(item => {\n        const name = (item.name || item.content?.name || '').toLowerCase();\n        return name.includes(query) && !pendingTags.includes(item.id);\n      }).slice(0, 10);\n\n      matches.forEach(item => {\n        const row = api.createElement('div');\n        row.style.cssText = 'padding: 6px 8px; cursor: pointer; border-radius: 4px; background: var(--color-bg-surface); margin-bottom: 4px;';\n        row.textContent = item.name || item.content?.name || item.id.substring(0, 8);\n        row.onmouseover = () => { row.style.background = 'var(--color-primary-light)'; };\n        row.onmouseout = () => { row.style.background = 'var(--color-bg-surface)'; };\n        row.onclick = () => selectTag(item.id);\n        searchResults.appendChild(row);\n      });\n    };\n\n    pickerPanel.appendChild(searchInput);\n    pickerPanel.appendChild(searchResults);\n\n    // Tree section label\n    if (tagItems.length > 0) {\n      const treeLabel = api.createElement('div');\n      treeLabel.textContent = 'Previously used tags:';\n      treeLabel.style.cssText = 'font-size: 12px; color: var(--color-text-secondary); margin-bottom: 8px;';\n      pickerPanel.appendChild(treeLabel);\n    }\n\n    const treeContainer = api.createElement('div');\n    pickerPanel.appendChild(treeContainer);\n\n    wrapper.appendChild(pickerPanel);\n\n    const renderTree = () => {\n      treeContainer.innerHTML = '';\n      if (tagItems.length === 0) {\n        const emptyMsg = api.createElement('div');\n        emptyMsg.textContent = 'No tags in use yet. Search above to tag with any item.';\n        emptyMsg.style.cssText = 'color: var(--color-text-secondary); font-style: italic; font-size: 13px;';\n        treeContainer.appendChild(emptyMsg);\n        return;\n      }\n      tagPickerUI.renderTagPicker({\n        container: treeContainer,\n        tree: tree,\n        selectedTags: pendingTags,\n        expandedState: expandedState,\n        onToggle: (tagId) => selectTag(tagId),\n        onExpand: () => renderTree()\n      }, api);\n    };\n\n    renderTree();\n  };\n\n  const hidePicker = () => {\n    if (pickerPanel) {\n      pickerPanel.remove();\n      pickerPanel = null;\n    }\n  };\n\n  // Initial render\n  renderPills();\n\n  return wrapper;\n}\n",
+    "_symbols": {
+      "render": {
+        "name": "render",
+        "line": 3,
+        "col": 7,
+        "endLine": 253,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(value, options, api)"
+      },
+      "render.tags": {
+        "name": "tags",
+        "line": 5,
+        "col": 8,
+        "endLine": 5,
+        "endCol": 26,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.wrapper": {
+        "name": "wrapper",
+        "line": 7,
+        "col": 8,
+        "endLine": 7,
+        "endCol": 71,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.labelEl": {
+        "name": "labelEl",
+        "line": 11,
+        "col": 10,
+        "endLine": 11,
+        "endCol": 46,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.pillsContainer": {
+        "name": "pillsContainer",
+        "line": 18,
+        "col": 8,
+        "endLine": 18,
+        "endCol": 49,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.pendingTags": {
+        "name": "pendingTags",
+        "line": 23,
+        "col": 6,
+        "endLine": 23,
+        "endCol": 29,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.isPickerOpen": {
+        "name": "isPickerOpen",
+        "line": 24,
+        "col": 6,
+        "endLine": 24,
+        "endCol": 26,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.pickerPanel": {
+        "name": "pickerPanel",
+        "line": 25,
+        "col": 6,
+        "endLine": 25,
+        "endCol": 24,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.expandedState": {
+        "name": "expandedState",
+        "line": 26,
+        "col": 8,
+        "endLine": 26,
+        "endCol": 33,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.getTagPath": {
+        "name": "getTagPath",
+        "line": 29,
+        "col": 8,
+        "endLine": 44,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "render",
+        "signature": "(tag)"
+      },
+      "getTagPath.path": {
+        "name": "path",
+        "line": 30,
+        "col": 10,
+        "endLine": 30,
+        "endCol": 19,
+        "kind": "variable",
+        "scope": "getTagPath"
+      },
+      "getTagPath.currentTag": {
+        "name": "currentTag",
+        "line": 31,
+        "col": 8,
+        "endLine": 31,
+        "endCol": 24,
+        "kind": "variable",
+        "scope": "getTagPath"
+      },
+      "getTagPath.tagName": {
+        "name": "tagName",
+        "line": 33,
+        "col": 12,
+        "endLine": 33,
+        "endCol": 82,
+        "kind": "variable",
+        "scope": "getTagPath"
+      },
+      "render.renderPills": {
+        "name": "renderPills",
+        "line": 47,
+        "col": 8,
+        "endLine": 100,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "render",
+        "signature": "()"
+      },
+      "renderPills.tagsToRender": {
+        "name": "tagsToRender",
+        "line": 49,
+        "col": 10,
+        "endLine": 49,
+        "endCol": 65,
+        "kind": "variable",
+        "scope": "renderPills"
+      },
+      "renderPills.tagId": {
+        "name": "tagId",
+        "line": 51,
+        "col": 15,
+        "endLine": 51,
+        "endCol": 20,
+        "kind": "variable",
+        "scope": "renderPills"
+      },
+      "renderPills.tag": {
+        "name": "tag",
+        "line": 53,
+        "col": 14,
+        "endLine": 53,
+        "endCol": 40,
+        "kind": "variable",
+        "scope": "renderPills"
+      },
+      "renderPills.tagPath": {
+        "name": "tagPath",
+        "line": 54,
+        "col": 14,
+        "endLine": 54,
+        "endCol": 45,
+        "kind": "variable",
+        "scope": "renderPills"
+      },
+      "renderPills.tagColor": {
+        "name": "tagColor",
+        "line": 55,
+        "col": 14,
+        "endLine": 55,
+        "endCol": 69,
+        "kind": "variable",
+        "scope": "renderPills"
+      },
+      "renderPills.pill": {
+        "name": "pill",
+        "line": 84,
+        "col": 14,
+        "endLine": 84,
+        "endCol": 46,
+        "kind": "variable",
+        "scope": "renderPills"
+      },
+      "renderPills.pillText": {
+        "name": "pillText",
+        "line": 63,
+        "col": 14,
+        "endLine": 63,
+        "endCol": 50,
+        "kind": "variable",
+        "scope": "renderPills"
+      },
+      "renderPills.removeBtn": {
+        "name": "removeBtn",
+        "line": 69,
+        "col": 16,
+        "endLine": 69,
+        "endCol": 55,
+        "kind": "variable",
+        "scope": "renderPills"
+      },
+      "renderPills.addBtn": {
+        "name": "addBtn",
+        "line": 94,
+        "col": 12,
+        "endLine": 94,
+        "endCol": 48,
+        "kind": "variable",
+        "scope": "renderPills"
+      },
+      "render.togglePicker": {
+        "name": "togglePicker",
+        "line": 103,
+        "col": 8,
+        "endLine": 110,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "render",
+        "signature": "()"
+      },
+      "render.showPicker": {
+        "name": "showPicker",
+        "line": 112,
+        "col": 8,
+        "endLine": 240,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "render",
+        "signature": "()"
+      },
+      "showPicker.header": {
+        "name": "header",
+        "line": 118,
+        "col": 10,
+        "endLine": 118,
+        "endCol": 43,
+        "kind": "variable",
+        "scope": "showPicker"
+      },
+      "showPicker.title": {
+        "name": "title",
+        "line": 121,
+        "col": 10,
+        "endLine": 121,
+        "endCol": 42,
+        "kind": "variable",
+        "scope": "showPicker"
+      },
+      "showPicker.closeBtn": {
+        "name": "closeBtn",
+        "line": 126,
+        "col": 10,
+        "endLine": 126,
+        "endCol": 48,
+        "kind": "variable",
+        "scope": "showPicker"
+      },
+      "showPicker.treeBuilder": {
+        "name": "treeBuilder",
+        "line": 135,
+        "col": 10,
+        "endLine": 135,
+        "endCol": 61,
+        "kind": "variable",
+        "scope": "showPicker"
+      },
+      "showPicker.tagPickerUI": {
+        "name": "tagPickerUI",
+        "line": 136,
+        "col": 10,
+        "endLine": 136,
+        "endCol": 58,
+        "kind": "variable",
+        "scope": "showPicker"
+      },
+      "showPicker.allItems": {
+        "name": "allItems",
+        "line": 137,
+        "col": 10,
+        "endLine": 137,
+        "endCol": 39,
+        "kind": "variable",
+        "scope": "showPicker"
+      },
+      "showPicker.usedAsTag": {
+        "name": "usedAsTag",
+        "line": 140,
+        "col": 10,
+        "endLine": 140,
+        "endCol": 31,
+        "kind": "variable",
+        "scope": "showPicker"
+      },
+      "showPicker.toInclude": {
+        "name": "toInclude",
+        "line": 146,
+        "col": 10,
+        "endLine": 146,
+        "endCol": 40,
+        "kind": "variable",
+        "scope": "showPicker"
+      },
+      "showPicker.tagId": {
+        "name": "tagId",
+        "line": 147,
+        "col": 15,
+        "endLine": 147,
+        "endCol": 20,
+        "kind": "variable",
+        "scope": "showPicker"
+      },
+      "showPicker.current": {
+        "name": "current",
+        "line": 148,
+        "col": 10,
+        "endLine": 148,
+        "endCol": 40,
+        "kind": "variable",
+        "scope": "showPicker"
+      },
+      "showPicker.tagItems": {
+        "name": "tagItems",
+        "line": 156,
+        "col": 10,
+        "endLine": 158,
+        "endCol": 22,
+        "kind": "variable",
+        "scope": "showPicker"
+      },
+      "showPicker.tree": {
+        "name": "tree",
+        "line": 159,
+        "col": 10,
+        "endLine": 159,
+        "endCol": 51,
+        "kind": "variable",
+        "scope": "showPicker"
+      },
+      "showPicker.selectTag": {
+        "name": "selectTag",
+        "line": 162,
+        "col": 10,
+        "endLine": 171,
+        "endCol": 5,
+        "kind": "function",
+        "scope": "showPicker",
+        "signature": "(tagId)"
+      },
+      "showPicker.searchInput": {
+        "name": "searchInput",
+        "line": 174,
+        "col": 10,
+        "endLine": 174,
+        "endCol": 50,
+        "kind": "variable",
+        "scope": "showPicker"
+      },
+      "showPicker.searchResults": {
+        "name": "searchResults",
+        "line": 179,
+        "col": 10,
+        "endLine": 179,
+        "endCol": 50,
+        "kind": "variable",
+        "scope": "showPicker"
+      },
+      "showPicker.query": {
+        "name": "query",
+        "line": 183,
+        "col": 12,
+        "endLine": 183,
+        "endCol": 58,
+        "kind": "variable",
+        "scope": "showPicker"
+      },
+      "showPicker.matches": {
+        "name": "matches",
+        "line": 188,
+        "col": 12,
+        "endLine": 191,
+        "endCol": 21,
+        "kind": "variable",
+        "scope": "showPicker"
+      },
+      "showPicker.row": {
+        "name": "row",
+        "line": 194,
+        "col": 14,
+        "endLine": 194,
+        "endCol": 44,
+        "kind": "variable",
+        "scope": "showPicker"
+      },
+      "showPicker.treeLabel": {
+        "name": "treeLabel",
+        "line": 209,
+        "col": 12,
+        "endLine": 209,
+        "endCol": 48,
+        "kind": "variable",
+        "scope": "showPicker"
+      },
+      "showPicker.treeContainer": {
+        "name": "treeContainer",
+        "line": 215,
+        "col": 10,
+        "endLine": 215,
+        "endCol": 50,
+        "kind": "variable",
+        "scope": "showPicker"
+      },
+      "showPicker.renderTree": {
+        "name": "renderTree",
+        "line": 220,
+        "col": 10,
+        "endLine": 237,
+        "endCol": 5,
+        "kind": "function",
+        "scope": "showPicker",
+        "signature": "()"
+      },
+      "renderTree.emptyMsg": {
+        "name": "emptyMsg",
+        "line": 223,
+        "col": 14,
+        "endLine": 223,
+        "endCol": 49,
+        "kind": "variable",
+        "scope": "renderTree"
+      },
+      "renderTree.container": {
+        "name": "container",
+        "line": 230,
+        "col": 8,
+        "endLine": 230,
+        "endCol": 32,
+        "kind": "property",
+        "scope": "renderTree"
+      },
+      "renderTree.tree": {
+        "name": "tree",
+        "line": 231,
+        "col": 8,
+        "endLine": 231,
+        "endCol": 18,
+        "kind": "property",
+        "scope": "renderTree"
+      },
+      "renderTree.selectedTags": {
+        "name": "selectedTags",
+        "line": 232,
+        "col": 8,
+        "endLine": 232,
+        "endCol": 33,
+        "kind": "property",
+        "scope": "renderTree"
+      },
+      "renderTree.expandedState": {
+        "name": "expandedState",
+        "line": 233,
+        "col": 8,
+        "endLine": 233,
+        "endCol": 36,
+        "kind": "property",
+        "scope": "renderTree"
+      },
+      "renderTree.onToggle": {
+        "name": "onToggle",
+        "line": 234,
+        "col": 8,
+        "endLine": 234,
+        "endCol": 45,
+        "kind": "property-function",
+        "scope": "renderTree",
+        "signature": "(tagId)"
+      },
+      "renderTree.onExpand": {
+        "name": "onExpand",
+        "line": 235,
+        "col": 8,
+        "endLine": 235,
+        "endCol": 36,
+        "kind": "property-function",
+        "scope": "renderTree",
+        "signature": "()"
+      },
+      "render.hidePicker": {
+        "name": "hidePicker",
+        "line": 242,
+        "col": 8,
+        "endLine": 247,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "render",
+        "signature": "()"
+      }
+    }
   },
   "attachments": []
 }

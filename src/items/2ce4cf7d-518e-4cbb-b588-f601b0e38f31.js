@@ -117,7 +117,7 @@ export function render(value, options, api) {
     if (pickerPanel) pickerPanel.remove();
 
     pickerPanel = api.createElement('div');
-    pickerPanel.style.cssText = 'margin-top: 12px; padding: 15px; background: var(--color-bg-surface-alt); border: 1px solid var(--color-border); border-radius: var(--border-radius); max-height: 300px; overflow-y: auto;';
+    pickerPanel.style.cssText = 'margin-top: 12px; padding: 15px; background: var(--color-bg-surface-alt); border: 1px solid var(--color-border); border-radius: var(--border-radius); max-height: 400px; overflow-y: auto;';
 
     const header = api.createElement('div');
     header.style.cssText = 'display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;';
@@ -135,32 +135,107 @@ export function render(value, options, api) {
 
     pickerPanel.appendChild(header);
 
+    // Load libraries and all items
+    const treeBuilder = await api.require('tag-tree-builder');
+    const tagPickerUI = await api.require('tag-picker-ui');
+    const allItems = await api.getAll();
+
+    // Discover items used as tags (same algorithm as tag browser)
+    const usedAsTag = new Set();
+    allItems.forEach(item => {
+      (item.content?.tags || []).forEach(tagId => usedAsTag.add(tagId));
+    });
+
+    // Walk up parent chains to include ancestors
+    const toInclude = new Set(usedAsTag);
+    for (const tagId of usedAsTag) {
+      let current = await api.get(tagId);
+      while (current?.content?.parent) {
+        toInclude.add(current.content.parent);
+        current = await api.get(current.content.parent);
+      }
+    }
+
+    // Build tree from discovered tags
+    const tagItems = (await Promise.all(
+      [...toInclude].map(id => api.get(id))
+    )).filter(Boolean);
+    const tree = treeBuilder.buildTagTree(tagItems);
+
+    // Helper to add tag
+    const selectTag = async (tagId) => {
+      if (!pendingTags.includes(tagId)) {
+        pendingTags.push(tagId);
+        onChange(pendingTags);
+        await renderPills();
+        renderTree();
+        searchInput.value = '';
+        searchResults.innerHTML = '';
+      }
+    };
+
+    // Search box for finding any item
+    const searchInput = api.createElement('input');
+    searchInput.type = 'text';
+    searchInput.placeholder = 'Search all items...';
+    searchInput.style.cssText = 'width: 100%; padding: 8px; margin-bottom: 12px; border: 1px solid var(--color-border); border-radius: var(--border-radius); box-sizing: border-box;';
+
+    const searchResults = api.createElement('div');
+    searchResults.style.cssText = 'margin-bottom: 12px;';
+
+    searchInput.oninput = () => {
+      const query = searchInput.value.toLowerCase().trim();
+      searchResults.innerHTML = '';
+
+      if (query.length < 2) return;
+
+      const matches = allItems.filter(item => {
+        const name = (item.name || item.content?.name || '').toLowerCase();
+        return name.includes(query) && !pendingTags.includes(item.id);
+      }).slice(0, 10);
+
+      matches.forEach(item => {
+        const row = api.createElement('div');
+        row.style.cssText = 'padding: 6px 8px; cursor: pointer; border-radius: 4px; background: var(--color-bg-surface); margin-bottom: 4px;';
+        row.textContent = item.name || item.content?.name || item.id.substring(0, 8);
+        row.onmouseover = () => { row.style.background = 'var(--color-primary-light)'; };
+        row.onmouseout = () => { row.style.background = 'var(--color-bg-surface)'; };
+        row.onclick = () => selectTag(item.id);
+        searchResults.appendChild(row);
+      });
+    };
+
+    pickerPanel.appendChild(searchInput);
+    pickerPanel.appendChild(searchResults);
+
+    // Tree section label
+    if (tagItems.length > 0) {
+      const treeLabel = api.createElement('div');
+      treeLabel.textContent = 'Previously used tags:';
+      treeLabel.style.cssText = 'font-size: 12px; color: var(--color-text-secondary); margin-bottom: 8px;';
+      pickerPanel.appendChild(treeLabel);
+    }
+
     const treeContainer = api.createElement('div');
     pickerPanel.appendChild(treeContainer);
 
     wrapper.appendChild(pickerPanel);
 
-    // Load and render tag tree
-    const treeBuilder = await api.require('tag-tree-builder');
-    const tagPickerUI = await api.require('tag-picker-ui');
-    const allTags = await api.query({ type: "d1da8525-b0dc-4a79-8bef-0cbed1ed003d" });
-    const tree = treeBuilder.buildTagTree(allTags);
-
     const renderTree = () => {
       treeContainer.innerHTML = '';
+      if (tagItems.length === 0) {
+        const emptyMsg = api.createElement('div');
+        emptyMsg.textContent = 'No tags in use yet. Search above to tag with any item.';
+        emptyMsg.style.cssText = 'color: var(--color-text-secondary); font-style: italic; font-size: 13px;';
+        treeContainer.appendChild(emptyMsg);
+        return;
+      }
       tagPickerUI.renderTagPicker({
         container: treeContainer,
         tree: tree,
         selectedTags: pendingTags,
         expandedState: expandedState,
-        onToggle: async (tagId) => {
-          if (!pendingTags.includes(tagId)) {
-            pendingTags.push(tagId);
-            onChange(pendingTags);
-            await renderPills();
-            renderTree();
-          }
-        },
+        onToggle: (tagId) => selectTag(tagId),
         onExpand: () => renderTree()
       }, api);
     };

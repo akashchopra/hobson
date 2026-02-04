@@ -3,7 +3,7 @@
 // Type: aaaaaaaa-0000-0000-0000-000000000000
 
 
-// Tag browser view - stores results as children for uniform interaction
+// Tag browser view - stores results as attachments for uniform interaction
 // Uses tag-tree-builder and tag-picker-ui libraries
 
 export async function render(browser, api) {
@@ -28,10 +28,28 @@ export async function render(browser, api) {
 
   container.appendChild(header);
 
-  // Get all tag items and build tree
-  const TAG_TYPE_ID = "d1da8525-b0dc-4a79-8bef-0cbed1ed003d";
-  const tags = await api.query({ type: TAG_TYPE_ID });
-  const tree = treeBuilder.buildTagTree(tags);
+  // Discover tags by scanning content.tags arrays across all items
+  const allItems = await api.getAll();
+  const usedAsTag = new Set();
+  allItems.forEach(item => {
+    (item.content?.tags || []).forEach(tagId => usedAsTag.add(tagId));
+  });
+
+  // Walk up parent chains to include ancestors
+  const toInclude = new Set(usedAsTag);
+  for (const tagId of usedAsTag) {
+    let current = await api.get(tagId);
+    while (current?.content?.parent) {
+      toInclude.add(current.content.parent);
+      current = await api.get(current.content.parent);
+    }
+  }
+
+  // Fetch all tag items and build tree
+  const tagItems = (await Promise.all(
+    [...toInclude].map(id => api.get(id))
+  )).filter(Boolean);
+  const tree = treeBuilder.buildTagTree(tagItems);
 
   // Track expanded state (tag ID -> boolean)
   const expandedState = new Map();
@@ -111,12 +129,12 @@ export async function render(browser, api) {
     return card;
   };
 
-  // Render results from children
+  // Render results from attachments
   const renderResults = async () => {
     resultsList.innerHTML = '';
 
     const selectedTag = browser.content?.selectedTag;
-    const children = browser.attachments || [];
+    const attachments = browser.attachments || [];
 
     if (!selectedTag) {
       resultsContainer.style.display = 'none';
@@ -132,16 +150,16 @@ export async function render(browser, api) {
       // Use ID if tag not found
     }
 
-    resultsTitle.textContent = 'Items tagged with "' + tagName + '" (' + children.length + ')';
+    resultsTitle.textContent = 'Items tagged with "' + tagName + '" (' + attachments.length + ')';
     resultsContainer.style.display = 'block';
 
-    if (children.length === 0) {
+    if (attachments.length === 0) {
       const emptyMsg = api.createElement('div', {
         style: 'padding: 20px; text-align: center; color: var(--color-border-dark); font-style: italic;'
       }, ['No items found with this tag.']);
       resultsList.appendChild(emptyMsg);
     } else {
-      for (const childSpec of children) {
+      for (const childSpec of attachments) {
         const childId = typeof childSpec === 'string' ? childSpec : childSpec.id;
         // Respect per-child view override (from "Display As..."), fall back to compact view
         const childViewId = (typeof childSpec === 'object' && childSpec.view) ? childSpec.view : compactViewId;
@@ -161,18 +179,17 @@ export async function render(browser, api) {
     }
   };
 
-  // Function to select a tag and update children
+  // Function to select a tag and update attachments
   const selectTag = async (tag) => {
-    // Find all items with this tag
-    const allItems = await api.getAll();
+    // Find all items with this tag in content.tags
     const taggedItems = allItems.filter(item =>
-      item.tags && item.tags.includes(tag.id)
+      item.content?.tags?.includes(tag.id)
     );
 
-    // Store results as children and save selected tag
+    // Store results as attachments and save selected tag
     const updated = {
       ...browser,
-      children: taggedItems.map(item => ({ id: item.id })),
+      attachments: taggedItems.map(item => ({ id: item.id })),
       content: {
         ...browser.content,
         selectedTag: tag.id
