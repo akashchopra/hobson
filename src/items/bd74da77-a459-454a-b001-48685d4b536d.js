@@ -885,6 +885,35 @@ export async function render(item, api) {
     };
     contextMenu.appendChild(copyIdItem);
 
+    // Duplicate
+    const duplicateItem = api.createElement('div', { class: 'context-menu-item' }, ['Duplicate']);
+    duplicateItem.onclick = async () => {
+      hideContextMenu();
+      const original = await api.get(itemId);
+      const newContent = { ...original.content };
+      if (newContent.title) newContent.title += ' (copy)';
+      const duplicate = {
+        id: crypto.randomUUID(),
+        name: original.name ? original.name + ' (copy)' : undefined,
+        type: original.type,
+        created: Date.now(),
+        modified: Date.now(),
+        attachments: [],
+        content: newContent
+      };
+      await api.set(duplicate);
+
+      // Open the duplicate the same way views do: via siblingContainer if in spatial context
+      const instances = api.instances.getByItemId(itemId);
+      const siblingContainer = instances?.[0]?.siblingContainer;
+      if (siblingContainer) {
+        siblingContainer.addSibling(duplicate.id);
+      } else {
+        await api.navigate(duplicate.id);
+      }
+    };
+    contextMenu.appendChild(duplicateItem);
+
     // Make Root
     const makeRootItem = api.createElement('div', { class: 'context-menu-item' }, ['Make Root']);
     makeRootItem.onclick = async () => {
