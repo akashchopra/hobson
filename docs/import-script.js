@@ -126,16 +126,16 @@ async function importWithNewIds(json) {
       newItem.type = idMap.get(newItem.type);
     }
 
-    // Remap children
-    if (newItem.children) {
-      newItem.children = newItem.children.map(child => {
-        if (typeof child === 'string') {
-          return idMap.get(child) || child;
+    // Remap attachments
+    if (newItem.attachments) {
+      newItem.attachments = newItem.attachments.map(attachment => {
+        if (typeof attachment === 'string') {
+          return idMap.get(attachment) || attachment;
         } else {
-          // Positioned child
+          // Positioned attachment
           return {
-            ...child,
-            id: idMap.get(child.id) || child.id
+            ...attachment,
+            id: idMap.get(attachment.id) || attachment.id
           };
         }
       });

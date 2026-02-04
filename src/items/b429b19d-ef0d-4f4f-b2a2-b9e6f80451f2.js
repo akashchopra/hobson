@@ -1,7 +1,3 @@
-// Item: system:generic-view
-// ID: b429b19d-ef0d-4f4f-b2a2-b9e6f80451f2
-// Type: 66666666-0000-0000-0000-000000000000
-
 // Generic view library - interprets view-spec items
 // Supports both sync and async field views
 // See [Views & Rendering](item://a0a0a0a0-d0c0-4000-8000-000000000004#generic-view)

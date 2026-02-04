@@ -8,10 +8,10 @@
 
 The `spatial-canvas-view` currently conflates two concerns:
 
-1. **Spatial layout** — displaying children as draggable windows on a 2D canvas
+1. **Spatial layout** — displaying attachments as draggable windows on a 2D canvas
 2. **Content presentation** — rendering `content.description` in a resizable banner
 
-This coupling limits the view's usefulness. If a code item has children, viewing it as a spatial container shows a description banner (which code items don't meaningfully have) rather than the syntax-highlighted code. The spatial layout capability is locked to one specific content presentation.
+This coupling limits the view's usefulness. If a code item has attachments, viewing it as a spatial container shows a description banner (which code items don't meaningfully have) rather than the syntax-highlighted code. The spatial layout capability is locked to one specific content presentation.
 
 ---
 
@@ -75,7 +75,7 @@ container (position: relative, 100% × 100%)
 ### View Config Structure
 
 ```javascript
-// In parent's children array (or viewport root config)
+// In parent's attachments array (or viewport root config)
 {
   id: "some-note",
   view: {
@@ -89,10 +89,10 @@ container (position: relative, 100% × 100%)
   }
 }
 
-// The item's own children store window positions
+// The item's own attachments store window positions
 {
   id: "some-note",
-  children: [
+  attachments: [
     { id: "child-1", view: { type: "...", x: 50, y: 50, z: 0, ... } },
     { id: "child-2", view: { type: "...", x: 200, y: 100, z: 1, ... } }
   ]
@@ -241,7 +241,7 @@ const windowZ = baseZ + (childView.z || 0);
 wrapper.style.zIndex = windowZ;
 
 // When bringing to front
-const maxZ = Math.max(...children.map(c => c.view?.z || 0));
+const maxZ = Math.max(...attachments.map(c => c.view?.z || 0));
 const newZ = maxZ + 1;
 await updateChild(childId, { z: newZ });
 wrapper.style.zIndex = baseZ + newZ;
@@ -325,7 +325,7 @@ A note item with child items as related materials:
     title: "Q1 Planning",
     body: "## Agenda\n- Budget review\n- Roadmap..."
   },
-  children: [
+  attachments: [
     { id: "budget-spreadsheet", view: { type: "...", x: 600, y: 50, ... } },
     { id: "roadmap-diagram", view: { type: "...", x: 600, y: 300, ... } }
   ]
@@ -342,7 +342,7 @@ Result: Editable note fills the background; spreadsheet and diagram float as win
 
 ### Code with Examples
 
-A library item with example usage items as children:
+A library item with example usage items as attachments:
 
 ```javascript
 {
@@ -351,7 +351,7 @@ A library item with example usage items as children:
   content: { 
     code: "export function formatDate(d) { ... }"
   },
-  children: [
+  attachments: [
     { id: "example-1", view: { type: "...", x: 500, y: 50, ... } },
     { id: "example-2", view: { type: "...", x: 500, y: 250, ... } }
   ]
@@ -374,7 +374,7 @@ A container used purely for spatial arrangement:
 {
   id: "my-workspace",
   type: "container",
-  children: [
+  attachments: [
     { id: "item-1", view: { ... } },
     { id: "item-2", view: { ... } }
   ]
@@ -398,8 +398,8 @@ Result: Clean canvas with windows only (current behavior).
 The pattern generalizes. Other layout wrappers could include:
 
 - **split-view** — Inner view on one side, single child on other
-- **tabs-view** — Inner view as first tab, children as additional tabs
-- **overlay-view** — Inner view with children as modal overlays
+- **tabs-view** — Inner view as first tab, attachments as additional tabs
+- **overlay-view** — Inner view with attachments as modal overlays
 
 ### Nested Wrappers
 

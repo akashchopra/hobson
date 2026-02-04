@@ -1,7 +1,3 @@
-// Item: viewport-manager
-// ID: f1111111-0002-0000-0000-000000000000
-// Type: 66666666-0000-0000-0000-000000000000
-
 // Viewport Manager Library
 // Stateless - reads from URL (root) and viewport item (view config)
 // No module-level caching; sources of truth are URL + viewport item
@@ -29,7 +25,7 @@ export async function onSystemBootComplete({ safeMode }, _api) {
   const urlRoot = getRoot();
   if (urlRoot) {
     const viewport = await window.kernel.storage.get(VIEWPORT_ID);
-    const currentChild = viewport.children?.[0];
+    const currentChild = viewport.attachments?.[0];
 
     // If URL root differs from viewport item, update viewport item
     // (URL is authoritative for root)
@@ -46,7 +42,7 @@ async function handlePopstate(e) {
   if (urlRoot) {
     // Get previous root from viewport item for event
     const viewport = await window.kernel.storage.get(VIEWPORT_ID);
-    const previous = viewport.children?.[0]?.id;
+    const previous = viewport.attachments?.[0]?.id;
 
     // Update viewport item (clear view override when navigating to different item)
     if (previous !== urlRoot) {
@@ -79,7 +75,7 @@ async function persistRootChange(newRootId, previousRootId) {
   }
 
   // Different root - clear view config
-  viewport.children = newRootId ? [{ id: newRootId }] : [];
+  viewport.attachments = newRootId ? [{ id: newRootId }] : [];
   viewport.modified = Date.now();
   await window.kernel.saveItem(viewport);
 }
@@ -101,7 +97,7 @@ function getUrlParams() {
 async function getChildSpec() {
   try {
     const viewport = await window.kernel.storage.get(VIEWPORT_ID);
-    return viewport.children?.[0] || null;
+    return viewport.attachments?.[0] || null;
   } catch (e) {
     console.warn('[viewport-manager] Failed to read viewport item:', e);
     return null;
@@ -114,7 +110,7 @@ async function updateChildSpec(updater) {
     const root = getRoot();
     if (!root) return;
 
-    let childSpec = viewport.children?.[0];
+    let childSpec = viewport.attachments?.[0];
     if (!childSpec || childSpec.id !== root) {
       // Child spec doesn't exist or is for different root
       childSpec = { id: root };
@@ -123,7 +119,7 @@ async function updateChildSpec(updater) {
     // Apply the update
     const updated = updater(childSpec);
 
-    viewport.children = [updated];
+    viewport.attachments = [updated];
     viewport.modified = Date.now();
     await window.kernel.saveItem(viewport);
   } catch (e) {
@@ -139,7 +135,7 @@ async function updateChildSpec(updater) {
 export async function navigate(itemId, params = {}) {
   // Get previous root for event
   const viewport = await window.kernel.storage.get(VIEWPORT_ID);
-  const previous = viewport.children?.[0]?.id;
+  const previous = viewport.attachments?.[0]?.id;
 
   // Build new URL
   const url = new URL(window.location);

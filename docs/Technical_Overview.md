@@ -10,7 +10,7 @@ The architecture draws from Smalltalk's image-based persistence, Lisp's REPL-dri
 
 ### Items
 
-The universal data structure. Every entity in the system—notes, type definitions, executable code, UI components—is an item with the same structure: a unique identifier, a type reference, timestamps, a children array for composition, and an arbitrary content map. There are no special cases; the kernel treats all items identically.
+The universal data structure. Every entity in the system—notes, type definitions, executable code, UI components—is an item with the same structure: a unique identifier, a type reference, timestamps, a attachments array for composition, and an arbitrary content map. There are no special cases; the kernel treats all items identically.
 
 Items reference types which reference types, forming chains that terminate at a self-referential base called "atom." The kernel validates these chains on every write, ensuring structural integrity without interpreting content semantics.
 
@@ -40,7 +40,7 @@ Users create new types by making items that describe them. Instances of those ty
 
 Discovered by walking an item's type chain. Each renderer specifies which type it handles. Multiple renderers can exist for one type, enabling view switching (compact vs. detail, card vs. list). A context menu built into the viewport chrome allows selecting among available renderers at runtime.
 
-Renderers compose hierarchically via recursive rendering calls. A container renderer renders its children with their own appropriate renderers, creating arbitrarily deep UI hierarchies from simple building blocks.
+Renderers compose hierarchically via recursive rendering calls. A container renderer renders its attachments with their own appropriate renderers, creating arbitrarily deep UI hierarchies from simple building blocks.
 
 ### Editors
 
@@ -56,7 +56,7 @@ A special item managing view state: which item is currently displayed and with w
 
 **First Code Items**: Using the built-in REPL, create initial infrastructure: helper libraries, basic types (note, container), and renderers for those types. Everything feels REPL-driven at this stage—typing JavaScript to create items that will eventually enable UI-driven workflows.
 
-**Container Infrastructure**: Build container types that display children as positioned windows on a 2D canvas. Children become draggable, stackable, and spatially organized. This transforms the system from "render one item" to "navigate a spatial workspace of items."
+**Container Infrastructure**: Build container types that display attachments as positioned windows on a 2D canvas. Children become draggable, stackable, and spatially organized. This transforms the system from "render one item" to "navigate a spatial workspace of items."
 
 **Viewport Infrastructure**: Build a viewport renderer providing navigation controls, context menus for renderer/editor selection, and REPL access. The viewport becomes the shell wrapping all user interaction.
 

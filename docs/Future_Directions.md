@@ -216,7 +216,7 @@ Don't make desktop UI responsive. Create mobile-specific containers and renderer
 {
   id: "my_notes_desktop",
   type: "container",
-  children: [
+  attachments: [
     { id: "tag-browser", x: 0, y: 0, ... },
     { id: "search", x: 260, y: 0, ... }
   ]
@@ -226,7 +226,7 @@ Don't make desktop UI responsive. Create mobile-specific containers and renderer
 {
   id: "my_notes_mobile",
   type: "container",
-  children: ["search", "note-1", "note-2"]  // Linear, no positioning
+  attachments: ["search", "note-1", "note-2"]  // Linear, no positioning
 }
 ```
 

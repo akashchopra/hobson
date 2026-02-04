@@ -1,7 +1,3 @@
-// Item: context-menu-css
-// ID: d4e149ab-35fa-44a4-a858-779015bdee70
-// Type: 23b66a83-5c61-4320-9517-5aa2abad2d1f
-
 /* Context Menu Styles */
 .context-menu {
   position: fixed;

@@ -147,7 +147,7 @@ Item {
   type: String         // GUID reference to type item
   created: Timestamp
   modified: Timestamp
-  children: String[]   // Array of child item IDs (ordered)
+  attachments: String[]   // Array of child item IDs (ordered)
   content: Map<String, Any>
 }
 ```
@@ -277,7 +277,7 @@ The system ships with these pre-created items on first boot:
   type: "00000000-0000-0000-0000-000000000000",  // self-referential
   created: <boot_timestamp>,
   modified: <boot_timestamp>,
-  children: [],  // Standard property for all items
+  attachments: [],  // Standard property for all items
   content: {
     description: "The fundamental unit. Everything is an atom or derives from atom."
   }
@@ -289,7 +289,7 @@ The system ships with these pre-created items on first boot:
   type: "00000000-0000-0000-0000-000000000000",  // atom
   created: <boot_timestamp>,
   modified: <boot_timestamp>,
-  children: [],
+  attachments: [],
   content: {
     description: "Defines a type of item"
   }
@@ -301,7 +301,7 @@ The system ships with these pre-created items on first boot:
   type: "00000000-0000-0000-0000-000000000001",  // type_definition
   created: <boot_timestamp>,
   modified: <boot_timestamp>,
-  children: [],
+  attachments: [],
   content: {
     description: "Executable code. Items with this in their type chain are code items.",
     required_fields: ["code"]
@@ -314,7 +314,7 @@ The system ships with these pre-created items on first boot:
   type: "00000000-0000-0000-0000-000000000002",  // code
   created: <boot_timestamp>,
   modified: <boot_timestamp>,
-  children: [],
+  attachments: [],
   content: {
     description: "Code that renders an item type",
     required_fields: ["for_type", "code"]
@@ -327,7 +327,7 @@ The system ships with these pre-created items on first boot:
   type: "00000000-0000-0000-0000-000000000002",  // code
   created: <boot_timestamp>,
   modified: <boot_timestamp>,
-  children: [],
+  attachments: [],
   content: {
     description: "Reusable code module",
     required_fields: ["code"]
@@ -340,7 +340,7 @@ The system ships with these pre-created items on first boot:
   type: "00000000-0000-0000-0000-000000000003",  // renderer
   created: <boot_timestamp>,
   modified: <boot_timestamp>,
-  children: [],
+  attachments: [],
   content: {
     for_type: "00000000-0000-0000-0000-000000000000",  // atom
     code: `
@@ -359,7 +359,7 @@ The system ships with these pre-created items on first boot:
   type: "00000000-0000-0000-0000-000000000000",  // atom
   created: <boot_timestamp>,
   modified: <boot_timestamp>,
-  children: [],
+  attachments: [],
   content: {
     title: "Workspace",
     description: "Default starting point. Add items here or navigate elsewhere."
@@ -719,11 +719,11 @@ There is no special "container" concept in the kernel. A container is simply an 
 
 **Key Principles:**
 
-- **No special container type**: Containers are items with renderers that call `api.renderItem()` on children
+- **No special container type**: Containers are items with renderers that call `api.renderItem()` on attachments
 - **Hierarchical composition**: Containers can contain other containers, forming arbitrarily deep trees
 - **Graph structure**: Items can have multiple parents (appear in multiple containers)
-- **Explicit tree structure**: The `children` array defines parent-child relationships
-- **DAG enforcement**: Cycles are prevented through validation on `addChild()`
+- **Explicit tree structure**: The `attachments` array defines parent-child relationships
+- **DAG enforcement**: Cycles are prevented through validation on `attach()`
 
 **Parent-Child Relationships:**
 
@@ -732,7 +732,7 @@ There is no special "container" concept in the kernel. A container is simply an 
 {
   id: "kanban-board-123",
   type: "kanban_board",
-  children: ["column-1", "column-2", "column-3"],  // Explicit child list
+  attachments: ["column-1", "column-2", "column-3"],  // Explicit child list
   content: {
     title: "Project Tasks"
   }
@@ -742,7 +742,7 @@ There is no special "container" concept in the kernel. A container is simply an 
 {
   id: "column-1",
   type: "kanban_column",
-  children: ["task-1", "task-2"],  // Its own children
+  attachments: ["task-1", "task-2"],  // Its own attachments
   content: {
     title: "Todo"
   }
@@ -761,7 +761,7 @@ Items can appear in multiple containers simultaneously:
 When adding a child, the kernel validates that no cycle would be created:
 ```javascript
 // Prevent: A ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ B ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ C ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ A
-await api.addChild(childId);
+await api.attach(childId);
 // Throws error if childId's descendants include the current item
 ```
 
@@ -770,7 +770,7 @@ await api.addChild(childId);
 ```javascript
 // Example container renderer
 export function render(container, api) {
-  const childItems = container.children || [];
+  const childItems = container.attachments || [];
   
   return api.createElement('div', {class: 'container'}, [
     api.createElement('h1', {}, [container.content.title]),
@@ -793,7 +793,7 @@ The kernel provides navigation helpers but doesn't enforce a particular pattern.
 
 **Rationale:**
 - Consistency: Containers use the same item structure as everything else
-- Flexibility: Any renderer can become a container by rendering children
+- Flexibility: Any renderer can become a container by rendering attachments
 - Emergent complexity: Complex UIs emerge from simple composition rules
 - Graph structure enables flexible organization (items in multiple contexts)
 - Cycle prevention maintains graph integrity without over-constraining
@@ -804,7 +804,7 @@ The kernel provides navigation helpers but doesn't enforce a particular pattern.
 
 **Decision: Automatic Subscriptions with Optional Lifecycle Hooks**
 
-When a renderer renders an item, it automatically subscribes to changes in that item's children. The kernel manages this subscription and calls optional lifecycle hooks when children change.
+When a renderer renders an item, it automatically subscribes to changes in that item's attachments. The kernel manages this subscription and calls optional lifecycle hooks when attachments change.
 
 **Lifecycle Hook Exports:**
 
@@ -826,7 +826,7 @@ export function onChildDeleted(childId, api) {
 
 **Automatic Subscriptions:**
 
-- When rendering an item, kernel subscribes it to all items in its `children` array
+- When rendering an item, kernel subscribes it to all items in its `attachments` array
 - When a child changes, kernel calls the parent's lifecycle hook (if defined)
 - After lifecycle hook completes, kernel automatically re-renders the parent
 - Only **direct parents** are notified, not grandparents or ancestors
@@ -866,11 +866,11 @@ When an item appears in multiple containers (graph structure):
 Deletion is separate from child removal:
 ```javascript
 // Remove from parent (item still exists elsewhere)
-await api.removeChild(childId);
+await api.detach(childId);
 
 // Delete entirely (notifies ALL parents across the system)
 await api.delete(childId);
-// ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ Finds all items where children.includes(childId)
+// ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ Finds all items where attachments.includes(itemId)
 // ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ Calls onChildDeleted on each parent
 // ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ Parents can decide how to handle (show tombstone, remove silently, etc.)
 ```
@@ -887,7 +887,7 @@ await api.delete(childId);
 - Direct-parent-only notifications prevent cascading re-renders
 - Optional hooks maintain simplicity (not all renderers need them)
 - Automatic re-renders after hooks match reactive framework patterns
-- Separate delete/removeChild operations give fine-grained control
+- Separate delete/detach operations give fine-grained control
 - Multiple parent notifications essential for graph structure consistency
 
 ---
@@ -1001,14 +1001,14 @@ Users can bookmark different starting points:
 
 **Decision: Spatial Browsing with Positioned Windows**
 
-Containers render their children as draggable, positioned windows on a 2D canvas rather than in a linear list or grid.
+Containers render their attachments as draggable, positioned windows on a 2D canvas rather than in a linear list or grid.
 
 **Core Design:**
 
 - Container = Desktop/Canvas (2D space for arranging windows)
 - Children = Windows (positioned rectangles containing items)
 - Recursive composition: Containers within containers work naturally
-- Position data stored in parent's children array (not in child itself)
+- Position data stored in parent's attachments array (not in child itself)
 
 **Data Model Evolution:**
 
@@ -1016,10 +1016,10 @@ Children changed from simple ID array to positioned objects:
 
 ```javascript
 // Before
-children: ["item-1", "item-2"]
+attachments: ["item-1", "item-2"]
 
 // After
-children: [
+attachments: [
   {id: "item-1", x: 20, y: 20, width: 400, height: 300, z: 0, minimized: false},
   {id: "item-2", x: 50, y: 50, width: 400, height: 300, z: 1, minimized: false}
 ]
@@ -1086,14 +1086,14 @@ Major source of bugs: Event handlers capturing stale data at render time.
 
 **Problem:**
 ```javascript
-const children = item.children;  // Snapshot
+const attachments = item.attachments;  // Snapshot
 
 const updateChild = (id, updates) => {
-  children.map(...);  // Uses stale snapshot!
+  attachments.map(...);  // Uses stale snapshot!
 };
 
 titlebar.onmousedown = () => {
-  const maxZ = Math.max(...children.map(c => c.z));  // Stale!
+  const maxZ = Math.max(...attachments.map(c => c.z));  // Stale!
 };
 ```
 
@@ -1101,7 +1101,7 @@ titlebar.onmousedown = () => {
 ```javascript
 const updateChild = async (id, updates) => {
   const fresh = await api.get(item.id);  // Current state
-  fresh.children.map(...);
+  fresh.attachments.map(...);
 };
 ```
 
@@ -1123,9 +1123,9 @@ api.navigate(itemId);  // Would destroy entire workspace
 
 **Default Positioning:**
 
-New children positioned diagonally:
+New attachments positioned diagonally:
 ```javascript
-const numChildren = parent.children.length;
+const numChildren = parent.attachments.length;
 const offset = numChildren * 30;
 const newChild = {
   x: 20 + offset,
@@ -1525,10 +1525,10 @@ Systems examined for insights:
 | 2026-01-09 | Session 2: Made decisions on code execution model (async require, lazy invalidation), sandboxing (ES modules with strict mode), circular dependency handling, error handling, and explicitly decided against version control |
 | 2026-01-09 | Session 3: Made decisions on item identification (GUIDs with optional names), name uniqueness enforcement for code items, code item detection via type hierarchy, special GUIDs for seed items, and updated seed item structure to include "code" type |
 | 2026-01-10 | Session 4: Made decisions on storage API signatures (method contracts, validation strategy, query capabilities), bootstrap behavior (self-healing seed items, export/import strategy, system reset), and seed item creation order |
-| 2026-01-10 | Session 5: Made decisions on containers (items that render children), graph structure (DAG with multiple parents), lifecycle hooks (onChildChanged, onChildDeleted), automatic subscriptions and reactivity, navigation (URL-based root), unified view/edit model, delete vs removeChild operations, and cycle prevention |
+| 2026-01-10 | Session 5: Made decisions on containers (items that render attachments), graph structure (DAG with multiple parents), lifecycle hooks (onChildChanged, onChildDeleted), automatic subscriptions and reactivity, navigation (URL-based root), unified view/edit model, delete vs detach operations, and cycle prevention |
 | 2026-01-10 | Session 6: Added external libraries as code items (section 7.5), added workspace seed item as default root (GUID ...000006), ready for implementation |
 | 2026-01-10 | Session 7: Implemented container type and renderer - two-step child creation flow (click to create, click to edit), container manages child addition via createChild API, workspace is now type container, validates hierarchical composition |
-| 2026-01-12 | Session 8: Implemented 2D canvas windowing system with spatial browsing - positioned children (x,y,width,height,z), draggable windows, click-to-front, silent updates for DOM preservation, scroll state restoration, stale closure prevention, openSibling API for link navigation |
+| 2026-01-12 | Session 8: Implemented 2D canvas windowing system with spatial browsing - positioned attachments (x,y,width,height,z), draggable windows, click-to-front, silent updates for DOM preservation, scroll state restoration, stale closure prevention, openSibling API for link navigation |
 | 2026-01-13 | Documentation restructure: Created subsystem docs (Rendering_and_Editing.md, Tags_and_Classification.md, Spatial_Windowing.md, Future_Directions.md). Added sections 13 (Tags as Universal Property) and 14 (Editors as Separate Items & Multiple Renderers). Decided tags apply to all items, editors separate from renderers, multiple of each per type. |
 | 2026-02-03 | Added section 15 (Emergency REPL Loading). Kernel loads repl-ui directly on error when normal boot-complete activation didn't happen. Falls back to dev tools console if repl-ui itself is broken. No kernel fallback UI needed. |
 | 2026-02-03 | Added section 16 (Module-Level State and Hot-Reload). Documented the open problem where libraries caching `api` at module level break after hot-reload. Proposed clean pattern: use `window.kernel` directly, use window-level references for event listener cleanup. |
@@ -1540,14 +1540,14 @@ Systems examined for insights:
 ### Answered in Session 5
 
 1. ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã¢â‚¬Â¦ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¦ **Event system**: Decided - Automatic subscriptions with lifecycle hooks, direct-parent-only notifications
-2. ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã¢â‚¬Â¦ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¦ **Nested renderer composition**: Decided - Containers are items that render children, recursive composition via `api.renderItem()`
+2. ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã¢â‚¬Â¦ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¦ **Nested renderer composition**: Decided - Containers are items that render attachments, recursive composition via `api.renderItem()`
 3. ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã¢â‚¬Â¦ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¦ **Context-specific APIs**: Decided - Single unified API with scoped write access (descendants only)
 4. ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã¢â‚¬Â¦ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¦ **Navigation between items**: Decided - URL-based root with renderer-controlled behavior
 5. ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã¢â‚¬Â¦ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¦ **View vs Edit modes**: Decided - Unified view/edit, renderers decide interaction model
 6. ✅ **Multiple renderers per type**: Decided - Supported, single default renderer for MVP, selection mechanism deferred (see Section 14, Rendering_and_Editing.md)
-7. ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã¢â‚¬Â¦ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¦ **Hierarchical containers**: Decided - Graph structure (DAG) with explicit children array
-8. ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã¢â‚¬Â¦ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¦ **Delete semantics**: Decided - Separate `removeChild()` and `delete()` operations
-9. ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã¢â‚¬Â¦ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¦ **Cycle prevention**: Decided - Validate on `addChild()` to prevent cycles
+7. ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã¢â‚¬Â¦ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¦ **Hierarchical containers**: Decided - Graph structure (DAG) with explicit attachments array
+8. ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã¢â‚¬Â¦ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¦ **Delete semantics**: Decided - Separate `detach()` and `delete()` operations
+9. ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã¢â‚¬Â¦ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¦ **Cycle prevention**: Decided - Validate on `attach()` to prevent cycles
 
 ### Still Open
 

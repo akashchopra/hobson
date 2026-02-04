@@ -366,10 +366,10 @@ If multiple renderers/editors exist for a type:
 
 ## Container Rendering
 
-When a container renders its children, it can specify how each child is rendered:
+When a container renders its attachments, it can specify how each child is rendered:
 ```javascript
-// Positioned children with optional renderer
-children: [
+// Positioned attachments with optional renderer
+attachments: [
   { 
     id: "note-1", 
     x: 20, y: 20, width: 400, height: 300, z: 0,
@@ -479,7 +479,7 @@ Renderer selection lives in the **parent-child relationship**, not on items them
   id: "my-note",
   type: "container",
   content: {
-    children: [
+    attachments: [
       { 
         id: "tag-browser-1",
         renderer: "tag-browser-compact"  // Parent's choice
@@ -536,7 +536,7 @@ Viewport Container (system-defined)
 **Future Considerations:**
 - Keyboard shortcuts ('e' for edit, etc.)
 - Double-click behavior
-- Drag-and-drop for rearranging children
+- Drag-and-drop for rearranging attachments
 - Hover preview of alternative renderers
 - Undo for renderer code edits
 
@@ -553,7 +553,7 @@ In spatial layouts, rendered items may overlap or be adjacent. The selection mec
 
 **Unreachable containers:**
 
-If a container's entire visible area is occupied by children, reaching the container requires:
+If a container's entire visible area is occupied by attachments, reaching the container requires:
 - Navigation breadcrumbs showing ancestor chain
 - Modifier keys (e.g., Ctrl+click to select parent)
 - Hover effects revealing container boundaries
@@ -564,6 +564,6 @@ If a container's entire visible area is occupied by children, reaching the conta
 ## Cross-References
 
 - For renderer implementation patterns, see Technical_Implementation_Notes.md Section 5
-- For container rendering of children, see Spatial_Windowing.md
+- For container rendering of attachments, see Spatial_Windowing.md
 - For generic editor design, see Future_Directions.md
 - For current implementation status, see Design_Decisions_Log.md

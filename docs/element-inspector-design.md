@@ -50,7 +50,7 @@ Source location capture has a cost (creating Error objects for stack traces). Ra
 
 **Global debug (`?debug=1`)** — URL parameter checked at boot. When enabled, all elements created via `api.createElement` receive source attribution. Zero cost when disabled.
 
-**Subtree debug** — Re-render a specific item with debug enabled. The debug flag flows through the rendering context, so children also receive attribution. Useful for surgical inspection without global overhead.
+**Subtree debug** — Re-render a specific item with debug enabled. The debug flag flows through the rendering context, so attachments also receive attribution. Useful for surgical inspection without global overhead.
 
 | Mode | Trigger | Scope | Use Case |
 |------|---------|-------|----------|

@@ -1,7 +1,3 @@
-// Item: field-editor-itemref
-// ID: bccf2a2b-c750-417e-9d86-b96699cc5078
-// Type: 66666666-0000-0000-0000-000000000000
-
 
 export function render(value, onChange, api, options = {}) {
   const container = document.createElement('div');

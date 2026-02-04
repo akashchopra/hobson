@@ -1,7 +1,3 @@
-// Item: field-view-code-editable
-// ID: e7b73a8e-2191-4ce5-ae9c-f721b5e30731
-// Type: cccccccc-0000-0000-0000-000000000000
-
 // Code Editable Field View - CodeMirror-based code editor
 // See [field-view-code-editable documentation](item://e7b73a8e-2191-4ce5-ae9c-f721b5e30731)
 

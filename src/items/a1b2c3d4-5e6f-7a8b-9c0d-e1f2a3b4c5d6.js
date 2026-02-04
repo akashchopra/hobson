@@ -1,7 +1,3 @@
-// Item: hobson-markdown
-// ID: a1b2c3d4-5e6f-7a8b-9c0d-e1f2a3b4c5d6
-// Type: 66666666-0000-0000-0000-000000000000
-
 
 
 // Hobson-flavored markdown renderer
@@ -95,8 +91,6 @@ const applyLineRange = (text, linesParam, baseStartLine = 1) => {
  * Render markdown with Hobson extensions.
  * @param {string} markdown - The markdown text to render
  * @param {object} api - The Hobson API object
- * @param {object} [options] - Optional settings
- * @param {object} [options.markdownit] - Pre-loaded markdownit instance (for recursive calls)
  * @returns {Promise<HTMLElement>} - A div containing the rendered markdown
  */
 export async function render(markdown, api, options = {}) {

@@ -1,7 +1,3 @@
-// Item: element-inspector
-// ID: eeee0000-0000-0000-0000-000000000001
-// Type: 66666666-0000-0000-0000-000000000000
-
 // Element Inspector Library
 // Provides tools to inspect which view/item rendered any UI element
 
@@ -278,11 +274,11 @@ async function showInspectorOverlay(info, x, y, api) {
           try {
             const rootItem = await api.get(currentRoot);
             // Check if target is already a child
-            const existingChild = rootItem.children?.find(c => c.id === targetId);
+            const existingChild = rootItem.attachments?.find(c => c.id === targetId);
 
             if (existingChild) {
               // Already a child - update its view.navigateTo and re-render
-              const updatedChildren = rootItem.children.map(c => {
+              const updatedChildren = rootItem.attachments.map(c => {
                 if (c.id === targetId) {
                   return { ...c, view: { ...(c.view || {}), navigateTo, minimized: false } };
                 }
@@ -294,7 +290,7 @@ async function showInspectorOverlay(info, x, y, api) {
               const newChild = { id: targetId, view: { navigateTo } };
               await api.set({
                 ...rootItem,
-                children: [...(rootItem.children || []), newChild],
+                children: [...(rootItem.attachments || []), newChild],
                 modified: Date.now()
               });
             }

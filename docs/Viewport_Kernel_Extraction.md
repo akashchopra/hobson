@@ -43,7 +43,7 @@ Remove all viewport state and navigation logic from the kernel. The kernel's onl
 **Changed:**
 - Now checks URL `?root=` param on first render
 - If URL has root, uses that and updates viewport item to match
-- Falls back to viewport item's `children[0]` if no URL root
+- Falls back to viewport item's `attachments[0]` if no URL root
 
 ## Boot Sequence (After)
 
@@ -51,7 +51,7 @@ Remove all viewport state and navigation logic from the kernel. The kernel's onl
 2. Kernel calls `renderViewport()` - renders VIEWPORT item
 3. Viewport view renders:
    - Checks URL for `?root=` param
-   - Falls back to viewport item's children[0]
+   - Falls back to viewport item's attachments[0]
    - Updates viewport item if URL differs
    - Renders the root item
 4. Kernel emits `system:boot-complete`

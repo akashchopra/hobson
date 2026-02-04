@@ -1,7 +1,3 @@
-// Item: system:hobson-instance-view
-// ID: 99999999-1111-0000-0000-000000000000
-// Type: aaaaaaaa-0000-0000-0000-000000000000
-
 // Hobson Instance View - iframe-based isolation
 // See [system:hobson-instance-view documentation](item://99999999-1111-0000-0000-000000000000)
 

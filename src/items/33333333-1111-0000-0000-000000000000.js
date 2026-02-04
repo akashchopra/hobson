@@ -1,7 +1,3 @@
-// Item: kernel:core
-// ID: 33333333-1111-0000-0000-000000000000
-// Type: 33333333-0000-0000-0000-000000000000
-
 export async function loadKernel(require, storageBackend) {
   // Event system - Phase 2: Object-based emit with type hierarchy dispatch
   class EventBus {
@@ -870,10 +866,10 @@ export async function loadKernel(require, storageBackend) {
         },
 
         // Parent-child operations
-        setChildView: (parentId, childId, viewId) => kernel.setChildView(parentId, childId, viewId),
-        findParentOf: (childId) => kernel.findParentOf(childId),
-        addChild: (parentId, childId) => kernel.addChild(parentId, childId),
-        removeChild: (parentId, childId) => kernel.removeChild(parentId, childId),
+        setAttachmentView: (parentId, itemId, viewId) => kernel.setAttachmentView(parentId, itemId, viewId),
+        findContainerOf: (itemId) => kernel.findContainerOf(itemId),
+        attach: (parentId, itemId) => kernel.attach(parentId, itemId),
+        detach: (parentId, itemId) => kernel.detach(parentId, itemId),
 
         // Cycle detection (advisory - for UIs that want to warn before creating cycles)
         wouldCreateCycle: (parentId, childId) => kernel.wouldCreateCycle(parentId, childId),
@@ -1031,7 +1027,7 @@ export async function loadKernel(require, storageBackend) {
               id,
               name,
               type: IDS.TYPE_DEFINITION,
-              children: [],
+              attachments: [],
               content: { description }
             });
             return id;
@@ -1109,56 +1105,56 @@ export async function loadKernel(require, storageBackend) {
     // Parent-child operations
     // -------------------------------------------------------------------------
 
-    async addChild(parentId, childId) {
+    async attach(parentId, itemId) {
       // Note: Cycles are now allowed in the item graph.
       // Cycle detection happens at render time, not at data modification time.
       // Use wouldCreateCycle() if you want to check/warn before adding.
 
       const parent = await this.storage.get(parentId);
-      if (!parent.children) parent.children = [];
+      if (!parent.attachments) parent.attachments = [];
 
       // Check if child already exists
-      if (parent.children.some(c => c.id === childId)) {
+      if (parent.attachments.some(c => c.id === childId)) {
         return; // Already a child
       }
 
       // Append minimal child object - views add layout properties as needed
       const updated = {
         ...parent,
-        children: [...parent.children, { id: childId }]
+        attachments: [...parent.attachments, { id: childId }]
       };
 
       // Save silently without triggering re-render
       await this.saveItem(updated);
     }
 
-    async removeChild(parentId, childId) {
+    async detach(parentId, itemId) {
       const parent = await this.storage.get(parentId);
       const updated = {
         ...parent,
-        children: parent.children.filter(c => c.id !== childId)
+        attachments: parent.attachments.filter(c => c.id !== childId)
       };
       // Save silently without triggering re-render (consistent with addChild)
       await this.saveItem(updated);
     }
 
-    async setChildView(parentId, childId, viewId) {
+    async setAttachmentView(parentId, itemId, viewId) {
       const parent = await this.storage.get(parentId);
-      const childIndex = parent.children.findIndex(c => c.id === childId);
+      const childIndex = parent.attachments.findIndex(c => c.id === childId);
 
       if (childIndex < 0) {
-        const error = new Error(`Child ${childId} not found in parent ${parentId}`);
+        const error = new Error(`Item ${itemId} not found in container ${parentId}`);
         await this.captureError(error, {
-          operation: 'setChildView',
+          operation: 'setAttachmentView',
           itemId: parentId,
-          childId: childId
+          itemId: itemId
         });
         throw error;
       }
 
       // Update the child's view - preserve existing view properties, change type
-      const updatedChildren = [...parent.children];
-      const currentChild = updatedChildren[childIndex];
+      const updatedAttachments = [...parent.attachments];
+      const currentChild = updatedAttachments[childIndex];
       const currentView = currentChild.view;
       
       // Store previous view (complete snapshot)
@@ -1167,20 +1163,20 @@ export async function loadKernel(require, storageBackend) {
         previousView: currentView ? { ...currentView } : null,
         view: { ...(currentView || {}), type: viewId }
       };
-      updatedChildren[childIndex] = newChild;
+      updatedAttachments[childIndex] = newChild;
 
       const updated = {
         ...parent,
-        children: updatedChildren
+        attachments: updatedAttachments
       };
 
       await this.saveItem(updated);
     }
 
-    async findParentOf(childId) {
+    async findContainerOf(itemId) {
       const allItems = await this.storage.getAll();
       for (const item of allItems) {
-        if (item.children && item.children.some(c => c.id === childId)) {
+        if (item.attachments && item.attachments.some(c => c.id === itemId)) {
           return item;
         }
       }
@@ -1197,7 +1193,7 @@ export async function loadKernel(require, storageBackend) {
 
         try {
           const item = await this.storage.get(fromId);
-          for (const child of (item.children || [])) {
+          for (const child of (item.attachments || [])) {
             if (await canReach(child.id, toId, visited)) {
               return true;
             }
@@ -1230,7 +1226,7 @@ export async function loadKernel(require, storageBackend) {
 
         try {
           const item = await this.storage.get(id);
-          for (const child of (item.children || [])) {
+          for (const child of (item.attachments || [])) {
             if (await detectCycle(child.id)) {
               return true;
             }
@@ -1261,13 +1257,13 @@ export async function loadKernel(require, storageBackend) {
       // Find all parents
       const allItems = await this.storage.getAll();
       const parents = allItems.filter(parentItem => {
-        if (!parentItem.children) return false;
-        return parentItem.children.some(child => child.id === itemId);
+        if (!parentItem.attachments) return false;
+        return parentItem.attachments.some(child => child.id === itemId);
       });
 
       // Remove from all parents
       for (const parent of parents) {
-        await this.removeChild(parent.id, itemId);
+        await this.detach(parent.id, itemId);
       }
 
       // Delete the item

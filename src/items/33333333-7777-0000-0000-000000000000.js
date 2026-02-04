@@ -1,7 +1,3 @@
-// Item: kernel:safe-mode
-// ID: 33333333-7777-0000-0000-000000000000
-// Type: 33333333-0000-0000-0000-000000000000
-
 // kernel-safe-mode module
 // See [Architecture Overview - Safe Mode](item://a0a0a0a0-d0c0-4000-8000-000000000003#Safe-Mode)
 

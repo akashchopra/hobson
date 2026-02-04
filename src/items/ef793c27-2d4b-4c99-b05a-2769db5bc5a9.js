@@ -2,10 +2,6 @@
 // ID: ef793c27-2d4b-4c99-b05a-2769db5bc5a9
 // Type: aaaaaaaa-0000-0000-0000-000000000000
 
-// Item: system:spatial-canvas-view
-// ID: ef793c27-2d4b-4c99-b05a-2769db5bc5a9
-// Type: aaaaaaaa-0000-0000-0000-000000000000
-
 // Item: spatial-canvas-view
 // ID: ef793c27-2d4b-4c99-b05a-2769db5bc5a9
 // Type: aaaaaaaa-0000-0000-0000-000000000000
@@ -224,7 +220,7 @@ export async function render(item, api) {
   };
 
   // Children (windows)
-  const children = item.children || [];
+  const children = item.attachments || [];
 
   if (children.length === 0 && !innerViewConfig) {
     // Show empty message only when no children AND no background view
@@ -247,7 +243,7 @@ export async function render(item, api) {
     const updateChild = async (childId, viewUpdates) => {
       // Get fresh children from database (not stale closure)
       const freshItem = await api.get(item.id);
-      const freshChildren = freshItem.children || [];
+      const freshChildren = freshItem.attachments || [];
 
       const updatedChildren = freshChildren.map(c => {
         if (c.id === childId) {
@@ -282,7 +278,7 @@ export async function render(item, api) {
     // Helper: Get current max z-index from both database and DOM
     const getMaxZ = async () => {
       const freshItem = await api.get(item.id);
-      const freshChildren = freshItem.children || [];
+      const freshChildren = freshItem.attachments || [];
       // Exclude anchored windows from max z calculation
       const floating = freshChildren.filter(c => !isAnchored(c.view?.anchor) && !c.view?.minimized);
       const maxDbZ = Math.max(...floating.map(c => c.view?.z || 0), 0);
@@ -301,7 +297,7 @@ export async function render(item, api) {
     // Checks both database AND DOM z-values to ensure window goes on top
     const bringToFront = async (childIdToFront) => {
       const freshItem = await api.get(item.id);
-      const freshChildren = freshItem.children || [];
+      const freshChildren = freshItem.attachments || [];
 
       // Get max z from database (floating, non-minimized - exclude anchored)
       const floating = freshChildren.filter(c => !isAnchored(c.view?.anchor) && !c.view?.minimized);
@@ -1178,7 +1174,7 @@ export async function render(item, api) {
       id: item.id,
       addSibling: async (childId, navigateTo = null) => {
         const freshItem = await api.get(item.id);
-        const freshChildren = freshItem.children || [];
+        const freshChildren = freshItem.attachments || [];
         const existingChild = freshChildren.find(c => c.id === childId);
 
         if (existingChild) {
@@ -1332,7 +1328,7 @@ export async function render(item, api) {
           onclick: async () => {
             // Restore window and bring to front using normalized z-indices
             const freshItem = await api.get(item.id);
-            const freshChildren = freshItem.children || [];
+            const freshChildren = freshItem.attachments || [];
 
             // Get floating, non-minimized children sorted by z
             const floating = freshChildren

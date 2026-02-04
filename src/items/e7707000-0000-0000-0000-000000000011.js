@@ -1,7 +1,3 @@
-// Item: system:error-list-view
-// ID: e7707000-0000-0000-0000-000000000011
-// Type: aaaaaaaa-0000-0000-0000-000000000000
-
 
 // Error List View - displays all errors newest first with clear all option
 
@@ -100,7 +96,7 @@ export async function render(errorList, api) {
     await api.set(updated);
 
     // Update local reference
-    errorList.children = updated.children;
+    errorList.attachments = updated.attachments;
 
     return errors;
   };
@@ -108,7 +104,7 @@ export async function render(errorList, api) {
   // Render the results
   const renderResults = async () => {
     resultsArea.innerHTML = '';
-    const children = errorList.children || [];
+    const children = errorList.attachments || [];
     let renderedCount = 0;
 
     // Render each error, skipping deleted items
@@ -148,7 +144,7 @@ export async function render(errorList, api) {
 
   // Clear all handler
   clearAllBtn.onclick = async () => {
-    const count = errorList.children?.length || 0;
+    const count = errorList.attachments?.length || 0;
     if (count === 0) return;
 
     if (!confirm('Delete ' + count + ' error' + (count === 1 ? '' : 's') + '?')) {
@@ -156,7 +152,7 @@ export async function render(errorList, api) {
     }
 
     // Delete all error items
-    for (const childSpec of errorList.children) {
+    for (const childSpec of errorList.attachments) {
       const childId = typeof childSpec === 'string' ? childSpec : childSpec.id;
       try {
         await api.delete(childId);
@@ -166,7 +162,7 @@ export async function render(errorList, api) {
     }
 
     // Clear children and save
-    errorList.children = [];
+    errorList.attachments = [];
     await api.set(errorList);
 
     // Refresh from database to ensure consistent state after deletions

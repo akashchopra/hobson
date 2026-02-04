@@ -21,7 +21,7 @@ Phase 1 of the Tags and Classification system has been implemented. This include
 - Added `api.IDS.TAG` constant for easy reference
 
 **Item Structure:**
-- Items now support a `tags` property at the top level (sibling to `children`)
+- Items now support a `tags` property at the top level (sibling to `attachments`)
 - Structure: `tags: ["tag-id-1", "tag-id-2"]`
 - No validation changes needed - the system already allows arbitrary top-level properties
 
@@ -127,7 +127,7 @@ await api.set({
   type: api.IDS.TAG,
   created: Date.now(),
   modified: Date.now(),
-  children: [],
+  attachments: [],
   content: {
     name: 'important',
     color: '#dc2626',
@@ -171,7 +171,7 @@ console.log('Tagged items:', tagged);
   type: "00000000-0000-0000-0000-000000000009",  // TAG type
   created: timestamp,
   modified: timestamp,
-  children: [],
+  attachments: [],
   content: {
     name: "work",
     color: "#3b82f6",
@@ -189,7 +189,7 @@ console.log('Tagged items:', tagged);
   type: "871ae771-b9b1-4f40-8c7f-d9038bfb69c3",  // note type
   created: timestamp,
   modified: timestamp,
-  children: [],
+  attachments: [],
   tags: ["tag-id-1", "tag-id-2"],  // ← Tags at top level, not in content!
   content: {
     title: "My Note",
@@ -206,7 +206,7 @@ console.log('Tagged items:', tagged);
   type: "tag-browser-type-id",
   created: timestamp,
   modified: timestamp,
-  children: [],
+  attachments: [],
   content: {
     title: "Browse by Tag",
     target_container: null  // Future: filter to specific container
@@ -289,7 +289,7 @@ All implementation files are in `/tmp/`:
 **Why tags at top level?**
 - User specified this location (not in `content`)
 - Makes tags universal across all item types
-- Consistent with other top-level properties like `children`
+- Consistent with other top-level properties like `attachments`
 - No nesting means simpler queries
 
 **Why comma-separated IDs in UI?**

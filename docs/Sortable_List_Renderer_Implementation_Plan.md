@@ -2,19 +2,19 @@
 
 ## Overview
 
-Create a new view that displays any item's children as a vertically sortable list with drag-and-drop reordering and an item picker for adding existing items.
+Create a new view that displays any item's attachments as a vertically sortable list with drag-and-drop reordering and an item picker for adding existing items.
 
 ## Architecture Analysis
 
 ### Universal Applicability
 
-Any item can have children. This view provides a sequential (list) perspective on those children, complementing the spatial (2D canvas) perspective offered by the container view. The view ignores spatial properties (x, y, width, height) and uses array order exclusively.
+Any item can have attachments. This view provides a sequential (list) perspective on those attachments, complementing the spatial (2D canvas) perspective offered by the container view. The view ignores spatial properties (x, y, width, height) and uses array order exclusively.
 
 ### Data Model Decision
 
 **Chosen Approach: Array Order Only**
 ```javascript
-children: [
+attachments: [
   {id: "item-1", view: null},
   {id: "item-2", view: "compact"},
   {id: "item-3", view: null}
@@ -110,9 +110,9 @@ function createHeader(item, api, rootContainer) {
 
 async function renderChildren(listContainer, parentItem, api) {
   listContainer.innerHTML = '';
-  const children = parentItem.children || [];
+  const attachments = parentItem.attachments || [];
 
-  if (children.length === 0) {
+  if (attachments.length === 0) {
     const empty = api.createElement('div', {
       style: 'text-align: center; color: #999; padding: 60px 20px; font-style: italic;'
     }, ['This list is empty. Click "+ Add Item" to add items.']);
@@ -120,12 +120,12 @@ async function renderChildren(listContainer, parentItem, api) {
     return;
   }
 
-  // Find compact_card_view for rendering children
+  // Find compact_card_view for rendering attachments
   const compactViews = await api.query({ name: 'compact_card_view' });
   const defaultViewId = compactViews[0]?.id || null;
 
-  for (let i = 0; i < children.length; i++) {
-    const childSpec = children[i];
+  for (let i = 0; i < attachments.length; i++) {
+    const childSpec = attachments[i];
     const childId = typeof childSpec === 'string' ? childSpec : childSpec.id;
     const childViewId = (typeof childSpec === 'object' && childSpec.view) ? childSpec.view : defaultViewId;
 
@@ -248,7 +248,7 @@ async function createListItem(childId, index, viewId, parentItem, api, listConta
 └─────────────────────────────────┘
 ```
 
-**Deliverable**: Basic list view that displays children vertically with drag handles and remove buttons.
+**Deliverable**: Basic list view that displays attachments vertically with drag handles and remove buttons.
 
 ---
 
@@ -301,7 +301,7 @@ async function showItemPicker(parentItem, api, rootContainer) {
 
   const closeBtn = api.createElement('button', {
     style: 'padding: 4px 10px; cursor: pointer; background: transparent; border: none; font-size: 24px; color: #666;',
-    onclick: () => document.body.removeChild(overlay)
+    onclick: () => document.body.detach(overlay)
   }, ['×']);
 
   modalHeader.appendChild(modalTitle);
@@ -322,7 +322,7 @@ async function showItemPicker(parentItem, api, rootContainer) {
 
   // Get existing child IDs to filter them out
   const existingIds = new Set(
-    (parentItem.children || []).map(c => typeof c === 'string' ? c : c.id)
+    (parentItem.attachments || []).map(c => typeof c === 'string' ? c : c.id)
   );
   existingIds.add(parentItem.id); // Also exclude self
 
@@ -335,7 +335,7 @@ async function showItemPicker(parentItem, api, rootContainer) {
         return;
       }
       await addItemToList(parentItem, selectedItem.id, api, rootContainer);
-      document.body.removeChild(overlay);
+      document.body.detach(overlay);
     },
     api,
     {
@@ -347,7 +347,7 @@ async function showItemPicker(parentItem, api, rootContainer) {
   // Close on overlay click
   overlay.onclick = (e) => {
     if (e.target === overlay) {
-      document.body.removeChild(overlay);
+      document.body.detach(overlay);
     }
   };
 
@@ -362,25 +362,25 @@ async function addItemToList(parentItem, itemId, api, listContainer) {
   // Get fresh parent data
   const fresh = await api.get(parentItem.id);
 
-  // Normalize children to object format
-  const children = (fresh.children || []).map(c =>
+  // Normalize attachments to object format
+  const attachments = (fresh.attachments || []).map(c =>
     typeof c === 'string' ? { id: c } : c
   );
 
   // Add new item at the end
-  children.push({ id: itemId });
+  attachments.push({ id: itemId });
 
   // Update parent
   const updated = {
     ...fresh,
-    children: children,
+    attachments: attachments,
     modified: Date.now()
   };
 
   await api.set(updated);
 
   // Update local reference
-  parentItem.children = updated.children;
+  parentItem.attachments = updated.attachments;
 
   // Targeted DOM update: re-render just the list items
   const itemsContainer = listContainer.querySelector('.sortable-list-items');
@@ -507,7 +507,7 @@ function setupDragAndDrop(listContainer, parentItem, api) {
     draggedItem.querySelector('.drag-handle').style.cursor = 'grab';
     dropIndicator.style.display = 'none';
     if (dropIndicator.parentNode) {
-      dropIndicator.parentNode.removeChild(dropIndicator);
+      dropIndicator.parentNode.detach(dropIndicator);
     }
 
     draggedItem = null;
@@ -526,26 +526,26 @@ async function updateChildOrder(parentItem, fromIndex, toIndex, api, listContain
   // Get fresh data
   const fresh = await api.get(parentItem.id);
 
-  // Normalize children
-  let children = (fresh.children || []).map(c =>
+  // Normalize attachments
+  let attachments = (fresh.attachments || []).map(c =>
     typeof c === 'string' ? { id: c } : c
   );
 
   // Move item in array
-  const [movedItem] = children.splice(fromIndex, 1);
-  children.splice(toIndex, 0, movedItem);
+  const [movedItem] = attachments.splice(fromIndex, 1);
+  attachments.splice(toIndex, 0, movedItem);
 
   // Save update
   const updated = {
     ...fresh,
-    children: children,
+    attachments: attachments,
     modified: Date.now()
   };
 
   await api.set(updated);
 
   // Update local reference
-  parentItem.children = updated.children;
+  parentItem.attachments = updated.attachments;
 
   // Targeted DOM update: move the element in the DOM
   const items = Array.from(listContainer.querySelectorAll('.sortable-list-item'));
@@ -577,7 +577,7 @@ async function removeItemFromList(parentItem, childId, api, listContainer) {
   const fresh = await api.get(parentItem.id);
 
   // Filter out the removed child
-  const children = (fresh.children || []).filter(c => {
+  const attachments = (fresh.attachments || []).filter(c => {
     const id = typeof c === 'string' ? c : c.id;
     return id !== childId;
   });
@@ -585,14 +585,14 @@ async function removeItemFromList(parentItem, childId, api, listContainer) {
   // Save update
   const updated = {
     ...fresh,
-    children: children,
+    attachments: attachments,
     modified: Date.now()
   };
 
   await api.set(updated);
 
   // Update local reference
-  parentItem.children = updated.children;
+  parentItem.attachments = updated.attachments;
 
   // Targeted DOM update: remove the element
   const itemElement = listContainer.querySelector(`[data-item-id="${childId}"]`);
@@ -605,8 +605,8 @@ async function removeItemFromList(parentItem, childId, api, listContainer) {
     el.setAttribute('data-index', i);
   });
 
-  // Show empty state if no children left
-  if (children.length === 0) {
+  // Show empty state if no attachments left
+  if (attachments.length === 0) {
     listContainer.innerHTML = '';
     const empty = api.createElement('div', {
       style: 'text-align: center; color: #999; padding: 60px 20px; font-style: italic;'
@@ -661,7 +661,7 @@ async function removeItemFromList(parentItem, childId, api, listContainer) {
 ### Phase 2: Item Picker
 - [x] Implement modal overlay
 - [x] Integrate `item-search-lib.createSearchUI()`
-- [x] Filter out existing children
+- [x] Filter out existing attachments
 - [x] Implement targeted add with DOM update
 
 ### Phase 3: Drag-and-Drop
@@ -680,7 +680,7 @@ async function removeItemFromList(parentItem, childId, api, listContainer) {
 
 ## Success Criteria
 
-1. Users can view any item's children as a sortable list
+1. Users can view any item's attachments as a sortable list
 2. Users can add existing items via picker (reusing item-search-lib)
 3. Users can drag-and-drop to reorder items
 4. Users can remove items from list

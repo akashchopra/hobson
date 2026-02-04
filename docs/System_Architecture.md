@@ -27,7 +27,7 @@ Every piece of data in Hobson has the same structure:
 | type | GUID of type item |
 | created | Timestamp |
 | modified | Timestamp |
-| children | Array of child IDs or positioned objects |
+| attachments | Array of attached item IDs or positioned objects |
 | content | Arbitrary key-value data |
 
 ### Type Hierarchy
@@ -45,7 +45,7 @@ The kernel validates that every type chain terminates at ATOM and contains no cy
 Children are always objects with an `id` and a `view`:
 
 ```javascript
-children: [
+attachments: [
   {
     id: "item-guid",
     view: {
@@ -337,19 +337,19 @@ Passed to render functions as the second parameter:
 
 - `get(id)`, `set(item)`, `update(item)`, `delete(id)`, `query(filter)` — Storage
 - `renderItem(itemId, viewId)`, `rerenderItem(itemId)` — Rendering
-- `addChild(parentId, childId)`, `removeChild(parentId, childId)` — Composition
+- `attach(parentId, childId)`, `detach(parentId, childId)` — Composition
 - `navigate(itemId)` — Navigation
 - `IDS` — Well-known GUIDs
 - `viewport` — View state access
 - `siblingContainer` — Parent container context for "open as sibling" operations
-- `setChildView(parentId, childId, viewId)` — Override child's contextual view
-- `updateViewConfig(parentId, childId, config)` — Persist view state in parent's children array
+- `setAttachmentView(parentId, childId, viewId)` — Override child's contextual view
+- `updateViewConfig(parentId, childId, config)` — Persist view state in parent's attachments array
 
 ### Runtime View Patterns
 
 **Sibling Container** — Views can request items to open as siblings within the same parent container. The `api.siblingContainer` provides the parent context, enabling "open here" behavior where clicking a link adds the target item as a sibling window rather than navigating away.
 
-**View Config Persistence** — Per-child view state (window position, size, banner settings, collapsed state) is stored in the parent's `children` array. This keeps view-specific layout data with the composition relationship rather than on the items themselves, allowing the same item to appear differently in different contexts.
+**View Config Persistence** — Per-child view state (window position, size, banner settings, collapsed state) is stored in the parent's `attachments` array. This keeps view-specific layout data with the composition relationship rather than on the items themselves, allowing the same item to appear differently in different contexts.
 
 ---
 
@@ -516,7 +516,7 @@ Watches for deletion of hobson-instance items. When a nested instance is deleted
 - **Code Views** — Editable and readonly views for code items
 - **Tag Browser View** — Hierarchical tag navigation
 - **Item Search View** — Search interface with results
-- **Sortable List View** — Reorderable list of children
+- **Sortable List View** — Reorderable list of attachments
 - **Compact Card View** — Condensed item display
 - **Generic View** — Spec-driven rendering from VIEW_SPEC items
 - **Error Views** — Error detail and error list views (see case study above)
@@ -583,7 +583,7 @@ Evaluate view code if first time
   ↓
 render(item, api) called
   ↓
-May call renderItem() for children (recursion)
+May call renderItem() for attachments (recursion)
   ↓
 Register in instance registry → Insert into DOM
 ```

@@ -45,7 +45,7 @@ const json = `[
     "type": "00000000-0000-0000-0000-000000000004",
     "created": 1705276800000,
     "modified": 1705276800000,
-    "children": [],
+    "attachments": [],
     "content": {
       "code": "export function helper() { return 'useful'; }"
     }
@@ -124,7 +124,7 @@ const json = `[
     "type": "00000000-0000-0000-0000-000000000004",
     "created": 1705276800000,
     "modified": 1705283000000,
-    "children": [],
+    "attachments": [],
     "content": {
       "code": "export function helper() { return 'updated!'; }"
     }
@@ -178,7 +178,7 @@ const result = await importSelective(
 
 ## Scenario 6: Clone a Set of Items
 
-You want to duplicate a workspace with all its children and code.
+You want to duplicate a workspace with all its attachments and code.
 
 ### REPL Session:
 
@@ -186,7 +186,7 @@ You want to duplicate a workspace with all its children and code.
 // Load the full import script
 // ... paste import-script.js ...
 
-// Export a specific workspace and its children
+// Export a specific workspace and its attachments
 const workspaceId = 'some-workspace-id';
 const allItems = await api.getAll();
 
@@ -199,7 +199,7 @@ function getDescendants(itemId, allItems) {
 
   descendants.push(item);
 
-  const childIds = item.children.map(c =>
+  const childIds = item.attachments.map(c =>
     typeof c === 'string' ? c : c.id
   );
 
@@ -256,7 +256,7 @@ const newItems = oldItems.map(old => ({
         api.IDS.ATOM,
   created: Date.now(),
   modified: Date.now(),
-  children: [],
+  attachments: [],
   content: {
     code: old.data.source
   }
@@ -381,8 +381,8 @@ async function importAndAddToWorkspace(json) {
       created++;
 
       // Add to workspace if not already a child
-      if (!workspace.children.includes(item.id)) {
-        await api.addChild(api.IDS.WORKSPACE, item.id);
+      if (!workspace.attachments.includes(item.id)) {
+        await api.attach(api.IDS.WORKSPACE, item.id);
         console.log(`Created and added to workspace: ${item.name || item.id}`);
       }
     }

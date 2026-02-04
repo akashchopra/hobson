@@ -24,9 +24,9 @@
 | saveJson() | Keep | Keep | Used by export |
 | export() | Keep | Keep | Data export |
 | createREPLAPI() | Keep | Slim | Remove showItemList/showHelp/editItemRaw refs |
-| addChild/removeChild | Keep | Keep | Graph operations |
-| setChildView | Keep | Keep | View management |
-| findParentOf | Keep | Keep | Graph query |
+| attach/detach | Keep | Keep | Graph operations |
+| setAttachmentView | Keep | Keep | View management |
+| findContainerOf | Keep | Keep | Graph query |
 | wouldCreateCycle/hasCycle | Keep | Keep | Cycle detection |
 | deleteItem | Keep | Keep | CRUD |
 | isCodeItem | Keep | Keep | Type check |
@@ -134,10 +134,10 @@ export async function loadKernel(require, storageBackend) {
         getPreferredView: async (itemId) => { /* ... */ },
 
         // Parent-child operations - unchanged
-        setChildView: (parentId, childId, viewId) => kernel.setChildView(parentId, childId, viewId),
-        findParentOf: (childId) => kernel.findParentOf(childId),
-        addChild: (parentId, childId) => kernel.addChild(parentId, childId),
-        removeChild: (parentId, childId) => kernel.removeChild(parentId, childId),
+        setAttachmentView: (parentId, childId, viewId) => kernel.setAttachmentView(parentId, childId, viewId),
+        findContainerOf: (childId) => kernel.findContainerOf(childId),
+        attach: (parentId, childId) => kernel.attach(parentId, childId),
+        detach: (parentId, childId) => kernel.detach(parentId, childId),
         wouldCreateCycle: (parentId, childId) => kernel.wouldCreateCycle(parentId, childId),
         hasCycle: (itemId) => kernel.hasCycle(itemId),
 
@@ -170,10 +170,10 @@ export async function loadKernel(require, storageBackend) {
     }
 
     // Parent-child operations - unchanged
-    async addChild(parentId, childId) { /* ... */ }
-    async removeChild(parentId, childId) { /* ... */ }
-    async setChildView(parentId, childId, viewId) { /* ... */ }
-    async findParentOf(childId) { /* ... */ }
+    async attach(parentId, childId) { /* ... */ }
+    async detach(parentId, childId) { /* ... */ }
+    async setAttachmentView(parentId, childId, viewId) { /* ... */ }
+    async findContainerOf(childId) { /* ... */ }
     async wouldCreateCycle(parentId, newChildId) { /* ... */ }
     async hasCycle(itemId) { /* ... */ }
     async deleteItem(itemId) { /* ... */ }
@@ -265,9 +265,9 @@ For this to work, these userland libraries become **required** (not optional):
 - getTypeChain()
 
 **Graph Operations:**
-- addChild(), removeChild()
-- setChildView()
-- findParentOf()
+- attach(), detach()
+- setAttachmentView()
+- findContainerOf()
 - wouldCreateCycle(), hasCycle()
 
 **CRUD:**

@@ -1,7 +1,3 @@
-// Item: css-loader-lib
-// ID: c3cebc22-4a33-4182-b9a7-166316ba004e
-// Type: 66666666-0000-0000-0000-000000000000
-
 
 /**
  * CSS Loader Library

@@ -72,7 +72,7 @@ System-level concepts that aren't types:
 | `concept:bootstrap` | How the system boots, bootloader vs kernel, first run vs normal |
 | `concept:navigation` | URL handling, viewport state, history, navigate() |
 | `concept:transclusion` | How embedding works, syntax, partial vs full |
-| `concept:children` | Parent-child relationships, composition, spatial positioning |
+| `concept:attachments` | Parent-child relationships, composition, spatial positioning |
 | `concept:event-system` | EventBus, declarative watches, event types |
 | `concept:safe-mode` | Recovery, when to use, what's available |
 

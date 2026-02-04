@@ -1,7 +1,3 @@
-// Item: field-editor-textarea
-// ID: 8271c69e-ec45-485b-9233-89efd8b562ab
-// Type: 66666666-0000-0000-0000-000000000000
-
 
 export function render(value, onChange, api, options = {}) {
   const textarea = document.createElement('textarea');

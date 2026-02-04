@@ -22,7 +22,7 @@
 
 - **Comprehensive window management:** Handles all expected window operations
 - **Good UX details:** Minimize animation, z-order management, anchor system
-- **Banner integration:** Shows container's markdown content alongside children
+- **Banner integration:** Shows container's markdown content alongside attachments
 - **Context menu system:** Rich menu with view selection, child management
 
 ### Issues Found
@@ -43,11 +43,11 @@
 
 1. **Inline styles:** Uses extensive inline CSS. Consider extracting common styles to CSS item.
 
-2. **State management:** Window states stored in children array view configs. This is the correct pattern per architecture.
+2. **State management:** Window states stored in attachments array view configs. This is the correct pattern per architecture.
 
 3. **Selection handling:** Uses `data-item-id` and `data-parent-id` attributes correctly for viewport selection.
 
-4. **Error boundaries:** Catches render errors for individual children, doesn't crash entire container.
+4. **Error boundaries:** Catches render errors for individual attachments, doesn't crash entire container.
 
 ---
 
@@ -55,7 +55,7 @@
 
 Uses renderer API correctly:
 - `api.renderItem()` for child rendering with context
-- `api.setChildView()` for view overrides
+- `api.setAttachmentView()` for view overrides
 - `api.updateViewConfig()` for banner state persistence
 - `api.siblingContainer` for "open as sibling" pattern
 

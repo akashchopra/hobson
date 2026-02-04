@@ -6,7 +6,7 @@
 
 ## Problem Statement
 
-The `container_view` displays children as draggable windows on a 2D spatial canvas. Users assemble "task-specific workspaces" by positioning windows, but these layouts break when the container resizes because positions are stored as absolute pixel offsets from the top-left corner.
+The `container_view` displays attachments as draggable windows on a 2D spatial canvas. Users assemble "task-specific workspaces" by positioning windows, but these layouts break when the container resizes because positions are stored as absolute pixel offsets from the top-left corner.
 
 The current "Dock Left/Right/Top/Bottom" menu options position windows flush against edges with filled height/width, but this is a one-time positioning operation — the relationship to the edge is not preserved.
 
@@ -31,7 +31,7 @@ Users don't need to understand anchors directly. Pin and Dock are the interactio
 
 ### View Properties
 
-The `view` object in the parent's children array gains one optional property:
+The `view` object in the parent's attachments array gains one optional property:
 
 ```javascript
 {
@@ -243,12 +243,12 @@ function calculateAbsolutePosition(view, containerWidth, containerHeight) {
 
 ### Resize Observation
 
-The `container_view` must observe its own size changes and re-render children when dimensions change. Use `ResizeObserver`:
+The `container_view` must observe its own size changes and re-render attachments when dimensions change. Use `ResizeObserver`:
 
 ```javascript
 const resizeObserver = new ResizeObserver(entries => {
   for (const entry of entries) {
-    // Re-render children with new container dimensions
+    // Re-render attachments with new container dimensions
     rerenderChildren(entry.contentRect.width, entry.contentRect.height);
   }
 });

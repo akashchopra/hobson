@@ -118,7 +118,7 @@ console.log(result.idMap)
 
 **Features:**
 - Generates new GUIDs for all items
-- Remaps all references (type, children)
+- Remaps all references (type, attachments)
 - Preserves relationships between imported items
 - Updates timestamps to now
 
@@ -172,7 +172,7 @@ await importWithOverwrite(json, true)
 ### Clone a Workspace
 
 ```javascript
-// Export workspace and its children from one system
+// Export workspace and its attachments from one system
 const workspaceBackup = '[...]'
 
 // Import with new IDs in another system (or same system)
@@ -226,7 +226,7 @@ Hobson backup files are JSON arrays of item objects:
     "type": "00000000-0000-0000-0000-000000000004",
     "created": 1705276800000,
     "modified": 1705283000000,
-    "children": [],
+    "attachments": [],
     "content": {
       "code": "export function test() { return 42; }"
     }
@@ -239,7 +239,7 @@ Hobson backup files are JSON arrays of item objects:
 - `type`: GUID of type item
 - `created`: Unix timestamp (milliseconds)
 - `modified`: Unix timestamp (milliseconds)
-- `children`: Array of IDs or positioned objects
+- `attachments`: Array of IDs or positioned objects
 - `content`: Object with arbitrary data
 
 ### Optional Fields
@@ -268,8 +268,8 @@ When using `api.set()` (not `_rawSet()`):
 - `importWithOverwrite()`: Updates `modified` timestamp
 
 ### Children References
-- String children: Imported as-is
-- Positioned children: `{id, x, y, width, height, z, pinned}`
+- String attachments: Imported as-is
+- Positioned attachments: `{id, x, y, width, height, z, pinned}`
 - IDs are remapped in `importWithNewIds()`
 
 ---
@@ -298,7 +298,7 @@ Default behavior - item with that ID already exists. To overwrite:
 
 Check:
 1. Items were created: `await api.exists('item-id')`
-2. Items are in workspace children: `const ws = await api.get(api.IDS.WORKSPACE)`
+2. Items are in workspace attachments: `const ws = await api.get(api.IDS.WORKSPACE)`
 3. Container needs refresh: close and reopen item
 
 ---

@@ -74,7 +74,7 @@ interface Item {
   type: string         // GUID reference to type item
   created: number      // Unix timestamp
   modified: number     // Unix timestamp
-  children: string[]   // Array of child item IDs (ordered)
+  attachments: string[]   // Array of child item IDs (ordered)
   content: Record<string, any>  // Arbitrary key-value data
 }
 ```
@@ -92,7 +92,7 @@ await storage.set({
   type: 'note-type-guid',
   created: Date.now(),
   modified: Date.now(),
-  children: [],  // Standard property for all items
+  attachments: [],  // Standard property for all items
   content: {
     text: 'Meeting notes',
     tags: ['work', 'urgent']
@@ -328,7 +328,7 @@ async createSeedItems() {
     type: "atom",
     created: now,
     modified: now,
-    children: [],  // Standard property for all items
+    attachments: [],  // Standard property for all items
     content: {
       description: "The fundamental unit. Everything is an atom or derives from atom."
     }
@@ -340,7 +340,7 @@ async createSeedItems() {
     type: "atom",
     created: now,
     modified: now,
-    children: [],
+    attachments: [],
     content: {
       description: "Defines a type of item",
       required_fields: []
@@ -353,7 +353,7 @@ async createSeedItems() {
     type: "type_definition",
     created: now,
     modified: now,
-    children: [],
+    attachments: [],
     content: {
       description: "Executable code item",
       required_fields: ["code"]
@@ -366,7 +366,7 @@ async createSeedItems() {
     type: "code",
     created: now,
     modified: now,
-    children: [],
+    attachments: [],
     content: {
       description: "Code that renders an item type",
       required_fields: ["for_type", "code"]
@@ -379,7 +379,7 @@ async createSeedItems() {
     type: "renderer",
     created: now,
     modified: now,
-    children: [],
+    attachments: [],
     content: {
       for_type: "atom",
       code: `
@@ -884,7 +884,7 @@ To use an external library:
   type: "00000000-0000-0000-0000-000000000004",  // library
   created: Date.now(),
   modified: Date.now(),
-  children: [],
+  attachments: [],
   content: {
     code: `
       // UMD libraries need wrapping to export properly
@@ -953,7 +953,7 @@ class Kernel {
           type: "00000000-0000-0000-0000-000000000004",
           created: Date.now(),
           modified: Date.now(),
-          children: [],
+          attachments: [],
           content: { code }
         };
         
@@ -1111,7 +1111,7 @@ const SEED_ITEMS = [
     type: "00000000-0000-0000-0000-000000000000",
     created: 0,
     modified: 0,
-    children: [],
+    attachments: [],
     content: {
       title: "Workspace",
       description: "Default starting point. Add items here or navigate elsewhere."
@@ -1336,7 +1336,7 @@ Containers are items that render other items. No special kernel support needed b
 ```javascript
 // Example: Simple list container renderer
 export function render(listContainer, api) {
-  const childIds = listContainer.children || [];
+  const childIds = listContainer.attachments || [];
   
   return api.h('div', { class: 'list-container' }, [
     api.h('h2', {}, [listContainer.content.title || 'Untitled List']),
@@ -1355,7 +1355,7 @@ async function addNewItem(container, api) {
     type: 'note',  // Or whatever type is appropriate
     created: Date.now(),
     modified: Date.now(),
-    children: [],
+    attachments: [],
     content: { text: 'New item' }
   };
   
@@ -1368,7 +1368,7 @@ async function addNewItem(container, api) {
 ```javascript
 // Kanban board renders columns, columns render tasks
 export function render(board, api) {
-  const columnIds = board.children || [];
+  const columnIds = board.attachments || [];
   
   return api.h('div', { class: 'kanban-board' }, [
     api.h('h1', {}, [board.content.title]),
@@ -1383,7 +1383,7 @@ export function render(board, api) {
 
 // Column renderer (also a container)
 export function render(column, api) {
-  const taskIds = column.children || [];
+  const taskIds = column.attachments || [];
   
   return api.h('div', { class: 'kanban-column' }, [
     api.h('input', {
@@ -1402,7 +1402,7 @@ export function render(column, api) {
 
 ### Child Management in API
 
-The renderer API provides these operations for managing children:
+The renderer API provides these operations for managing attachments:
 
 ```javascript
 createRendererAPI(containerItem) {
@@ -1410,7 +1410,7 @@ createRendererAPI(containerItem) {
     // ... other API methods
     
     // Add a child to this container
-    addChild: async (childId) => {
+    attach: async (childId) => {
       // Validate no cycle
       if (await this.wouldCreateCycle(containerItem.id, childId)) {
         throw new Error(
@@ -1420,7 +1420,7 @@ createRendererAPI(containerItem) {
       
       const updated = {
         ...containerItem,
-        children: [...(containerItem.children || []), childId],
+        attachments: [...(containerItem.attachments || []), childId],
         modified: Date.now()
       };
       
@@ -1428,10 +1428,10 @@ createRendererAPI(containerItem) {
     },
     
     // Remove a child from this container (item still exists)
-    removeChild: async (childId) => {
+    detach: async (childId) => {
       const updated = {
         ...containerItem,
-        children: (containerItem.children || []).filter(id => id !== childId),
+        attachments: (containerItem.attachments || []).filter(id => id !== childId),
         modified: Date.now()
       };
       
@@ -1441,14 +1441,14 @@ createRendererAPI(containerItem) {
     // Create a new item and optionally add as child
     create: async (item, addAsChild = true) => {
       // Ensure item has all required fields
-      if (!item.children) {
-        item.children = [];
+      if (!item.attachments) {
+        item.attachments = [];
       }
       
       await this.storage.set(item);
       
       if (addAsChild) {
-        await this.addChild(containerItem.id, item.id);
+        await this.attach(containerItem.id, item.id);
       }
       
       return item.id;
@@ -1481,7 +1481,7 @@ createRendererAPI(containerItem) {
 
 ```javascript
 async wouldCreateCycle(parentId, newChildId) {
-  // Adding newChildId to parentId's children
+  // Adding itemId to parentId's attachments
   // Creates cycle if we can reach parentId from newChildId
   
   async function canReach(fromId, toId, visited = new Set()) {
@@ -1492,9 +1492,9 @@ async wouldCreateCycle(parentId, newChildId) {
     
     try {
       const item = await this.storage.get(fromId);
-      const children = item.children || [];
+      const attachments = item.attachments || [];
       
-      for (const childId of children) {
+      for (const childId of attachments) {
         if (await canReach(childId, toId, visited)) {
           return true;
         }
@@ -1517,7 +1517,7 @@ async wouldCreateCycle(parentId, newChildId) {
 async findAllParents(itemId) {
   const allItems = await this.storage.getAll();
   return allItems
-    .filter(item => item.children?.includes(itemId))
+    .filter(item => item.attachments?.includes(itemId))
     .map(item => item.id);
 }
 ```
@@ -1538,9 +1538,9 @@ async isDescendant(itemId, ancestorId) {
     
     try {
       const item = await this.storage.get(checkId);
-      const children = item.children || [];
+      const attachments = item.attachments || [];
       
-      for (const childId of children) {
+      for (const childId of attachments) {
         if (await checkRecursive(childId, targetId, visited)) {
           return true;
         }
@@ -1562,7 +1562,7 @@ async isDescendant(itemId, ancestorId) {
 
 ### Subscription Management
 
-The kernel maintains subscriptions between parents and children:
+The kernel maintains subscriptions between parents and attachments:
 
 ```javascript
 class SubscriptionManager {
@@ -1610,8 +1610,8 @@ class SubscriptionManager {
 async renderItem(itemId, rendererName) {
   const item = await this.storage.get(itemId);
   
-  // Subscribe this item to all its children
-  (item.children || []).forEach(childId => {
+  // Subscribe this item to all its attachments
+  (item.attachments || []).forEach(childId => {
     this.subscriptions.subscribe(itemId, childId);
   });
   
@@ -1719,7 +1719,7 @@ export function onChildDeleted(columnId, api) {
   console.log(`Column ${columnId} was deleted`);
   
   // Note: The board will re-render automatically
-  // The deleted column will no longer appear in children array
+  // The deleted column will no longer appear in attachments array
 }
 ```
 
@@ -1822,7 +1822,7 @@ createRendererAPI(containerItem) {
 ```javascript
 // Navigate when clicking an item
 export function render(list, api) {
-  const items = list.children || [];
+  const items = list.attachments || [];
   
   return api.h('div', { class: 'item-list' }, 
     items.map(itemId => 
@@ -1837,7 +1837,7 @@ export function render(list, api) {
 
 // Or create a proper link with href
 export function render(list, api) {
-  const items = list.children || [];
+  const items = list.attachments || [];
   
   return api.h('div', { class: 'item-list' },
     items.map(itemId =>
@@ -1884,8 +1884,8 @@ export function render(container, api) {
   ]);
   containerDiv.appendChild(header);
   
-  // Render children recursively
-  const childIds = container.children || [];
+  // Render attachments recursively
+  const childIds = container.attachments || [];
   for (const childId of childIds) {
     const childNode = await api.renderItem(childId);
     containerDiv.appendChild(childNode);
@@ -1904,7 +1904,7 @@ createChild: async (type, content = {}) => {
   const newItem = {
     type,
     content,
-    children: []
+    attachments: []
   };
   const id = await api.create(newItem, true);  // true = add as child
   return id;
@@ -1927,17 +1927,17 @@ const noteId = await api.createChild('note-type-guid', {
 
 **What Happens:**
 1. Item is created with generated ID and timestamps
-2. Item is added to parent's `children` array
+2. Item is added to parent's `attachments` array
 3. Parent's `modified` timestamp is updated
 4. Reactivity system triggers parent re-render
 5. New child appears immediately
 
 ### Recursive Rendering
 
-Containers render their children by calling `api.renderItem()`:
+Containers render their attachments by calling `api.renderItem()`:
 
 ```javascript
-for (const childId of container.children) {
+for (const childId of container.attachments) {
   try {
     const childNode = await api.renderItem(childId);
     parentElement.appendChild(childNode);

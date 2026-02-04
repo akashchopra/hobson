@@ -548,7 +548,7 @@ class Kernel {
     // 2. Check persisted viewport
     try {
       const viewport = await this.storage.get(this.IDS.VIEWPORT);
-      return viewport.children?.[0]?.id || null;
+      return viewport.attachments?.[0]?.id || null;
     } catch {
       return null;
     }
@@ -694,7 +694,7 @@ let rootViewConfig = {};
 export async function onSystemBootComplete({ content }, api) {
   // Restore view preferences
   const viewport = await api.get(VIEWPORT_ID);
-  const child = viewport.children?.[0];
+  const child = viewport.attachments?.[0];
   if (child?.view) {
     rootViewId = child.view.type || null;
     const { type, ...config } = child.view;
@@ -714,7 +714,7 @@ export async function onSystemBootComplete({ content }, api) {
         ...rootViewConfig
       };
     }
-    viewport.children = content.rootId ? [childSpec] : [];
+    viewport.attachments = content.rootId ? [childSpec] : [];
     await api.set(viewport);
 
     // Clear view prefs for new root

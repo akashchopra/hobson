@@ -2,11 +2,11 @@
 
 ## Background
 
-The current kernel prevents cycles in the item graph by checking in `addChild()`. This assumes a tree structure is always desirable.
+The current kernel prevents cycles in the item graph by checking in `attach()`. This assumes a tree structure is always desirable.
 
 However, there are legitimate use cases for cyclic structures:
 
-- **Search results as children**: A search widget might find its own container as a result
+- **Search results as attachments**: A search widget might find its own container as a result
 - **Bidirectional relationships**: Item A references B, B references A
 - **Graph structures**: Knowledge graphs, state machines, etc.
 
@@ -27,7 +27,7 @@ Rendering is recursive through the dispatch mechanism:
 
 1. Container A's view calls `api.renderItem(B)`
 2. B's view calls `api.renderItem(C)`
-3. If C's children includes A → `api.renderItem(A)` → infinite loop
+3. If C's attachments includes A → `api.renderItem(A)` → infinite loop
 
 ### Solution: Track Render Path
 
@@ -101,7 +101,7 @@ createRendererAPI(containerItem, context = {}) {
 
 **Before (breaks on cycle):**
 ```javascript
-for (const childSpec of item.children) {
+for (const childSpec of item.attachments) {
   const childNode = await api.renderItem(childSpec.id);
   container.appendChild(childNode);
 }
@@ -109,7 +109,7 @@ for (const childSpec of item.children) {
 
 **After (handles cycles explicitly):**
 ```javascript
-for (const childSpec of item.children) {
+for (const childSpec of item.attachments) {
   const childId = typeof childSpec === 'string' ? childSpec : childSpec.id;
   const child = await api.get(childId);
 
@@ -131,11 +131,11 @@ The kernel cannot statically know if a view will recurse. The rule is:
 - If a cycle is actually encountered and no `onCycle` is provided → error
 - If no cycle occurs, `onCycle` is never called (and not required)
 
-In practice, any view that calls `api.renderItem()` on children should provide `onCycle`. Views that don't render children (e.g., a simple note view) don't need it.
+In practice, any view that calls `api.renderItem()` on attachments should provide `onCycle`. Views that don't render attachments (e.g., a simple note view) don't need it.
 
 ## Supporting API Changes
 
-### Remove Cycle Prevention from `addChild()`
+### Remove Cycle Prevention from `attach()`
 
 **Current behavior:**
 ```javascript
@@ -146,7 +146,7 @@ if (await this.wouldCreateCycle(parentId, childId)) {
 
 **New behavior:**
 - Remove this check
-- `addChild()` succeeds even if it creates a cycle
+- `attach()` succeeds even if it creates a cycle
 - Cycles are handled at render time, not at data modification time
 
 ### Advisory Cycle Detection
@@ -179,11 +179,11 @@ For non-rendering traversal (export, counting, analysis), provide explicit helpe
 
 ### `api.mapChildren(itemId, normalFn, cycleFn, options?)`
 
-Recursively map over children with explicit handling for both cases.
+Recursively map over attachments with explicit handling for both cases.
 
 **Parameters:**
 - `itemId` - Root item to traverse from
-- `normalFn(child, context)` - Called for normal children, returns transformed value
+- `normalFn(child, context)` - Called for normal attachments, returns transformed value
 - `cycleFn(child, context)` - Called when a cycle is detected, returns transformed value
 - `options` - Optional: `{ maxDepth: number }`
 
@@ -211,7 +211,7 @@ const nodes = await api.mapChildren(
 
 ### `api.foldChildren(itemId, initialValue, fn, options?)`
 
-Recursively fold/reduce over children with cycle detection via context flag.
+Recursively fold/reduce over attachments with cycle detection via context flag.
 
 **Parameters:**
 - `itemId` - Root item to traverse from
@@ -249,13 +249,13 @@ const allIds = await api.foldChildren(container.id, [], async (acc, child, ctx) 
 
 - [ ] Implement render path tracking in kernel
 - [ ] Update `renderItem` to detect cycles and require `onCycle`
-- [ ] Remove cycle prevention from `addChild()`
+- [ ] Remove cycle prevention from `attach()`
 - [ ] Implement `api.hasCycle()` (advisory)
 - [ ] Implement `api.wouldCreateCycle()` (advisory) - already exists, just expose in API
 - [ ] Implement `api.mapChildren()`
 - [ ] Implement `api.foldChildren()`
 - [ ] Update `container_view` with `onCycle` handler
-- [ ] Update any other views that call `renderItem` on children
+- [ ] Update any other views that call `renderItem` on attachments
 - [ ] Test: Create intentional cycle via REPL
 - [ ] Test: Cycle renders with marker, no infinite loop
 - [ ] Test: Error thrown when cycle encountered without handler
@@ -266,14 +266,14 @@ const allIds = await api.foldChildren(container.id, [], async (acc, child, ctx) 
 ## Migration Effort
 
 **Views requiring update:**
-- `container_view` - renders children in spatial layout
+- `container_view` - renders attachments in spatial layout
 - Any custom container-style views
 
 **Views NOT requiring update:**
-- `note_view` - doesn't render children
-- `code_view` - doesn't render children
-- `script_view` - doesn't render children
-- View-specs (declarative) - rendered by `generic_view`, which doesn't recurse into children
+- `note_view` - doesn't render attachments
+- `code_view` - doesn't render attachments
+- `script_view` - doesn't render attachments
+- View-specs (declarative) - rendered by `generic_view`, which doesn't recurse into attachments
 - Simple leaf views
 
 ## Future Considerations

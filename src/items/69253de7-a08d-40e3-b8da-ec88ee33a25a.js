@@ -1,7 +1,3 @@
-// Item: system:sortable-list-view
-// ID: 69253de7-a08d-40e3-b8da-ec88ee33a25a
-// Type: aaaaaaaa-0000-0000-0000-000000000000
-
 // Sortable List View - Phases 1-3: Display, Item Picker, Drag-and-Drop
 
 const COMPACT_CARD_VIEW_ID = 'd4e5f6a7-b8c9-4d0e-a1b2-c3d4e5f6a7b8';
@@ -58,9 +54,9 @@ function createHeader(item, api, listContainer) {
 
 async function renderChildren(listContainer, parentItem, api) {
   listContainer.innerHTML = '';
-  const children = parentItem.children || [];
+  const attachments = parentItem.attachments || [];
 
-  if (children.length === 0) {
+  if (attachments.length === 0) {
     const empty = api.createElement('div', {
       style: 'text-align: center; color: var(--color-border-dark); padding: 60px 20px; font-style: italic;'
     }, ['This list is empty. Click "+ Add Item" to add items.']);
@@ -71,8 +67,8 @@ async function renderChildren(listContainer, parentItem, api) {
   const compactViews = await api.query({ name: 'system:compact-card-view' });
   const defaultViewId = compactViews[0]?.id || COMPACT_CARD_VIEW_ID;
 
-  for (let i = 0; i < children.length; i++) {
-    const childSpec = children[i];
+  for (let i = 0; i < attachments.length; i++) {
+    const childSpec = attachments[i];
     const childId = typeof childSpec === 'string' ? childSpec : childSpec.id;
     const childViewId = typeof childSpec === 'string' ? defaultViewId : (childSpec.view?.type || defaultViewId);
 
@@ -177,7 +173,7 @@ async function showItemPicker(parentItem, api, listContainer) {
   const searchLib = await api.require('item-search-lib');
 
   const existingIds = new Set(
-    (parentItem.children || []).map(c => typeof c === 'string' ? c : c.id)
+    (parentItem.attachments || []).map(c => typeof c === 'string' ? c : c.id)
   );
   existingIds.add(parentItem.id);
 
@@ -203,12 +199,12 @@ async function showItemPicker(parentItem, api, listContainer) {
 
 async function addItemToList(parentItem, itemId, api, listContainer) {
   const fresh = await api.get(parentItem.id);
-  const children = (fresh.children || []).map(c => typeof c === 'string' ? { id: c } : c);
-  children.push({ id: itemId });
+  const attachments = (fresh.attachments || []).map(c => typeof c === 'string' ? { id: c } : c);
+  attachments.push({ id: itemId });
 
-  const updated = { ...fresh, children, modified: Date.now() };
+  const updated = { ...fresh, attachments, modified: Date.now() };
   await api.set(updated);
-  parentItem.children = updated.children;
+  parentItem.attachments = updated.attachments;
 
   // Re-render list
   await renderChildren(listContainer, parentItem, api);
@@ -216,14 +212,14 @@ async function addItemToList(parentItem, itemId, api, listContainer) {
 
 async function removeItemFromList(parentItem, childId, api, listContainer) {
   const fresh = await api.get(parentItem.id);
-  const children = (fresh.children || []).filter(c => {
+  const attachments = (fresh.attachments || []).filter(c => {
     const id = typeof c === 'string' ? c : c.id;
     return id !== childId;
   });
 
-  const updated = { ...fresh, children, modified: Date.now() };
+  const updated = { ...fresh, attachments, modified: Date.now() };
   await api.set(updated);
-  parentItem.children = updated.children;
+  parentItem.attachments = updated.attachments;
 
   const itemElement = listContainer.querySelector(`[data-item-id="${childId}"]`);
   if (itemElement) itemElement.remove();
@@ -232,7 +228,7 @@ async function removeItemFromList(parentItem, childId, api, listContainer) {
     el.setAttribute('data-index', i);
   });
 
-  if (children.length === 0) {
+  if (attachments.length === 0) {
     listContainer.innerHTML = '';
     const empty = api.createElement('div', {
       style: 'text-align: center; color: var(--color-border-dark); padding: 60px 20px; font-style: italic;'
@@ -336,14 +332,14 @@ function setupDragAndDrop(listContainer, parentItem, api) {
 
 async function updateChildOrder(parentItem, fromIndex, toIndex, api, listContainer) {
   const fresh = await api.get(parentItem.id);
-  let children = (fresh.children || []).map(c => typeof c === 'string' ? { id: c } : c);
+  let attachments = (fresh.attachments || []).map(c => typeof c === 'string' ? { id: c } : c);
 
-  const [movedItem] = children.splice(fromIndex, 1);
-  children.splice(toIndex, 0, movedItem);
+  const [movedItem] = attachments.splice(fromIndex, 1);
+  attachments.splice(toIndex, 0, movedItem);
 
-  const updated = { ...fresh, children, modified: Date.now() };
+  const updated = { ...fresh, attachments, modified: Date.now() };
   await api.set(updated);
-  parentItem.children = updated.children;
+  parentItem.attachments = updated.attachments;
 
   // Move element in DOM
   const items = Array.from(listContainer.querySelectorAll('.sortable-list-item'));

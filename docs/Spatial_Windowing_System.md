@@ -6,7 +6,7 @@
 
 ## Overview
 
-Containers in Hobson render their children as positioned, draggable windows on a 2D canvas rather than in a linear list. This enables spatial organization that matches how people naturally organize information - multiple items visible simultaneously, persistent layouts, direct manipulation.
+Containers in Hobson render their attachments as positioned, draggable windows on a 2D canvas rather than in a linear list. This enables spatial organization that matches how people naturally organize information - multiple items visible simultaneously, persistent layouts, direct manipulation.
 
 **Status:** Implemented in Session 8
 
@@ -53,12 +53,12 @@ Children evolved from simple ID arrays to positioned objects:
 
 **Before (string format):**
 ```javascript
-children: ["item-1", "item-2", "item-3"]
+attachments: ["item-1", "item-2", "item-3"]
 ```
 
 **After (positioned format):**
 ```javascript
-children: [
+attachments: [
   {
     id: "item-1",
     x: 20,           // Left position in pixels
@@ -88,11 +88,11 @@ const childId = typeof child === 'string' ? child : child.id;
 const x = child.x || 0;  // Default for string format
 ```
 
-Old string-format children work with default positioning (0, 0). They convert to object format on first interaction (drag, bring-to-front).
+Old string-format attachments work with default positioning (0, 0). They convert to object format on first interaction (drag, bring-to-front).
 
 ### Per-Child Renderer Selection
 
-Positioned children can optionally specify which renderer to use:
+Positioned attachments can optionally specify which renderer to use:
 ```javascript
 {
   id: "note-1",
@@ -134,7 +134,7 @@ Mouse can leave window during drag. Titlebar listeners only fire when over title
 
 Clicking anywhere on window brings it to front (except titlebar, which drags):
 
-1. Read fresh children from database
+1. Read fresh attachments from database
 2. Calculate max z-index
 3. If current z-index < max, increment to max + 1
 4. Update wrapper.style.zIndex immediately
@@ -146,9 +146,9 @@ Avoid unnecessary writes. If already on top, do nothing.
 
 ### Default Positioning
 
-New children positioned diagonally to avoid overlap:
+New attachments positioned diagonally to avoid overlap:
 ```javascript
-const numChildren = parent.children.length;
+const numChildren = parent.attachments.length;
 const offset = numChildren * 30;
 
 const newChild = {
@@ -185,7 +185,7 @@ await api.updateSilent(item);
 
 ### When NOT to Use Silent Updates
 
-- Adding/removing children (need to show new elements)
+- Adding/removing attachments (need to show new elements)
 - Content changes (need to reflect in UI)
 - Type changes (might need different renderer)
 
@@ -201,10 +201,10 @@ Silent updates preserve DOM state (scroll, focus, textarea cursor) but create st
 
 Event handlers capture data at render time:
 ```javascript
-const children = item.children;  // Snapshot at render time
+const attachments = item.attachments;  // Snapshot at render time
 
 titlebar.onmousedown = () => {
-  const maxZ = Math.max(...children.map(c => c.z));  // Uses stale data!
+  const maxZ = Math.max(...attachments.map(c => c.z));  // Uses stale data!
 };
 ```
 
@@ -220,14 +220,14 @@ Always read fresh data from database in event handlers:
 ```javascript
 titlebar.onmousedown = async () => {
   const freshItem = await api.get(item.id);  // Current state
-  const freshChildren = freshItem.children;
+  const freshChildren = freshItem.attachments;
   const maxZ = Math.max(...freshChildren.map(c => c.z));
 };
 ```
 
 **Critical locations:**
 
-- `updateChild()` function - MUST read fresh children
+- `updateChild()` function - MUST read fresh attachments
 - Click-to-front handler - MUST read fresh z-indices
 - Drag end handler - MUST read fresh state
 
@@ -507,10 +507,10 @@ Traditional docked panels (left/right/top/bottom edges) were considered:
 
 ### Why Positioned Objects Over Strings?
 
-**Considered:** Storing layout separately from children array.
+**Considered:** Storing layout separately from attachments array.
 
 **Rejected:**
-- Duplicates data (children array + separate layout)
+- Duplicates data (attachments array + separate layout)
 - Synchronization issues (what if child removed but layout entry remains?)
 - More complex queries (fetch item, then fetch layout)
 
@@ -548,15 +548,15 @@ Traditional docked panels (left/right/top/bottom edges) were considered:
 
 **Problem:** Click-to-front worked once then stopped.
 
-**Cause:** Using stale closure of children array for maxZ calculation.
+**Cause:** Using stale closure of attachments array for maxZ calculation.
 
-**Fix:** Read fresh children from database in click handler.
+**Fix:** Read fresh attachments from database in click handler.
 
 ### 3. Position Jumping
 
 **Problem:** Windows jumped when adding new windows.
 
-**Cause:** `updateChild()` using stale children snapshot.
+**Cause:** `updateChild()` using stale attachments snapshot.
 
 **Fix:** Read fresh item from database before updating.
 

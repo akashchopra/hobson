@@ -1,7 +1,3 @@
-// Item: field-view-code-readonly
-// ID: 8e2f3e95-cc2d-44a3-beeb-0569f400da7c
-// Type: cccccccc-0000-0000-0000-000000000000
-
 // Code Readonly Field View - CodeMirror-based readonly code display
 // See [field-view-code-readonly documentation](item://8e2f3e95-cc2d-44a3-beeb-0569f400da7c)
 

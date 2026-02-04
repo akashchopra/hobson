@@ -385,7 +385,7 @@ The child instance is unaware of the prefixing - it's completely transparent.
 4. **Self-contained** - child imports its own complete kernel + data
 5. **Queryable** - parent can find all child items by prefix
 6. **Exportable** - export child by filtering on prefix
-7. **No hierarchy limit** - child can contain its own children
+7. **No hierarchy limit** - child can contain its own attachments
 8. **User controls import** - can import minimal, full, or custom kernel
 
 ---

@@ -1,7 +1,3 @@
-// Item: system:item-search-view
-// ID: 9428203f-c088-4a54-bbcb-fdbef244189e
-// Type: aaaaaaaa-0000-0000-0000-000000000000
-
 
 
 export async function render(search, api) {
@@ -101,19 +97,19 @@ export async function render(search, api) {
     return card;
   };
 
-  // Render current results from children
+  // Render current results from attachments
   const renderResults = async () => {
     resultsArea.innerHTML = '';
 
     const query = search.content?.currentQuery || '';
-    const children = search.children || [];
+    const attachments = search.attachments || [];
 
     if (!query || query.trim().length === 0) {
       const emptyMsg = api.createElement('div', {
         style: 'padding: 40px; text-align: center; color: var(--color-border-dark); font-style: italic;'
       }, ['Type to search...']);
       resultsArea.appendChild(emptyMsg);
-    } else if (children.length === 0) {
+    } else if (attachments.length === 0) {
       // No results - show create option
       const noResults = api.createElement('div', {
         style: 'text-align: center; padding: 40px;'
@@ -137,7 +133,7 @@ export async function render(search, api) {
             type: noteTypeId,
             created: Date.now(),
             modified: Date.now(),
-            children: [],
+            attachments: [],
             content: {
               title: query,
               description: ''
@@ -155,15 +151,15 @@ export async function render(search, api) {
       noResults.appendChild(createBtn); */
       resultsArea.appendChild(noResults);
     } else {
-      // Has results - render children with their specified view or compact view
+      // Has results - render attachments with their specified view or compact view
       const countHeader = api.createElement('div', {
         style: 'margin-bottom: 15px; font-size: 14px; color: var(--color-text-secondary); font-weight: 500;'
-      }, ['Found ' + children.length + ' item' + (children.length === 1 ? '' : 's')]);
+      }, ['Found ' + attachments.length + ' item' + (attachments.length === 1 ? '' : 's')]);
       resultsArea.appendChild(countHeader);
 
       const resultsList = api.createElement('div', {}, []);
 
-      for (const childSpec of children) {
+      for (const childSpec of attachments) {
         const childId = typeof childSpec === 'string' ? childSpec : childSpec.id;
         // Respect per-child view override (from "Display As..."), fall back to compact view
         const childViewId = (typeof childSpec === 'object' && childSpec.view?.type) ? childSpec.view.type : compactViewId;
@@ -192,14 +188,14 @@ export async function render(search, api) {
   let searchTimeout = null;
 
   const executeSearch = async (query) => {
-    // Update children with search results
+    // Update attachments with search results
     const targetContainer = search.content?.target_container || null;
     const matches = await searchLib.searchItems(query, api, { targetContainer });
 
-    // Store results as children and save query
+    // Store results as attachments and save query
     const updated = {
       ...search,
-      children: matches.map(m => ({ id: m.id })),
+      attachments: matches.map(m => ({ id: m.id })),
       content: {
         ...search.content,
         currentQuery: query
@@ -209,7 +205,7 @@ export async function render(search, api) {
     await api.set(updated);
 
     // Update local reference and re-render results
-    search.children = updated.children;
+    search.attachments = updated.attachments;
     search.content = updated.content;
     await renderResults();
   };

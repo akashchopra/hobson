@@ -1,7 +1,3 @@
-// Item: kernel:rendering
-// ID: 33333333-5555-0000-0000-000000000000
-// Type: 33333333-0000-0000-0000-000000000000
-
 
 // Parse stack trace to extract source item name and line number
 function parseSourceLocation(stack) {
@@ -186,13 +182,13 @@ export class RenderingSystem {
     let updated = 0;
     for (const instance of instances) {
       try {
-        // Look up current view config from parent's children array (may have changed via setChildView)
+        // Look up current view config from parent's attachments array (may have changed via setAttachmentView)
         // We need the FULL view config object (not just type) so views can access innerView, etc.
         let currentViewId = instance.viewId;
         let viewConfig = null;
         if (instance.parentId) {
           const parent = await this.kernel.storage.get(instance.parentId);
-          const childEntry = parent?.children?.find(c => c.id === itemId);
+          const childEntry = parent?.attachments?.find(c => c.id === itemId);
           if (childEntry?.view) {
             viewConfig = childEntry.view;  // Full view config object
             currentViewId = childEntry.view.type || currentViewId;
@@ -699,7 +695,7 @@ export class RenderingSystem {
       // Returns { field, line, region } or null
       getNavigateTo: () => context.navigateTo || null,
 
-      // Update the view config for the current item in the parent's children array
+      // Update the view config for the current item in the parent's attachments array
       // This persists view-specific state like banner position, sort order, etc.
       // For root items (rendered by viewport), updates the viewport's root view config instead.
       updateViewConfig: async (updates) => {
@@ -720,15 +716,15 @@ export class RenderingSystem {
         }
 
         const parent = await kernel.storage.get(parentId);
-        const childIndex = parent.children?.findIndex(c => c.id === containerItem.id);
+        const childIndex = parent.attachments?.findIndex(c => c.id === containerItem.id);
         if (childIndex < 0) {
-          console.warn('updateViewConfig: item not found in parent children');
+          console.warn('updateViewConfig: item not found in parent attachments');
           return false;
         }
 
         // Merge updates into existing view config
-        const currentChild = parent.children[childIndex];
-        parent.children[childIndex] = {
+        const currentChild = parent.attachments[childIndex];
+        parent.attachments[childIndex] = {
           ...currentChild,
           view: { ...(currentChild.view || {}), ...updates }
         };
@@ -802,7 +798,7 @@ export class RenderingSystem {
         if (!parentId) return null;
         try {
           const parent = await kernel.storage.get(parentId);
-          const childSpec = parent.children?.find(c =>
+          const childSpec = parent.attachments?.find(c =>
             (typeof c === 'string' ? c : c.id) === itemId
           );
           if (childSpec && typeof childSpec === 'object' && childSpec.view?.type) {
@@ -835,13 +831,13 @@ export class RenderingSystem {
         const newItem = {
           ...item,
           id: item.id || crypto.randomUUID(),
-          children: item.children || []
+          attachments: item.attachments || []
         };
 
         await kernel.saveItem(newItem);
 
         if (addAsChild) {
-          await kernel.addChild(containerItem.id, newItem.id);
+          await kernel.attach(containerItem.id, newItem.id);
         }
 
         return newItem.id;
@@ -852,7 +848,7 @@ export class RenderingSystem {
         const newItem = {
           type,
           content,
-          children: []
+          attachments: []
         };
         const id = await api.create(newItem, true);
         // Trigger re-render to show the new child
@@ -880,24 +876,24 @@ export class RenderingSystem {
       },
 
       // Add child to current container
-      addChild: async (childId) => {
-        await kernel.addChild(containerItem.id, childId);
+      attach: async (itemId) => {
+        await kernel.attach(containerItem.id, itemId);
       },
 
       // Remove child from current container
-      removeChild: async (childId) => {
-        await kernel.removeChild(containerItem.id, childId);
+      detach: async (itemId) => {
+        await kernel.detach(containerItem.id, itemId);
       },
 
       // Set view for a child in current container (2 params)
       // or in any container (3 params: parentId, childId, viewId)
-      setChildView: async (childIdOrParentId, viewIdOrChildId, optionalViewId) => {
+      setAttachmentView: async (itemIdOrParentId, viewIdOrItemId, optionalViewId) => {
         if (optionalViewId !== undefined) {
-          // 3-parameter version: setChildView(parentId, childId, viewId)
-          await kernel.setChildView(childIdOrParentId, viewIdOrChildId, optionalViewId);
+          // 3-parameter version: setAttachmentView(parentId, itemId, viewId)
+          await kernel.setAttachmentView(itemIdOrParentId, viewIdOrItemId, optionalViewId);
         } else {
-          // 2-parameter version: setChildView(childId, viewId)
-          await kernel.setChildView(containerItem.id, childIdOrParentId, viewIdOrChildId);
+          // 2-parameter version: setAttachmentView(itemId, viewId)
+          await kernel.setAttachmentView(containerItem.id, itemIdOrParentId, viewIdOrItemId);
         }
       },
 
@@ -935,13 +931,13 @@ export class RenderingSystem {
         }
 
         // Find the child spec
-        const childIndex = parent.children.findIndex(c => c.id === itemId);
+        const childIndex = parent.attachments.findIndex(c => c.id === itemId);
         if (childIndex < 0) return false;
 
-        const childSpec = parent.children[childIndex];
+        const childSpec = parent.attachments[childIndex];
         if (childSpec.previousView) {
           // Restore previous view (complete snapshot)
-          parent.children[childIndex] = {
+          parent.attachments[childIndex] = {
             ...childSpec,
             view: { ...childSpec.previousView },
             previousView: undefined
@@ -950,7 +946,7 @@ export class RenderingSystem {
           // No previous view stored, but there's a current view override
           // Remove the type to revert to default view, keeping spatial props
           const { type, ...viewWithoutType } = childSpec.view;
-          parent.children[childIndex] = {
+          parent.attachments[childIndex] = {
             ...childSpec,
             view: Object.keys(viewWithoutType).length > 0 ? viewWithoutType : undefined,
             previousView: undefined
@@ -965,7 +961,7 @@ export class RenderingSystem {
       },
 
       // Find parent of an item
-      findParentOf: (itemId) => kernel.findParentOf(itemId),
+      findContainerOf: (itemId) => kernel.findContainerOf(itemId),
 
       // Delete item entirely
       delete: async (itemId) => {
@@ -1011,7 +1007,7 @@ export class RenderingSystem {
             id,
             name,
             type: IDS.TYPE_DEFINITION,
-            children: [],
+            attachments: [],
             content: { description }
           });
           return id;

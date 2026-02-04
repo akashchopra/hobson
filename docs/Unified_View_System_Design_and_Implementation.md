@@ -154,7 +154,7 @@ The **generic view** is a library item that:
   type: "00000000-0000-0000-0000-000000000010", // view type
   created: 1737590400000,
   modified: 1737590400000,
-  children: [],
+  attachments: [],
   content: {
     for_type: "note_type_id",
     capabilities: ["read", "write"],
@@ -179,7 +179,7 @@ The **generic view** is a library item that:
   type: "00000000-0000-0000-0000-000000000011", // view-spec type
   created: 1737590400000,
   modified: 1737590400000,
-  children: [],
+  attachments: [],
   content: {
     for_type: "note_type_id",
     description: "Form-based note view",
@@ -236,7 +236,7 @@ The **generic view** is a library item that:
   type: "66666666-0000-0000-0000-000000000000", // library type
   created: 1737590400000,
   modified: 1737590400000,
-  children: [],
+  attachments: [],
   content: {
     description: "Simple text field supporting readonly and editable modes",
     code: `
@@ -555,7 +555,7 @@ Create three new seed items with memorable GUIDs:
   type: "22222222-0000-0000-0000-000000000000", // code
   created: Date.now(),
   modified: Date.now(),
-  children: [],
+  attachments: [],
   content: {
     description: "Code that displays and/or allows interaction with an item. Replaces renderer and editor types.",
     required_fields: ["for_type", "code", "capabilities"]
@@ -569,7 +569,7 @@ Create three new seed items with memorable GUIDs:
   type: "11111111-0000-0000-0000-000000000000", // type_definition
   created: Date.now(),
   modified: Date.now(),
-  children: [],
+  attachments: [],
   content: {
     description: "Declarative specification for how to view/edit an item. Contains ui_hints consumed by generic_view.",
     required_fields: ["for_type", "ui_hints"]
@@ -583,7 +583,7 @@ Create three new seed items with memorable GUIDs:
   type: "66666666-0000-0000-0000-000000000000", // library
   created: Date.now(),
   modified: Date.now(),
-  children: [],
+  attachments: [],
   content: {
     description: "Reusable component for rendering individual properties. Supports multiple modes (readonly, editable)."
   }
@@ -615,7 +615,7 @@ Create three new seed items with memorable GUIDs:
   type: "66666666-0000-0000-0000-000000000000", // library
   created: Date.now(),
   modified: Date.now(),
-  children: [],
+  attachments: [],
   content: {
     description: "Interprets view-spec items and constructs appropriate UI by loading field views.",
     code: `

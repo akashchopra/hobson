@@ -83,8 +83,8 @@ Events are emitted from kernel methods, not storage directly. This keeps storage
    - `editItemRaw()` save button
    - `createREPLAPI().set()`
    - `createREPLAPI().update()`
-   - `addChild()`
-   - `removeChild()`
+   - `attach()`
+   - `detach()`
    - `setChildRenderer()`
    - `import()`
 
@@ -172,7 +172,7 @@ After implementation, test in REPL:
 const unsub = api.events.on('item:*', e => console.log('Event:', e));
 
 // Create an item - should log item:created
-await api.set({ id: crypto.randomUUID(), type: api.IDS.ATOM, name: 'test', children: [], content: {} });
+await api.set({ id: crypto.randomUUID(), type: api.IDS.ATOM, name: 'test', attachments: [], content: {} });
 
 // Update it - should log item:updated
 const items = await api.query({ name: 'test' });

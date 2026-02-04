@@ -1,7 +1,3 @@
-// Item: field-view-object
-// ID: 205c0188-a13a-4c2b-b1d4-88de7eb9aa21
-// Type: cccccccc-0000-0000-0000-000000000000
-
 
 export async function render(value, options, api) {
   const { mode, onChange, label, indent = 0 } = options;
@@ -52,11 +48,11 @@ export async function render(value, options, api) {
   const renderInternalField = (key, val) => {
     const container = api.createElement('div');
     container.style.cssText = 'display: flex; flex-direction: column; gap: 4px;';
-
+    
     const jsonStr = JSON.stringify(val, null, 2);
     const lineCount = jsonStr.split('\n').length;
     const isLarge = lineCount > 10;
-
+    
     // Collapsible header for large internal fields
     if (isLarge) {
       const summary = api.createElement('div');
@@ -64,12 +60,12 @@ export async function render(value, options, api) {
       const keyCount = typeof val === 'object' && val !== null ? Object.keys(val).length : 0;
       summary.textContent = '(internal, ' + keyCount + ' entries, click to expand)';
       container.appendChild(summary);
-
+      
       const textarea = api.createElement('textarea');
       textarea.value = jsonStr;
       textarea.style.cssText = 'display: none; width: 100%; min-height: 150px; max-height: 400px; font-family: monospace; font-size: 12px; padding: 8px; border: 1px solid var(--color-border); border-radius: var(--border-radius); resize: vertical; background: var(--color-bg-surface-alt);';
       if (!isEditable) textarea.readOnly = true;
-
+      
       if (isEditable) {
         const errorEl = api.createElement('div');
         errorEl.style.cssText = 'display: none; color: var(--color-danger); font-size: 12px;';
@@ -87,13 +83,13 @@ export async function render(value, options, api) {
         };
         container.appendChild(errorEl);
       }
-
+      
       container.appendChild(textarea);
-
+      
       summary.onclick = () => {
         const isHidden = textarea.style.display === 'none';
         textarea.style.display = isHidden ? 'block' : 'none';
-        summary.textContent = isHidden
+        summary.textContent = isHidden 
           ? '(internal, ' + keyCount + ' entries, click to collapse)'
           : '(internal, ' + keyCount + ' entries, click to expand)';
       };
@@ -103,7 +99,7 @@ export async function render(value, options, api) {
       textarea.value = jsonStr;
       textarea.style.cssText = 'width: 100%; min-height: 60px; font-family: monospace; font-size: 12px; padding: 8px; border: 1px solid var(--color-border); border-radius: var(--border-radius); resize: vertical; background: var(--color-bg-surface-alt);';
       if (!isEditable) textarea.readOnly = true;
-
+      
       if (isEditable) {
         const errorEl = api.createElement('div');
         errorEl.style.cssText = 'color: var(--color-danger); font-size: 12px; min-height: 16px;';
@@ -124,7 +120,7 @@ export async function render(value, options, api) {
         container.appendChild(textarea);
       }
     }
-
+    
     return container;
   };
 

@@ -27,7 +27,7 @@ Transclusion uses standard markdown image syntax with the `item://` protocol:
 {
   id: "meeting-note",
   type: "note",
-  children: [{id: "agenda"}, {id: "alice-contact"}, {id: "template"}],
+  attachments: [{id: "agenda"}, {id: "alice-contact"}, {id: "template"}],
   content: {
     description: "![Agenda](item://agenda) ![Template](item://template) ..."
   }
@@ -35,8 +35,8 @@ Transclusion uses standard markdown image syntax with the `item://` protocol:
 ```
 
 - "agenda" and "template" are transcluded (rendered inline)
-- "alice-contact" is attached but not transcluded (would be shown in viewport's children panel)
-- All three appear in children array
+- "alice-contact" is attached but not transcluded (would be shown in viewport's attachments panel)
+- All three appear in attachments array
 
 ## Implementation Flow
 
@@ -45,8 +45,8 @@ Transclusion uses standard markdown image syntax with the `item://` protocol:
 When user saves markdown content:
 1. Parse content for `![...](item://item-id)` patterns using regex
 2. Extract all unique transcluded item IDs
-3. Ensure each transcluded ID exists in children array
-4. Add missing ones via `api.addChild(itemId)`
+3. Ensure each transcluded ID exists in attachments array
+4. Add missing ones via `api.attach(itemId)`
    - This provides cycle detection (prevents A→B→A loops)
    - This provides duplicate prevention (same child only appears once)
    - This ensures consistent structure: `{id: itemId}`
@@ -77,14 +77,14 @@ When rendering markdown content:
 ### Non-existent Item ID
 
 User types `![Agenda](item://typo-id)` where "typo-id" doesn't exist:
-- At save: Added to children array anyway via `api.addChild()`
+- At save: Added to attachments array anyway via `api.attach()`
 - At render: Shows `[Missing: Agenda]` (using the alt text)
 - User must fix manually (correct ID or delete syntax)
 
 ### Deleted Item
 
 Item was transcluded, then source item deleted:
-- Kernel's delete operation removes from all parents' children arrays
+- Kernel's delete operation removes from all parents' attachments arrays
 - Markdown still contains `![...](item://deleted-id)` syntax
 - Renders as `[Missing: ...]` (using alt text as fallback)
 - User should edit to remove stale transclusion
@@ -92,7 +92,7 @@ Item was transcluded, then source item deleted:
 ### Duplicate Transclusion
 
 Same item transcluded multiple times: `![X](item://id) ... ![X](item://id)`
-- Only appears once in children array (api.addChild prevents duplicates)
+- Only appears once in attachments array (api.attach prevents duplicates)
 - Renders fully inline at each location
 - Valid use case (show same content in different contexts)
 
@@ -118,7 +118,7 @@ Transcluded content is wrapped in a container with:
 
 ### Non-Transcluded Children
 
-Children that aren't transcluded are **not shown in the note renderer**. The viewport's children panel will display all children (both transcluded and non-transcluded). This keeps the note renderer focused on content display.
+Children that aren't transcluded are **not shown in the note renderer**. The viewport's attachments panel will display all attachments (both transcluded and non-transcluded). This keeps the note renderer focused on content display.
 
 ## Comparison with Other References
 
@@ -129,8 +129,8 @@ Children that aren't transcluded are **not shown in the note renderer**. The vie
 [Agenda](item://agenda-id)   → Hyperlink, click to navigate (link)
 ```
 
-- Links: navigation affordance only, no children relationship
-- Transclusion: embedded content + creates children relationship
+- Links: navigation affordance only, no attachments relationship
+- Transclusion: embedded content + creates attachments relationship
 - Both use the same `item://` protocol
 - The `!` prefix distinguishes embed from navigate
 

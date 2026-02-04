@@ -2,7 +2,7 @@
 
 ## Overview
 
-Treat search results and tag browser matches as actual children of their parent items. This enables consistent interaction patterns (context menus, selection, Display As) without introducing new concepts.
+Treat search results and tag browser matches as actual attachments of their parent items. This enables consistent interaction patterns (context menus, selection, Display As) without introducing new concepts.
 
 **Prerequisite**: Cycle-safe rendering (implemented) - a search widget may find its own container as a result, which is now handled gracefully via `onCycle` callbacks.
 
@@ -74,11 +74,11 @@ export async function render(item, api) {
 
 ## Phase 2: Update Item Search View ✓ COMPLETED
 
-**Note**: Instead of modifying `item-search-lib`, we updated `item_search_view` directly to store results as children. The view handles search execution and child management.
+**Note**: Instead of modifying `item-search-lib`, we updated `item_search_view` directly to store results as attachments. The view handles search execution and child management.
 
 **Changes to `item_search_view`**:
 
-Modify the search execution to update the parent item's children:
+Modify the search execution to update the parent item's attachments:
 
 ```javascript
 const executeSearch = async (query) => {
@@ -99,9 +99,9 @@ const executeSearch = async (query) => {
 
   const matches = await searchItems(query, api, { targetContainer });
 
-  // Update parent item's children with results (debounced)
+  // Update parent item's attachments with results (debounced)
   const parentItem = await api.get(parentItemId);
-  parentItem.children = matches.map(m => ({ id: m.id }));
+  parentItem.attachments = matches.map(m => ({ id: m.id }));
   parentItem.content.query = query; // Save current query
   await api.set(parentItem);
 
@@ -136,9 +136,9 @@ input.oninput = (e) => {
 
 ## Phase 3: Create Item Search View ✓ COMPLETED
 
-**Note**: `item_search_view` already existed; it was updated in Phase 2 to store results as children and render them with `compact_card_view`.
+**Note**: `item_search_view` already existed; it was updated in Phase 2 to store results as attachments and render them with `compact_card_view`.
 
-**Purpose**: Replace the custom rendering in `item-search-lib` with a proper view that displays children.
+**Purpose**: Replace the custom rendering in `item-search-lib` with a proper view that displays attachments.
 
 **New view**:
 - **Name**: `item_search_view`
@@ -174,8 +174,8 @@ export async function render(item, api) {
         targetContainer: item.content.targetContainer
       });
 
-      // Update children
-      item.children = results.map(r => ({ id: r.id }));
+      // Update attachments
+      item.attachments = results.map(r => ({ id: r.id }));
       item.content.query = e.target.value;
       await api.set(item);
 
@@ -195,7 +195,7 @@ export async function render(item, api) {
       style: 'padding: 40px; text-align: center; color: #999; font-style: italic;'
     }, ['Type to search...']);
     resultsArea.appendChild(emptyMsg);
-  } else if (!item.children || item.children.length === 0) {
+  } else if (!item.attachments || item.attachments.length === 0) {
     // No results - show create new option
     const noResults = api.createElement('div', {
       style: 'text-align: center; padding: 40px;'
@@ -219,7 +219,7 @@ export async function render(item, api) {
           type: noteTypeId,
           created: Date.now(),
           modified: Date.now(),
-          children: [],
+          attachments: [],
           content: {
             title: item.content.query,
             description: ''
@@ -237,7 +237,7 @@ export async function render(item, api) {
     // Has results - render each child with compact view
     const header = api.createElement('div', {
       style: 'margin-bottom: 15px; font-size: 14px; color: #666; font-weight: 500;'
-    }, ['Found ' + item.children.length + ' item' + (item.children.length === 1 ? '' : 's')]);
+    }, ['Found ' + item.attachments.length + ' item' + (item.attachments.length === 1 ? '' : 's')]);
     resultsArea.appendChild(header);
 
     const resultsList = api.createElement('div', {}, []);
@@ -251,7 +251,7 @@ export async function render(item, api) {
       style: 'padding: 12px; color: #888; font-style: italic; border: 1px dashed #ccc; border-radius: 4px;'
     }, ['↻ ' + (cycleItem.name || cycleItem.id.substring(0, 8)) + ' (current container)']);
 
-    for (const childSpec of item.children) {
+    for (const childSpec of item.attachments) {
       const childId = typeof childSpec === 'string' ? childSpec : childSpec.id;
 
       // Render with compact card view, handling cycles
@@ -279,7 +279,7 @@ export async function render(item, api) {
 
 **Changes to `tag_browser_view`**:
 
-Similar approach - when a tag is clicked, update the browser item's children:
+Similar approach - when a tag is clicked, update the browser item's attachments:
 
 ```javascript
 const showTaggedItems = async (tag) => {
@@ -289,8 +289,8 @@ const showTaggedItems = async (tag) => {
     item.tags && item.tags.includes(tag.id)
   );
 
-  // Update browser item's children
-  browser.children = taggedItems.map(item => ({ id: item.id }));
+  // Update browser item's attachments
+  browser.attachments = taggedItems.map(item => ({ id: item.id }));
   browser.content.selectedTag = tag.id; // Track which tag is selected
   await api.set(browser);
 
@@ -299,14 +299,14 @@ const showTaggedItems = async (tag) => {
 };
 ```
 
-Then render children using the compact view in the results section, with `onCycle` handler.
+Then render attachments using the compact view in the results section, with `onCycle` handler.
 
 ## Phase 5: Testing Checklist
 
 - [x] Create `compact_card_view` item
 - [x] Test compact view displays item info correctly
 - [x] Update `item_search_view` with debounced child updates
-- [x] Test search updates children correctly
+- [x] Test search updates attachments correctly
 - [x] Test context menu works on search results
 - [x] Test "Display As..." works on search results
 - [x] Test search results persist across sessions
@@ -318,11 +318,11 @@ Then render children using the compact view in the results section, with `onCycl
 
 ## Benefits Achieved
 
-1. **Uniform interaction**: Search results behave exactly like container children
+1. **Uniform interaction**: Search results behave exactly like container attachments
 2. **Context menus work**: Right-click on results accesses full item menu
 3. **View flexibility**: Can use "Display As..." on individual results
 4. **Persistence**: Last search results visible on reload
-5. **Simplicity**: One mechanism (children) instead of two (children + results)
+5. **Simplicity**: One mechanism (attachments) instead of two (children + results)
 6. **Composability**: Compact view reusable anywhere
 7. **Cycle safety**: Search can find its own container without infinite loops
 
@@ -344,9 +344,9 @@ Then render children using the compact view in the results section, with `onCycl
 
 ## Implementation Notes
 
-- This approach treats `children` as a flexible attachment mechanism rather than just permanent containment
+- This approach treats `attachments` as a flexible attachment mechanism rather than just permanent containment
 - Performance concerns about database writes are mitigated through debouncing
-- The system becomes more consistent - all items that look like children ARE children
+- The system becomes more consistent - all items that look like attachments ARE attachments
 - Context menus and viewport features work uniformly across all child items
 - Cycle-safe rendering ensures no infinite loops when search results include ancestor containers
 

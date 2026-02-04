@@ -1,57 +1,97 @@
 # Tags and Classification
 
-**Last Updated:** 2026-01-13
+**Last Updated:** 2026-02-04
 
 ---
 
 ## Overview
 
-Tags provide a flexible, user-defined taxonomy for organizing and finding items. Unlike relationships (which have semantic meaning), tags are classification metadata - ways of grouping items by topic, status, priority, or any other dimension the user finds useful.
+Tags provide a flexible, user-defined mechanism for organizing and finding items. Unlike relationships (which have semantic meaning), tags are classification metadata - ways of grouping items by topic, status, priority, or any other dimension the user finds useful.
+
+---
+
+## Terminology: `attachments` vs `parent`
+
+Hobson items have two distinct hierarchical concepts that should not be confused:
+
+| Property | Location | Purpose | Example |
+|----------|----------|---------|---------|
+| `attachments` | Top-level array | Compositional - items composed into this item's view | Windows on a spatial canvas, sections in a document |
+| `parent` | `content.parent` | Taxonomical - where this item sits in a classification tree | "hobson" → "projects" → "work" |
+
+These are intentionally asymmetric terms. `attachments` suggests physical composition ("I've attached the contact details to the meeting note"), while `parent` indicates tree hierarchy.
+
+**They are not inverses.** An item's `attachments` are things displayed within it. An item's `parent` is its position in a taxonomy. An item can have both, neither, or either independently.
 
 ---
 
 ## Core Design Decisions
 
-### Tags are Items
+### Any Item Can Be a Tag
 
-Tags are first-class items in the system, not just strings:
+There is no dedicated "tag type". Any item can be used as a tag by placing its ID in another item's `tags` array.
+
 ```javascript
+// A note about Hobson
 {
-  id: "tag-work",
-  type: "tag_type_id",
-  name: "work",
+  id: "hobson-note",
+  type: "note",
   content: {
-    name: "work",
-    color: "#3b82f6",
-    description: "Work-related items",
-    parent: null  // or parent tag ID for hierarchy
+    description: "# Hobson\n\nHobson is a personal information system..."
+  }
+}
+
+// Another note tagged with the Hobson note
+{
+  id: "architecture-note",
+  type: "note",
+  content: {
+    description: "# Architecture decisions\n\n...",
+    tags: ["hobson-note"]
   }
 }
 ```
 
-**Why tags as items?**
+**Why no dedicated tag type?**
 
-- Central definition (one place to edit name, color, description)
-- Can have properties (color, icon, metadata)
-- Support hierarchy (parent references)
-- Can be queried, rendered, edited like any item
-- Consistent with "everything is an item" philosophy
+- **Philosophical consistency:** "Everything is an item" - tags shouldn't be special
+- **No duplication:** You don't create "Hobson the note" AND "Hobson the tag"
+- **Reduced mental overhead:** One concept instead of two parallel structures
+- **Natural evolution:** An item can become a tag organically through usage
+
+### Lightweight Labels
+
+For pure classification markers like "urgent", "draft", "bug" - create minimal notes with only a description:
+
+```javascript
+{
+  id: "urgent-label",
+  type: "note",
+  content: {
+    description: "Applied to items requiring immediate attention"
+  }
+}
+```
+
+These are just notes with minimal content. No special treatment required.
 
 ### Tags Referenced in Arrays
 
 Items reference tags via ID arrays in their content:
+
 ```javascript
 {
   id: "note-123",
   type: "note",
   content: {
-    text: "# Meeting Notes",
-    tags: ["tag-work", "tag-urgent", "tag-projects"]
+    description: "# Meeting Notes\n\n...",
+    tags: ["hobson-note", "urgent-label", "work-note"]
   }
 }
 ```
 
 **Not via relationship items:**
+
 ```javascript
 // We DON'T do this:
 {
@@ -59,7 +99,7 @@ Items reference tags via ID arrays in their content:
   type: "relationship",
   content: {
     from: "note-123",
-    to: "tag-work",
+    to: "hobson-note",
     type: "tagged_with"
   }
 }
@@ -89,13 +129,14 @@ In "Note A follows from Note B", the "follows from" part carries semantic meanin
 ## Universal Tags
 
 Tags can be applied to ANY item type, not just notes:
+
 ```javascript
 // Note with tags
 {
   type: "note",
   content: {
-    text: "...",
-    tags: ["tag-work", "tag-urgent"]
+    description: "...",
+    tags: ["hobson-note", "urgent-label"]
   }
 }
 
@@ -103,8 +144,9 @@ Tags can be applied to ANY item type, not just notes:
 {
   type: "renderer",
   content: {
+    description: "Renders note items with markdown",
     code: "...",
-    tags: ["tag-experimental", "tag-ui"]
+    tags: ["experimental-label", "ui-note"]
   }
 }
 
@@ -112,8 +154,8 @@ Tags can be applied to ANY item type, not just notes:
 {
   type: "container",
   content: {
-    title: "My Workspace",
-    tags: ["tag-work", "tag-archive"]
+    description: "Development workspace",
+    tags: ["work-note", "archive-label"]
   }
 }
 ```
@@ -126,42 +168,40 @@ Tags can be applied to ANY item type, not just notes:
 4. **No kernel changes** - `content.tags` is just a convention, kernel doesn't care
 5. **Future-proofing** - Don't close doors for future use cases
 
-**Usage patterns:**
-
-- **Power users** - Tag code items, renderers, types
-- **Regular users** - Tag notes, documents, high-level items
-- **Cross-type queries** - "Show all work-related items" includes notes AND code AND containers
-
 ---
 
-## Hierarchical Tags
+## Hierarchical Organization
 
-Tags can form hierarchies via parent references:
+Any item can have an optional `parent` property for hierarchical organization:
+
 ```javascript
-// Parent tag
+// Top-level category
 {
-  id: "tag-work",
+  id: "work-note",
+  type: "note",
   content: {
-    name: "work",
+    description: "Work-related items",
     parent: null
   }
 }
 
-// Child tag
+// Sub-category
 {
-  id: "tag-projects",
+  id: "projects-note",
+  type: "note",
   content: {
-    name: "projects",
-    parent: "tag-work"
+    description: "Project-related items",
+    parent: "work-note"
   }
 }
 
-// Grandchild tag
+// Specific project
 {
-  id: "tag-hobson",
+  id: "hobson-note",
+  type: "note",
   content: {
-    name: "hobson",
-    parent: "tag-projects"
+    description: "# Hobson\n\nHobson is a personal information system...",
+    parent: "projects-note"
   }
 }
 ```
@@ -194,51 +234,81 @@ When you tag a note with "hobson", does it automatically inherit "projects" and 
 - Note tagged with "hobson" is implicitly tagged with "projects" and "work"
 - Simpler queries, but changes tag semantics
 
-**Recommendation:** Start with Option A (explicit only). Add inheritance queries later if needed. Keeps data model simple.
+**Decision:** Start with Option A (explicit only). Add inheritance queries later if needed. Keeps data model simple.
 
 ---
 
 ## Tag Browser
 
-A specialized item type that displays the tag hierarchy and enables tag-based navigation.
+A specialized item type that displays items used as tags and enables tag-based navigation.
 
-### Tag Browser Structure
+### Tag Discovery Algorithm
+
+The tag browser discovers tags by scanning usage:
+
+1. Scan all items, collect IDs that appear in any `tags` array
+2. For each collected ID, walk up its `parent` chain
+3. Include all ancestors in the tree (even if not directly used as tags)
+4. Render as tree structure
+
+**Example:**
+
 ```javascript
-{
-  id: "my_tag_browser",
-  type: "tag_browser_type",
-  content: {
-    title: "Browse by Tag",
-    target_container: null  // If specified, only show tags from this container's items
-  }
-}
+// Only hobson-note is used as a tag
+{ id: "some-note", content: { tags: ["hobson-note"] } }
+
+// But hobson-note has ancestors
+{ id: "hobson-note", content: { parent: "projects-note" } }
+{ id: "projects-note", content: { parent: "work-note" } }
+{ id: "work-note", content: { parent: null } }
 ```
+
+Tag browser shows:
+```
+work-note
+└── projects-note
+    └── hobson-note
+```
+
+Even though only `hobson-note` is actually used as a tag, the full ancestry is displayed for context.
 
 ### Tag Browser Renderer
 
-The tag browser renderer:
-
-1. Queries all tag items
-2. Builds hierarchy from parent relationships
-3. Renders as expandable tree
-4. Clicking a tag shows matching items
 ```javascript
 export async function render(browser, api) {
-  // Query all tags
-  const tags = await api.query({ type: TAG_TYPE_ID });
+  // 1. Find all items used as tags
+  const allItems = await api.getAll();
+  const usedAsTag = new Set();
   
-  // Build tree from parent relationships
-  const tree = buildTagTree(tags);
+  allItems.forEach(item => {
+    (item.content?.tags || []).forEach(tagId => usedAsTag.add(tagId));
+  });
   
-  // Render tree with click handlers
+  // 2. Walk up parent chains to include ancestors
+  const toInclude = new Set(usedAsTag);
+  
+  for (const tagId of usedAsTag) {
+    let current = await api.get(tagId);
+    while (current?.content?.parent) {
+      toInclude.add(current.content.parent);
+      current = await api.get(current.content.parent);
+    }
+  }
+  
+  // 3. Fetch all items to include
+  const tagItems = await Promise.all(
+    [...toInclude].map(id => api.get(id))
+  );
+  
+  // 4. Build tree from parent relationships
+  const tree = buildTree(tagItems);
+  
+  // 5. Render tree with click handlers
   return renderTree(tree, async (tagId) => {
-    // Find items with this tag
-    const allItems = await api.getAll();
     const tagged = allItems.filter(item => 
-      item.content.tags?.includes(tagId)
+      item.content?.tags?.includes(tagId)
     );
     
-    // Open them as sibling windows
     for (const item of tagged) {
       await api.openSibling(item.id);
     }
@@ -272,45 +342,15 @@ When user clicks a tag:
 ## Note Search
 
 Complementary to tag browsing - find items by text content:
+
 ```javascript
 {
   id: "my_note_search",
   type: "note_search_type",
   content: {
-    title: "Search Notes",
+    description: "Search all items by text content",
     target_container: null  // If specified, only search within this container
   }
-}
-```
-
-### Search Renderer
-```javascript
-export async function render(search, api) {
-  const input = api.createElement('input', {
-    type: 'text',
-    placeholder: 'Search...',
-    oninput: async (e) => {
-      const query = e.target.value.toLowerCase();
-      if (!query) {
-        results.innerHTML = '';
-        return;
-      }
-      
-      // Search across all items
-      const allItems = await api.getAll();
-      const matches = allItems.filter(item => {
-        const content = JSON.stringify(item.content).toLowerCase();
-        return content.includes(query);
-      });
-      
-      // Display results
-      renderResults(matches, results);
-    }
-  });
-  
-  const results = api.createElement('div', { class: 'search-results' }, []);
-  
-  return api.createElement('div', {}, [input, results]);
 }
 ```
 
@@ -324,148 +364,69 @@ Tag browser and search can work together:
 
 ---
 
-## "My Notes" Container
-
-Combining tag browser + search + notes in a container creates a complete note-taking app:
-```javascript
-{
-  id: "my_notes",
-  type: "container",
-  content: {
-    title: "My Notes"
-  },
-  children: [
-    {
-      id: "tag-browser-instance",
-      x: 0, y: 0, width: 250, height: 600, z: 0
-    },
-    {
-      id: "search-instance",
-      x: 260, y: 0, width: 540, height: 100, z: 0
-    }
-    // Note windows open below/beside these
-  ]
-}
-```
-
-Add "New Note" button to search renderer → complete note-taking workflow.
-
----
-
-## Tag Creation Workflows
-
-### Explicit Creation (MVP)
-
-User creates tag items manually:
-```javascript
-// Via REPL
-await api.set({
-  id: crypto.randomUUID(),
-  type: TAG_TYPE_ID,
-  created: Date.now(),
-  modified: Date.now(),
-  content: {
-    name: "work",
-    parent: null
-  }
-});
-```
-
-Or via "New Item" button selecting tag type.
-
-### Implicit Creation (Future)
-
-Type unknown tag in note tag field → system auto-creates tag item:
-```javascript
-// User types "work/projects/hobson" in tag field
-// System creates three tag items if they don't exist:
-// - work
-// - projects (parent: work)
-// - hobson (parent: projects)
-```
-
-**Why defer implicit creation?**
-
-- Explicit is simpler to implement
-- Proves the concept first
-- Implicit can be added later when workflow proves valuable
-
----
-
 ## Tag Editing UI
 
-Notes need UI to add/remove tags. Several approaches:
+Items need UI to add/remove tags.
 
-### Text Field (MVP)
+### Tag Picker
 
-Simple comma-separated list of tag IDs:
-```
-Tags: tag-work, tag-urgent, tag-projects
-```
+The tag picker shows all items (not just a specific type). User selects items to add to the `tags` array.
 
-User must know tag IDs. Functional but not elegant.
-
-### Tag Selector Widget
-
-Visual selector showing available tags:
-
-- List of all tags with checkboxes
-- Or dropdown with search
-- Or pills with remove button + add button
-
-This becomes a **field editor** for the generic item editor (see Future_Directions.md).
+Implementation can filter or search to help find items quickly.
 
 ### Inline Tag Editor
 
-Tags displayed as pills in note display:
+Tags displayed as pills in item display:
 ```
-[work] [urgent] [projects] [+]
+[hobson] [urgent] [work] [+]
 ```
 
-Click [+] to add tag, click [x] on pill to remove.
+Click [+] to add tag (opens picker), click [x] on pill to remove.
 
 ---
 
 ## Queries
 
 ### Find Items by Tag
+
 ```javascript
 // Simple
 const items = await api.getAll();
 const tagged = items.filter(item => 
-  item.content.tags?.includes(tagId)
+  item.content?.tags?.includes(tagId)
 );
 
 // With type filter
 const notes = await api.query({ type: NOTE_TYPE });
 const taggedNotes = notes.filter(n => 
-  n.content.tags?.includes(tagId)
+  n.content?.tags?.includes(tagId)
 );
 
 // Multiple tags (AND)
 const bothTags = items.filter(item =>
-  item.content.tags?.includes(tag1) &&
-  item.content.tags?.includes(tag2)
+  item.content?.tags?.includes(tag1) &&
+  item.content?.tags?.includes(tag2)
 );
 
 // Multiple tags (OR)
 const eitherTag = items.filter(item =>
-  item.content.tags?.includes(tag1) ||
-  item.content.tags?.includes(tag2)
+  item.content?.tags?.includes(tag1) ||
+  item.content?.tags?.includes(tag2)
 );
 ```
 
-### Find Tags by Usage
+### Find Items Used as Tags
+
 ```javascript
-// All tags used in system
+// All items used as tags in system
 const items = await api.getAll();
-const tagIds = new Set(items.flatMap(i => i.content.tags || []));
+const tagIds = new Set(items.flatMap(i => i.content?.tags || []));
 const tags = await Promise.all([...tagIds].map(id => api.get(id)));
 
 // Most frequently used tags
 const tagCounts = {};
 items.forEach(item => {
-  (item.content.tags || []).forEach(tagId => {
+  (item.content?.tags || []).forEach(tagId => {
     tagCounts[tagId] = (tagCounts[tagId] || 0) + 1;
   });
 });
@@ -475,89 +436,48 @@ const sorted = Object.entries(tagCounts)
 ```
 
 ### Hierarchical Queries
+
 ```javascript
-// Find all descendants of a tag
-async function getTagDescendants(tagId) {
-  const allTags = await api.query({ type: TAG_TYPE });
+// Find all descendants of an item (by parent chain)
+async function getDescendants(itemId) {
+  const allItems = await api.getAll();
   const descendants = [];
   
   const findChildren = (parentId) => {
-    const children = allTags.filter(t => t.content.parent === parentId);
+    const children = allItems.filter(i => i.content?.parent === parentId);
     children.forEach(child => {
       descendants.push(child.id);
       findChildren(child.id);  // Recursive
     });
   };
   
-  findChildren(tagId);
+  findChildren(itemId);
   return descendants;
 }
 
-// Find items tagged with tag OR any descendant
-const tagIds = [tagId, ...(await getTagDescendants(tagId))];
+// Find items tagged with item OR any descendant
+const tagIds = [itemId, ...(await getDescendants(itemId))];
 const items = await api.getAll();
 const matches = items.filter(item =>
-  item.content.tags?.some(t => tagIds.includes(t))
+  item.content?.tags?.some(t => tagIds.includes(t))
 );
 ```
 
 ---
 
-## Implementation Plan
-
-### Phase 1: Basic Tags (Week 1-2)
-
-1. **Create tag type and seed items**
-   - Tag type definition
-   - Maybe a few default tags
-
-2. **Add tags to notes**
-   - Modify note renderer to show/edit tags
-   - Simple text field (comma-separated IDs)
-
-3. **Build tag browser**
-   - New item type + renderer
-   - Query all tags, display as flat list
-   - Click tag → log matching items to console
-
-4. **Open matching items**
-   - Tag browser calls `api.openSibling()` to open notes as windows
-   - Prove the concept works end-to-end
-
-### Phase 2: Hierarchy and Search (Week 3)
-
-5. **Add hierarchy to tags**
-   - Parent references in tag items
-   - Tag browser renders as tree
-   - Expand/collapse branches
-
-6. **Build note search**
-   - New item type + renderer
-   - Text input + results list
-   - Open items as sibling windows
-
-7. **Create "My Notes" container**
-   - Container with tag browser + search + notes
-   - Prove the composed workflow
-
-### Phase 3: Polish (Week 4+)
-
-8. **Better tag editing UI**
-   - Visual tag selector (pills, dropdown, etc)
-   - Auto-complete tag names
-
-9. **Tag metadata**
-   - Colors, icons, descriptions
-   - Render in tag browser
-
-10. **Advanced queries**
-    - Multiple tag filter (AND/OR)
-    - Date ranges
-    - Full-text search + tags
-
----
-
 ## Design Rationale
+
+### Why No Dedicated Tag Type?
+
+**Considered:** Dedicated "tag" type for classification items.
+
+**Rejected:**
+- Creates artificial distinction between "content items" and "classification items"
+- Forces duplication when you want "Hobson the note" and "Hobson the tag"
+- Increases mental overhead maintaining parallel structures
+- Violates "everything is just an item" philosophy
+
+**Accepted:** Any item can be used as a tag. Tag browser discovers tags by scanning usage.
 
 ### Why Not Relationships for Tags?
 
@@ -567,31 +487,19 @@ const matches = items.filter(item =>
 - Creates proliferation of relationship items (one per tag per item)
 - Queries become complex (filter relationship items, then fetch targets)
 - "Tagged with" relationship doesn't add semantic value
-- Inconsistent with `children` array pattern (which also uses direct references)
+- Inconsistent with `attachments` array pattern (which also uses direct references)
 
 **When to use relationships:** When the connection itself has meaning ("argues against", "inspired by") or needs metadata.
 
-### Why Universal Tags?
+### Why Walk Parent Chains in Tag Browser?
 
-**Considered:** Tags only on notes.
+**Considered:** Only show items directly used as tags.
 
 **Rejected:**
-- Artificially limits extensibility
-- Same implementation cost as universal
-- Closes doors for future use cases
-- Violates "everything is an item" consistency
+- Produces flat list with no hierarchy context
+- User can't see organizational structure
 
-**Accepted:** Universal tags with convention that some types use them more than others. Power users tag code, regular users tag notes. Both are valid.
-
-### Why Explicit Creation (MVP)?
-
-**Considered:** Implicit tag creation (auto-create when typing unknown tag).
-
-**Deferred:**
-- Explicit is simpler to implement
-- Proves the concept first
-- Can add implicit later without changing data model
-- Explicit creation acceptable for early usage
+**Accepted:** Walk parent chains to include ancestors, providing full tree context even if ancestors aren't directly used as tags.
 
 ---
 
@@ -600,4 +508,4 @@ const matches = items.filter(item =>
 - For container composition patterns, see Spatial_Windowing.md
 - For generic item editor (which will handle tag editing), see Future_Directions.md
 - For current implementation status, see Design_Decisions_Log.md
-- For field editor plugins, see Future_Directions.md
+- For the description property design, see Description_Property_Design.md

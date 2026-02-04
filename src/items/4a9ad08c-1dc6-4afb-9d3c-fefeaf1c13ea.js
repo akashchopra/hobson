@@ -1,7 +1,3 @@
-// Item: field-view-json
-// ID: 4a9ad08c-1dc6-4afb-9d3c-fefeaf1c13ea
-// Type: cccccccc-0000-0000-0000-000000000000
-
 
 export function render(value, options, api) {
   const { mode, onChange, label } = options;

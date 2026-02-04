@@ -96,13 +96,13 @@ Architectural Code Review: Hobson
   2.4 Child Format Inconsistency
 
   Children can be either strings or position objects:
-  children: ["item-id"]  // Old format
-  children: [{ id: "item-id", x: 20, y: 20, ... }]  // New format
+  attachments: ["item-id"]  // Old format
+  attachments: [{ id: "item-id", x: 20, y: 20, ... }]  // New format
 
   This forces defensive code throughout (hobson.html:1712-1714, 1759-1761, 1786-1789):
   const childId = typeof c === 'string' ? c : c.id;
 
-  Recommendation: Migrate all children to the object format with a one-time migration script, then simplify the code.
+  Recommendation: Migrate all attachments to the object format with a one-time migration script, then simplify the code.
 
   ---
   3. Renderer Code Items Review
@@ -212,7 +212,7 @@ Architectural Code Review: Hobson
 
   1. Unify REPL and Renderer APIs - Critical for code reuse
   2. Eliminate window.kernel access - Add missing methods to API instead
-  3. Migrate children to consistent format - Reduce defensive code
+  3. Migrate attachments to consistent format - Reduce defensive code
 
   Medium Priority
 

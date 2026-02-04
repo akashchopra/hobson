@@ -1,7 +1,3 @@
-// Item: repl-ui
-// ID: f1111111-0003-0000-0000-000000000000
-// Type: 66666666-0000-0000-0000-000000000000
-
 // REPL UI Library
 // Provides the REPL interface as a collapsible bottom panel
 // State persisted to viewport item

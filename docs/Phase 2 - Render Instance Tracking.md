@@ -59,7 +59,7 @@ Each rendered element gets a `data-render-instance` attribute with its instance 
 
 1. **Full re-render** (`renderRoot`): Call `registry.clear()` before rendering
 2. **Nested render** (`api.renderItem`): Register after render completes
-3. **Parent re-renders children**: Call `registry.unregisterByParent(parentId)` first
+3. **Parent re-renders attachments**: Call `registry.unregisterByParent(parentId)` first
 
 ### API Exposure
 

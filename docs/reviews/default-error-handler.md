@@ -37,7 +37,7 @@
 
 2. **Toast styling:** Hardcoded styles. Could use CSS class from context-menu-css pattern.
 
-3. **Error list management:** Creates error items but doesn't manage the error list item's children. The error_list_view uses `api.query({ type: errorType })` which works but means errors aren't hierarchically organized.
+3. **Error list management:** Creates error items but doesn't manage the error list item's attachments. The error_list_view uses `api.query({ type: errorType })` which works but means errors aren't hierarchically organized.
 
 ---
 
@@ -69,7 +69,7 @@ watches: [{ event: 'system:error' }]
    }
    ```
 
-2. **LOW:** Consider adding errors as children of the Error List item for better organization.
+2. **LOW:** Consider adding errors as attachments of the Error List item for better organization.
 
 ---
 

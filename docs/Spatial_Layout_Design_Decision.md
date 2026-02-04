@@ -7,7 +7,7 @@
 
 ## Summary
 
-Remove the specific `container` type and make spatial layout a universal rendering option available for any item with children. The description field is displayed as a floating banner that can be positioned and collapsed according to user preference.
+Remove the specific `container` type and make spatial layout a universal rendering option available for any item with attachments. The description field is displayed as a floating banner that can be positioned and collapsed according to user preference.
 
 ---
 
@@ -20,14 +20,14 @@ Remove the specific `container` type and make spatial layout a universal renderi
 
 ### New State
 - No specific `container` type
-- `spatial_layout` renderer works with **any item that has children**
+- `spatial_layout` renderer works with **any item that has attachments**
 - Spatial organization emerges from renderer choice, not type distinction
 
 ### Rationale
 
 1. **Aligns with Radical Uniformity**: The kernel already states "any item can contain other items" - the type system shouldn't contradict this
 2. **Enables Emergent Behavior**: Notes, projects, tags - any type can be viewed spatially when useful
-3. **Supports Continuous Evolution**: Users can start with simple items and progressively add children without reclassifying
+3. **Supports Continuous Evolution**: Users can start with simple items and progressively add attachments without reclassifying
 4. **Follows Renderer Philosophy**: Presentation is chosen by parent, not baked into item types
 5. **Reduces Conceptual Overhead**: One less type to learn, one less decision point
 6. **Honors Humane Dozen Principles**:
@@ -210,7 +210,7 @@ Banner Settings ▸
 ### Context Menu Integration
 
 Right-click on item → "Display As..." → "Spatial Layout"
-- Works for any item with children (or that could have children)
+- Works for any item with attachments (or that could have attachments)
 - No longer requires item to be "container" type
 
 ---
@@ -243,7 +243,7 @@ Right-click on item → "Display As..." → "Spatial Layout"
   content: {
     description: "# Project X\n\nOverview of the project...",
   },
-  children: [
+  attachments: [
     {id: "meeting-notes", x: 20, y: 50, ...},
     {id: "todo-list", x: 450, y: 50, ...},
     {id: "resources", x: 20, y: 400, ...}
@@ -256,7 +256,7 @@ View as: Text (for editing) OR Spatial (for organizing)
 ```javascript
 {
   type: "workspace",  // or just "note" with no description
-  children: [
+  attachments: [
     {id: "project-a", x: 20, y: 20, ...},
     {id: "project-b", x: 500, y: 20, ...}
   ]
@@ -272,7 +272,7 @@ No banner (no description) → full canvas space
     name: "Important",
     description: "Items tagged as important for Q1 review"
   },
-  children: [/* tagged items */]
+  attachments: [/* tagged items */]
 }
 ```
 View as: List OR Spatial layout with context banner
@@ -329,7 +329,7 @@ Could add visual feedback when windows overlap banner:
 
 This decision embodies core Hobson principles:
 
-- **Radical Uniformity**: All items can contain children, all can be viewed spatially
+- **Radical Uniformity**: All items can contain attachments, all can be viewed spatially
 - **User Agency**: Complete control over layout, positioning, visibility
 - **Emergent Complexity**: Sophisticated organization from simple, uniform rules
 - **Modifiable**: Switch views mid-stream, no commitment to "container-ness"

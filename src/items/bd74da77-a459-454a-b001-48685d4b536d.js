@@ -21,7 +21,7 @@ export async function render(item, api) {
   const urlRoot = urlParams.get('root');
   
   // The viewport item stores rootId in children[0]
-  const storedSpec = item.children?.[0];
+  const storedSpec = item.attachments?.[0];
   const storedRootId = storedSpec?.id || storedSpec;
   
   // Use URL root if present and valid, otherwise use stored root
@@ -89,7 +89,7 @@ export async function render(item, api) {
 
     // Get parent and determine if it's being rendered spatially
     const parent = await api.get(parentId);
-    const children = parent.children || [];
+    const children = parent.attachments || [];
     
     // Check if parent is rendered spatially by looking at existing children
     // If children have position data (view.x, view.y), it's spatial
@@ -99,7 +99,7 @@ export async function render(item, api) {
 
     if (isSpatial || clickCoords) {
       // Spatial: add with position in view object
-      const maxZ = children.length > 0 ? Math.max(...children.map(c => c.view?.z || 1000)) : 999;
+      const maxZ = children.length > 0 ? Math.max(...attachments.map(c => c.view?.z || 1000)) : 999;
       const x = clickCoords?.x || 50;
       const y = clickCoords?.y || 50;
       
@@ -118,7 +118,7 @@ export async function render(item, api) {
       children.push({ id: newItem.id });
     }
 
-    parent.children = children;
+    parent.attachments = children;
     parent.modified = Date.now();
     await api.update(parent);
     api.viewport.select(newItem.id, parentId);
@@ -133,7 +133,7 @@ export async function render(item, api) {
   // Helper: Add existing item as child to a parent
   const addExistingChildToItem = async (parentId, childId, clickCoords) => {
     const parent = await api.get(parentId);
-    const children = parent.children || [];
+    const children = parent.attachments || [];
 
     // Check if already a child
     if (children.some(c => c.id === childId)) {
@@ -147,7 +147,7 @@ export async function render(item, api) {
       : false;
 
     if (isSpatial || clickCoords) {
-      const maxZ = children.length > 0 ? Math.max(...children.map(c => c.view?.z || 1000)) : 999;
+      const maxZ = children.length > 0 ? Math.max(...attachments.map(c => c.view?.z || 1000)) : 999;
       const x = clickCoords?.x || 50;
       const y = clickCoords?.y || 50;
 
@@ -165,7 +165,7 @@ export async function render(item, api) {
       children.push({ id: childId });
     }
 
-    parent.children = children;
+    parent.attachments = children;
     parent.modified = Date.now();
     await api.update(parent);
     api.viewport.select(childId, parentId);
@@ -692,7 +692,7 @@ export async function render(item, api) {
     let currentViewId = null;
     if (selectedParentId) {
       const parent = await api.get(selectedParentId);
-      const childSpec = parent.children?.find(c => c.id === itemId);
+      const childSpec = parent.attachments?.find(c => c.id === itemId);
       currentViewId = childSpec?.view?.type || null;
     } else {
       currentViewId = await getRootView();
@@ -740,7 +740,7 @@ export async function render(item, api) {
                 getViewConfig: async () => {
                   if (selectedParentId) {
                     const parent = await api.get(selectedParentId);
-                    const childSpec = parent.children?.find(c => c.id === itemId);
+                    const childSpec = parent.attachments?.find(c => c.id === itemId);
                     return childSpec?.view || null;
                   } else {
                     // Root item - get from viewport-manager
@@ -751,10 +751,10 @@ export async function render(item, api) {
                 updateViewConfig: async (updates) => {
                   if (selectedParentId) {
                     const parent = await api.get(selectedParentId);
-                    const childIndex = parent.children?.findIndex(c => c.id === itemId);
+                    const childIndex = parent.attachments?.findIndex(c => c.id === itemId);
                     if (childIndex >= 0) {
-                      const currentChild = parent.children[childIndex];
-                      parent.children[childIndex] = {
+                      const currentChild = parent.attachments[childIndex];
+                      parent.attachments[childIndex] = {
                         ...currentChild,
                         view: { ...(currentChild.view || {}), ...updates }
                       };
@@ -817,9 +817,9 @@ export async function render(item, api) {
               // For nested items, update the child's view config in parent's children array
               // This sets both the view type AND innerView for wrapper views in one atomic operation
               const parent = await api.get(selectedParentId);
-              const childIndex = parent.children.findIndex(c => c.id === itemId);
+              const childIndex = parent.attachments.findIndex(c => c.id === itemId);
               if (childIndex >= 0) {
-                const currentChild = parent.children[childIndex];
+                const currentChild = parent.attachments[childIndex];
                 const currentView = currentChild.view || {};
 
                 // Build new view config
@@ -831,7 +831,7 @@ export async function render(item, api) {
                 };
 
                 // Store previous view for restore functionality
-                parent.children[childIndex] = {
+                parent.attachments[childIndex] = {
                   ...currentChild,
                   previousView: currentView.type ? { ...currentView } : null,
                   view: newView
@@ -887,7 +887,7 @@ export async function render(item, api) {
       if (selectedParentId) {
         // Get the view config from the parent's children array
         const parent = await api.get(selectedParentId);
-        const childSpec = parent.children?.find(c => c.id === itemId);
+        const childSpec = parent.attachments?.find(c => c.id === itemId);
         viewConfig = childSpec?.view || null;
       }
       await api.navigate(itemId);

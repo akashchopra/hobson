@@ -31,7 +31,7 @@ This document summarizes the comprehensive code review of all JavaScript-contain
 | Item-centric data model | ✓ Correctly implemented |
 | Type hierarchy with chains | ✓ Validated in kernel-storage |
 | Code as data (renderers/libraries) | ✓ Working via kernel-module-system |
-| Spatial windowing (children positions) | ✓ Implemented in container_view |
+| Spatial windowing (attachment positions) | ✓ Implemented in container_view |
 | View/View-Spec separation | ✓ Both supported in kernel-rendering |
 | Declarative watches | ✓ EventBus implementation exists |
 | Three-tier error handling | ✓ Per Error_Handling_System.md |
@@ -39,7 +39,7 @@ This document summarizes the comprehensive code review of all JavaScript-contain
 ### Undocumented But Present:
 - **Render Instance Registry** in kernel-rendering - tracks rendered DOM nodes for partial updates
 - **Sibling container** pattern - views can request "open as sibling" behavior
-- **View config persistence** - banner positions, etc. stored in children array
+- **View config persistence** - banner positions, etc. stored in attachments array
 
 ### Documented But Not Found:
 - None - all documented features are implemented

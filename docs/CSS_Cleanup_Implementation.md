@@ -116,7 +116,7 @@ export async function render(item, api) {
 await api.create({
   name: 'my_component_css',
   type: '<css-type-id>', // Use the CSS type created above
-  children: [],
+  attachments: [],
   content: {
     description: 'CSS for my custom component',
     code: `

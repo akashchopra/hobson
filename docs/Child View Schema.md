@@ -1,6 +1,6 @@
 # Child View Schema
 
-This document describes the schema for child entries in an item's `children` array. The design allows each view/renderer to store its own configuration alongside the child reference.
+This document describes the schema for child entries in an item's `attachments` array. The design allows each view/renderer to store its own configuration alongside the child reference.
 
 ## Schema
 
@@ -95,9 +95,9 @@ This document describes the schema for child entries in an item's `children` arr
 - No property collisions between different renderer types
 - `view.type` makes the renderer choice explicit
 
-**Why store view config in parent's children array?**
+**Why store view config in parent's attachments array?**
 - Same item can appear in different parents with different view settings
-- Parent controls how its children are displayed
+- Parent controls how its attachments are displayed
 - View preferences are contextual to where the item appears
 - Consistent with parent already controlling child layout
 
@@ -128,9 +128,9 @@ Items with legacy flat spatial properties:
 
 **Code items updated:**
 - `33333333-3333-0000-0000-000000000000` (kernel-viewport) - persist/restore methods
-- `33333333-1111-0000-0000-000000000000` (kernel-core) - setChildView method
+- `33333333-1111-0000-0000-000000000000` (kernel-core) - setAttachmentView method
 - `33333333-5555-0000-0000-000000000000` (kernel-rendering) - restorePreviousView in API
 - `ef793c27-2d4b-4c99-b05a-2769db5bc5a9` (container_view) - read/write spatial properties
 - `69253de7-a08d-40e3-b8da-ec88ee33a25a` (sortable_list_view) - read view type
 - `9428203f-c088-4a54-bbcb-fdbef244189e` (item_search_view) - read view type
-- `bd74da77-a459-454a-b001-48685d4b536d` (viewport_view) - read/write children properties
+- `bd74da77-a459-454a-b001-48685d4b536d` (viewport_view) - read/write attachments properties

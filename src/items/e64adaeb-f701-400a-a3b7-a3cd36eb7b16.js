@@ -1,7 +1,3 @@
-// Item: theme-hot-reload
-// ID: e64adaeb-f701-400a-a3b7-a3cd36eb7b16
-// Type: 66666666-0000-0000-0000-000000000000
-
 // Theme Hot-Reload Library
 // Applies kernel styles at boot and hot-reloads when kernel:styles is edited
 

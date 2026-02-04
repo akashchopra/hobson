@@ -77,7 +77,7 @@
 |--------|-------------|
 | `register(domNode, itemId, viewId, parentId)` | Track render instance |
 | `unregister(instanceId)` | Remove tracking |
-| `unregisterByParent(parentId)` | Cleanup children |
+| `unregisterByParent(parentId)` | Cleanup attachments |
 | `clear()` | Full reset |
 | `getByItemId(itemId)` | Find instances |
 | `getSummary()` | Debug stats |

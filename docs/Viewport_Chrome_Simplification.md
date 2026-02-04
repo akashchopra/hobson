@@ -178,8 +178,8 @@ Universal navigation should emerge from the item graph itself, not from permanen
 ```javascript
 // viewport_renderer simplified structure:
 export async function render(item, api) {
-  // Get root from viewport children
-  const rootSpec = item.children?.[0];
+  // Get root from viewport attachments
+  const rootSpec = item.attachments?.[0];
   const rootId = rootSpec?.id || rootSpec;
   const rootRendererId = rootSpec?.renderer || null;
 
@@ -344,7 +344,7 @@ ID: 3f7a8b9c...
 
 **Special Cases**:
 - **Root item**: Could show "(root)" indicator in tooltip
-- **Container children**: Already have titles in window title bars
+- **Container attachments**: Already have titles in window title bars
 - **Nested items**: Show parent context if useful
 
 ---

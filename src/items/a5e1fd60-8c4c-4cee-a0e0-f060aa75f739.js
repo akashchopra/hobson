@@ -1,7 +1,3 @@
-// Item: field-editor-checkbox
-// ID: a5e1fd60-8c4c-4cee-a0e0-f060aa75f739
-// Type: 66666666-0000-0000-0000-000000000000
-
 
 export function render(value, onChange, api, options = {}) {
   const wrapper = api.createElement('label', {

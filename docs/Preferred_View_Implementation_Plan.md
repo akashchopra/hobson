@@ -398,7 +398,7 @@ getTypeName: async (itemId) => {
 getContextualView: async (itemId, parentId) => {
   if (!parentId) return null;
   const parent = await kernel.storage.get(parentId);
-  const childSpec = parent.children?.find(c =>
+  const childSpec = parent.attachments?.find(c =>
     (typeof c === 'string' ? c : c.id) === itemId
   );
   if (childSpec && typeof childSpec === 'object' && childSpec.view?.type) {

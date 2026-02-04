@@ -118,6 +118,6 @@ Compare with full re-render:
 
 ## Future Enhancements
 
-- `rerenderChildren(itemId)` - re-render all children of a container
+- `rerenderChildren(itemId)` - re-render all attachments of a container
 - `rerenderByView(viewId)` - re-render all items using a specific view
 - Integration with Phase 4 reactive watches

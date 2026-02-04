@@ -1,7 +1,3 @@
-// Item: system:tag-browser-view
-// ID: 08f3da07-81e2-4031-bd89-b26f9ebea54d
-// Type: aaaaaaaa-0000-0000-0000-000000000000
-
 
 // Tag browser view - stores results as children for uniform interaction
 // Uses tag-tree-builder and tag-picker-ui libraries
@@ -116,7 +112,7 @@ export async function render(browser, api) {
     resultsList.innerHTML = '';
 
     const selectedTag = browser.content?.selectedTag;
-    const children = browser.children || [];
+    const children = browser.attachments || [];
 
     if (!selectedTag) {
       resultsContainer.style.display = 'none';
@@ -182,7 +178,7 @@ export async function render(browser, api) {
     await api.set(updated);
 
     // Update local reference and re-render results
-    browser.children = updated.children;
+    browser.attachments = updated.attachments;
     browser.content = updated.content;
     await renderResults();
   };

@@ -155,7 +155,7 @@ await api.set({
   id,
   name: "Test Nested Instance",
   type: "99999999-0000-0000-0000-000000000000",
-  children: [],
+  attachments: [],
   content: {}
 });
 await api.navigate(id);
