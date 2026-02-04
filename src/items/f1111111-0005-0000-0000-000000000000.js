@@ -44,7 +44,7 @@ export async function show(_api) {
     align-items: flex-start;
     justify-content: center;
     padding-top: 10vh;
-    z-index: 10000;
+    z-index: 10000000;
   `;
 
   const modal = document.createElement("div");

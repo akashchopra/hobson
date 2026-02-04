@@ -323,14 +323,15 @@ export async function render(item, api) {
       const targetChild = floating.find(c => c.id === childIdToFront);
       if (!targetChild) return null; // Anchored or minimized
 
-      // Current z of target (database value + baseZ)
-      const currentDbZ = (targetChild.view?.z || 0) + baseZ;
+      // Get actual DOM z-index of target (may differ from database)
+      const targetWrapper = document.querySelector(`[data-parent-id="${item.id}"][data-item-id="${childIdToFront}"]`);
+      const currentDomZ = targetWrapper ? (parseInt(targetWrapper.style.zIndex) || 0) : (targetChild.view?.z || 0) + baseZ;
 
       // Max z considering both database and DOM
       const maxZ = Math.max(maxDbZ + baseZ, maxDomZ);
 
       // If already at or above max, no change needed
-      if (currentDbZ >= maxZ) return null;
+      if (currentDomZ >= maxZ) return null;
 
       // New z is max + 1
       const newDomZ = maxZ + 1;
@@ -856,7 +857,7 @@ export async function render(item, api) {
               wrapper.style.bottom = '0';
               wrapper.style.width = 'auto';
               wrapper.style.height = 'auto';
-              wrapper.style.zIndex = '9999';
+              wrapper.style.zIndex = '1000000';
               wrapper.dataset.maximized = 'true';
               maxBtn.textContent = '❐';
               maxBtn.title = 'Restore';

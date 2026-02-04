@@ -3,7 +3,7 @@
   "name": "field-view-item-ref",
   "type": "cccccccc-0000-0000-0000-000000000000",
   "created": 1769700000000,
-  "modified": 1770228800000,
+  "modified": 1770233728634,
   "content": {
     "description": "Displays an item reference (GUID) as a clickable link. In editable mode, provides an item picker modal.",
     "code": "\nexport async function render(value, options, api) {\n  const { mode, onChange, label } = options;\n  const wrapper = api.createElement('div', { class: 'field-item-ref' });\n  wrapper.style.cssText = 'display: flex; flex-direction: column; gap: 4px;';\n\n  if (label) {\n    const labelEl = api.createElement('label');\n    labelEl.textContent = label;\n    labelEl.style.cssText = 'font-weight: 500; font-size: 14px; color: var(--color-text);';\n    wrapper.appendChild(labelEl);\n  }\n\n  const itemId = value || '';\n  const isEditable = mode === 'editable' && onChange;\n\n  // Reference to name display element (set later, used by showItemPicker)\n  let nameSpan = null;\n\n  // Helper to navigate to item\n  const navigateToItem = async (id) => {\n    try {\n      if (api.siblingContainer) {\n        await api.siblingContainer.addSibling(id);\n      } else {\n        await api.navigate(id);\n      }\n    } catch (err) {\n      console.error('item_ref navigation error:', err);\n    }\n  };\n\n  // Helper to show item picker modal\n  const showItemPicker = async () => {\n    const searchLib = await api.require('item-search-lib');\n    const modalLib = await api.require('modal-lib');\n\n    const { close } = modalLib.showModal({\n      title: 'Select Item',\n      width: '500px',\n      maxHeight: '70vh',\n      api,\n      content: ({ close: closeModal }) => {\n        const searchContainer = api.createElement('div');\n        searchContainer.style.cssText = 'min-height: 200px;';\n\n        // Create search UI\n        searchLib.createSearchUI(\n          searchContainer,\n          (selectedItem) => {\n            closeModal();\n            onChange(selectedItem.id);\n            // Update display immediately\n            if (nameSpan) {\n              nameSpan.textContent = selectedItem.name || selectedItem.id;\n            }\n          },\n          api,\n          { placeholder: 'Search for items...', autoFocus: true }\n        );\n\n        return searchContainer;\n      }\n    });\n  };\n\n  // Get current item name\n  let currentName = itemId ? itemId.slice(0, 8) + '...' : '(none)';\n  let itemExists = false;\n  if (itemId) {\n    try {\n      const refItem = await api.get(itemId);\n      currentName = refItem.name || refItem.id;\n      itemExists = true;\n    } catch (e) {\n      currentName = itemId.slice(0, 8) + '... (not found)';\n    }\n  }\n\n  if (isEditable) {\n    // Editable: show picker button with current value\n    const row = api.createElement('div');\n    row.style.cssText = 'display: flex; gap: 8px; align-items: center;';\n\n    const pickerBtn = api.createElement('button');\n    pickerBtn.style.cssText = 'flex: 1; padding: 8px 12px; text-align: left; background: var(--color-bg-surface-alt); border: 1px solid var(--color-border-light); border-radius: var(--border-radius); cursor: pointer; font-size: 14px; display: flex; align-items: center; gap: 8px;';\n    \n    nameSpan = api.createElement('span');\n    nameSpan.style.cssText = 'flex: 1;';\n    nameSpan.textContent = currentName;\n    pickerBtn.appendChild(nameSpan);\n\n    const chevron = api.createElement('span');\n    chevron.textContent = '\\u25BC';\n    chevron.style.cssText = 'font-size: 10px; color: var(--color-text-secondary);';\n    pickerBtn.appendChild(chevron);\n\n    pickerBtn.onclick = showItemPicker;\n    row.appendChild(pickerBtn);\n\n    // Navigate button (if item exists)\n    if (itemExists) {\n      const navBtn = api.createElement('button');\n      navBtn.textContent = '\\u2192';\n      navBtn.title = 'Go to item';\n      navBtn.style.cssText = 'padding: 8px 12px; background: var(--color-bg-hover); border: 1px solid var(--color-border-light); border-radius: var(--border-radius); cursor: pointer; font-size: 14px;';\n      navBtn.onclick = async (e) => {\n        e.preventDefault();\n        e.stopPropagation();\n        await navigateToItem(itemId);\n      };\n      row.appendChild(navBtn);\n    }\n\n    // Clear button\n    if (itemId) {\n      const clearBtn = api.createElement('button');\n      clearBtn.textContent = '\\u00d7';\n      clearBtn.title = 'Clear';\n      clearBtn.style.cssText = 'padding: 8px 12px; background: var(--color-bg-hover); border: 1px solid var(--color-border-light); border-radius: var(--border-radius); cursor: pointer; font-size: 14px; color: var(--color-text-secondary);';\n      clearBtn.onclick = () => onChange('');\n      row.appendChild(clearBtn);\n    }\n\n    wrapper.appendChild(row);\n  } else {\n    // Readonly: show clickable link with item name\n    if (itemId && itemExists) {\n      const link = api.createElement('a');\n      link.textContent = currentName;\n      link.href = '#';\n      link.style.cssText = 'color: var(--color-primary); text-decoration: none; cursor: pointer; padding: 8px; background: var(--color-bg-body); border-radius: var(--border-radius); display: inline-block;';\n      link.onclick = async (e) => {\n        e.preventDefault();\n        e.stopPropagation();\n        await navigateToItem(itemId);\n      };\n      wrapper.appendChild(link);\n    } else if (itemId) {\n      const span = api.createElement('span');\n      span.textContent = currentName;\n      span.style.cssText = 'padding: 8px; background: var(--color-warning-light); border-radius: var(--border-radius); font-size: 14px; color: var(--color-text);';\n      wrapper.appendChild(span);\n    } else {\n      const span = api.createElement('span');\n      span.textContent = '(none)';\n      span.style.cssText = 'padding: 8px; background: var(--color-bg-body); border-radius: var(--border-radius); font-size: 14px; color: var(--color-border-dark);';\n      wrapper.appendChild(span);\n    }\n  }\n\n  return wrapper;\n}\n",
@@ -12,7 +12,7 @@
         "name": "render",
         "line": 2,
         "col": 7,
-        "endLine": 176,
+        "endLine": 153,
         "endCol": 1,
         "kind": "function",
         "scope": null,
@@ -54,11 +54,20 @@
         "kind": "variable",
         "scope": "render"
       },
+      "render.nameSpan": {
+        "name": "nameSpan",
+        "line": 18,
+        "col": 6,
+        "endLine": 18,
+        "endCol": 21,
+        "kind": "variable",
+        "scope": "render"
+      },
       "render.navigateToItem": {
         "name": "navigateToItem",
-        "line": 18,
+        "line": 21,
         "col": 8,
-        "endLine": 28,
+        "endLine": 31,
         "endCol": 3,
         "kind": "function",
         "scope": "render",
@@ -66,9 +75,9 @@
       },
       "render.showItemPicker": {
         "name": "showItemPicker",
-        "line": 31,
+        "line": 34,
         "col": 8,
-        "endLine": 88,
+        "endLine": 65,
         "endCol": 3,
         "kind": "function",
         "scope": "render",
@@ -76,190 +85,108 @@
       },
       "showItemPicker.searchLib": {
         "name": "searchLib",
-        "line": 32,
+        "line": 35,
         "col": 10,
-        "endLine": 32,
+        "endLine": 35,
         "endCol": 58,
         "kind": "variable",
         "scope": "showItemPicker"
       },
-      "showItemPicker.overlay": {
-        "name": "overlay",
-        "line": 34,
+      "showItemPicker.modalLib": {
+        "name": "modalLib",
+        "line": 36,
         "col": 10,
-        "endLine": 34,
-        "endCol": 44,
+        "endLine": 36,
+        "endCol": 51,
         "kind": "variable",
-        "scope": "showItemPicker"
-      },
-      "showItemPicker.modal": {
-        "name": "modal",
-        "line": 37,
-        "col": 10,
-        "endLine": 37,
-        "endCol": 42,
-        "kind": "variable",
-        "scope": "showItemPicker"
-      },
-      "showItemPicker.header": {
-        "name": "header",
-        "line": 40,
-        "col": 10,
-        "endLine": 40,
-        "endCol": 43,
-        "kind": "variable",
-        "scope": "showItemPicker"
-      },
-      "showItemPicker.title": {
-        "name": "title",
-        "line": 43,
-        "col": 10,
-        "endLine": 43,
-        "endCol": 41,
-        "kind": "variable",
-        "scope": "showItemPicker"
-      },
-      "showItemPicker.closeBtn": {
-        "name": "closeBtn",
-        "line": 48,
-        "col": 10,
-        "endLine": 48,
-        "endCol": 48,
-        "kind": "variable",
-        "scope": "showItemPicker"
-      },
-      "showItemPicker.searchContainer": {
-        "name": "searchContainer",
-        "line": 55,
-        "col": 10,
-        "endLine": 55,
-        "endCol": 52,
-        "kind": "variable",
-        "scope": "showItemPicker"
-      },
-      "showItemPicker.escHandler": {
-        "name": "escHandler",
-        "line": 69,
-        "col": 10,
-        "endLine": 74,
-        "endCol": 5,
-        "kind": "function",
-        "scope": "showItemPicker",
-        "signature": "(e)"
-      },
-      "showItemPicker.placeholder": {
-        "name": "placeholder",
-        "line": 86,
-        "col": 8,
-        "endLine": 86,
-        "endCol": 42,
-        "kind": "property",
-        "scope": "showItemPicker"
-      },
-      "showItemPicker.autoFocus": {
-        "name": "autoFocus",
-        "line": 86,
-        "col": 44,
-        "endLine": 86,
-        "endCol": 59,
-        "kind": "property",
         "scope": "showItemPicker"
       },
       "render.currentName": {
         "name": "currentName",
-        "line": 91,
+        "line": 68,
         "col": 6,
-        "endLine": 91,
+        "endLine": 68,
         "endCol": 66,
         "kind": "variable",
         "scope": "render"
       },
       "render.itemExists": {
         "name": "itemExists",
-        "line": 92,
+        "line": 69,
         "col": 6,
-        "endLine": 92,
+        "endLine": 69,
         "endCol": 24,
         "kind": "variable",
         "scope": "render"
       },
       "render.refItem": {
         "name": "refItem",
-        "line": 95,
+        "line": 72,
         "col": 12,
-        "endLine": 95,
+        "endLine": 72,
         "endCol": 43,
         "kind": "variable",
         "scope": "render"
       },
       "render.row": {
         "name": "row",
-        "line": 105,
+        "line": 82,
         "col": 10,
-        "endLine": 105,
+        "endLine": 82,
         "endCol": 40,
         "kind": "variable",
         "scope": "render"
       },
       "render.pickerBtn": {
         "name": "pickerBtn",
-        "line": 108,
+        "line": 85,
         "col": 10,
-        "endLine": 108,
+        "endLine": 85,
         "endCol": 49,
-        "kind": "variable",
-        "scope": "render"
-      },
-      "render.nameSpan": {
-        "name": "nameSpan",
-        "line": 111,
-        "col": 10,
-        "endLine": 111,
-        "endCol": 46,
         "kind": "variable",
         "scope": "render"
       },
       "render.chevron": {
         "name": "chevron",
-        "line": 116,
+        "line": 93,
         "col": 10,
-        "endLine": 116,
+        "endLine": 93,
         "endCol": 45,
         "kind": "variable",
         "scope": "render"
       },
       "render.navBtn": {
         "name": "navBtn",
-        "line": 126,
+        "line": 103,
         "col": 12,
-        "endLine": 126,
+        "endLine": 103,
         "endCol": 48,
         "kind": "variable",
         "scope": "render"
       },
       "render.clearBtn": {
         "name": "clearBtn",
-        "line": 140,
+        "line": 117,
         "col": 12,
-        "endLine": 140,
+        "endLine": 117,
         "endCol": 50,
         "kind": "variable",
         "scope": "render"
       },
       "render.link": {
         "name": "link",
-        "line": 152,
+        "line": 129,
         "col": 12,
-        "endLine": 152,
+        "endLine": 129,
         "endCol": 41,
         "kind": "variable",
         "scope": "render"
       },
       "render.span": {
         "name": "span",
-        "line": 168,
+        "line": 145,
         "col": 12,
-        "endLine": 168,
+        "endLine": 145,
         "endCol": 44,
         "kind": "variable",
         "scope": "render"

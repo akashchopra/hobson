@@ -436,7 +436,7 @@ export async function loadKernel(require, storageBackend) {
         align-items: flex-start;
         justify-content: center;
         padding-top: 10vh;
-        z-index: 10000;
+        z-index: 10000000;
       `;
 
       const modal = document.createElement("div");
@@ -577,7 +577,7 @@ export async function loadKernel(require, storageBackend) {
         display: flex;
         align-items: center;
         justify-content: center;
-        z-index: 10000;
+        z-index: 10000000;
       `;
 
       const modal = document.createElement("div");
@@ -876,7 +876,7 @@ export async function loadKernel(require, storageBackend) {
         detach: (parentId, itemId) => kernel.detach(parentId, itemId),
 
         // Cycle detection (advisory - for UIs that want to warn before creating cycles)
-        wouldCreateCycle: (parentId, childId) => kernel.wouldCreateCycle(parentId, childId),
+        wouldCreateCycle: (parentId, attachmentId) => kernel.wouldCreateCycle(parentId, attachmentId),
         hasCycle: (itemId) => kernel.hasCycle(itemId),
 
         // Navigation (params: { field, line, col } for line highlighting)
@@ -1579,7 +1579,7 @@ export async function loadKernel(require, storageBackend) {
         background: #ffebee;
         border-bottom: 2px solid #c62828;
         padding: 12px 20px;
-        z-index: 10000;
+        z-index: 10000000;
         font-family: system-ui, sans-serif;
       `;
 
