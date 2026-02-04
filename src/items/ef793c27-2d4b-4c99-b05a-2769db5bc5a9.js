@@ -89,56 +89,52 @@ export async function render(item, api) {
     style: 'position: absolute; inset: 0; z-index: 0; overflow: auto; display: flex; flex-direction: column;'
   }, []);
 
+  // Start inner view rendering as a promise (will be awaited later with children for parallelism)
+  let innerViewPromise = null;
   if (innerViewConfig && innerViewConfig.type) {
-    try {
-      // BYPASS api.renderItem() to avoid cycle detection
-      // The wrapper pattern intentionally renders the same item with a different view.
-      // This is NOT a cycle - it's a deliberate composition pattern.
-      // We directly load and call the inner view's render function.
+    const innerViewId = innerViewConfig.type;
+    innerViewPromise = (async () => {
+      try {
+        // BYPASS api.renderItem() to avoid cycle detection
+        // The wrapper pattern intentionally renders the same item with a different view.
+        // This is NOT a cycle - it's a deliberate composition pattern.
+        // We directly load and call the inner view's render function.
 
-      const innerViewId = innerViewConfig.type;
+        // Load the inner view module
+        const innerViewModule = await api.require(innerViewId);
 
-      // Load the inner view module
-      const innerViewModule = await api.require(innerViewId);
+        if (innerViewModule && typeof innerViewModule.render === 'function') {
+          // Create a modified api for the inner view
+          // The inner view's config is stored inside innerViewConfig (minus the 'type' field which is for spatial-canvas)
+          const { type: _viewType, ...innerViewOwnConfig } = innerViewConfig;
+          const hasOwnConfig = Object.keys(innerViewOwnConfig).length > 0;
 
-      if (innerViewModule && typeof innerViewModule.render === 'function') {
-        // Create a modified api for the inner view
-        // The inner view's config is stored inside innerViewConfig (minus the 'type' field which is for spatial-canvas)
-        const { type: _viewType, ...innerViewOwnConfig } = innerViewConfig;
-        const hasOwnConfig = Object.keys(innerViewOwnConfig).length > 0;
+          const innerApi = Object.create(api);
+          // Return the inner view's own config (if any), not the wrapper config
+          innerApi.getViewConfig = () => hasOwnConfig ? innerViewOwnConfig : null;
+          innerApi.updateViewConfig = async (updates) => {
+            const currentConfig = await api.getViewConfig() || {};
+            await api.updateViewConfig({
+              innerView: { ...(currentConfig.innerView || {}), ...updates }
+            });
+          };
+          // Override getCurrentItem to return the item being rendered, not the spatial container
+          innerApi.getCurrentItem = () => item;
+          // Override getViewId to return the inner view's ID
+          innerApi.getViewId = () => innerViewId;
 
-        const innerApi = Object.create(api);
-        // Return the inner view's own config (if any), not the wrapper config
-        innerApi.getViewConfig = () => hasOwnConfig ? innerViewOwnConfig : null;
-        innerApi.updateViewConfig = async (updates) => {
-          const currentConfig = await api.getViewConfig() || {};
-          await api.updateViewConfig({
-            innerView: { ...(currentConfig.innerView || {}), ...updates }
-          });
-        };
-        // Override getCurrentItem to return the item being rendered, not the spatial container
-        innerApi.getCurrentItem = () => item;
-        // Override getViewId to return the inner view's ID
-        innerApi.getViewId = () => innerViewId;
-
-        // Call the inner view's render function directly
-        const innerDom = await innerViewModule.render(item, innerApi);
-
-        if (innerDom) {
-          // Ensure inner content fills the background
-          innerDom.style.flex = '1';
-          innerDom.style.minHeight = '0';
-          background.appendChild(innerDom);
+          // Call the inner view's render function directly
+          return await innerViewModule.render(item, innerApi);
+        } else {
+          throw new Error(`Inner view ${innerViewId} has no render function`);
         }
-      } else {
-        throw new Error(`Inner view ${innerViewId} has no render function`);
+      } catch (error) {
+        const errorDiv = api.createElement('div', {
+          style: 'padding: 20px; color: var(--color-danger); background: var(--color-danger-light); border: 1px solid var(--color-danger); margin: 10px;'
+        }, ['Error rendering inner view: ' + error.message]);
+        return errorDiv;
       }
-    } catch (error) {
-      const errorDiv = api.createElement('div', {
-        style: 'padding: 20px; color: var(--color-danger); background: var(--color-danger-light); border: 1px solid var(--color-danger); margin: 10px;'
-      }, ['Error rendering inner view: ' + error.message]);
-      background.appendChild(errorDiv);
-    }
+    })();
   }
 
   container.appendChild(background);
@@ -238,6 +234,14 @@ export async function render(item, api) {
       'No items yet. Use View As > Spatial Canvas to set a background view, or add children via REPL.'
     ]);
     container.appendChild(empty);
+  } else if (children.length === 0 && innerViewPromise) {
+    // Inner view but no children - await inner view now
+    const innerDom = await innerViewPromise;
+    if (innerDom) {
+      innerDom.style.flex = '1';
+      innerDom.style.minHeight = '0';
+      background.appendChild(innerDom);
+    }
   } else if (children.length > 0) {
     // Function to update child view properties (silent - no re-render)
     const updateChild = async (childId, viewUpdates) => {
@@ -1245,19 +1249,19 @@ export async function render(item, api) {
       }
     };
 
-    // Render children using the helper
-    for (const child of childrenToRender) {
+    // Render children in parallel for better performance
+    // Also await inner view promise (started earlier) in parallel with children
+    const childRenderPromises = childrenToRender.map(async (child) => {
       try {
         // Pass navigateTo from view config if present (used by inspector and other external openers)
-        const wrapper = await createWindowForChild(child.id, child.view || {}, child.view?.navigateTo);
-        container.appendChild(wrapper);
+        return await createWindowForChild(child.id, child.view || {}, child.view?.navigateTo);
       } catch (error) {
         const childView = child.view || {};
         const xPos = childView.x || 0;
         const yPos = childView.y || 0;
         const widthVal = childView.width || 500;
         const zVal = (childView.z || 0) + baseZ;
-        const errorNode = api.createElement('div', {
+        return api.createElement('div', {
           style: `
             position: absolute;
             left: ${xPos}px;
@@ -1273,8 +1277,27 @@ export async function render(item, api) {
         }, [
           'Error rendering child: ' + child.id + ' - ' + error.message
         ]);
-        container.appendChild(errorNode);
       }
+    });
+
+    // Await inner view and children in parallel
+    const allPromises = innerViewPromise
+      ? [innerViewPromise, ...childRenderPromises]
+      : childRenderPromises;
+    const allResults = await Promise.all(allPromises);
+
+    // If we had an inner view, append it to background
+    if (innerViewPromise) {
+      const innerDom = allResults[0];
+      if (innerDom) {
+        innerDom.style.flex = '1';
+        innerDom.style.minHeight = '0';
+        background.appendChild(innerDom);
+      }
+      // Child wrappers are the rest of the results
+      allResults.slice(1).forEach(wrapper => container.appendChild(wrapper));
+    } else {
+      allResults.forEach(wrapper => container.appendChild(wrapper));
     }
 
     // Render minimized windows at bottom

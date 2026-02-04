@@ -76,6 +76,59 @@
     // Parse URL parameters
     const urlParams = new URLSearchParams(window.location.search);
     const instanceId = urlParams.get('instance');
+    const perfMode = urlParams.get('perf') === '1';
+
+    // Performance instrumentation helper
+    const perf = {
+      enabled: perfMode,
+      mark(name) {
+        if (this.enabled) performance.mark(`hobson:${name}`);
+      },
+      measure(name, startMark, endMark) {
+        if (this.enabled) {
+          try {
+            performance.measure(`hobson:${name}`, `hobson:${startMark}`, `hobson:${endMark}`);
+          } catch (e) {
+            // Marks may not exist if boot failed early
+          }
+        }
+      },
+      getTimings() {
+        // Returns timings as an object, useful for programmatic access
+        const measures = performance.getEntriesByType('measure')
+          .filter(e => e.name.startsWith('hobson:'))
+          .sort((a, b) => a.startTime - b.startTime);
+        const result = {};
+        for (const m of measures) {
+          result[m.name.replace('hobson:', '')] = Math.round(m.duration * 10) / 10;
+        }
+        return result;
+      },
+      summary() {
+        if (!this.enabled) return;
+        const measures = performance.getEntriesByType('measure')
+          .filter(e => e.name.startsWith('hobson:'))
+          .sort((a, b) => a.startTime - b.startTime);
+
+        if (measures.length === 0) return;
+
+        console.group('%c⏱ Hobson Boot Timings', 'font-weight: bold; color: #2196F3');
+        const maxNameLen = Math.max(...measures.map(m => m.name.length)) - 7; // subtract 'hobson:'
+        for (const m of measures) {
+          const name = m.name.replace('hobson:', '').padEnd(maxNameLen);
+          const duration = m.duration.toFixed(1).padStart(7);
+          const bar = '█'.repeat(Math.min(50, Math.round(m.duration / 10)));
+          console.log(`  ${name}  ${duration}ms  ${bar}`);
+        }
+        const total = measures.find(m => m.name === 'hobson:total');
+        if (total) {
+          console.log(`%c  ${'─'.repeat(maxNameLen + 12)}`, 'color: #999');
+          console.log(`%c  Total: ${total.duration.toFixed(1)}ms`, 'font-weight: bold');
+        }
+        console.groupEnd();
+      }
+    };
+    window.hobsonPerf = perf;
 
     // Update title for nested instances
     if (instanceId) {
@@ -84,7 +137,10 @@
 
     async function boot() {
       try {
+        perf.mark('boot-start');
+
         // Open IndexedDB - use version 2 to force upgrade if old version exists
+        perf.mark('indexeddb-start');
         const db = await new Promise((resolve, reject) => {
           const request = indexedDB.open('hobson', 2);
           
@@ -108,6 +164,8 @@
         if (!db.objectStoreNames.contains('items')) {
           throw new Error('Database opened but items object store is missing. Please clear your browser data and try again.');
         }
+        perf.mark('indexeddb-end');
+        perf.measure('indexeddb-open', 'indexeddb-start', 'indexeddb-end');
 
         // Helper: prefix an ID if in instance mode
         const prefixId = (id) => instanceId ? `${instanceId}:${id}` : id;
@@ -213,7 +271,10 @@
         // Check for kernel:core (using its GUID)
         const KERNEL_CORE_ID = '33333333-1111-0000-0000-000000000000';
 
+        perf.mark('kernel-core-load-start');
         const kernelCore = await storageBackend.get(KERNEL_CORE_ID);
+        perf.mark('kernel-core-load-end');
+        perf.measure('kernel-core-load', 'kernel-core-load-start', 'kernel-core-load-end');
 
         if (!kernelCore || !kernelCore.content?.code) {
           showImportUI(db, storageBackend);
@@ -221,6 +282,7 @@
         }
 
         // Import kernel-core as module
+        perf.mark('module-import-start');
         const code = `
           "use strict";
           ${kernelCore.content.code}
@@ -232,6 +294,8 @@
         const { loadKernel } = await import(url);
         console.log('LOADED MODULE HAS MULTIPLE:', loadKernel.toString().includes('multiple'));
         URL.revokeObjectURL(url);
+        perf.mark('module-import-end');
+        perf.measure('module-import', 'module-import-start', 'module-import-end');
 
         // Create custom require function that uses our storage backend
         const customRequire = async (moduleId) => {
@@ -258,10 +322,16 @@
         };
 
         // Load and instantiate kernel (pass require and storage backend for nested instances)
+        perf.mark('load-kernel-start');
         const Kernel = await loadKernel(customRequire, storageBackend);
+        perf.mark('load-kernel-end');
+        perf.measure('load-kernel', 'load-kernel-start', 'load-kernel-end');
 
+        perf.mark('kernel-new-start');
         const kernel = new Kernel();
         window.kernel = kernel;
+        perf.mark('kernel-new-end');
+        perf.measure('kernel-instantiate', 'kernel-new-start', 'kernel-new-end');
         
         // Listen for reload requests
         window.addEventListener('message', async (e) => {
@@ -280,8 +350,15 @@
         document.body.appendChild(kernel.rootElement);
 
         // Boot kernel
+        perf.mark('kernel-boot-start');
         await kernel.boot();
-        
+        perf.mark('kernel-boot-end');
+        perf.measure('kernel-boot', 'kernel-boot-start', 'kernel-boot-end');
+
+        perf.mark('boot-end');
+        perf.measure('total', 'boot-start', 'boot-end');
+        perf.summary();
+
       } catch (error) {
         showError(error);
       }
