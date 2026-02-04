@@ -10,6 +10,9 @@
 // ID: bd74da77-a459-454a-b001-48685d4b536d
 // Type: aaaaaaaa-0000-0000-0000-000000000000
 
+// Default window dimensions for new spatial children
+const DEFAULT_WINDOW_WIDTH = 600;
+const DEFAULT_WINDOW_HEIGHT = 500;
 
 export async function render(item, api) {
   // Load dependencies
@@ -112,8 +115,8 @@ export async function render(item, api) {
         view: {
           x: x,
           y: y,
-          width: 400,
-          height: 300,
+          width: DEFAULT_WINDOW_WIDTH,
+          height: DEFAULT_WINDOW_HEIGHT,
           z: maxZ + 1
         }
       });
@@ -160,8 +163,8 @@ export async function render(item, api) {
         view: {
           x: x,
           y: y,
-          width: 400,
-          height: 300,
+          width: DEFAULT_WINDOW_WIDTH,
+          height: DEFAULT_WINDOW_HEIGHT,
           z: maxZ + 1
         }
       });
