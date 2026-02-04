@@ -17,6 +17,15 @@
 // A "wrapper view" that provides spatial layout for any item type.
 // Renders an optional inner view as the background, with children as floating windows above.
 
+// Default window dimensions
+const DEFAULT_WINDOW_WIDTH = 600;
+const DEFAULT_WINDOW_HEIGHT = 500;
+
+// Minimum resize constraints
+const MIN_WINDOW_WIDTH = 200;
+const MIN_WINDOW_HEIGHT = 150;
+const MIN_DOCKED_WIDTH = 100;
+const MIN_DOCKED_HEIGHT = 50;
 
 // Contributes submenu items to the "View As..." menu when this view is active
 export async function getViewMenuItems(item, api) {
@@ -152,8 +161,8 @@ export async function render(item, api) {
     const isEdgeV = anchor === 'left' || anchor === 'right';
 
     // Edge anchors fill perpendicular axis
-    const width = isEdgeH ? containerWidth : (view.width || 500);
-    const height = isEdgeV ? containerHeight : (view.height || 400);
+    const width = isEdgeH ? containerWidth : (view.width || DEFAULT_WINDOW_WIDTH);
+    const height = isEdgeV ? containerHeight : (view.height || DEFAULT_WINDOW_HEIGHT);
 
     let left, top;
     switch (anchor) {
@@ -198,8 +207,8 @@ export async function render(item, api) {
   const pinToNearestCorner = (view, containerWidth, containerHeight) => {
     const x = view.x || 0;
     const y = view.y || 0;
-    const width = view.width || 500;
-    const height = view.height || 400;
+    const width = view.width || DEFAULT_WINDOW_WIDTH;
+    const height = view.height || DEFAULT_WINDOW_HEIGHT;
 
     const centerX = x + width / 2;
     const centerY = y + height / 2;
@@ -400,8 +409,8 @@ export async function render(item, api) {
       } else {
         x = effectiveView.x || 0;
         y = effectiveView.y || 0;
-        width = effectiveView.width || 500;
-        height = effectiveView.height || 400;
+        width = effectiveView.width || DEFAULT_WINDOW_WIDTH;
+        height = effectiveView.height || DEFAULT_WINDOW_HEIGHT;
       }
 
       // Anchored windows get z=1 (same as baseZ, above background at z=0)
@@ -572,8 +581,8 @@ export async function render(item, api) {
             // Get current position from DOM
             const currentX = parseInt(wrapper.style.left) || 0;
             const currentY = parseInt(wrapper.style.top) || 0;
-            const currentWidth = parseInt(wrapper.style.width) || 500;
-            const currentHeight = parseInt(wrapper.style.height) || 400;
+            const currentWidth = parseInt(wrapper.style.width) || DEFAULT_WINDOW_WIDTH;
+            const currentHeight = parseInt(wrapper.style.height) || DEFAULT_WINDOW_HEIGHT;
 
             const pinResult = pinToNearestCorner({
               x: currentX,
@@ -604,8 +613,8 @@ export async function render(item, api) {
 
           for (const { label, pos } of dockPositions) {
             menu.appendChild(createMenuItem(label, async () => {
-              const currentWidth = parseInt(wrapper.style.width) || 400;
-              const currentHeight = parseInt(wrapper.style.height) || 300;
+              const currentWidth = parseInt(wrapper.style.width) || DEFAULT_WINDOW_WIDTH;
+              const currentHeight = parseInt(wrapper.style.height) || DEFAULT_WINDOW_HEIGHT;
 
               await updateChild(childId, {
                 anchor: pos,
@@ -658,8 +667,8 @@ export async function render(item, api) {
             // Get current rendered dimensions from DOM
             const currentLeft = parseInt(wrapper.style.left) || 0;
             const currentTop = parseInt(wrapper.style.top) || 0;
-            const currentWidth = parseInt(wrapper.style.width) || 400;
-            const currentHeight = parseInt(wrapper.style.height) || 300;
+            const currentWidth = parseInt(wrapper.style.width) || DEFAULT_WINDOW_WIDTH;
+            const currentHeight = parseInt(wrapper.style.height) || DEFAULT_WINDOW_HEIGHT;
 
             // Get max z for bringing to front
             const maxZ = await getMaxZ();
@@ -729,8 +738,8 @@ export async function render(item, api) {
             // Get current rendered position/dimensions
             const currentLeft = parseInt(wrapper.style.left) || 0;
             const currentTop = parseInt(wrapper.style.top) || 0;
-            const currentWidth = parseInt(wrapper.style.width) || 400;
-            const currentHeight = parseInt(wrapper.style.height) || 300;
+            const currentWidth = parseInt(wrapper.style.width) || DEFAULT_WINDOW_WIDTH;
+            const currentHeight = parseInt(wrapper.style.height) || DEFAULT_WINDOW_HEIGHT;
 
             // Get max z for bringing to front
             const maxZ = await getMaxZ();
@@ -1024,22 +1033,22 @@ export async function render(item, api) {
 
               if (corner === 'br') {
                 // Bottom-right: increase width and height
-                newWidth = Math.max(200, startWidth + deltaX);
-                newHeight = Math.max(150, startHeight + deltaY);
+                newWidth = Math.max(MIN_WINDOW_WIDTH, startWidth + deltaX);
+                newHeight = Math.max(MIN_WINDOW_HEIGHT, startHeight + deltaY);
               } else if (corner === 'bl') {
                 // Bottom-left: change x and width, increase height
-                newWidth = Math.max(200, startWidth - deltaX);
-                newHeight = Math.max(150, startHeight + deltaY);
+                newWidth = Math.max(MIN_WINDOW_WIDTH, startWidth - deltaX);
+                newHeight = Math.max(MIN_WINDOW_HEIGHT, startHeight + deltaY);
                 newLeft = startLeft + (startWidth - newWidth);
               } else if (corner === 'tr') {
                 // Top-right: change y and height, increase width
-                newWidth = Math.max(200, startWidth + deltaX);
-                newHeight = Math.max(150, startHeight - deltaY);
+                newWidth = Math.max(MIN_WINDOW_WIDTH, startWidth + deltaX);
+                newHeight = Math.max(MIN_WINDOW_HEIGHT, startHeight - deltaY);
                 newTop = startTop + (startHeight - newHeight);
               } else if (corner === 'tl') {
                 // Top-left: change x, y, width, and height
-                newWidth = Math.max(200, startWidth - deltaX);
-                newHeight = Math.max(150, startHeight - deltaY);
+                newWidth = Math.max(MIN_WINDOW_WIDTH, startWidth - deltaX);
+                newHeight = Math.max(MIN_WINDOW_HEIGHT, startHeight - deltaY);
                 newLeft = startLeft + (startWidth - newWidth);
                 newTop = startTop + (startHeight - newHeight);
               }
@@ -1126,13 +1135,13 @@ export async function render(item, api) {
               const deltaY = moveEvent.clientY - startY;
 
               if (edge === 'right' && edgeAnchor === 'left') {
-                wrapper.style.width = Math.max(100, startWidth + deltaX) + 'px';
+                wrapper.style.width = Math.max(MIN_DOCKED_WIDTH, startWidth + deltaX) + 'px';
               } else if (edge === 'left' && edgeAnchor === 'right') {
-                wrapper.style.width = Math.max(100, startWidth - deltaX) + 'px';
+                wrapper.style.width = Math.max(MIN_DOCKED_WIDTH, startWidth - deltaX) + 'px';
               } else if (edge === 'bottom' && edgeAnchor === 'top') {
-                wrapper.style.height = Math.max(50, startHeight + deltaY) + 'px';
+                wrapper.style.height = Math.max(MIN_DOCKED_HEIGHT, startHeight + deltaY) + 'px';
               } else if (edge === 'top' && edgeAnchor === 'bottom') {
-                wrapper.style.height = Math.max(50, startHeight - deltaY) + 'px';
+                wrapper.style.height = Math.max(MIN_DOCKED_HEIGHT, startHeight - deltaY) + 'px';
               }
             };
 
@@ -1241,8 +1250,8 @@ export async function render(item, api) {
           const wrapper = await createWindowForChild(childId, {
             x: newX,
             y: newY,
-            width: 500,
-            height: 400,
+            width: DEFAULT_WINDOW_WIDTH,
+            height: DEFAULT_WINDOW_HEIGHT,
             z: newZ - baseZ
           }, navigateTo);
 
@@ -1265,7 +1274,7 @@ export async function render(item, api) {
         const childView = child.view || {};
         const xPos = childView.x || 0;
         const yPos = childView.y || 0;
-        const widthVal = childView.width || 500;
+        const widthVal = childView.width || DEFAULT_WINDOW_WIDTH;
         const zVal = (childView.z || 0) + baseZ;
         return api.createElement('div', {
           style: `
