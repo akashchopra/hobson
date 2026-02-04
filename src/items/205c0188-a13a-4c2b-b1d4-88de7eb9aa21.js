@@ -48,6 +48,86 @@ export async function render(value, options, api) {
     onChange(updated);
   };
 
+  // Helper to render _ prefixed fields as collapsed JSON textarea
+  const renderInternalField = (key, val) => {
+    const container = api.createElement('div');
+    container.style.cssText = 'display: flex; flex-direction: column; gap: 4px;';
+
+    const jsonStr = JSON.stringify(val, null, 2);
+    const lineCount = jsonStr.split('\n').length;
+    const isLarge = lineCount > 10;
+
+    // Collapsible header for large internal fields
+    if (isLarge) {
+      const summary = api.createElement('div');
+      summary.style.cssText = 'font-size: 12px; color: var(--color-text-tertiary); cursor: pointer; user-select: none;';
+      const keyCount = typeof val === 'object' && val !== null ? Object.keys(val).length : 0;
+      summary.textContent = '(internal, ' + keyCount + ' entries, click to expand)';
+      container.appendChild(summary);
+
+      const textarea = api.createElement('textarea');
+      textarea.value = jsonStr;
+      textarea.style.cssText = 'display: none; width: 100%; min-height: 150px; max-height: 400px; font-family: monospace; font-size: 12px; padding: 8px; border: 1px solid var(--color-border); border-radius: var(--border-radius); resize: vertical; background: var(--color-bg-surface-alt);';
+      if (!isEditable) textarea.readOnly = true;
+
+      if (isEditable) {
+        const errorEl = api.createElement('div');
+        errorEl.style.cssText = 'display: none; color: var(--color-danger); font-size: 12px;';
+        textarea.oninput = () => {
+          try {
+            const parsed = JSON.parse(textarea.value);
+            updateProp(key, parsed);
+            errorEl.style.display = 'none';
+            textarea.style.borderColor = 'var(--color-border)';
+          } catch (e) {
+            errorEl.textContent = 'Invalid JSON';
+            errorEl.style.display = 'block';
+            textarea.style.borderColor = 'var(--color-danger)';
+          }
+        };
+        container.appendChild(errorEl);
+      }
+
+      container.appendChild(textarea);
+
+      summary.onclick = () => {
+        const isHidden = textarea.style.display === 'none';
+        textarea.style.display = isHidden ? 'block' : 'none';
+        summary.textContent = isHidden
+          ? '(internal, ' + keyCount + ' entries, click to collapse)'
+          : '(internal, ' + keyCount + ' entries, click to expand)';
+      };
+    } else {
+      // Small internal field - show directly as textarea
+      const textarea = api.createElement('textarea');
+      textarea.value = jsonStr;
+      textarea.style.cssText = 'width: 100%; min-height: 60px; font-family: monospace; font-size: 12px; padding: 8px; border: 1px solid var(--color-border); border-radius: var(--border-radius); resize: vertical; background: var(--color-bg-surface-alt);';
+      if (!isEditable) textarea.readOnly = true;
+
+      if (isEditable) {
+        const errorEl = api.createElement('div');
+        errorEl.style.cssText = 'color: var(--color-danger); font-size: 12px; min-height: 16px;';
+        textarea.oninput = () => {
+          try {
+            const parsed = JSON.parse(textarea.value);
+            updateProp(key, parsed);
+            errorEl.textContent = '';
+            textarea.style.borderColor = 'var(--color-border)';
+          } catch (e) {
+            errorEl.textContent = 'Invalid JSON';
+            textarea.style.borderColor = 'var(--color-danger)';
+          }
+        };
+        container.appendChild(textarea);
+        container.appendChild(errorEl);
+      } else {
+        container.appendChild(textarea);
+      }
+    }
+
+    return container;
+  };
+
   // Render each property
   const keys = Object.keys(obj);
   for (const key of keys) {
@@ -72,7 +152,12 @@ export async function render(value, options, api) {
       const deleteBtn = api.createElement('button');
       deleteBtn.textContent = '\u00d7';
       deleteBtn.style.cssText = 'background: none; border: none; color: var(--color-text-tertiary); cursor: pointer; font-size: 16px; padding: 0 4px; line-height: 1;';
-      deleteBtn.onclick = () => deleteProp(key);
+      deleteBtn.onclick = () => {
+        if (confirm('Delete property "' + key + '"?')) {
+          deleteProp(key);
+          propRow.remove();
+        }
+      };
       deleteBtn.title = 'Remove property';
       propHeader.appendChild(deleteBtn);
     } else {
@@ -83,6 +168,14 @@ export async function render(value, options, api) {
     }
 
     propRow.appendChild(propHeader);
+
+    // Handle _ prefixed fields specially - render as JSON textarea
+    if (key.startsWith('_')) {
+      const fieldEl = renderInternalField(key, val);
+      propRow.appendChild(fieldEl);
+      propsContainer.appendChild(propRow);
+      continue;
+    }
 
     // Render value based on type
     const valType = Array.isArray(val) ? 'array' : typeof val;
