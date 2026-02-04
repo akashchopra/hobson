@@ -144,6 +144,9 @@ export async function loadKernel(require, storageBackend) {
       this._safeMode = false;
       this.debugMode = false;
 
+      // Index of item IDs that have watches (for efficient event dispatch)
+      this.watcherIndex = new Set();
+
       this.rootElement = document.createElement('div');
       this.rootElement.id = 'app';
       this.rootElement.innerHTML = '<div id="main-view"></div>';
@@ -260,7 +263,9 @@ export async function loadKernel(require, storageBackend) {
       // - ancestors: Set of all type IDs in the chain (for type hierarchy dispatch)
       // - name: The event's name string (for handler name derivation in declarative watches)
       // This enables O(1) lookups during emit().
+      // Also builds the watcher index for efficient event dispatch.
       this.eventTypeCache = new Map();
+      this.watcherIndex = new Set();
 
       try {
         // Find all items that extend event-definition
@@ -274,6 +279,11 @@ export async function loadKernel(require, storageBackend) {
           // Also include the event-definition type itself
           if (item.id === EVENT_IDS.EVENT_DEFINITION) {
             eventDefs.push(item);
+          }
+
+          // Build watcher index: items with top-level watches array
+          if (item.watches && Array.isArray(item.watches) && item.watches.length > 0) {
+            this.watcherIndex.add(item.id);
           }
         }
 
@@ -1240,6 +1250,9 @@ export async function loadKernel(require, storageBackend) {
       // Delete the item
       await this.storage.delete(itemId);
 
+      // Remove from watcher index
+      this.watcherIndex.delete(itemId);
+
       // Emit deletion event
       this.events.emit({ type: EVENT_IDS.ITEM_DELETED, content: { id: itemId, item } });
 
@@ -1271,6 +1284,13 @@ export async function loadKernel(require, storageBackend) {
 
       await this.storage.set(item, this);
 
+      // Update watcher index
+      if (item.watches && Array.isArray(item.watches) && item.watches.length > 0) {
+        this.watcherIndex.add(item.id);
+      } else {
+        this.watcherIndex.delete(item.id);
+      }
+
       // Clear module cache if this is a code item (ensures fresh code on next require)
       if (await this.isCodeItem(item)) {
         this.moduleSystem.clearCache();
@@ -1285,7 +1305,7 @@ export async function loadKernel(require, storageBackend) {
 
         // If item watches system:boot-complete, call its handler now
         // This enables newly-created/edited libraries to activate without reload
-        if (item.content?.watches?.some(w => w.event === EVENT_IDS.SYSTEM_BOOT_COMPLETE)) {
+        if (item.watches?.some(w => w.event === EVENT_IDS.SYSTEM_BOOT_COMPLETE)) {
           try {
             const bootEvent = {
               type: EVENT_IDS.SYSTEM_BOOT_COMPLETE,
@@ -1326,10 +1346,9 @@ export async function loadKernel(require, storageBackend) {
     async dispatchToWatchers(event) {
       // event = { type: eventTypeId, content: {...}, timestamp }
       try {
-        // Query all code items that have watches
-        const allItems = await this.storage.getAll();
-        const watcherItems = allItems.filter(i =>
-          i.content?.watches && Array.isArray(i.content.watches)
+        // Get watcher items from index (O(k) where k = number of watchers)
+        const watcherItems = await Promise.all(
+          [...this.watcherIndex].map(id => this.storage.get(id).catch(() => null))
         );
 
         // Get the emitted event's type chain for matching
@@ -1337,8 +1356,10 @@ export async function loadKernel(require, storageBackend) {
 
         // Find watchers for this event type
         for (const watcherItem of watcherItems) {
+          if (!watcherItem || !watcherItem.watches) continue;
+
           // A watch matches if the emitted event's type chain includes the watch's event field
-          const matchingWatches = watcherItem.content.watches.filter(w =>
+          const matchingWatches = watcherItem.watches.filter(w =>
             eventTypeChain.has(w.event)
           );
 
@@ -1464,16 +1485,20 @@ export async function loadKernel(require, storageBackend) {
     }
 
     async findSystemEventHandlers(eventTypeId) {
-      const allItems = await this.storage.getAll();
+      // Get watcher items from index (O(k) where k = number of watchers)
+      const watcherItems = await Promise.all(
+        [...this.watcherIndex].map(id => this.storage.get(id).catch(() => null))
+      );
+
       // Get the event's type chain for matching (allows subscribing to parent types)
       const eventTypeChain = this.eventTypeCache?.get(eventTypeId)?.ancestors || new Set([eventTypeId]);
 
-      return allItems.filter(item => {
-        if (!item.content?.watches || !Array.isArray(item.content.watches)) {
+      return watcherItems.filter(item => {
+        if (!item || !item.watches || !Array.isArray(item.watches)) {
           return false;
         }
         // Match if any watch's event field is in the emitted event's type chain
-        return item.content.watches.some(w => eventTypeChain.has(w.event));
+        return item.watches.some(w => eventTypeChain.has(w.event));
       });
     }
 

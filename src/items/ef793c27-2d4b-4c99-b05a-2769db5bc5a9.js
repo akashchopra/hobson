@@ -438,6 +438,12 @@ export async function render(item, api) {
         'data-item-id': childId,
         'data-parent-id': item.id,
         'data-anchor': effectiveView.anchor || '',
+        'data-maximized': isMaximized ? 'true' : 'false',
+        'data-orig-x': x,
+        'data-orig-y': y,
+        'data-orig-width': width,
+        'data-orig-height': height,
+        'data-orig-z': z,
         style: wrapperStyle
       }, []);
 
@@ -753,8 +759,47 @@ export async function render(item, api) {
           title: 'Minimize',
           onclick: async (clickE) => {
             clickE.stopPropagation();
-            await updateChild(childId, { minimized: true, maximized: false });
-            await api.rerenderItem(item.id);
+
+            // Immediate DOM update for responsiveness
+            wrapper.style.display = 'none';
+
+            // Create minimized box immediately
+            const existingMinimized = container.querySelectorAll('[data-minimized="true"]');
+            const minIndex = existingMinimized.length;
+            const minBox = api.createElement('div', {
+              'data-item-id': childId,
+              'data-parent-id': item.id,
+              'data-minimized': 'true',
+              style: `
+                position: absolute;
+                bottom: 8px;
+                left: ${8 + minIndex * 158}px;
+                width: 150px;
+                height: 32px;
+                background: var(--color-bg-hover);
+                border: 1px solid var(--color-border);
+                border-radius: var(--border-radius);
+                display: flex;
+                align-items: center;
+                padding: 0 8px;
+                cursor: pointer;
+                z-index: 10000;
+              `,
+              onclick: async () => {
+                // Restore: remove this box, show wrapper
+                minBox.remove();
+                wrapper.style.display = '';
+                // Reposition other minimized boxes
+                const remaining = container.querySelectorAll('[data-minimized="true"]');
+                remaining.forEach((box, i) => { box.style.left = `${8 + i * 158}px`; });
+                // Persist
+                updateChild(childId, { minimized: false });
+              }
+            }, [childItem.content?.title || childItem.name || childId.slice(0,8)]);
+            container.appendChild(minBox);
+
+            // Persist to DB (fire and forget)
+            updateChild(childId, { minimized: true, maximized: false });
           }
         }, ['−']);
         buttonContainer.appendChild(minimizeBtn);
@@ -779,14 +824,35 @@ export async function render(item, api) {
           title: isMaximized ? 'Restore' : 'Maximize',
           onclick: async (clickE) => {
             clickE.stopPropagation();
-            if (isMaximized) {
-              // Restore
-              await updateChild(childId, { maximized: false });
+            const currentlyMaximized = wrapper.dataset.maximized === 'true';
+
+            if (currentlyMaximized) {
+              // Restore - apply original position from data attributes
+              wrapper.style.left = `${wrapper.dataset.origX}px`;
+              wrapper.style.top = `${wrapper.dataset.origY}px`;
+              wrapper.style.width = `${wrapper.dataset.origWidth}px`;
+              wrapper.style.height = `${wrapper.dataset.origHeight}px`;
+              wrapper.style.right = '';
+              wrapper.style.bottom = '';
+              wrapper.style.zIndex = wrapper.dataset.origZ;
+              wrapper.dataset.maximized = 'false';
+              maxBtn.textContent = '□';
+              maxBtn.title = 'Maximize';
+              updateChild(childId, { maximized: false });
             } else {
-              // Maximize
-              await updateChild(childId, { maximized: true });
+              // Maximize - fill container
+              wrapper.style.left = '0';
+              wrapper.style.top = '0';
+              wrapper.style.right = '0';
+              wrapper.style.bottom = '0';
+              wrapper.style.width = 'auto';
+              wrapper.style.height = 'auto';
+              wrapper.style.zIndex = '9999';
+              wrapper.dataset.maximized = 'true';
+              maxBtn.textContent = '❐';
+              maxBtn.title = 'Restore';
+              updateChild(childId, { maximized: true });
             }
-            await api.rerenderItem(item.id);
           }
         }, [isMaximized ? '❐' : '□']);
         buttonContainer.appendChild(maxBtn);
