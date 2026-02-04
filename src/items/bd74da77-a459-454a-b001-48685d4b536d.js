@@ -732,7 +732,47 @@ export async function render(item, api) {
           try {
             const viewModule = await api.require(view.id);
             if (viewModule && typeof viewModule.getViewMenuItems === 'function') {
-              viewMenuItems = await viewModule.getViewMenuItems(menuItem, api);
+              // Create wrapped API with correct context for the nested item
+              // The view's getViewMenuItems may call updateViewConfig/getViewConfig which need proper parentId
+              const wrappedApi = {
+                ...api,
+                // Override getViewConfig to read from the correct parent's children array
+                getViewConfig: async () => {
+                  if (selectedParentId) {
+                    const parent = await api.get(selectedParentId);
+                    const childSpec = parent.children?.find(c => c.id === itemId);
+                    return childSpec?.view || null;
+                  } else {
+                    // Root item - get from viewport-manager
+                    return await api.viewport.getRootViewConfig();
+                  }
+                },
+                // Override updateViewConfig to update the correct parent's children array
+                updateViewConfig: async (updates) => {
+                  if (selectedParentId) {
+                    const parent = await api.get(selectedParentId);
+                    const childIndex = parent.children?.findIndex(c => c.id === itemId);
+                    if (childIndex >= 0) {
+                      const currentChild = parent.children[childIndex];
+                      parent.children[childIndex] = {
+                        ...currentChild,
+                        view: { ...(currentChild.view || {}), ...updates }
+                      };
+                      parent.modified = Date.now();
+                      await api.set(parent);
+                      return true;
+                    }
+                  } else {
+                    // Root item - update viewport-manager's root view config
+                    await api.viewport.updateRootViewConfig(updates);
+                    return true;
+                  }
+                  return false;
+                },
+                // Override getParentId to return the correct parent
+                getParentId: () => selectedParentId || null
+              };
+              viewMenuItems = await viewModule.getViewMenuItems(menuItem, wrappedApi);
             }
           } catch (e) {
             // View module doesn't export getViewMenuItems or failed to load
