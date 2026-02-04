@@ -149,16 +149,22 @@ export function render(value, options, api) {
     // Walk up parent chains to include ancestors
     const toInclude = new Set(usedAsTag);
     for (const tagId of usedAsTag) {
-      let current = await api.get(tagId);
-      while (current?.content?.parent) {
-        toInclude.add(current.content.parent);
-        current = await api.get(current.content.parent);
+      try {
+        let current = await api.get(tagId);
+        while (current?.content?.parent) {
+          toInclude.add(current.content.parent);
+          try {
+            current = await api.get(current.content.parent);
+          } catch { break; }
+        }
+      } catch {
+        // Tag referenced but no longer exists - skip
       }
     }
 
     // Build tree from discovered tags
     const tagItems = (await Promise.all(
-      [...toInclude].map(id => api.get(id))
+      [...toInclude].map(id => api.get(id).catch(() => null))
     )).filter(Boolean);
     const tree = treeBuilder.buildTagTree(tagItems);
 

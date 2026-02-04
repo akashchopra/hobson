@@ -10,6 +10,10 @@
 // ID: ef793c27-2d4b-4c99-b05a-2769db5bc5a9
 // Type: aaaaaaaa-0000-0000-0000-000000000000
 
+// Item: system:spatial-canvas-view
+// ID: ef793c27-2d4b-4c99-b05a-2769db5bc5a9
+// Type: aaaaaaaa-0000-0000-0000-000000000000
+
 // Item: spatial-canvas-view
 // ID: ef793c27-2d4b-4c99-b05a-2769db5bc5a9
 // Type: aaaaaaaa-0000-0000-0000-000000000000
