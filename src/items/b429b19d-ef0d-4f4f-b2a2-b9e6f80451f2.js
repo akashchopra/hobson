@@ -106,7 +106,9 @@ export async function render(item, api) {
     const value = getNestedValue(item, path);
 
     // Load field view
-    const fieldViewName = 'field-view-' + (hint.field_view || 'json');
+    // Default to markdown for description field, json for everything else
+    const defaultFieldView = path === 'content.description' ? 'markdown' : 'json';
+    const fieldViewName = 'field-view-' + (hint.field_view || defaultFieldView);
     let fieldView;
 
     try {
