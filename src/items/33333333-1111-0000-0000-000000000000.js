@@ -153,8 +153,16 @@ export async function loadKernel(require, storageBackend) {
     }
 
     async boot() {
+      const perf = window.hobsonPerf;
+      perf?.mark('storage-init-start');
       await this.storage.initialize();
+      perf?.mark('storage-init-end');
+      perf?.measure('storage-init', 'storage-init-start', 'storage-init-end');
+
+      perf?.mark('seed-items-start');
       await this.ensureSeedItems();
+      perf?.mark('seed-items-end');
+      perf?.measure('seed-items-check', 'seed-items-start', 'seed-items-end');
 
       // Check for safe mode and debug mode
       const params = new URLSearchParams(window.location.search);
@@ -210,15 +218,22 @@ export async function loadKernel(require, storageBackend) {
         // Popstate handler removed - managed by userland viewport-manager
 
         // Build event type cache for hierarchical event dispatch (Phase 1 prep)
+        perf?.mark('event-cache-start');
         await this.buildEventTypeCache();
+        perf?.mark('event-cache-end');
+        perf?.measure('event-cache-build', 'event-cache-start', 'event-cache-end');
 
         // Setup declarative event watches BEFORE first render
         // so error handlers are active during boot
+        perf?.mark('watches-start');
         this.setupDeclarativeWatches();
+        perf?.mark('watches-end');
+        perf?.measure('watches-setup', 'watches-start', 'watches-end');
 
         // Emit system:boot-complete BEFORE rendering so userland libraries
         // (especially viewport-manager) are initialized before any code tries
         // to call navigate() during render
+        perf?.mark('boot-complete-emit-start');
         this.events.emit({
           type: EVENT_IDS.SYSTEM_BOOT_COMPLETE,
           content: {
@@ -227,9 +242,14 @@ export async function loadKernel(require, storageBackend) {
             lateActivation: false
           }
         });
+        perf?.mark('boot-complete-emit-end');
+        perf?.measure('boot-complete-emit', 'boot-complete-emit-start', 'boot-complete-emit-end');
 
         // Render the viewport - viewport-view handles URL reading and root display
+        perf?.mark('render-viewport-start');
         await this.renderViewport();
+        perf?.mark('render-viewport-end');
+        perf?.measure('render-viewport', 'render-viewport-start', 'render-viewport-end');
 
         // Auto-activate element inspector in debug mode
         if (this.debugMode) {

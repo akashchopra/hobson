@@ -292,6 +292,9 @@ export class RenderingSystem {
   async renderItem(itemId, viewId = null, options = {}, context = {}) {
     const IDS = this.kernel.IDS;
     const renderPath = context.renderPath || [];
+    const perf = window.hobsonPerf;
+    const isRoot = renderPath.length === 0;
+    const perfPrefix = isRoot ? 'root' : `child-${renderPath.length}`;
 
     // Cycle detection
     if (renderPath.includes(itemId)) {
@@ -307,16 +310,26 @@ export class RenderingSystem {
       }
     }
 
+    if (isRoot) perf?.mark(`${perfPrefix}-item-fetch-start`);
     const item = await this.kernel.storage.get(itemId);
+    if (isRoot) {
+      perf?.mark(`${perfPrefix}-item-fetch-end`);
+      perf?.measure(`${perfPrefix}-item-fetch`, `${perfPrefix}-item-fetch-start`, `${perfPrefix}-item-fetch-end`);
+    }
 
     // Use specified view or find default via preference hierarchy
     let view;
+    if (isRoot) perf?.mark(`${perfPrefix}-view-resolve-start`);
     if (viewId) {
       // Explicit view specified by caller (highest priority)
       view = await this.kernel.storage.get(viewId);
     } else {
       // Use preference hierarchy: item.preferredView → type.preferredView → type chain
       view = await this.resolveView(item);
+    }
+    if (isRoot) {
+      perf?.mark(`${perfPrefix}-view-resolve-end`);
+      perf?.measure(`${perfPrefix}-view-resolve`, `${perfPrefix}-view-resolve-start`, `${perfPrefix}-view-resolve-end`);
     }
 
     // Build new context with updated render path
@@ -329,9 +342,21 @@ export class RenderingSystem {
 
     // Load and execute view
     try {
+      if (isRoot) perf?.mark(`${perfPrefix}-view-load-start`);
       const viewModule = await this.kernel.moduleSystem.require(view.id);
+      if (isRoot) {
+        perf?.mark(`${perfPrefix}-view-load-end`);
+        perf?.measure(`${perfPrefix}-view-load`, `${perfPrefix}-view-load-start`, `${perfPrefix}-view-load-end`);
+      }
+
       const api = this.createRendererAPI(item, newContext);
+
+      if (isRoot) perf?.mark(`${perfPrefix}-render-exec-start`);
       const domNode = await viewModule.render(item, api);
+      if (isRoot) {
+        perf?.mark(`${perfPrefix}-render-exec-end`);
+        perf?.measure(`${perfPrefix}-render-exec`, `${perfPrefix}-render-exec-start`, `${perfPrefix}-render-exec-end`);
+      }
 
       // Register render instance (Phase 2)
       if (domNode) {
