@@ -2,6 +2,10 @@
 // ID: ef793c27-2d4b-4c99-b05a-2769db5bc5a9
 // Type: aaaaaaaa-0000-0000-0000-000000000000
 
+// Item: system:spatial-canvas-view
+// ID: ef793c27-2d4b-4c99-b05a-2769db5bc5a9
+// Type: aaaaaaaa-0000-0000-0000-000000000000
+
 // Item: spatial-canvas-view
 // ID: ef793c27-2d4b-4c99-b05a-2769db5bc5a9
 // Type: aaaaaaaa-0000-0000-0000-000000000000
@@ -258,7 +262,7 @@ export async function render(item, api) {
 
       const updated = {
         ...freshItem,
-        children: updatedChildren,
+        attachments: updatedChildren,
         modified: Date.now()
       };
 
@@ -878,7 +882,7 @@ export async function render(item, api) {
           title: 'Close',
           onclick: async (clickE) => {
             clickE.stopPropagation();
-            await api.removeChild(childId);
+            await api.detach(childId);
             wrapper.remove();
           }
         }, ['×']);
@@ -1205,7 +1209,7 @@ export async function render(item, api) {
           }
         } else {
           // Item doesn't exist - add as new child and create window directly
-          await api.addChild(childId);
+          await api.attach(childId);
 
           // Calculate position for new window (offset from existing windows)
           const existingWrappers = document.querySelectorAll(`[data-parent-id="${item.id}"]`);
@@ -1364,7 +1368,7 @@ export async function render(item, api) {
 
             const updated = {
               ...freshItem,
-              children: updatedChildren,
+              attachments: updatedChildren,
               modified: Date.now()
             };
 

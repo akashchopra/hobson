@@ -1,3 +1,7 @@
+// Item: field-view-code-editable
+// ID: e7b73a8e-2191-4ce5-ae9c-f721b5e30731
+// Type: cccccccc-0000-0000-0000-000000000000
+
 // Code Editable Field View - CodeMirror-based code editor
 // See [field-view-code-editable documentation](item://e7b73a8e-2191-4ce5-ae9c-f721b5e30731)
 
@@ -19,10 +23,23 @@ function findRegionStartLine(text, regionName) {
 }
 // [END:findRegionStartLine]
 
+// Helper: Parse lines param ("5" or "10-20") into { start, end }
+const parseLines = (linesStr) => {
+  if (!linesStr) return null;
+  if (typeof linesStr === 'number') return { start: linesStr, end: linesStr };
+  const str = String(linesStr);
+  if (str.includes('-')) {
+    const [start, end] = str.split('-').map(n => parseInt(n, 10));
+    return { start, end };
+  }
+  const line = parseInt(str, 10);
+  return { start: line, end: line };
+};
+
 // [BEGIN:render]
 // Code editable field view
 export async function render(value, options, api) {
-  const { onChange, label, language = 'javascript', scrollToLine, scrollToRegion } = options;
+  const { onChange, label, language = 'javascript', scrollToLines, scrollToLine, scrollToRegion, scrollToSymbol } = options;
   const code = value || '';
 
   const wrapper = api.createElement('div', { className: 'field-code-editable' });
@@ -73,36 +90,58 @@ export async function render(value, options, api) {
 
   // Function to handle line/region navigation
   const navigateToTarget = () => {
-    // First try options (passed from generic_view), then fall back to URL params
-    let targetLine = scrollToLine;
-    let col = 0;
+    // Parse scrollToLines ("5" or "10-20") - prefer plural, fall back to singular
+    let lineRange = parseLines(scrollToLines) || parseLines(scrollToLine);
 
-    // If scrollToRegion is specified but no line, find the region
-    if (scrollToRegion && !targetLine) {
-      targetLine = findRegionStartLine(code, scrollToRegion);
-    }
-
-    // Fallback to URL params for backward compatibility
-    if (!targetLine) {
-      const urlParams = new URLSearchParams(window.location.search);
-      const urlLine = parseInt(urlParams.get('line'), 10);
-      col = parseInt(urlParams.get('col'), 10) || 0;
-      if (!isNaN(urlLine) && urlLine > 0) {
-        targetLine = urlLine;
+    // If scrollToRegion is specified but no lines, find the region
+    if (scrollToRegion && !lineRange) {
+      const regionStart = findRegionStartLine(code, scrollToRegion);
+      if (regionStart) {
+        lineRange = { start: regionStart, end: regionStart };
       }
     }
 
-    if (targetLine) {
+    // If scrollToSymbol is specified, look up in item's _symbols
+    if (scrollToSymbol && !lineRange) {
+      const currentItem = api.getCurrentItem ? api.getCurrentItem() : null;
+      const symbols = currentItem?.content?._symbols || {};
+      let symbolInfo = symbols[scrollToSymbol];
+      if (!symbolInfo) {
+        for (const [key, info] of Object.entries(symbols)) {
+          if (info.name === scrollToSymbol) {
+            symbolInfo = info;
+            break;
+          }
+        }
+      }
+      if (symbolInfo) {
+        lineRange = { start: symbolInfo.line, end: symbolInfo.endLine || symbolInfo.line };
+      }
+    }
+
+    // Fallback to URL params for backward compatibility
+    if (!lineRange) {
+      const urlParams = new URLSearchParams(window.location.search);
+      const urlLines = urlParams.get('lines');
+      if (urlLines) {
+        lineRange = parseLines(urlLines);
+      } else {
+        const urlLine = parseInt(urlParams.get('line'), 10);
+        if (!isNaN(urlLine) && urlLine > 0) {
+          lineRange = { start: urlLine, end: urlLine };
+        }
+      }
+    }
+
+    if (lineRange) {
       // CodeMirror uses 0-based line numbers
-      const cmLine = targetLine - 1;
+      const startLine = lineRange.start - 1;
+      const endLine = lineRange.end - 1;
 
-      // Scroll line into view and set cursor
-      cm.scrollIntoView({ line: cmLine, ch: col }, 100);
-      cm.setCursor({ line: cmLine, ch: col });
+      // Scroll first line into view and set cursor
+      cm.scrollIntoView({ line: startLine, ch: 0 }, 100);
+      cm.setCursor({ line: startLine, ch: 0 });
       cm.focus();
-
-      // Add highlight class to the line
-      cm.addLineClass(cmLine, 'background', 'line-highlight');
 
       // Add CSS for highlight if not present
       if (!document.getElementById('line-highlight-css')) {
@@ -110,6 +149,11 @@ export async function render(value, options, api) {
         style.id = 'line-highlight-css';
         style.textContent = '.line-highlight { background: var(--color-warning-light) !important; }';
         document.head.appendChild(style);
+      }
+
+      // Highlight all lines in range
+      for (let i = startLine; i <= endLine; i++) {
+        cm.addLineClass(i, 'background', 'line-highlight');
       }
     }
   };
