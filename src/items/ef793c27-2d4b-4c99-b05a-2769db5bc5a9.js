@@ -41,7 +41,8 @@ export async function getViewMenuItems(item, api) {
   // Filter out this view itself and debug views
   const availableViews = views.filter(v =>
     v.view.id !== SPATIAL_CANVAS_ID &&
-    v.view.content?.category !== 'debug'
+    v.view.content?.category !== 'debug' &&
+    v.view.content?.category !== 'hidden'
   );
 
   // Sort views alphabetically

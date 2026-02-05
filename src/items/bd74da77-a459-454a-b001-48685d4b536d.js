@@ -714,7 +714,7 @@ export async function render(item, api) {
     const currentlyRenderedViewId = currentViewId || effectiveViewId;
 
     // Separate normal views from debug views
-    const normalViews = views.filter(v => v.view.content?.category !== 'debug');
+    const normalViews = views.filter(v => v.view.content?.category !== 'debug' && v.view.content?.category !== 'hidden');
     const debugViews = views.filter(v => v.view.content?.category === 'debug');
 
     if (normalViews.length === 0) {
