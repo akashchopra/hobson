@@ -881,7 +881,7 @@ export async function render(item, api) {
         if (viewConfig.type) {
           await setRootView(viewConfig.type);
         }
-        // Set other view config properties (bannerPosition, etc.)
+        // Set other view config properties
         const { type, ...otherConfig } = viewConfig;
         if (Object.keys(otherConfig).length > 0 && api.viewport.updateRootViewConfig) {
           await api.viewport.updateRootViewConfig(otherConfig);

@@ -19,9 +19,9 @@ const FORWARD_GROUPS = [
 const INVERSE_GROUPS = [
   ['Instances', 'instances', false],
   ['Tagged With', 'taggedWith', false],
-  ['Children', 'children', false],
+  ['Parent Of', 'children', false],
   ['Subtypes', 'subtypes', false],
-  ['Contained In', 'containers', false],
+  ['Attached To', 'containers', false],
   ['Linked From', 'incomingLinks', false],
   ['Views For', 'viewsFor', false],
   ['Preferred By', 'preferredBy', false],
@@ -50,7 +50,7 @@ export async function render(widget, api) {
 
   if (!selectedId) {
     const title = api.createElement('h2', {
-      style: 'margin: 0; font-size: 18px; color: var(--color-border-dark); font-style: italic;'
+      style: 'margin: 0; font-size: 14px; color: var(--color-border-dark); font-style: italic;'
     }, ['Select an item to see relationships']);
     header.appendChild(title);
     return container;
@@ -71,7 +71,7 @@ export async function render(widget, api) {
   }
 
   const title = api.createElement('h2', {
-    style: 'margin: 0; font-size: 18px;'
+    style: 'margin: 0; font-size: 16px;'
   }, ['Related to: ' + (selectedItem.name || selectedId.substring(0, 8))]);
   header.appendChild(title);
 

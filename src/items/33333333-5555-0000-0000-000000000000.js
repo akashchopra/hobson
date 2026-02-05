@@ -696,7 +696,7 @@ export class RenderingSystem {
       getNavigateTo: () => context.navigateTo || null,
 
       // Update the view config for the current item in the parent's attachments array
-      // This persists view-specific state like banner position, sort order, etc.
+      // This persists view-specific state like sort order etc.
       // For root items (rendered by viewport), updates the viewport's root view config instead.
       updateViewConfig: async (updates) => {
         const parentId = context.parentId;
