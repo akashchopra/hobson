@@ -131,7 +131,7 @@ function clearAll() {
 
 // --- Event handlers ---
 
-export async function onSystemBootComplete(payload, api) {
+export async function onKernelBootComplete(payload, api) {
   clearAll();
   const items = await api.getAll();
   for (const item of items) indexItem(item);

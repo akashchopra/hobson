@@ -15,7 +15,7 @@ if (!globalThis[CACHE_KEY]) {
 const S = globalThis[CACHE_KEY];
 
 // Called at boot
-export async function onSystemBootComplete({ safeMode }, _api) {
+export async function onKernelBootComplete({ safeMode }, _api) {
   if (safeMode) return;  // No selection in safe mode
 
   S.api = _api;

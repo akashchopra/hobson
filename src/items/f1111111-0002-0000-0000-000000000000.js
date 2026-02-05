@@ -12,7 +12,7 @@ const EVENT_IDS = {
 let popstateHandlerRegistered = false;
 
 // Called at boot
-export async function onSystemBootComplete({ safeMode }, _api) {
+export async function onKernelBootComplete({ safeMode }, _api) {
   if (safeMode) return;
 
   // Register popstate handler for browser back/forward

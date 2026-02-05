@@ -5,7 +5,7 @@
 let api = null;
 let searchLib = null;
 
-export async function onSystemBootComplete({ safeMode }, _api) {
+export async function onKernelBootComplete({ safeMode }, _api) {
   if (safeMode) return;
   api = _api;
   searchLib = await api.require('item-search-lib');

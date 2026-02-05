@@ -21,7 +21,7 @@ async function applyStyles(api) {
 }
 
 // Called at boot (or when library is created/edited post-boot)
-export async function onSystemBootComplete({ lateActivation }, api) {
+export async function onKernelBootComplete({ lateActivation }, api) {
   await applyStyles(api);
   if (lateActivation) {
     console.log('[theme-hot-reload] Library activated post-boot');

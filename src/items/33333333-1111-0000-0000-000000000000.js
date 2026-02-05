@@ -184,7 +184,7 @@ export async function loadKernel(require, storageBackend) {
         await this.applyStyles();
         this.safeMode.render(this.rootElement.querySelector('#main-view'));
       } else {
-        // REPL container is now created by userland repl-ui library via system:boot-complete
+        // REPL container is now created by userland repl-ui library via kernel:boot-complete
 
         // Global error handlers for uncaught errors and promise rejections
         if (!window._globalErrorHandler) {
@@ -229,7 +229,7 @@ export async function loadKernel(require, storageBackend) {
         perf?.mark('watches-end');
         perf?.measure('watches-setup', 'watches-start', 'watches-end');
 
-        // Emit system:boot-complete BEFORE rendering so userland libraries
+        // Emit kernel:boot-complete BEFORE rendering so userland libraries
         // (especially viewport-manager) are initialized before any code tries
         // to call navigate() during render
         perf?.mark('boot-complete-emit-start');
@@ -311,7 +311,7 @@ export async function loadKernel(require, storageBackend) {
           const ancestors = await this.getTypeChain(eventDef.id);
           this.eventTypeCache.set(eventDef.id, {
             ancestors: new Set(ancestors),
-            name: eventDef.name  // e.g., "item:created", "system:error"
+            name: eventDef.name  // e.g., "item:created", "error-event"
           });
         }
       } catch (e) {
@@ -1322,7 +1322,7 @@ export async function loadKernel(require, storageBackend) {
           this.events.emit({ type: EVENT_IDS.ITEM_CREATED, content: { id: item.id, item } });
         }
 
-        // If item watches system:boot-complete, call its handler now
+        // If item watches kernel:boot-complete, call its handler now
         // This enables newly-created/edited libraries to activate without reload
         if (item.watches?.some(w => w.event === EVENT_IDS.SYSTEM_BOOT_COMPLETE)) {
           try {
@@ -1467,8 +1467,8 @@ export async function loadKernel(require, storageBackend) {
     eventToHandlerName(eventName) {
       // "item:deleted" -> "onItemDeleted"
       // "item:created" -> "onItemCreated"
-      // "system:error" -> "onSystemError"
-      // "system:boot-complete" -> "onSystemBootComplete"
+      // "error-event" -> "onErrorEvent"
+      // "kernel:boot-complete" -> "onKernelBootComplete"
       // Split by : and - then capitalize each part
       const parts = eventName.split(/[:-]/);
       const camelParts = parts.map(part =>
@@ -1489,7 +1489,7 @@ export async function loadKernel(require, storageBackend) {
       }
 
       try {
-        // Emit system:error event - user handlers will process
+        // Emit error-event event - user handlers will process
         this.events.emit({
           type: EVENT_IDS.SYSTEM_ERROR,
           content: {

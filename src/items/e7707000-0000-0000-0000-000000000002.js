@@ -4,7 +4,7 @@
 const ERROR_TYPE_ID = 'e7707000-0000-0000-0000-000000000001';
 const ERROR_LIST_TYPE_ID = 'e7707000-0000-0000-0000-000000000010';
 
-export async function onSystemError({ error, context, timestamp }, api) {
+export async function onErrorEvent({ error, context, timestamp }, api) {
   try {
     // Parse stack trace into structured data (async - looks up item names)
     const frames = await parseStackTrace(error.stack, api);

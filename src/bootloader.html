@@ -292,7 +292,6 @@
         const url = URL.createObjectURL(blob);
 
         const { loadKernel } = await import(url);
-        console.log('LOADED MODULE HAS MULTIPLE:', loadKernel.toString().includes('multiple'));
         URL.revokeObjectURL(url);
         perf.mark('module-import-end');
         perf.measure('module-import', 'module-import-start', 'module-import-end');
@@ -346,7 +345,7 @@
         });
         
         // Append kernel's rootElement to body BEFORE boot
-        // so DOM structure exists when system:boot-complete fires
+        // so DOM structure exists when kernel:boot-complete fires
         document.body.appendChild(kernel.rootElement);
 
         // Boot kernel
@@ -354,6 +353,43 @@
         await kernel.boot();
         perf.mark('kernel-boot-end');
         perf.measure('kernel-boot', 'kernel-boot-start', 'kernel-boot-end');
+
+        // In safe mode, inject a multi-file import button using direct IndexedDB access
+        // (bypasses old safe-mode import code that may not support multiple files)
+        if (kernel._safeMode) {
+          const actionsDiv = document.querySelector('#safe-mode .actions');
+          if (actionsDiv) {
+            const btn = document.createElement('button');
+            btn.textContent = 'Multi-Import Files';
+            btn.onclick = async () => {
+              const input = document.createElement('input');
+              input.type = 'file';
+              input.accept = '.json';
+              input.multiple = true;
+              input.onchange = async (e) => {
+                const files = Array.from(e.target.files);
+                if (!files.length) return;
+                let created = 0, updated = 0;
+                for (const f of files) {
+                  const text = await f.text();
+                  const data = JSON.parse(text);
+                  const items = Array.isArray(data) ? data : [data];
+                  for (const item of items) {
+                    const exists = await storageBackend.get(item.id);
+                    await storageBackend.set(item);
+                    if (exists) updated++; else created++;
+                  }
+                }
+                alert(`Imported!\nCreated: ${created}\nUpdated: ${updated}`);
+                location.reload();
+              };
+              input.click();
+            };
+            // Insert before the last button (Exit Safe Mode)
+            const lastBtn = actionsDiv.querySelector('button:last-child');
+            actionsDiv.insertBefore(btn, lastBtn);
+          }
+        }
 
         perf.mark('boot-end');
         perf.measure('total', 'boot-start', 'boot-end');

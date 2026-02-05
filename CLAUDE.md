@@ -72,18 +72,17 @@ NOTE: "871ae771-b9b1-4f40-8c7f-d9038bfb69c3"
 **Namespaces:**
 | Namespace | Meaning | Examples |
 |-----------|---------|----------|
-| `kernel:` | Kernel has hardcoded GUID reference to this item | `kernel:core`, `kernel:item`, `kernel:view` |
-| `system:` | System actively discovers and dispatches to this item | `system:generic-view`, `system:error-view` |
-| *(none)* | Userland items | `markdown-it`, `field-view-text`, `note-view-editable` |
+| `kernel:` | Kernel has hardcoded GUID reference to this item | `kernel:core`, `kernel:item`, `kernel:view`, `kernel:boot-complete` |
+| *(none)* | Everything else (views, libraries, type-defs, user items) | `generic-view`, `markdown-it`, `field-view-text`, `note-view-editable` |
 
 **Case Conventions:**
 - Code items: kebab-case (`field-view-markdown-editable`, `item-search-lib`)
 - Non-code items: Normal prose (`Hobson TODOs`, `My First Note`)
 
 **Key Distinctions:**
-- Views (`kernel:view` type) use `system:` because the rendering system dispatches to them
-- View-specs and field-views are userland (no namespace) - they're config consumed by `system:generic-view`
-- Libraries are userland (no namespace) - loaded via `api.require('name')`
+- Views, libraries, and type-defs are all unprefixed userland items
+- View-specs and field-views are config consumed by `generic-view`
+- Libraries are loaded via `api.require('name')`
 
 ## Working Rules
 

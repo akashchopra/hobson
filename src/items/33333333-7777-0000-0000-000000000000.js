@@ -126,35 +126,40 @@ export class SafeMode {
     const input = document.createElement('input');
     input.type = 'file';
     input.accept = '.json';
+    input.setAttribute('multiple', '');
 
     input.onchange = async (e) => {
-      const file = e.target.files[0];
-      if (!file) return;
+      const files = Array.from(e.target.files);
+      if (files.length === 0) return;
 
       try {
-        const text = await file.text();
-        const items = JSON.parse(text);
-
-        if (!Array.isArray(items)) {
-          throw new Error('JSON must be an array of items');
+        let items = [];
+        for (const file of files) {
+          const text = await file.text();
+          const data = JSON.parse(text);
+          if (Array.isArray(data)) {
+            items = items.concat(data);
+          } else {
+            items.push(data);
+          }
         }
 
-        let created = 0, skipped = 0;
+        let created = 0, updated = 0;
 
         for (const item of items) {
           const exists = await this.kernel.storage.exists(item.id);
-          if (!exists) {
-            await this.kernel.saveItem(item);
-            created++;
+          await this.kernel.saveItem(item);
+          if (exists) {
+            updated++;
           } else {
-            skipped++;
+            created++;
           }
         }
 
         // Clear module cache
         this.kernel.moduleSystem.clearCache();
 
-        alert(`Import complete!\nCreated: ${created}\nSkipped: ${skipped}`);
+        alert(`Import complete!\nCreated: ${created}\nUpdated: ${updated}`);
         this.render(this.kernel.rootElement);
 
       } catch (error) {

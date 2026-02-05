@@ -55,7 +55,7 @@ async function savePanelState() {
   }, 500);
 }
 
-export async function onSystemBootComplete({ safeMode }, _api) {
+export async function onKernelBootComplete({ safeMode }, _api) {
   if (safeMode) return;  // No REPL in safe mode
 
   api = _api;

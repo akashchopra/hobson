@@ -3,7 +3,7 @@
 
 let api = null;
 
-export async function onSystemBootComplete({ safeMode }, _api) {
+export async function onKernelBootComplete({ safeMode }, _api) {
   if (safeMode) return;  // No shortcuts in safe mode
 
   api = _api;
@@ -21,7 +21,7 @@ export async function onSystemBootComplete({ safeMode }, _api) {
           console.warn('help-dialog not available:', err.message);
         }
       }
-      // Note: Cmd+K (item palette) is handled by system:viewport-view
+      // Note: Cmd+K (item palette) is handled by viewport-view
     };
     document.addEventListener('keydown', window._userKeyboardHandler);
   }

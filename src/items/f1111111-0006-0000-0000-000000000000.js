@@ -3,7 +3,7 @@
 
 let api = null;
 
-export async function onSystemBootComplete({ safeMode }, _api) {
+export async function onKernelBootComplete({ safeMode }, _api) {
   if (safeMode) return;
   api = _api;
 }

@@ -1,5 +1,5 @@
 // Hobson Instance View - iframe-based isolation
-// See [system:hobson-instance-view documentation](item://99999999-1111-0000-0000-000000000000)
+// See [hobson-instance-view documentation](item://99999999-1111-0000-0000-000000000000)
 
 // [BEGIN:render]
 // hobson-instance renderer - iframe-based isolation

@@ -1,4 +1,4 @@
-// Item: system:generic-view
+// Item: generic-view
 // ID: b429b19d-ef0d-4f4f-b2a2-b9e6f80451f2
 // Type: 66666666-0000-0000-0000-000000000000
 
