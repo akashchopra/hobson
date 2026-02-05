@@ -37,49 +37,43 @@ export async function render(widget, api) {
     style: 'max-width: 600px; margin: 0 auto; font-size: 14px;'
   }, []);
 
-  // Header
-  const header = api.createElement('div', {
-    style: 'margin-bottom: 16px; padding-bottom: 12px; border-bottom: 2px solid var(--color-border-light);'
-  }, []);
-
-  const title = api.createElement('h2', {
-    style: 'margin: 0; font-size: 18px;'
-  }, [widget.name || 'Related Items']);
-  header.appendChild(title);
-  container.appendChild(header);
-
-  // Body
-  const body = api.createElement('div', {}, []);
-  container.appendChild(body);
-
   // Ensure indexes are built (rebuilds if module cache was cleared)
   await relatedLib.ensureBuilt(api);
 
   const selectedId = selectionMgr.getSelection();
 
+  // Header - shows selection state
+  const header = api.createElement('div', {
+    style: 'margin-bottom: 16px; padding-bottom: 12px; border-bottom: 2px solid var(--color-border-light);'
+  }, []);
+  container.appendChild(header);
+
   if (!selectedId) {
-    const msg = api.createElement('div', {
-      style: 'padding: 16px; text-align: center; color: var(--color-border-dark); font-style: italic;'
-    }, ['Select an item to view relationships']);
-    body.appendChild(msg);
+    const title = api.createElement('h2', {
+      style: 'margin: 0; font-size: 18px; color: var(--color-border-dark); font-style: italic;'
+    }, ['Select an item to see relationships']);
+    header.appendChild(title);
     return container;
   }
+
+  // Body
+  const body = api.createElement('div', {}, []);
+  container.appendChild(body);
 
   let selectedItem;
   try { selectedItem = await api.get(selectedId); } catch (e) { selectedItem = null; }
   if (!selectedItem) {
-    const msg = api.createElement('div', {
-      style: 'padding: 16px; text-align: center; color: var(--color-border-dark); font-style: italic;'
+    const title = api.createElement('h2', {
+      style: 'margin: 0; font-size: 18px; color: var(--color-border-dark); font-style: italic;'
     }, ['Item not found']);
-    body.appendChild(msg);
+    header.appendChild(title);
     return container;
   }
 
-  // Subtitle: "Related to: [name]"
-  const subtitle = api.createElement('div', {
-    style: 'margin-bottom: 16px; color: var(--color-border-dark); font-size: 13px;'
+  const title = api.createElement('h2', {
+    style: 'margin: 0; font-size: 18px;'
   }, ['Related to: ' + (selectedItem.name || selectedId.substring(0, 8))]);
-  body.appendChild(subtitle);
+  header.appendChild(title);
 
   const related = await relatedLib.getRelated(selectedId, api);
   if (!related) {
