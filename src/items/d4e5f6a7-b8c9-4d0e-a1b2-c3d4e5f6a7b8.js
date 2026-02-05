@@ -9,11 +9,11 @@ export async function render(item, api) {
   // Title
   const title = api.createElement('div', {
     style: 'font-weight: 500; color: var(--color-text); margin-bottom: 6px; overflow: hidden;'
-  }, [item.name || item.content?.title || item.id.substring(0, 8)]);
+  }, [item.name || item.id.substring(0, 8)]);
   card.appendChild(title);
 
   // Preview text
-  const previewText = item.content?.body || item.content?.description || '';
+  const previewText = item.content?.description || '';
   if (previewText) {
     const preview = api.createElement('div', {
       style: 'font-size: 13px; color: var(--color-text-secondary); margin-bottom: 6px; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;'

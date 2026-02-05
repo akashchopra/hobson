@@ -185,52 +185,30 @@ export async function render(item, api) {
   };
 
   // Helper: Show item picker modal for adding existing item
-  const showExistingItemPicker = (parentId, clickCoords) => {
-    const overlay = api.createElement('div', {
-      style: 'position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 10000;'
-    }, []);
+  const showExistingItemPicker = async (parentId, clickCoords) => {
+    // Re-require to pick up any edits (see docs/Hot-Reloading Libraries.md)
+    const modalLib = await api.require('modal-lib');
 
-    const modal = api.createElement('div', {
-      style: 'background: var(--color-bg-surface); border-radius: 8px; width: 90%; max-width: 600px; max-height: 80vh; display: flex; flex-direction: column; box-shadow: var(--shadow-md);'
-    }, []);
+    const searchContainer = api.createElement('div', {}, []);
 
-    const modalHeader = api.createElement('div', {
-      style: 'display: flex; justify-content: space-between; align-items: center; padding: 20px; border-bottom: 1px solid var(--color-border-light);'
-    }, []);
+    const { close } = modalLib.showModal({
+      title: 'Add Existing Item',
+      width: '600px',
+      maxHeight: '80vh',
+      api,
+      content: searchContainer
+    });
 
-    const modalTitle = api.createElement('h3', { style: 'margin: 0;' }, ['Add Existing Item']);
-
-    const closeBtn = api.createElement('button', {
-      style: 'padding: 4px 10px; cursor: pointer; background: transparent; border: none; font-size: 24px; color: var(--color-text-secondary);',
-      onclick: () => document.body.removeChild(overlay)
-    }, ['\u00d7']);
-
-    modalHeader.appendChild(modalTitle);
-    modalHeader.appendChild(closeBtn);
-    modal.appendChild(modalHeader);
-
-    const searchContainer = api.createElement('div', {
-      style: 'padding: 20px; flex: 1; overflow: auto;'
-    }, []);
-    modal.appendChild(searchContainer);
-
-    overlay.appendChild(modal);
-    document.body.appendChild(overlay);
-
+    // createSearchUI called after modal is in DOM so autoFocus works
     searchLib.createSearchUI(
       searchContainer,
       async (selectedItem) => {
-        document.body.removeChild(overlay);
+        close();
         await addExistingChildToItem(parentId, selectedItem.id, clickCoords);
       },
       api,
       { placeholder: 'Search for items to add...', autoFocus: true }
     );
-
-    overlay.onclick = (e) => {
-      if (e.target === overlay) document.body.removeChild(overlay);
-    };
-    modal.onclick = (e) => e.stopPropagation();
   };
 
   // Context menu for empty/background state
@@ -442,32 +420,14 @@ export async function render(item, api) {
       }
     };
 
-    // Create modal overlay
-    const overlay = api.createElement('div', {
-      class: 'view-settings-overlay',
-      style: 'position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 10001;'
-    }, []);
-
-    const modal = api.createElement('div', {
-      class: 'view-settings-modal',
-      style: 'background: var(--bg-primary, white); border: 1px solid var(--border-color, #ddd); border-radius: 8px; width: 420px; max-width: 90vw; box-shadow: 0 4px 20px rgba(0,0,0,0.3);'
-    }, []);
-
-    // Header
     const itemName = item.name || item.content?.title || item.id.slice(0, 8);
-    const header = api.createElement('div', {
-      style: 'display: flex; justify-content: space-between; align-items: center; padding: 16px 20px; border-bottom: 1px solid var(--border-color, #ddd);'
-    }, []);
-    header.innerHTML = '<h3 style="margin: 0; font-size: 16px;">View Settings for "' + itemName + '"</h3>';
-    const closeBtn = api.createElement('button', {
-      style: 'background: none; border: none; font-size: 20px; cursor: pointer; color: #666; padding: 0 4px;',
-      onclick: () => overlay.remove()
-    }, ['\u00d7']);
-    header.appendChild(closeBtn);
-    modal.appendChild(header);
 
-    // Body
-    const body = api.createElement('div', { style: 'padding: 20px;' }, []);
+    // Re-require to pick up any edits (see docs/Hot-Reloading Libraries.md)
+    const modalLib = await api.require('modal-lib');
+    let closeModal;
+
+    // Body (will be passed to modal-lib as content)
+    const body = api.createElement('div', {}, []);
 
     // Current effective view
     const effectiveName = await getViewName(effectiveView?.id);
@@ -552,7 +512,7 @@ export async function render(item, api) {
 
     // Refresh modal after changes
     const refreshModal = async () => {
-      overlay.remove();
+      closeModal();
       await showViewSettingsModal(itemId, parentId);
     };
 
@@ -620,25 +580,13 @@ export async function render(item, api) {
     }, ['Resolution order: context \u2192 item \u2192 type \u2192 system']);
     body.appendChild(noteEl);
 
-    modal.appendChild(body);
-    overlay.appendChild(modal);
-
-    // Close on overlay click
-    overlay.onclick = (e) => {
-      if (e.target === overlay) overlay.remove();
-    };
-    modal.onclick = (e) => e.stopPropagation();
-
-    // Close on Escape
-    const escHandler = (e) => {
-      if (e.key === 'Escape') {
-        overlay.remove();
-        document.removeEventListener('keydown', escHandler);
-      }
-    };
-    document.addEventListener('keydown', escHandler);
-
-    document.body.appendChild(overlay);
+    const { close } = modalLib.showModal({
+      title: 'View Settings for "' + itemName + '"',
+      width: '420px',
+      api,
+      content: body
+    });
+    closeModal = close;
   };
 
   const showContextMenu = async (x, y, itemId) => {
