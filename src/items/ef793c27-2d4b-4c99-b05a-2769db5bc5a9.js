@@ -1130,6 +1130,8 @@ export async function render(item, api) {
             const startY = handleE.clientY;
             const startWidth = parseInt(wrapper.style.width) || width;
             const startHeight = parseInt(wrapper.style.height) || height;
+            const startLeft = parseInt(wrapper.style.left) || 0;
+            const startTop = parseInt(wrapper.style.top) || 0;
 
             const onMouseMove = (moveEvent) => {
               const deltaX = moveEvent.clientX - startX;
@@ -1138,11 +1140,15 @@ export async function render(item, api) {
               if (edge === 'right' && edgeAnchor === 'left') {
                 wrapper.style.width = Math.max(MIN_DOCKED_WIDTH, startWidth + deltaX) + 'px';
               } else if (edge === 'left' && edgeAnchor === 'right') {
-                wrapper.style.width = Math.max(MIN_DOCKED_WIDTH, startWidth - deltaX) + 'px';
+                const newWidth = Math.max(MIN_DOCKED_WIDTH, startWidth - deltaX);
+                wrapper.style.width = newWidth + 'px';
+                wrapper.style.left = (startLeft + startWidth - newWidth) + 'px';
               } else if (edge === 'bottom' && edgeAnchor === 'top') {
                 wrapper.style.height = Math.max(MIN_DOCKED_HEIGHT, startHeight + deltaY) + 'px';
               } else if (edge === 'top' && edgeAnchor === 'bottom') {
-                wrapper.style.height = Math.max(MIN_DOCKED_HEIGHT, startHeight - deltaY) + 'px';
+                const newHeight = Math.max(MIN_DOCKED_HEIGHT, startHeight - deltaY);
+                wrapper.style.height = newHeight + 'px';
+                wrapper.style.top = (startTop + startHeight - newHeight) + 'px';
               }
             };
 
