@@ -27,7 +27,7 @@ const INVERSE_GROUPS = [
   ['Preferred By', 'preferredBy', false],
 ];
 
-const TRUNCATE_LIMIT = 10;
+const TRUNCATE_LIMIT = 30;
 
 export async function render(widget, api) {
   const selectionMgr = await api.require('selection-manager');
