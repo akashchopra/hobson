@@ -1,7 +1,3 @@
-// Item: element-inspector
-// ID: eeee0000-0000-0000-0000-000000000001
-// Type: 66666666-0000-0000-0000-000000000000
-
 // Element Inspector Library
 // Provides tools to inspect which view/item rendered any UI element
 

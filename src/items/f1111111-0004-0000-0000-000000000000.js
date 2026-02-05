@@ -1,7 +1,3 @@
-// Item: keyboard-shortcuts
-// ID: f1111111-0004-0000-0000-000000000000
-// Type: 66666666-0000-0000-0000-000000000000
-
 // Keyboard Shortcuts Library
 // Registers global keyboard shortcuts, moved from kernel to userland
 

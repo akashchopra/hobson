@@ -1,7 +1,3 @@
-// Item: modal-lib
-// ID: 2264e4e7-4ff7-4013-9f09-5393ff0e3116
-// Type: 66666666-0000-0000-0000-000000000000
-
 /**
  * Shared modal library for consistent modal dialogs across Hobson.
  * Handles: backdrop, centering, Escape key, click-outside-to-close.

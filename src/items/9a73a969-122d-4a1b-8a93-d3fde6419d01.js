@@ -1,7 +1,3 @@
-// Item: system:script-view
-// ID: 9a73a969-122d-4a1b-8a93-d3fde6419d01
-// Type: aaaaaaaa-0000-0000-0000-000000000000
-
 // Script View - Renders script items
 // See [Views & Rendering](item://a0a0a0a0-d0c0-4000-8000-000000000004)
 

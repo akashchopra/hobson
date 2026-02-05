@@ -1,7 +1,3 @@
-// Item: tag-picker-ui
-// ID: e05faa99-120f-4ca9-b1f2-8cb3b5bf718e
-// Type: 66666666-0000-0000-0000-000000000000
-
 // Tag Picker UI Library
 // Shared component for rendering hierarchical tag picker
 // See [tag-picker-ui documentation](item://e05faa99-120f-4ca9-b1f2-8cb3b5bf718e)

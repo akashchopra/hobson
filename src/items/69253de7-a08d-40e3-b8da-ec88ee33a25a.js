@@ -1,7 +1,3 @@
-// Item: system:sortable-list-view
-// ID: 69253de7-a08d-40e3-b8da-ec88ee33a25a
-// Type: aaaaaaaa-0000-0000-0000-000000000000
-
 // Sortable List View - Phases 1-3: Display, Item Picker, Drag-and-Drop
 
 const COMPACT_CARD_VIEW_ID = 'd4e5f6a7-b8c9-4d0e-a1b2-c3d4e5f6a7b8';

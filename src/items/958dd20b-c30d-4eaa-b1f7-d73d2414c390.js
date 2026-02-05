@@ -1,7 +1,3 @@
-// Item: field-editor-text
-// ID: 958dd20b-c30d-4eaa-b1f7-d73d2414c390
-// Type: 66666666-0000-0000-0000-000000000000
-
 
 export function render(value, onChange, api, options = {}) {
   const input = document.createElement('input');

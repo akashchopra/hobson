@@ -1,7 +1,3 @@
-// Item: tag-tree-builder
-// ID: 98760f63-7e5f-40fb-b26f-a843f3f5b341
-// Type: 66666666-0000-0000-0000-000000000000
-
 // Tag Tree Builder Library
 // Shared logic for building hierarchical tag trees
 

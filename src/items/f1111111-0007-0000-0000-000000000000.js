@@ -1,7 +1,3 @@
-// Item: json-editor
-// ID: f1111111-0007-0000-0000-000000000000
-// Type: 66666666-0000-0000-0000-000000000000
-
 // JSON Editor Library
 // Provides raw JSON editing for items. Extracted from kernel to userland.
 

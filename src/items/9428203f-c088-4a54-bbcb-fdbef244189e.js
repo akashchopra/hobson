@@ -1,7 +1,3 @@
-// Item: system:item-search-view
-// ID: 9428203f-c088-4a54-bbcb-fdbef244189e
-// Type: aaaaaaaa-0000-0000-0000-000000000000
-
 
 
 export async function render(search, api) {

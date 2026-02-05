@@ -10,10 +10,6 @@
 // ID: bd74da77-a459-454a-b001-48685d4b536d
 // Type: aaaaaaaa-0000-0000-0000-000000000000
 
-// Item: system:viewport-view
-// ID: bd74da77-a459-454a-b001-48685d4b536d
-// Type: aaaaaaaa-0000-0000-0000-000000000000
-
 // Default window dimensions for new spatial children
 const DEFAULT_WINDOW_WIDTH = 600;
 const DEFAULT_WINDOW_HEIGHT = 500;
@@ -101,10 +97,10 @@ export async function render(item, api) {
     // Get parent and determine if it's being rendered spatially
     const parent = await api.get(parentId);
     const attachments = parent.attachments || [];
-
+    
     // Check if parent is rendered spatially by looking at existing attachments
     // If attachments have position data (view.x, view.y), it's spatial
-    const isSpatial = attachments.length > 0
+    const isSpatial = attachments.length > 0 
       ? attachments.some(c => c.view?.x !== undefined || c.view?.y !== undefined)
       : false;
 
@@ -113,7 +109,7 @@ export async function render(item, api) {
       const maxZ = attachments.length > 0 ? Math.max(...attachments.map(c => c.view?.z || 1000)) : 999;
       const x = clickCoords?.x || 50;
       const y = clickCoords?.y || 50;
-
+      
       attachments.push({
         id: newItem.id,
         view: {
@@ -146,7 +142,7 @@ export async function render(item, api) {
     const parent = await api.get(parentId);
     const attachments = parent.attachments || [];
 
-    // Check if already attached
+    // Check if already a child
     if (attachments.some(c => c.id === childId)) {
       alert('This item is already attached.');
       return;

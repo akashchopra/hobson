@@ -1,7 +1,3 @@
-// Item: codemirror-javascript
-// ID: 84fd20bb-0415-4061-ac27-af99a5b85290
-// Type: 66666666-0000-0000-0000-000000000000
-
 /**
  * Minified by jsDelivr using Terser v5.37.0.
  * Original file: /npm/codemirror@5.65.16/mode/javascript/javascript.js

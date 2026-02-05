@@ -1,7 +1,3 @@
-// Item: field-view-number
-// ID: da0b96ad-5a69-4d38-952d-6ff76b851023
-// Type: cccccccc-0000-0000-0000-000000000000
-
 
 export function render(value, options, api) {
   const { mode, onChange, label, placeholder, min, max, step } = options;

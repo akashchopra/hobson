@@ -1,7 +1,3 @@
-// Item: Extract JS from items
-// ID: 9eaa5962-a61a-4320-943d-649fd7c4b98b
-// Type: 4f4b7331-874c-4814-90b7-c344e199d711
-
 // Extract content.code from items and save to separate .js files
 // Run this in the Hobson REPL
 
@@ -17,12 +13,8 @@
     const code = item.content.code;
     const filename = `${item.id}.js`;
 
-    // Add header comment with item metadata
-    const header = `// Item: ${item.name || '(unnamed)'}\n// ID: ${item.id}\n// Type: ${item.type}\n\n`;
-    const content = header + code;
-
     // Create and download the file
-    const blob = new Blob([content], { type: 'text/javascript' });
+    const blob = new Blob([code], { type: 'text/javascript' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;

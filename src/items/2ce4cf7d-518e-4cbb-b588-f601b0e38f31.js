@@ -1,7 +1,3 @@
-// Item: field-view-tags
-// ID: 2ce4cf7d-518e-4cbb-b588-f601b0e38f31
-// Type: cccccccc-0000-0000-0000-000000000000
-
 
 // Tag field view - displays and edits arrays of tag IDs
 export function render(value, options, api) {
