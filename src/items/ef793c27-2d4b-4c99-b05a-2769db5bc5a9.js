@@ -1331,6 +1331,7 @@ export async function render(item, api) {
         const minimizedBox = api.createElement('div', {
           'data-item-id': childId,
           'data-parent-id': item.id,
+          'data-minimized': 'true',
           style: `
             position: absolute;
             bottom: 8px;
