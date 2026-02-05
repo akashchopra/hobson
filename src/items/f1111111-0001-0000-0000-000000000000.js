@@ -3,18 +3,25 @@
 
 const SELECTION_CHANGED = "e0e00000-0003-0001-0000-000000000000";
 
-let selectedItemId = null;
-let selectedParentId = null;
-let api = null;
+// State lives on globalThis so it survives moduleSystem.clearCache()
+const CACHE_KEY = '__selectionManager__';
+if (!globalThis[CACHE_KEY]) {
+  globalThis[CACHE_KEY] = {
+    selectedItemId: null,
+    selectedParentId: null,
+    api: null,
+  };
+}
+const S = globalThis[CACHE_KEY];
 
 // Called at boot
 export async function onSystemBootComplete({ safeMode }, _api) {
   if (safeMode) return;  // No selection in safe mode
 
-  api = _api;
+  S.api = _api;
 
   // Emit initial selection state
-  api.events.emit({
+  S.api.events.emit({
     type: SELECTION_CHANGED,
     content: {
       current: { itemId: null, parentId: null },
@@ -25,15 +32,15 @@ export async function onSystemBootComplete({ safeMode }, _api) {
 
 // Public API - called by views or other code
 export function select(itemId, parentId = null) {
-  const previous = { itemId: selectedItemId, parentId: selectedParentId };
-  selectedItemId = itemId;
-  selectedParentId = parentId;
+  const previous = { itemId: S.selectedItemId, parentId: S.selectedParentId };
+  S.selectedItemId = itemId;
+  S.selectedParentId = parentId;
 
-  if (api) {
-    api.events.emit({
+  if (S.api) {
+    S.api.events.emit({
       type: SELECTION_CHANGED,
       content: {
-        current: { itemId: selectedItemId, parentId: selectedParentId },
+        current: { itemId: S.selectedItemId, parentId: S.selectedParentId },
         previous
       }
     });
@@ -45,9 +52,9 @@ export function clearSelection() {
 }
 
 export function getSelection() {
-  return selectedItemId;
+  return S.selectedItemId;
 }
 
 export function getSelectionParent() {
-  return selectedParentId;
+  return S.selectedParentId;
 }
