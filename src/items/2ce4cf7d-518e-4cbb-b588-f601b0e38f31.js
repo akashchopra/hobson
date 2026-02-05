@@ -64,6 +64,12 @@ export function render(value, options, api) {
         pillText.textContent = tagPath;
         pill.appendChild(pillText);
 
+        // Click to open tag item
+        if (mode !== 'editable') {
+          pill.style.cursor = 'pointer';
+          pill.onclick = () => api.siblingContainer?.addSibling(tagId);
+        }
+
         // Remove button in editable mode
         if (mode === 'editable' && onChange) {
           const removeBtn = api.createElement('button');

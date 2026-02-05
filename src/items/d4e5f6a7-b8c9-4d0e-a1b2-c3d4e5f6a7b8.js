@@ -41,6 +41,8 @@ export async function render(item, api) {
         style: 'width: 5px; height: 5px; border-radius: 50%; background: ' + color + '; flex-shrink: 0;'
       }, []));
       pill.appendChild(api.createElement('span', {}, [tagName]));
+      pill.style.cursor = 'pointer';
+      pill.onclick = (e) => { e.stopPropagation(); api.siblingContainer?.addSibling(tag.id); };
       meta.appendChild(pill);
     }
   }
