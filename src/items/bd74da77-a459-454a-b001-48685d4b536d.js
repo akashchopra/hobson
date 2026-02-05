@@ -733,7 +733,7 @@ export async function render(item, api) {
       });
 
       for (const { view, forType, inherited } of sortedViews) {
-        const isActive = currentViewId === view.id;
+        const isActive = (currentViewId || effectiveViewId) === view.id;
         let label = view.content?.displayName || view.name || view.id.slice(0, 8);
         if (isActive) label += ' ✓';
 
@@ -999,7 +999,7 @@ export async function render(item, api) {
       });
 
       for (const { view } of sortedDebugViews) {
-        const isActive = currentViewId === view.id;
+        const isActive = (currentViewId || effectiveViewId) === view.id;
         const viewOption = api.createElement('div', {
           class: 'context-menu-item' + (isActive ? ' selected' : '')
         }, []);
