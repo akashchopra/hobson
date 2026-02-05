@@ -2,17 +2,22 @@
 
 const LINK_RE = /item:\/\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/g;
 
-// All indexes: Map<string, Set<string>> — target ID → set of source item IDs
-const typeIndex = new Map();
-const tagIndex = new Map();
-const parentIndex = new Map();
-const extendsIndex = new Map();
-const containerIndex = new Map();
-const linkIndex = new Map();
-const forTypeIndex = new Map();
-const preferredViewIndex = new Map();
-
-let built = false;
+// State lives on globalThis so it survives moduleSystem.clearCache()
+const CACHE_KEY = '__relatedItemsLib__';
+if (!globalThis[CACHE_KEY]) {
+  globalThis[CACHE_KEY] = {
+    typeIndex: new Map(),
+    tagIndex: new Map(),
+    parentIndex: new Map(),
+    extendsIndex: new Map(),
+    containerIndex: new Map(),
+    linkIndex: new Map(),
+    forTypeIndex: new Map(),
+    preferredViewIndex: new Map(),
+    built: false,
+  };
+}
+const S = globalThis[CACHE_KEY];
 
 // --- Helpers ---
 
@@ -57,71 +62,71 @@ function indexItem(item) {
   const id = item.id;
 
   // type
-  addToIndex(typeIndex, item.type, id);
+  addToIndex(S.typeIndex, item.type, id);
 
   // tags
   if (Array.isArray(item.content?.tags)) {
-    for (const tag of item.content.tags) addToIndex(tagIndex, tag, id);
+    for (const tag of item.content.tags) addToIndex(S.tagIndex, tag, id);
   }
 
   // parent
-  addToIndex(parentIndex, item.content?.parent, id);
+  addToIndex(S.parentIndex, item.content?.parent, id);
 
   // extends
-  addToIndex(extendsIndex, item.extends, id);
+  addToIndex(S.extendsIndex, item.extends, id);
 
   // containers (attachment parents): key = child ID, value = this item
   if (Array.isArray(item.attachments)) {
     for (const att of item.attachments) {
       const childId = typeof att === 'string' ? att : att?.id;
-      if (childId) addToIndex(containerIndex, childId, id);
+      if (childId) addToIndex(S.containerIndex, childId, id);
     }
   }
 
   // links
   for (const target of extractLinks(item)) {
-    addToIndex(linkIndex, target, id);
+    addToIndex(S.linkIndex, target, id);
   }
 
   // for_type
-  addToIndex(forTypeIndex, item.content?.for_type, id);
+  addToIndex(S.forTypeIndex, item.content?.for_type, id);
 
   // preferredView
-  addToIndex(preferredViewIndex, item.preferredView, id);
+  addToIndex(S.preferredViewIndex, item.preferredView, id);
 }
 
 function unindexItem(item) {
   const id = item.id;
 
-  removeFromIndex(typeIndex, item.type, id);
+  removeFromIndex(S.typeIndex, item.type, id);
 
   if (Array.isArray(item.content?.tags)) {
-    for (const tag of item.content.tags) removeFromIndex(tagIndex, tag, id);
+    for (const tag of item.content.tags) removeFromIndex(S.tagIndex, tag, id);
   }
 
-  removeFromIndex(parentIndex, item.content?.parent, id);
-  removeFromIndex(extendsIndex, item.extends, id);
+  removeFromIndex(S.parentIndex, item.content?.parent, id);
+  removeFromIndex(S.extendsIndex, item.extends, id);
 
   if (Array.isArray(item.attachments)) {
     for (const att of item.attachments) {
       const childId = typeof att === 'string' ? att : att?.id;
-      if (childId) removeFromIndex(containerIndex, childId, id);
+      if (childId) removeFromIndex(S.containerIndex, childId, id);
     }
   }
 
   for (const target of extractLinks(item)) {
-    removeFromIndex(linkIndex, target, id);
+    removeFromIndex(S.linkIndex, target, id);
   }
 
-  removeFromIndex(forTypeIndex, item.content?.for_type, id);
-  removeFromIndex(preferredViewIndex, item.preferredView, id);
+  removeFromIndex(S.forTypeIndex, item.content?.for_type, id);
+  removeFromIndex(S.preferredViewIndex, item.preferredView, id);
 }
 
 function clearAll() {
-  for (const idx of [typeIndex, tagIndex, parentIndex, extendsIndex, containerIndex, linkIndex, forTypeIndex, preferredViewIndex]) {
-    idx.clear();
+  for (const key of ['typeIndex', 'tagIndex', 'parentIndex', 'extendsIndex', 'containerIndex', 'linkIndex', 'forTypeIndex', 'preferredViewIndex']) {
+    S[key].clear();
   }
-  built = false;
+  S.built = false;
 }
 
 // --- Event handlers ---
@@ -130,36 +135,36 @@ export async function onSystemBootComplete(payload, api) {
   clearAll();
   const items = await api.getAll();
   for (const item of items) indexItem(item);
-  built = true;
+  S.built = true;
   console.log(`[related-items-lib] Indexed ${items.length} items`);
 }
 
 export async function onItemCreated({ item }, api) {
-  if (!built) return;
+  await ensureBuilt(api);
   indexItem(item);
 }
 
 export async function onItemUpdated({ item, previous }, api) {
-  if (!built) return;
+  await ensureBuilt(api);
   if (previous) unindexItem(previous);
   indexItem(item);
 }
 
 export async function onItemDeleted({ id, item }, api) {
-  if (!built) return;
+  await ensureBuilt(api);
   if (item) unindexItem(item);
 }
 
 // --- Raw index accessors ---
 
-export function getInstancesOf(typeId)      { return getFromIndex(typeIndex, typeId); }
-export function getItemsTaggedWith(tagId)   { return getFromIndex(tagIndex, tagId); }
-export function getChildrenOf(parentId)     { return getFromIndex(parentIndex, parentId); }
-export function getSubtypesOf(typeId)       { return getFromIndex(extendsIndex, typeId); }
-export function getContainersOf(itemId)     { return getFromIndex(containerIndex, itemId); }
-export function getLinksTo(itemId)          { return getFromIndex(linkIndex, itemId); }
-export function getViewsFor(typeId)         { return getFromIndex(forTypeIndex, typeId); }
-export function getItemsPreferring(viewId)  { return getFromIndex(preferredViewIndex, viewId); }
+export function getInstancesOf(typeId)      { return getFromIndex(S.typeIndex, typeId); }
+export function getItemsTaggedWith(tagId)   { return getFromIndex(S.tagIndex, tagId); }
+export function getChildrenOf(parentId)     { return getFromIndex(S.parentIndex, parentId); }
+export function getSubtypesOf(typeId)       { return getFromIndex(S.extendsIndex, typeId); }
+export function getContainersOf(itemId)     { return getFromIndex(S.containerIndex, itemId); }
+export function getLinksTo(itemId)          { return getFromIndex(S.linkIndex, itemId); }
+export function getViewsFor(typeId)         { return getFromIndex(S.forTypeIndex, typeId); }
+export function getItemsPreferring(viewId)  { return getFromIndex(S.preferredViewIndex, viewId); }
 
 // --- Convenience: all relationships for one item ---
 
@@ -185,15 +190,22 @@ export async function getRelated(itemId, api) {
     outgoingLinks: outgoing,
 
     // Inverse
-    instances: getFromIndex(typeIndex, itemId),
-    taggedWith: getFromIndex(tagIndex, itemId),
-    children: getFromIndex(parentIndex, itemId),
-    subtypes: getFromIndex(extendsIndex, itemId),
-    containers: getFromIndex(containerIndex, itemId),
-    incomingLinks: getFromIndex(linkIndex, itemId),
-    viewsFor: getFromIndex(forTypeIndex, itemId),
-    preferredBy: getFromIndex(preferredViewIndex, itemId),
+    instances: getFromIndex(S.typeIndex, itemId),
+    taggedWith: getFromIndex(S.tagIndex, itemId),
+    children: getFromIndex(S.parentIndex, itemId),
+    subtypes: getFromIndex(S.extendsIndex, itemId),
+    containers: getFromIndex(S.containerIndex, itemId),
+    incomingLinks: getFromIndex(S.linkIndex, itemId),
+    viewsFor: getFromIndex(S.forTypeIndex, itemId),
+    preferredBy: getFromIndex(S.preferredViewIndex, itemId),
   };
 }
 
-export function isBuilt() { return built; }
+export function isBuilt() { return S.built; }
+
+export async function ensureBuilt(api) {
+  if (S.built) return;
+  const items = await api.getAll();
+  for (const item of items) indexItem(item);
+  S.built = true;
+}

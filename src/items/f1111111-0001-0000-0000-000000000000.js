@@ -1,6 +1,8 @@
 // Selection Manager Library
 // Handles item selection state via events, replacing kernel viewport selection
 
+const SELECTION_CHANGED = "e0e00000-0003-0001-0000-000000000000";
+
 let selectedItemId = null;
 let selectedParentId = null;
 let api = null;
@@ -13,7 +15,7 @@ export async function onSystemBootComplete({ safeMode }, _api) {
 
   // Emit initial selection state
   api.events.emit({
-    type: api.EVENT_IDS.VIEWPORT_SELECTION_CHANGED,
+    type: SELECTION_CHANGED,
     content: {
       current: { itemId: null, parentId: null },
       previous: null
@@ -29,7 +31,7 @@ export function select(itemId, parentId = null) {
 
   if (api) {
     api.events.emit({
-      type: api.EVENT_IDS.VIEWPORT_SELECTION_CHANGED,
+      type: SELECTION_CHANGED,
       content: {
         current: { itemId: selectedItemId, parentId: selectedParentId },
         previous

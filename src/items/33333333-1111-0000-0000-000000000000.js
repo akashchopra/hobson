@@ -1351,14 +1351,10 @@ export async function loadKernel(require, storageBackend) {
     // -------------------------------------------------------------------------
 
     setupDeclarativeWatches() {
-      // Register listener for all item events (subscribing to parent type)
-      this.events.on(EVENT_IDS.ITEM_EVENT, async (event) => {
+      // Single subscription to root event type — receives ALL events
+      // (item, system, viewport, userland, etc.)
+      this.events.on(EVENT_IDS.EVENT_DEFINITION, async (event) => {
         await this.dispatchToWatchers(event);
-      });
-
-      // Register listener for all system events (error handling, etc.)
-      this.events.on(EVENT_IDS.SYSTEM_EVENT, async (event) => {
-        await this.dispatchToSystemWatchers(event);
       });
     }
 
@@ -1373,7 +1369,8 @@ export async function loadKernel(require, storageBackend) {
         // Get the emitted event's type chain for matching
         const eventTypeChain = this.eventTypeCache?.get(event.type)?.ancestors || new Set([event.type]);
 
-        // Find watchers for this event type
+        // Find and call all matching watchers
+        let handled = false;
         for (const watcherItem of watcherItems) {
           if (!watcherItem || !watcherItem.watches) continue;
 
@@ -1388,16 +1385,29 @@ export async function loadKernel(require, storageBackend) {
 
             if (matches) {
               await this.callWatchHandler(watcherItem, event);
+              handled = true;
               break; // Only call handler once per watcher item, even if multiple watches match
             }
           }
         }
+
+        // Fallback for unhandled system errors
+        if (!handled && event.type === EVENT_IDS.SYSTEM_ERROR) {
+          this.showFallbackErrorUI(event.content?.error, event.content?.context);
+        }
       } catch (error) {
         console.error('Error dispatching to declarative watchers:', error);
+        if (event.type === EVENT_IDS.SYSTEM_ERROR) {
+          this.showFallbackErrorUI(event.content?.error, event.content?.context);
+        }
       }
     }
 
     async evaluateWatchFilter(watch, item) {
+      // No filters specified — always match (works for all event types)
+      if (!watch.type && !watch.typeExtends && !watch.id) return true;
+
+      // Filters require an item to evaluate against
       if (!item) return false;
 
       // Check exact type match (against the item being affected, not the event type)
@@ -1418,7 +1428,7 @@ export async function loadKernel(require, storageBackend) {
         return false;
       }
 
-      // All filters passed (or no filters specified)
+      // All filters passed
       return true;
     }
 
@@ -1465,60 +1475,6 @@ export async function loadKernel(require, storageBackend) {
         part.charAt(0).toUpperCase() + part.slice(1).toLowerCase()
       );
       return 'on' + camelParts.join('');
-    }
-
-    // -------------------------------------------------------------------------
-    // System Event Dispatching (for error handling, etc.)
-    // -------------------------------------------------------------------------
-
-    async dispatchToSystemWatchers(event) {
-      // event = { type: eventTypeId, content: {...}, timestamp }
-      try {
-        // Find all items watching this system event
-        const handlers = await this.findSystemEventHandlers(event.type);
-
-        if (handlers.length === 0 && event.type === EVENT_IDS.SYSTEM_ERROR) {
-          // No handlers for errors - show fallback UI
-          this.showFallbackErrorUI(event.content?.error, event.content?.context);
-          return;
-        }
-
-        // Call ALL matching handlers (unlike item events which call first match)
-        const results = await Promise.allSettled(
-          handlers.map(handler => this.callWatchHandler(handler, event))
-        );
-
-        // Log any handler failures (but don't re-emit as errors to avoid loops)
-        for (const result of results) {
-          if (result.status === 'rejected') {
-            console.error('System event handler failed:', result.reason);
-          }
-        }
-      } catch (error) {
-        console.error('Error dispatching system event:', error);
-        // If this was an error event and dispatch failed, show fallback
-        if (event.type === EVENT_IDS.SYSTEM_ERROR) {
-          this.showFallbackErrorUI(event.content?.error, event.content?.context);
-        }
-      }
-    }
-
-    async findSystemEventHandlers(eventTypeId) {
-      // Get watcher items from index (O(k) where k = number of watchers)
-      const watcherItems = await Promise.all(
-        [...this.watcherIndex].map(id => this.storage.get(id).catch(() => null))
-      );
-
-      // Get the event's type chain for matching (allows subscribing to parent types)
-      const eventTypeChain = this.eventTypeCache?.get(eventTypeId)?.ancestors || new Set([eventTypeId]);
-
-      return watcherItems.filter(item => {
-        if (!item || !item.watches || !Array.isArray(item.watches)) {
-          return false;
-        }
-        // Match if any watch's event field is in the emitted event's type chain
-        return item.watches.some(w => eventTypeChain.has(w.event));
-      });
     }
 
     // -------------------------------------------------------------------------
