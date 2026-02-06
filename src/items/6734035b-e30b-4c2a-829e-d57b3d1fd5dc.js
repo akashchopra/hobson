@@ -2,7 +2,6 @@
 // See [item-search-lib documentation](item://6734035b-e30b-4c2a-829e-d57b3d1fd5dc)
 
 const TYPE_DEFINITION_ID = '11111111-0000-0000-0000-000000000000';
-const TAG_TYPE_ID = 'd1da8525-b0dc-4a79-8bef-0cbed1ed003d';
 
 // [BEGIN:tokenize]
 /**
@@ -217,7 +216,7 @@ export async function matchesFilters(item, filters, api) {
   }
 
   // Tag includes - outer array is AND, inner is OR
-  const itemTags = item.tags || [];
+  const itemTags = item.content?.tags || [];
   for (const orGroup of filters.tags.include) {
     if (!orGroup.some(tagId => itemTags.includes(tagId))) {
       return false;
@@ -317,17 +316,24 @@ export async function searchItems(query, api, options = {}) {
   }
 
   try {
-    const allTags = await api.query({ type: TAG_TYPE_ID });
-    allTags.forEach(t => {
-      const name = (t.name || t.content?.name || '').toLowerCase();
-      if (name) {
-        // Store as array since multiple tags can have same name
-        if (!tagCache.has(name)) {
-          tagCache.set(name, []);
+    // Discover tags from actual usage in content.tags across all items
+    const tagIds = new Set();
+    for (const item of itemsToSearch) {
+      const tags = item.content?.tags || [];
+      for (const tagId of tags) tagIds.add(tagId);
+    }
+    // Resolve each tag ID to its item for name lookup
+    const itemById = new Map(itemsToSearch.map(i => [i.id, i]));
+    for (const tagId of tagIds) {
+      const tagItem = itemById.get(tagId) || await api.get(tagId).catch(() => null);
+      if (tagItem) {
+        const name = (tagItem.name || tagItem.content?.name || '').toLowerCase();
+        if (name) {
+          if (!tagCache.has(name)) tagCache.set(name, []);
+          tagCache.get(name).push(tagItem.id);
         }
-        tagCache.get(name).push(t.id);
       }
-    });
+    }
   } catch (err) {
     console.warn('Could not load tags for search cache:', err);
   }

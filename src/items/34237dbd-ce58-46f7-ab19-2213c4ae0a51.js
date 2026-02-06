@@ -137,6 +137,16 @@ async function renderGroup(label, ids, api) {
   }, []);
 
   const uniqueIds = [...new Set(ids)];
+
+  // Sort alphabetically by item name
+  const nameMap = new Map();
+  for (const id of uniqueIds) {
+    let it;
+    try { it = await api.get(id); } catch (e) { it = null; }
+    nameMap.set(id, (it?.name || '').toLowerCase());
+  }
+  uniqueIds.sort((a, b) => nameMap.get(a).localeCompare(nameMap.get(b)));
+
   const truncated = uniqueIds.length > TRUNCATE_LIMIT;
   const displayIds = truncated ? uniqueIds.slice(0, TRUNCATE_LIMIT) : uniqueIds;
 

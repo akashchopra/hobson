@@ -3,7 +3,7 @@
   "name": "spatial-canvas-view",
   "type": "aaaaaaaa-0000-0000-0000-000000000000",
   "created": 1768340933093,
-  "modified": 1770390545702,
+  "modified": 1770391155604,
   "content": {
     "description": "A 2D spatial windowing environment that renders attachments as draggable, resizable windows. The primary container view for organizing multiple items visually. For design rationale see [Spatial Windowing](item://c0c0c0c0-0020-0000-0000-000000000000).\n\n## Window Types\n\n### Floating Windows\n- Freely positioned via drag handle, corners to resize\n- Click brings to front; window controls: minimize, maximize, close\n\n### Pinned Windows (Corner-Anchored)\n- Fixed to viewport corner (`top-right`, `bottom-left`, `bottom-right`)\n- Stays in place relative to chosen corner on container resize\n\n### Docked Windows (Edge-Anchored)\n- Snapped to edge (`left`, `right`, `top`, `bottom`), fills perpendicular axis\n- Single-axis resize on the non-docked edge\n\n## Child Specification\n\nEach child in `item.attachments` has a `view` object:\n\n| Field | Type | Purpose |\n|-------|------|---------|\n| `x`, `y` | Number | Position in pixels (from anchor) |\n| `width`, `height` | Number | Window dimensions |\n| `z` | Number | Stored z-index (higher = front) |\n| `anchor` | String/null | Positioning mode (see below) |\n| `minimized` | Boolean | Minimized to pill bar |\n| `maximized` | Boolean | Fills entire canvas |\n| `type` | String/null | Optional view ID override |\n\n### Position Interpretation\n\nThe meaning of `x` and `y` depends on the `anchor`:\n\n| Anchor | x means | y means |\n|--------|---------|----------|\n| `null` / `top-left` | Distance from left edge | Distance from top edge |\n| `top-right` | Distance from right edge | Distance from top edge |\n| `bottom-left` | Distance from left edge | Distance from bottom edge |\n| `bottom-right` | Distance from right edge | Distance from bottom edge |\n| `left` / `right` | Distance from edge | (ignored - fills height) |\n| `top` / `bottom` | (ignored - fills width) | Distance from edge |\n\n## Window Chrome\n\n```\n┌──────────────────────────────────────────┐\n│ ≡ │  Item Title             │ − □ × │\n└──────────────────────────────────────────┘\n  │    └── Drag handle           └── Window controls\n  └── Menu button (pin/dock/unpin options)\n```\n\n- **Menu (≡)**: Pin, Dock Left/Right/Top/Bottom, Unpin/Undock\n- **Minimize (−)**: Collapses to pill at bottom; **Maximize (□)**: Fills canvas\n- **Close (×)**: Detaches child (floating only)\n- **Pin indicator (📌)**: Shown on anchored windows; click to unpin/undock\n\n## Z-Index Layering\n\nThe container uses two overlay layers without explicit z-index, so all children compete in the same stacking context:\n\n| Layer | Z-Index | Contents |\n|-------|---------|----------|\n| Background | 0 | Inner view (in scrollArea) |\n| Docked/pinned windows | 1 (ANCHOR_Z) | In dockOverlay (non-scrolling, pointer-events: none on container, auto on children) |\n| Floating windows | 2+ (storedZ + baseZ) | In scrollArea (scrollable) |\n| Maximized window | 1000000 | Covers everything |\n| Minimized pills | 10000 | Direct children of container |\n| Context menus | 100000 | Appended to document.body |\n\nZ-index is DB-authoritative: `bringToFront` and `normalizeZIndices` read from the database only, never the DOM.\n\n## Background Layer\n\nRenders an optional inner view as full-bleed background beneath windows. The inner view bypasses cycle detection (deliberate composition, not a true cycle) and receives its own `getViewConfig()` scope. Change via View As > Spatial Canvas submenu.\n\n## Sibling Container Protocol\n\nProvides `siblingContainer.addSibling(itemId, navigateTo)` to child views:\n- **New item**: Creates window at offset from last, brings to front\n- **Existing item**: Brings to front, restores if minimized\n- **navigateTo**: Optional anchor/line to scroll to after opening\n\nEnables item links to open as new windows instead of navigating away.\n\n## Scroll Preservation\n\nSaves `scrollTop`/`scrollLeft` from all `.window-content` elements before re-render, restores after via double-`requestAnimationFrame`.\n\n## Architecture\n\nDecomposed into 5 focused libraries:\n- [window-anchor-lib](item://2319aaaa-d991-43dc-8c04-724156f1ac18) — pure anchor positioning calculations\n- [window-zindex-lib](item://bc80bdc2-f6b3-49df-a72d-1cecf866ddcf) — DB-authoritative z-index management\n- [window-drag-resize-lib](item://9b319a24-ec36-4e5d-bf94-e7453febb380) — drag and resize handlers\n- [window-minimize-lib](item://6dd254a8-dc94-4300-8a2e-19ce4165e22e) — single-path minimize/restore\n- [window-menu-lib](item://f2bf33dc-3b41-4c9a-b0e5-62011eff239c) — window context menu\n\n## Programmatic Examples\n\n```javascript\\n// Add a child window\\nconst ws = await api.get('workspace-id');\\nws.attachments.push({ id: 'item-id', view: { x: 100, y: 100, width: 600, height: 400, z: 10 } });\\nawait api.update(ws);\\n\\n// Dock to left edge\\nchild.view.anchor = 'left';\\nchild.view.width = 300;\\nawait api.update(ws);\\n```",
     "for_type": "00000000-0000-0000-0000-000000000000",
@@ -12,7 +12,1848 @@
       "read",
       "write"
     ],
-    "code": "// Item: spatial-canvas-view\n// ID: ef793c27-2d4b-4c99-b05a-2769db5bc5a9\n// Type: aaaaaaaa-0000-0000-0000-000000000000\n//\n// Orchestrator: delegates to window-anchor-lib, window-zindex-lib,\n// window-drag-resize-lib, window-minimize-lib, window-menu-lib.\n\n// Contributes submenu items to the \"View As...\" menu when this view is active\nexport async function getViewMenuItems(item, api) {\n  const SPATIAL_CANVAS_ID = 'ef793c27-2d4b-4c99-b05a-2769db5bc5a9';\n\n  const viewConfig = await api.getViewConfig() || {};\n  const currentInnerViewId = viewConfig.innerView?.type || null;\n\n  const views = await api.getViews(item.type);\n\n  const availableViews = views.filter(v =>\n    v.view.id !== SPATIAL_CANVAS_ID &&\n    v.view.content?.category !== 'debug' &&\n    v.view.content?.category !== 'hidden'\n  );\n\n  const sortedViews = [...availableViews].sort((a, b) => {\n    const nameA = a.view.content?.displayName || a.view.name || a.view.id.slice(0, 8);\n    const nameB = b.view.content?.displayName || b.view.name || b.view.id.slice(0, 8);\n    return nameA.localeCompare(nameB);\n  });\n\n  const items = [];\n\n  for (const { view } of sortedViews) {\n    const isActive = view.id === currentInnerViewId;\n    items.push({\n      label: (view.content?.displayName || view.name || view.id.slice(0, 8)) + (isActive ? ' \\u2713' : ''),\n      checked: isActive,\n      onClick: async () => {\n        await api.updateViewConfig({ innerView: { type: view.id } });\n        await api.navigate(api.getCurrentRoot());\n      }\n    });\n  }\n\n  return items;\n}\n\nexport async function render(item, api) {\n  // Load all libraries in parallel\n  const [anchorLib, zLib, dragLib, minLib, menuLib] = await Promise.all([\n    api.require('window-anchor-lib'),\n    api.require('window-zindex-lib'),\n    api.require('window-drag-resize-lib'),\n    api.require('window-minimize-lib'),\n    api.require('window-menu-lib')\n  ]);\n\n  const {\n    DEFAULT_WINDOW_WIDTH, DEFAULT_WINDOW_HEIGHT,\n    MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT, MIN_DOCKED_WIDTH, MIN_DOCKED_HEIGHT,\n    isCornerAnchor, isEdgeAnchor, isAnchored,\n    calculateAbsolutePosition, pinToNearestCorner, generateInsetStyle\n  } = anchorLib;\n\n  // SCROLL PRESERVATION: Save scroll positions before re-render\n  const scrollStates = new Map();\n  const existingWindows = document.querySelectorAll(`[data-parent-id=\"${item.id}\"]`);\n  existingWindows.forEach(wrapper => {\n    const childId = wrapper.getAttribute('data-item-id');\n    const content = wrapper.querySelector('.window-content');\n    if (content && childId) {\n      scrollStates.set(childId, { scrollTop: content.scrollTop, scrollLeft: content.scrollLeft });\n    }\n  });\n\n  // Main container\n  const container = api.createElement('div', {\n    'data-container-id': item.id,\n    style: 'position: relative; width: 100%; height: 100%; overflow: hidden;'\n  }, []);\n\n  // Non-scrolling overlay for anchored/docked windows (z-index on children, not layer)\n  const dockOverlay = api.createElement('div', {\n    'data-dock-overlay': 'true',\n    style: 'position: absolute; inset: 0; pointer-events: none; overflow: hidden;'\n  }, []);\n  container.appendChild(dockOverlay);\n\n  // Scrollable area for background and floating windows\n  const scrollArea = api.createElement('div', {\n    'data-scroll-area': 'true',\n    style: 'position: absolute; inset: 0; overflow: auto;'\n  }, []);\n  container.appendChild(scrollArea);\n\n  // Inner view (background layer)\n  const viewConfig = await api.getViewConfig() || {};\n  const innerViewConfig = viewConfig.innerView || null;\n\n  const background = api.createElement('div', {\n    class: 'spatial-background',\n    style: 'position: absolute; inset: 0; z-index: 0; overflow: auto; display: flex; flex-direction: column;'\n  }, []);\n\n  let innerViewPromise = null;\n  if (innerViewConfig && innerViewConfig.type) {\n    const innerViewId = innerViewConfig.type;\n    innerViewPromise = (async () => {\n      try {\n        const innerViewModule = await api.require(innerViewId);\n        if (innerViewModule && typeof innerViewModule.render === 'function') {\n          const { type: _viewType, ...innerViewOwnConfig } = innerViewConfig;\n          const hasOwnConfig = Object.keys(innerViewOwnConfig).length > 0;\n          const innerApi = Object.create(api);\n          innerApi.getViewConfig = () => hasOwnConfig ? innerViewOwnConfig : null;\n          innerApi.updateViewConfig = async (updates) => {\n            const currentConfig = await api.getViewConfig() || {};\n            await api.updateViewConfig({ innerView: { ...(currentConfig.innerView || {}), ...updates } });\n          };\n          innerApi.getCurrentItem = () => item;\n          innerApi.getViewId = () => innerViewId;\n          return await innerViewModule.render(item, innerApi);\n        } else {\n          throw new Error(`Inner view ${innerViewId} has no render function`);\n        }\n      } catch (error) {\n        return api.createElement('div', {\n          style: 'padding: 20px; color: var(--color-danger); background: var(--color-danger-light); border: 1px solid var(--color-danger); margin: 10px;'\n        }, ['Error rendering inner view: ' + error.message]);\n      }\n    })();\n  }\n\n  scrollArea.appendChild(background);\n\n  const children = item.attachments || [];\n\n  if (children.length === 0 && !innerViewConfig) {\n    const empty = api.createElement('div', {\n      style: 'position: absolute; left: 40px; top: 40px; color: var(--color-border-dark); font-style: italic; z-index: 1;'\n    }, ['No items yet. Use View As > Spatial Canvas to set a background view, or add children via REPL.']);\n    scrollArea.appendChild(empty);\n  } else if (children.length === 0 && innerViewPromise) {\n    const innerDom = await innerViewPromise;\n    if (innerDom) {\n      innerDom.style.flex = '1';\n      innerDom.style.minHeight = '0';\n      background.appendChild(innerDom);\n    }\n  } else if (children.length > 0) {\n    // === updateChild helper ===\n    const updateChild = async (childId, viewUpdates) => {\n      const freshItem = await api.get(item.id);\n      const freshChildren = freshItem.attachments || [];\n      const updatedChildren = freshChildren.map(c => {\n        if (c.id === childId) {\n          return { ...c, view: { ...(c.view || {}), ...viewUpdates } };\n        }\n        return c;\n      });\n      await api.updateSilent({ ...freshItem, attachments: updatedChildren, modified: Date.now() });\n    };\n\n    // Separate children by state\n    const normalChildren = children.filter(c => !c.view?.minimized && !c.view?.maximized);\n    const maximizedChildren = children.filter(c => c.view?.maximized && !c.view?.minimized);\n    const minimizedChildren = children.filter(c => c.view?.minimized);\n    const childrenToRender = [...normalChildren, ...maximizedChildren];\n    const ANCHOR_Z = 1;\n    const baseZ = 2;\n\n    // === Z-index helpers (DB-authoritative, no DOM queries) ===\n    const getMaxZ = async () => {\n      const freshItem = await api.get(item.id);\n      return zLib.getMaxZ(freshItem.attachments || [], baseZ, isAnchored);\n    };\n\n    const bringToFront = async (childId) => {\n      const freshItem = await api.get(item.id);\n      const freshChildren = freshItem.attachments || [];\n      const result = zLib.bringToFrontZ(childId, freshChildren, baseZ, isAnchored);\n      if (!result) return null;\n      await updateChild(childId, { z: result.newStoredZ });\n      return result.newZ;\n    };\n\n    // Cycle handler\n    const onCycle = (cycleItem) => api.createElement('div', {\n      class: 'cycle-marker',\n      style: 'padding: 12px; color: var(--color-text-tertiary); font-style: italic; border: 1px dashed var(--color-border); border-radius: var(--border-radius); background: var(--color-bg-surface-alt); text-align: center;'\n    }, ['\\u21bb ' + (cycleItem.name || cycleItem.id.substring(0, 8)) + ' (already shown above)']);\n\n    let siblingContainer;\n\n    // === Restore handler (shared by render-loop pills and onclick pills) ===\n    const handleRestore = async (childId) => {\n      const freshItem = await api.get(item.id);\n      const freshChildren = freshItem.attachments || [];\n      const { updatedChildren } = minLib.calculateRestore(childId, freshChildren, isAnchored);\n      await api.updateSilent({ ...freshItem, attachments: updatedChildren, modified: Date.now() });\n      await api.rerenderItem(item.id);\n    };\n\n    // === Create window for a child ===\n    const createWindowForChild = async (childId, childView = {}, navigateTo = null) => {\n      console.log('[spatial-canvas] createWindowForChild:', childId, 'navigateTo:', navigateTo);\n      const containerRect = container.getBoundingClientRect();\n      const containerWidth = containerRect.width || 1000;\n      const containerHeight = containerRect.height || 600;\n\n      const anchor = childView.anchor || null;\n      const windowIsAnchored = isAnchored(anchor);\n      const windowIsCornerAnchored = isCornerAnchor(anchor);\n      const windowIsEdgeAnchored = isEdgeAnchor(anchor);\n\n      // Migration: convert old pinned property to anchor\n      let effectiveView = { ...childView };\n      if (childView.pinned && !anchor) {\n        const pinResult = pinToNearestCorner(childView, containerWidth, containerHeight);\n        effectiveView = { ...childView, anchor: pinResult.anchor, x: pinResult.x, y: pinResult.y, pinned: undefined };\n        await updateChild(childId, { anchor: pinResult.anchor, x: pinResult.x, y: pinResult.y, pinned: null });\n      }\n\n      // Calculate position using anchor-lib\n      let x, y, width, height;\n      const effectiveAnchor = effectiveView.anchor;\n      const anchoredInsetStyle = generateInsetStyle(effectiveAnchor, effectiveView);\n\n      if (anchoredInsetStyle) {\n        x = 0;\n        y = 0;\n        width = effectiveView.width || DEFAULT_WINDOW_WIDTH;\n        height = effectiveView.height || DEFAULT_WINDOW_HEIGHT;\n      } else {\n        x = effectiveView.x || 0;\n        y = effectiveView.y || 0;\n        width = effectiveView.width || DEFAULT_WINDOW_WIDTH;\n        height = effectiveView.height || DEFAULT_WINDOW_HEIGHT;\n      }\n\n      const z = windowIsAnchored || effectiveAnchor\n        ? ANCHOR_Z\n        : (effectiveView.z !== undefined ? effectiveView.z + baseZ : (await getMaxZ()) + 1);\n      const isMaximized = effectiveView.maximized || false;\n\n      const childItem = await api.get(childId);\n      const childNode = await api.renderItem(childId, effectiveView.type ? effectiveView : null, { onCycle, siblingContainer, navigateTo });\n\n      // Wrapper style\n      let wrapperStyle;\n      if (isMaximized) {\n        wrapperStyle = 'position: absolute; left: 0; top: 0; right: 0; bottom: 0; z-index: 1000000; border: 1px solid var(--color-border-light); border-radius: var(--border-radius); background: var(--color-bg-surface-alt); overflow: hidden; box-shadow: var(--shadow-md);';\n      } else if (anchoredInsetStyle) {\n        wrapperStyle = `position: absolute; ${anchoredInsetStyle} z-index: ${z}; pointer-events: auto; border: 1px solid var(--color-border-light); border-radius: var(--border-radius); background: var(--color-bg-surface-alt); overflow: hidden; box-shadow: var(--shadow-sm);`;\n      } else {\n        wrapperStyle = `position: absolute; left: ${x}px; top: ${y}px; width: ${width}px; height: ${height}px; z-index: ${z}; border: 1px solid var(--color-border-light); border-radius: var(--border-radius); background: var(--color-bg-surface-alt); overflow: hidden; box-shadow: var(--shadow-sm);`;\n      }\n\n      const wrapper = api.createElement('div', {\n        'data-item-id': childId,\n        'data-parent-id': item.id,\n        'data-anchor': effectiveView.anchor || '',\n        'data-maximized': isMaximized ? 'true' : 'false',\n        'data-orig-x': x,\n        'data-orig-y': y,\n        'data-orig-width': width,\n        'data-orig-height': height,\n        'data-orig-z': z,\n        style: wrapperStyle\n      }, []);\n\n      // Click to bring to front (floating, non-maximized only)\n      if (!windowIsAnchored && !effectiveView.anchor && !isMaximized) {\n        wrapper.addEventListener('mousedown', async (e) => {\n          if (!e.target.classList.contains('titlebar') &&\n              !e.target.classList.contains('resize-handle') &&\n              !e.target.closest('a')) {\n            const newZ = await bringToFront(childId);\n            if (newZ !== null) wrapper.style.zIndex = newZ;\n          }\n        });\n      }\n\n      const canDrag = !windowIsAnchored && !effectiveView.anchor && !isMaximized;\n\n      // Titlebar\n      const titlebar = api.createElement('div', {\n        class: 'titlebar',\n        style: `height: 24px; background: var(--color-bg-hover); border-bottom: 1px solid var(--color-border); padding: 0 8px; display: flex; align-items: center; justify-content: space-between; font-size: 12px; font-weight: 500; cursor: ${canDrag ? 'move' : 'default'}; user-select: none;`\n      }, []);\n\n      // Menu button\n      const menuBtn = api.createElement('button', {\n        style: 'width: 20px; height: 18px; padding: 0; margin-right: 6px; border: none; background: transparent; cursor: pointer; font-size: 12px; color: var(--color-text-secondary); display: flex; align-items: center; justify-content: center;',\n        title: 'Window menu'\n      }, ['\\u2261']);\n\n      menuBtn.addEventListener('click', (e) => {\n        e.stopPropagation();\n        menuLib.showWindowMenu(menuBtn, api, {\n          isAnchored: windowIsAnchored || !!effectiveView.anchor,\n          isCornerAnchored: windowIsCornerAnchored || isCornerAnchor(effectiveView.anchor),\n          isEdgeAnchored: windowIsEdgeAnchored || isEdgeAnchor(effectiveView.anchor),\n          wrapper,\n          effectiveView,\n          onPin: async (w) => {\n            const cEl = w.parentElement;\n            const cW = cEl ? cEl.clientWidth : 1000;\n            const cH = cEl ? cEl.clientHeight : 600;\n            const pinResult = pinToNearestCorner({\n              x: parseInt(w.style.left) || 0,\n              y: parseInt(w.style.top) || 0,\n              width: parseInt(w.style.width) || DEFAULT_WINDOW_WIDTH,\n              height: parseInt(w.style.height) || DEFAULT_WINDOW_HEIGHT\n            }, cW, cH);\n            await updateChild(childId, { anchor: pinResult.anchor, x: pinResult.x, y: pinResult.y, z: 0, pinned: null });\n            await api.navigate(api.getCurrentRoot());\n          },\n          onUnpin: async (w) => {\n            const cEl = w.parentElement;\n            const cW = cEl ? cEl.clientWidth : 1000;\n            const cH = cEl ? cEl.clientHeight : 600;\n            const absPos = calculateAbsolutePosition(effectiveView, cW, cH);\n            const maxZ = await getMaxZ();\n            await updateChild(childId, { anchor: null, x: absPos.left, y: absPos.top, width: absPos.width, height: absPos.height, z: maxZ - baseZ + 1 });\n            await api.navigate(api.getCurrentRoot());\n          },\n          onUndock: async (w) => {\n            const cEl = w.parentElement;\n            const cW = cEl ? cEl.clientWidth : 1000;\n            const cH = cEl ? cEl.clientHeight : 600;\n            const currentLeft = parseInt(w.style.left) || 0;\n            const currentTop = parseInt(w.style.top) || 0;\n            const currentWidth = parseInt(w.style.width) || DEFAULT_WINDOW_WIDTH;\n            const currentHeight = parseInt(w.style.height) || DEFAULT_WINDOW_HEIGHT;\n            const maxZ = await getMaxZ();\n            await updateChild(childId, { anchor: null, x: currentLeft, y: currentTop, width: currentWidth, height: currentHeight, z: maxZ - baseZ + 1 });\n            await api.navigate(api.getCurrentRoot());\n          },\n          onDock: async (pos, w) => {\n            const currentWidth = parseInt(w.style.width) || DEFAULT_WINDOW_WIDTH;\n            const currentHeight = parseInt(w.style.height) || DEFAULT_WINDOW_HEIGHT;\n            await updateChild(childId, { anchor: pos, x: 0, y: 0, width: currentWidth, height: currentHeight, z: 0, minimized: false, maximized: false, pinned: null });\n            await api.navigate(api.getCurrentRoot());\n          }\n        });\n      });\n      titlebar.appendChild(menuBtn);\n\n      // Title text\n      titlebar.appendChild(api.createElement('span', {\n        style: 'flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;'\n      }, [childItem.content?.title || childItem.name || childItem.id]));\n\n      // Button container\n      const buttonContainer = api.createElement('div', {\n        style: 'display: flex; gap: 4px; align-items: center;'\n      }, []);\n\n      // Anchor indicator\n      if (windowIsAnchored || effectiveView.anchor) {\n        const anchorIndicator = api.createElement('button', {\n          style: 'width: 18px; height: 18px; padding: 0; border: none; background: transparent; cursor: pointer; font-size: 12px; color: var(--color-text-secondary); display: flex; align-items: center; justify-content: center;',\n          title: windowIsEdgeAnchored || isEdgeAnchor(effectiveView.anchor) ? 'Undock' : 'Unpin',\n          onclick: async (clickE) => {\n            clickE.stopPropagation();\n            const cEl = wrapper.parentElement;\n            const cW = cEl ? cEl.clientWidth : 1000;\n            const cH = cEl ? cEl.clientHeight : 600;\n            const currentLeft = parseInt(wrapper.style.left) || 0;\n            const currentTop = parseInt(wrapper.style.top) || 0;\n            const currentWidth = parseInt(wrapper.style.width) || DEFAULT_WINDOW_WIDTH;\n            const currentHeight = parseInt(wrapper.style.height) || DEFAULT_WINDOW_HEIGHT;\n            const maxZ = await getMaxZ();\n            await updateChild(childId, { anchor: null, x: currentLeft, y: currentTop, width: currentWidth, height: currentHeight, z: maxZ - baseZ + 1 });\n            await api.navigate(api.getCurrentRoot());\n          }\n        }, ['\\ud83d\\udccc']);\n        buttonContainer.appendChild(anchorIndicator);\n      }\n\n      // Minimize button (not for anchored)\n      if (!windowIsAnchored && !effectiveView.anchor) {\n        const minimizeBtn = api.createElement('button', {\n          style: 'width: 18px; height: 18px; padding: 0; border: none; background: transparent; cursor: pointer; font-size: 14px; font-weight: bold; color: var(--color-text-secondary); display: flex; align-items: center; justify-content: center;',\n          title: 'Minimize',\n          onclick: async (clickE) => {\n            clickE.stopPropagation();\n            // Optimistic DOM update\n            wrapper.style.display = 'none';\n            // Create pill using minimize-lib (single code path)\n            const existingPills = container.querySelectorAll('[data-minimized=\"true\"]');\n            minLib.createMinimizedPill(childId, childItem.content?.title || childItem.name || childId.slice(0, 8), container, existingPills.length, api, { onRestore: handleRestore });\n            // Persist (awaited, not fire-and-forget)\n            await updateChild(childId, { minimized: true, maximized: false });\n          }\n        }, ['\\u2212']);\n        buttonContainer.appendChild(minimizeBtn);\n      }\n\n      // Maximize/Restore button (not for anchored)\n      if (!windowIsAnchored && !effectiveView.anchor) {\n        const maxBtn = api.createElement('button', {\n          style: 'width: 18px; height: 18px; padding: 0; border: none; background: transparent; cursor: pointer; font-size: 12px; color: var(--color-text-secondary); display: flex; align-items: center; justify-content: center;',\n          title: isMaximized ? 'Restore' : 'Maximize',\n          onclick: async (clickE) => {\n            clickE.stopPropagation();\n            const currentlyMaximized = wrapper.dataset.maximized === 'true';\n            if (currentlyMaximized) {\n              wrapper.style.left = `${wrapper.dataset.origX}px`;\n              wrapper.style.top = `${wrapper.dataset.origY}px`;\n              wrapper.style.width = `${wrapper.dataset.origWidth}px`;\n              wrapper.style.height = `${wrapper.dataset.origHeight}px`;\n              wrapper.style.right = '';\n              wrapper.style.bottom = '';\n              wrapper.style.zIndex = wrapper.dataset.origZ;\n              wrapper.dataset.maximized = 'false';\n              maxBtn.textContent = '\\u25a1';\n              maxBtn.title = 'Maximize';\n              updateChild(childId, { maximized: false });\n            } else {\n              wrapper.style.left = '0';\n              wrapper.style.top = '0';\n              wrapper.style.right = '0';\n              wrapper.style.bottom = '0';\n              wrapper.style.width = 'auto';\n              wrapper.style.height = 'auto';\n              wrapper.style.zIndex = '1000000';\n              wrapper.dataset.maximized = 'true';\n              maxBtn.textContent = '\\u274f';\n              maxBtn.title = 'Restore';\n              updateChild(childId, { maximized: true });\n            }\n          }\n        }, [isMaximized ? '\\u274f' : '\\u25a1']);\n        buttonContainer.appendChild(maxBtn);\n      }\n\n      // Close button (floating only)\n      if (!windowIsAnchored && !effectiveView.anchor) {\n        buttonContainer.appendChild(api.createElement('button', {\n          style: 'width: 18px; height: 18px; padding: 0; border: none; background: transparent; cursor: pointer; font-size: 14px; font-weight: bold; color: var(--color-text-secondary); display: flex; align-items: center; justify-content: center;',\n          title: 'Close',\n          onclick: async (clickE) => {\n            clickE.stopPropagation();\n            await api.detach(childId);\n            wrapper.remove();\n          }\n        }, ['\\u00d7']));\n      }\n\n      titlebar.appendChild(buttonContainer);\n\n      // Drag handler\n      if (canDrag) {\n        dragLib.attachDrag(titlebar, wrapper, {\n          onDragStart: async () => await bringToFront(childId),\n          onDragEnd: async (finalX, finalY) => {\n            await updateChild(childId, {\n              x: finalX, y: finalY,\n              width: parseInt(wrapper.style.width) || width,\n              height: parseInt(wrapper.style.height) || height,\n              anchor: null\n            });\n          }\n        });\n      }\n\n      wrapper.appendChild(titlebar);\n\n      // Corner resize handles (floating, non-maximized)\n      if (canDrag) {\n        dragLib.attachCornerResize(wrapper, api, {\n          onResizeStart: async () => await bringToFront(childId),\n          onResizeEnd: async (finalX, finalY, finalW, finalH) => {\n            await updateChild(childId, { x: finalX, y: finalY, width: finalW, height: finalH, anchor: null });\n          },\n          minWidth: MIN_WINDOW_WIDTH,\n          minHeight: MIN_WINDOW_HEIGHT\n        });\n      }\n\n      // Edge resize handle (docked windows)\n      if (windowIsEdgeAnchored || isEdgeAnchor(effectiveView.anchor)) {\n        dragLib.attachEdgeResize(wrapper, effectiveView.anchor, api, {\n          onResizeEnd: async (finalW, finalH) => {\n            await updateChild(childId, { width: finalW, height: finalH });\n          },\n          minWidth: MIN_DOCKED_WIDTH,\n          minHeight: MIN_DOCKED_HEIGHT\n        });\n      }\n\n      // Content area\n      const contentArea = api.createElement('div', {\n        class: 'window-content',\n        style: 'padding: 15px; overflow: auto; height: calc(100% - 24px);'\n      }, []);\n      contentArea.appendChild(childNode);\n      wrapper.appendChild(contentArea);\n\n      return wrapper;\n    };\n\n    // === Sibling container protocol ===\n    siblingContainer = {\n      id: item.id,\n      addSibling: async (childId, navigateTo = null) => {\n        const freshItem = await api.get(item.id);\n        const freshChildren = freshItem.attachments || [];\n        const existingChild = freshChildren.find(c => c.id === childId);\n\n        if (existingChild) {\n          const wasMinimized = existingChild.view?.minimized;\n          if (wasMinimized) await updateChild(childId, { minimized: false });\n\n          if (!isAnchored(existingChild.view?.anchor)) {\n            const newZ = await bringToFront(childId);\n            if (newZ !== null) {\n              const w = document.querySelector(`[data-parent-id=\"${item.id}\"][data-item-id=\"${childId}\"]`);\n              if (w) w.style.zIndex = newZ;\n            }\n          }\n\n          if (wasMinimized) await api.navigate(api.getCurrentRoot());\n        } else {\n          await api.attach(childId);\n\n          const existingWrappers = document.querySelectorAll(`[data-parent-id=\"${item.id}\"]`);\n          let newX = 50, newY = 50;\n          if (existingWrappers.length > 0) {\n            const lastWrapper = existingWrappers[existingWrappers.length - 1];\n            newX = (parseInt(lastWrapper.style.left) || 0) + 30;\n            newY = (parseInt(lastWrapper.style.top) || 0) + 30;\n          }\n\n          const maxZ = await getMaxZ();\n          const newZ = maxZ + 1;\n          await updateChild(childId, { x: newX, y: newY, z: newZ - baseZ });\n\n          const w = await createWindowForChild(childId, {\n            x: newX, y: newY,\n            width: DEFAULT_WINDOW_WIDTH, height: DEFAULT_WINDOW_HEIGHT,\n            z: newZ - baseZ\n          }, navigateTo);\n\n          const containerEl = document.querySelector(`[data-container-id=\"${item.id}\"]`);\n          const scrollAreaEl = containerEl?.querySelector('[data-scroll-area]');\n          if (scrollAreaEl) scrollAreaEl.appendChild(w);\n        }\n      }\n    };\n\n    // === Render children in parallel ===\n    const childRenderPromises = childrenToRender.map(async (child) => {\n      try {\n        return await createWindowForChild(child.id, child.view || {}, child.view?.navigateTo);\n      } catch (error) {\n        const cv = child.view || {};\n        return api.createElement('div', {\n          style: `position: absolute; left: ${cv.x || 0}px; top: ${cv.y || 0}px; width: ${cv.width || DEFAULT_WINDOW_WIDTH}px; padding: 15px; border: 1px solid var(--color-danger); border-radius: var(--border-radius); background: var(--color-danger-light); color: var(--color-danger); z-index: ${(cv.z || 0) + baseZ};`\n        }, ['Error rendering child: ' + child.id + ' - ' + error.message]);\n      }\n    });\n\n    const allPromises = innerViewPromise ? [innerViewPromise, ...childRenderPromises] : childRenderPromises;\n    const allResults = await Promise.all(allPromises);\n\n    if (innerViewPromise) {\n      const innerDom = allResults[0];\n      if (innerDom) {\n        innerDom.style.flex = '1';\n        innerDom.style.minHeight = '0';\n        background.appendChild(innerDom);\n      }\n      allResults.slice(1).forEach((w, i) => {\n        const target = isAnchored(childrenToRender[i].view?.anchor) ? dockOverlay : scrollArea;\n        target.appendChild(w);\n      });\n    } else {\n      allResults.forEach((w, i) => {\n        const target = isAnchored(childrenToRender[i].view?.anchor) ? dockOverlay : scrollArea;\n        target.appendChild(w);\n      });\n    }\n\n    // Render minimized pills using minimize-lib (single code path)\n    if (minimizedChildren.length > 0) {\n      const childItemCache = new Map();\n      for (const child of minimizedChildren) {\n        try { childItemCache.set(child.id, await api.get(child.id)); } catch (e) { /* skip */ }\n      }\n      minLib.renderMinimizedPills(minimizedChildren, container, api, {\n        getItemName: (child) => {\n          const ci = childItemCache.get(child.id);\n          return ci?.content?.title || ci?.name || child.id;\n        },\n        onRestore: handleRestore\n      });\n    }\n  }\n\n  // SCROLL PRESERVATION: Restore after DOM creation\n  if (scrollStates.size > 0) {\n    const restoreScroll = () => {\n      const newWindows = document.querySelectorAll(`[data-parent-id=\"${item.id}\"]`);\n      newWindows.forEach(w => {\n        const cid = w.getAttribute('data-item-id');\n        const saved = scrollStates.get(cid);\n        if (saved) {\n          const c = w.querySelector('.window-content');\n          if (c) { c.scrollTop = saved.scrollTop; c.scrollLeft = saved.scrollLeft; }\n        }\n      });\n    };\n    requestAnimationFrame(() => requestAnimationFrame(restoreScroll));\n  }\n\n  return container;\n}\n"
+    "code": "// Item: spatial-canvas-view\n// ID: ef793c27-2d4b-4c99-b05a-2769db5bc5a9\n// Type: aaaaaaaa-0000-0000-0000-000000000000\n//\n// Orchestrator: delegates to window-anchor-lib, window-zindex-lib,\n// window-drag-resize-lib, window-minimize-lib, window-menu-lib.\n\n// Contributes submenu items to the \"View As...\" menu when this view is active\nexport async function getViewMenuItems(item, api) {\n  const SPATIAL_CANVAS_ID = 'ef793c27-2d4b-4c99-b05a-2769db5bc5a9';\n\n  const viewConfig = await api.getViewConfig() || {};\n  const currentInnerViewId = viewConfig.innerView?.type || null;\n\n  const views = await api.getViews(item.type);\n\n  const availableViews = views.filter(v =>\n    v.view.id !== SPATIAL_CANVAS_ID &&\n    v.view.content?.category !== 'debug' &&\n    v.view.content?.category !== 'hidden'\n  );\n\n  const sortedViews = [...availableViews].sort((a, b) => {\n    const nameA = a.view.content?.displayName || a.view.name || a.view.id.slice(0, 8);\n    const nameB = b.view.content?.displayName || b.view.name || b.view.id.slice(0, 8);\n    return nameA.localeCompare(nameB);\n  });\n\n  const items = [];\n\n  for (const { view } of sortedViews) {\n    const isActive = view.id === currentInnerViewId;\n    items.push({\n      label: (view.content?.displayName || view.name || view.id.slice(0, 8)) + (isActive ? ' \\u2713' : ''),\n      checked: isActive,\n      onClick: async () => {\n        await api.updateViewConfig({ innerView: { type: view.id } });\n        await api.navigate(api.getCurrentRoot());\n      }\n    });\n  }\n\n  return items;\n}\n\nexport async function render(item, api) {\n  // Load all libraries in parallel\n  const [anchorLib, zLib, dragLib, minLib, menuLib] = await Promise.all([\n    api.require('window-anchor-lib'),\n    api.require('window-zindex-lib'),\n    api.require('window-drag-resize-lib'),\n    api.require('window-minimize-lib'),\n    api.require('window-menu-lib')\n  ]);\n\n  const {\n    DEFAULT_WINDOW_WIDTH, DEFAULT_WINDOW_HEIGHT,\n    MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT, MIN_DOCKED_WIDTH, MIN_DOCKED_HEIGHT,\n    isCornerAnchor, isEdgeAnchor, isAnchored,\n    calculateAbsolutePosition, pinToNearestCorner, generateInsetStyle\n  } = anchorLib;\n\n  // SCROLL PRESERVATION: Save scroll positions before re-render\n  const scrollStates = new Map();\n  const existingWindows = document.querySelectorAll(`[data-parent-id=\"${item.id}\"]`);\n  existingWindows.forEach(wrapper => {\n    const childId = wrapper.getAttribute('data-item-id');\n    const content = wrapper.querySelector('.window-content');\n    if (content && childId) {\n      scrollStates.set(childId, { scrollTop: content.scrollTop, scrollLeft: content.scrollLeft });\n    }\n  });\n\n  // Main container\n  const container = api.createElement('div', {\n    'data-container-id': item.id,\n    style: 'position: relative; width: 100%; height: 100%; overflow: hidden;'\n  }, []);\n\n  // Non-scrolling overlay for anchored/docked windows (z-index on children, not layer)\n  const dockOverlay = api.createElement('div', {\n    'data-dock-overlay': 'true',\n    style: 'position: absolute; inset: 0; pointer-events: none; overflow: hidden;'\n  }, []);\n  container.appendChild(dockOverlay);\n\n  // Scrollable area for background and floating windows\n  const scrollArea = api.createElement('div', {\n    'data-scroll-area': 'true',\n    style: 'position: absolute; inset: 0; overflow: auto;'\n  }, []);\n  container.appendChild(scrollArea);\n\n  // Inner view (background layer)\n  const viewConfig = await api.getViewConfig() || {};\n  const innerViewConfig = viewConfig.innerView || null;\n\n  const background = api.createElement('div', {\n    class: 'spatial-background',\n    style: 'position: absolute; inset: 0; z-index: 0; overflow: auto; display: flex; flex-direction: column;'\n  }, []);\n\n  let innerViewPromise = null;\n  if (innerViewConfig && innerViewConfig.type) {\n    const innerViewId = innerViewConfig.type;\n    innerViewPromise = (async () => {\n      try {\n        const innerViewModule = await api.require(innerViewId);\n        if (innerViewModule && typeof innerViewModule.render === 'function') {\n          const { type: _viewType, ...innerViewOwnConfig } = innerViewConfig;\n          const hasOwnConfig = Object.keys(innerViewOwnConfig).length > 0;\n          const innerApi = Object.create(api);\n          innerApi.getViewConfig = () => hasOwnConfig ? innerViewOwnConfig : null;\n          innerApi.updateViewConfig = async (updates) => {\n            const currentConfig = await api.getViewConfig() || {};\n            await api.updateViewConfig({ innerView: { ...(currentConfig.innerView || {}), ...updates } });\n          };\n          innerApi.getCurrentItem = () => item;\n          innerApi.getViewId = () => innerViewId;\n          return await innerViewModule.render(item, innerApi);\n        } else {\n          throw new Error(`Inner view ${innerViewId} has no render function`);\n        }\n      } catch (error) {\n        return api.createElement('div', {\n          style: 'padding: 20px; color: var(--color-danger); background: var(--color-danger-light); border: 1px solid var(--color-danger); margin: 10px;'\n        }, ['Error rendering inner view: ' + error.message]);\n      }\n    })();\n  }\n\n  scrollArea.appendChild(background);\n\n  const children = item.attachments || [];\n\n  if (children.length === 0 && !innerViewConfig) {\n    const empty = api.createElement('div', {\n      style: 'position: absolute; left: 40px; top: 40px; color: var(--color-border-dark); font-style: italic; z-index: 1;'\n    }, ['No items yet. Use View As > Spatial Canvas to set a background view, or add children via REPL.']);\n    scrollArea.appendChild(empty);\n  } else if (children.length === 0 && innerViewPromise) {\n    const innerDom = await innerViewPromise;\n    if (innerDom) {\n      innerDom.style.flex = '1';\n      innerDom.style.minHeight = '0';\n      background.appendChild(innerDom);\n    }\n  } else if (children.length > 0) {\n    // === updateChild helper ===\n    const updateChild = async (childId, viewUpdates) => {\n      const freshItem = await api.get(item.id);\n      const freshChildren = freshItem.attachments || [];\n      const updatedChildren = freshChildren.map(c => {\n        if (c.id === childId) {\n          return { ...c, view: { ...(c.view || {}), ...viewUpdates } };\n        }\n        return c;\n      });\n      await api.updateSilent({ ...freshItem, attachments: updatedChildren, modified: Date.now() });\n    };\n\n    // Separate children by state\n    const normalChildren = children.filter(c => !c.view?.minimized && !c.view?.maximized);\n    const maximizedChildren = children.filter(c => c.view?.maximized && !c.view?.minimized);\n    const minimizedChildren = children.filter(c => c.view?.minimized);\n    const childrenToRender = [...normalChildren, ...maximizedChildren];\n    const ANCHOR_Z = 1;\n    const baseZ = 2;\n\n    // === Z-index helpers (DB-authoritative, no DOM queries) ===\n    const getMaxZ = async () => {\n      const freshItem = await api.get(item.id);\n      return zLib.getMaxZ(freshItem.attachments || [], baseZ, isAnchored);\n    };\n\n    const bringToFront = async (childId) => {\n      const freshItem = await api.get(item.id);\n      const freshChildren = freshItem.attachments || [];\n      const result = zLib.bringToFrontZ(childId, freshChildren, baseZ, isAnchored);\n      if (!result) return null;\n      await updateChild(childId, { z: result.newStoredZ });\n      return result.newZ;\n    };\n\n    // Cycle handler\n    const onCycle = (cycleItem) => api.createElement('div', {\n      class: 'cycle-marker',\n      style: 'padding: 12px; color: var(--color-text-tertiary); font-style: italic; border: 1px dashed var(--color-border); border-radius: var(--border-radius); background: var(--color-bg-surface-alt); text-align: center;'\n    }, ['\\u21bb ' + (cycleItem.name || cycleItem.id.substring(0, 8)) + ' (already shown above)']);\n\n    let siblingContainer;\n\n    // === Restore handler (shared by render-loop pills and onclick pills) ===\n    const handleRestore = async (childId) => {\n      const freshItem = await api.get(item.id);\n      const freshChildren = freshItem.attachments || [];\n      const { updatedChildren } = minLib.calculateRestore(childId, freshChildren, isAnchored);\n      await api.updateSilent({ ...freshItem, attachments: updatedChildren, modified: Date.now() });\n      await api.rerenderItem(item.id);\n    };\n\n    // === Create window for a child ===\n    const createWindowForChild = async (childId, childView = {}, navigateTo = null) => {\n      console.log('[spatial-canvas] createWindowForChild:', childId, 'navigateTo:', navigateTo);\n      const containerRect = container.getBoundingClientRect();\n      const containerWidth = containerRect.width || 1000;\n      const containerHeight = containerRect.height || 600;\n\n      const anchor = childView.anchor || null;\n      const windowIsAnchored = isAnchored(anchor);\n      const windowIsCornerAnchored = isCornerAnchor(anchor);\n      const windowIsEdgeAnchored = isEdgeAnchor(anchor);\n\n      // Migration: convert old pinned property to anchor\n      let effectiveView = { ...childView };\n      if (childView.pinned && !anchor) {\n        const pinResult = pinToNearestCorner(childView, containerWidth, containerHeight);\n        effectiveView = { ...childView, anchor: pinResult.anchor, x: pinResult.x, y: pinResult.y, pinned: undefined };\n        await updateChild(childId, { anchor: pinResult.anchor, x: pinResult.x, y: pinResult.y, pinned: null });\n      }\n\n      // Calculate position using anchor-lib\n      let x, y, width, height;\n      const effectiveAnchor = effectiveView.anchor;\n      const anchoredInsetStyle = generateInsetStyle(effectiveAnchor, effectiveView);\n\n      if (anchoredInsetStyle) {\n        x = 0;\n        y = 0;\n        width = effectiveView.width || DEFAULT_WINDOW_WIDTH;\n        height = effectiveView.height || DEFAULT_WINDOW_HEIGHT;\n      } else {\n        x = effectiveView.x || 0;\n        y = effectiveView.y || 0;\n        width = effectiveView.width || DEFAULT_WINDOW_WIDTH;\n        height = effectiveView.height || DEFAULT_WINDOW_HEIGHT;\n      }\n\n      const z = windowIsAnchored || effectiveAnchor\n        ? ANCHOR_Z\n        : (effectiveView.z !== undefined ? effectiveView.z + baseZ : (await getMaxZ()) + 1);\n      const isMaximized = effectiveView.maximized || false;\n\n      const childItem = await api.get(childId);\n      const childNode = await api.renderItem(childId, effectiveView.type ? effectiveView : null, { onCycle, siblingContainer, navigateTo });\n\n      // Wrapper style\n      let wrapperStyle;\n      if (isMaximized) {\n        wrapperStyle = 'position: absolute; left: 0; top: 0; right: 0; bottom: 0; z-index: 1000000; border: 1px solid var(--color-border-light); border-radius: var(--border-radius); background: var(--color-bg-surface-alt); overflow: hidden; box-shadow: var(--shadow-md);';\n      } else if (anchoredInsetStyle) {\n        wrapperStyle = `position: absolute; ${anchoredInsetStyle} z-index: ${z}; pointer-events: auto; border: 1px solid var(--color-border-light); border-radius: var(--border-radius); background: var(--color-bg-surface-alt); overflow: hidden; box-shadow: var(--shadow-sm);`;\n      } else {\n        wrapperStyle = `position: absolute; left: ${x}px; top: ${y}px; width: ${width}px; height: ${height}px; z-index: ${z}; border: 1px solid var(--color-border-light); border-radius: var(--border-radius); background: var(--color-bg-surface-alt); overflow: hidden; box-shadow: var(--shadow-sm);`;\n      }\n\n      const wrapper = api.createElement('div', {\n        'data-item-id': childId,\n        'data-parent-id': item.id,\n        'data-anchor': effectiveView.anchor || '',\n        'data-maximized': isMaximized ? 'true' : 'false',\n        'data-orig-x': x,\n        'data-orig-y': y,\n        'data-orig-width': width,\n        'data-orig-height': height,\n        'data-orig-z': z,\n        style: wrapperStyle\n      }, []);\n\n      // Click to bring to front (floating, non-maximized only)\n      if (!windowIsAnchored && !effectiveView.anchor && !isMaximized) {\n        wrapper.addEventListener('mousedown', async (e) => {\n          if (!e.target.classList.contains('titlebar') &&\n              !e.target.classList.contains('resize-handle') &&\n              !e.target.closest('a')) {\n            const newZ = await bringToFront(childId);\n            if (newZ !== null) wrapper.style.zIndex = newZ;\n          }\n        });\n      }\n\n      const canDrag = !windowIsAnchored && !effectiveView.anchor && !isMaximized;\n\n      // Titlebar\n      const titlebar = api.createElement('div', {\n        class: 'titlebar',\n        style: `height: 24px; background: var(--color-bg-hover); border-bottom: 1px solid var(--color-border); padding: 0 8px; display: flex; align-items: center; justify-content: space-between; font-size: 12px; font-weight: 500; cursor: ${canDrag ? 'move' : 'default'}; user-select: none;`\n      }, []);\n\n      // Menu button\n      const menuBtn = api.createElement('button', {\n        style: 'width: 20px; height: 18px; padding: 0; margin-right: 6px; border: none; background: transparent; cursor: pointer; font-size: 12px; color: var(--color-text-secondary); display: flex; align-items: center; justify-content: center;',\n        title: 'Window menu'\n      }, ['\\u2261']);\n\n      menuBtn.addEventListener('click', (e) => {\n        e.stopPropagation();\n        menuLib.showWindowMenu(menuBtn, api, {\n          isAnchored: windowIsAnchored || !!effectiveView.anchor,\n          isCornerAnchored: windowIsCornerAnchored || isCornerAnchor(effectiveView.anchor),\n          isEdgeAnchored: windowIsEdgeAnchored || isEdgeAnchor(effectiveView.anchor),\n          wrapper,\n          effectiveView,\n          onPin: async (w) => {\n            const cEl = w.parentElement;\n            const cW = cEl ? cEl.clientWidth : 1000;\n            const cH = cEl ? cEl.clientHeight : 600;\n            const pinResult = pinToNearestCorner({\n              x: parseInt(w.style.left) || 0,\n              y: parseInt(w.style.top) || 0,\n              width: parseInt(w.style.width) || DEFAULT_WINDOW_WIDTH,\n              height: parseInt(w.style.height) || DEFAULT_WINDOW_HEIGHT\n            }, cW, cH);\n            await updateChild(childId, { anchor: pinResult.anchor, x: pinResult.x, y: pinResult.y, z: 0, pinned: null });\n            await api.navigate(api.getCurrentRoot());\n          },\n          onUnpin: async (w) => {\n            const cEl = w.parentElement;\n            const cW = cEl ? cEl.clientWidth : 1000;\n            const cH = cEl ? cEl.clientHeight : 600;\n            const absPos = calculateAbsolutePosition(effectiveView, cW, cH);\n            const maxZ = await getMaxZ();\n            await updateChild(childId, { anchor: null, x: absPos.left, y: absPos.top, width: absPos.width, height: absPos.height, z: maxZ - baseZ + 1 });\n            await api.navigate(api.getCurrentRoot());\n          },\n          onUndock: async (w) => {\n            const cEl = w.parentElement;\n            const cW = cEl ? cEl.clientWidth : 1000;\n            const cH = cEl ? cEl.clientHeight : 600;\n            const currentLeft = parseInt(w.style.left) || 0;\n            const currentTop = parseInt(w.style.top) || 0;\n            const currentWidth = parseInt(w.style.width) || DEFAULT_WINDOW_WIDTH;\n            const currentHeight = parseInt(w.style.height) || DEFAULT_WINDOW_HEIGHT;\n            const maxZ = await getMaxZ();\n            await updateChild(childId, { anchor: null, x: currentLeft, y: currentTop, width: currentWidth, height: currentHeight, z: maxZ - baseZ + 1 });\n            await api.navigate(api.getCurrentRoot());\n          },\n          onDock: async (pos, w) => {\n            const currentWidth = parseInt(w.style.width) || DEFAULT_WINDOW_WIDTH;\n            const currentHeight = parseInt(w.style.height) || DEFAULT_WINDOW_HEIGHT;\n            await updateChild(childId, { anchor: pos, x: 0, y: 0, width: currentWidth, height: currentHeight, z: 0, minimized: false, maximized: false, pinned: null });\n            await api.navigate(api.getCurrentRoot());\n          }\n        });\n      });\n      titlebar.appendChild(menuBtn);\n\n      // Title text\n      titlebar.appendChild(api.createElement('span', {\n        style: 'flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;'\n      }, [childItem.content?.title || childItem.name || childItem.id]));\n\n      // Button container\n      const buttonContainer = api.createElement('div', {\n        style: 'display: flex; gap: 4px; align-items: center;'\n      }, []);\n\n      // Anchor indicator\n      if (windowIsAnchored || effectiveView.anchor) {\n        const anchorIndicator = api.createElement('button', {\n          style: 'width: 18px; height: 18px; padding: 0; border: none; background: transparent; cursor: pointer; font-size: 12px; color: var(--color-text-secondary); display: flex; align-items: center; justify-content: center;',\n          title: windowIsEdgeAnchored || isEdgeAnchor(effectiveView.anchor) ? 'Undock' : 'Unpin',\n          onclick: async (clickE) => {\n            clickE.stopPropagation();\n            const cEl = wrapper.parentElement;\n            const cW = cEl ? cEl.clientWidth : 1000;\n            const cH = cEl ? cEl.clientHeight : 600;\n            const currentLeft = parseInt(wrapper.style.left) || 0;\n            const currentTop = parseInt(wrapper.style.top) || 0;\n            const currentWidth = parseInt(wrapper.style.width) || DEFAULT_WINDOW_WIDTH;\n            const currentHeight = parseInt(wrapper.style.height) || DEFAULT_WINDOW_HEIGHT;\n            const maxZ = await getMaxZ();\n            await updateChild(childId, { anchor: null, x: currentLeft, y: currentTop, width: currentWidth, height: currentHeight, z: maxZ - baseZ + 1 });\n            await api.navigate(api.getCurrentRoot());\n          }\n        }, ['\\ud83d\\udccc']);\n        buttonContainer.appendChild(anchorIndicator);\n      }\n\n      // Minimize button (not for anchored)\n      if (!windowIsAnchored && !effectiveView.anchor) {\n        const minimizeBtn = api.createElement('button', {\n          style: 'width: 18px; height: 18px; padding: 0; border: none; background: transparent; cursor: pointer; font-size: 14px; font-weight: bold; color: var(--color-text-secondary); display: flex; align-items: center; justify-content: center;',\n          title: 'Minimize',\n          onclick: async (clickE) => {\n            clickE.stopPropagation();\n            // Optimistic DOM update\n            wrapper.style.display = 'none';\n            // Create pill using minimize-lib (single code path)\n            const existingPills = container.querySelectorAll('[data-minimized=\"true\"]');\n            minLib.createMinimizedPill(childId, childItem.content?.title || childItem.name || childId.slice(0, 8), container, existingPills.length, api, { onRestore: handleRestore });\n            // Persist (awaited, not fire-and-forget)\n            await updateChild(childId, { minimized: true, maximized: false });\n          }\n        }, ['\\u2212']);\n        buttonContainer.appendChild(minimizeBtn);\n      }\n\n      // Maximize/Restore button (not for anchored)\n      if (!windowIsAnchored && !effectiveView.anchor) {\n        const maxBtn = api.createElement('button', {\n          style: 'width: 18px; height: 18px; padding: 0; border: none; background: transparent; cursor: pointer; font-size: 12px; color: var(--color-text-secondary); display: flex; align-items: center; justify-content: center;',\n          title: isMaximized ? 'Restore' : 'Maximize',\n          onclick: async (clickE) => {\n            clickE.stopPropagation();\n            const currentlyMaximized = wrapper.dataset.maximized === 'true';\n            if (currentlyMaximized) {\n              wrapper.style.left = `${wrapper.dataset.origX}px`;\n              wrapper.style.top = `${wrapper.dataset.origY}px`;\n              wrapper.style.width = `${wrapper.dataset.origWidth}px`;\n              wrapper.style.height = `${wrapper.dataset.origHeight}px`;\n              wrapper.style.right = '';\n              wrapper.style.bottom = '';\n              wrapper.style.zIndex = wrapper.dataset.origZ;\n              wrapper.dataset.maximized = 'false';\n              maxBtn.textContent = '\\u25a1';\n              maxBtn.title = 'Maximize';\n              updateChild(childId, { maximized: false });\n            } else {\n              wrapper.style.left = '0';\n              wrapper.style.top = '0';\n              wrapper.style.right = '0';\n              wrapper.style.bottom = '0';\n              wrapper.style.width = 'auto';\n              wrapper.style.height = 'auto';\n              wrapper.style.zIndex = '1000000';\n              wrapper.dataset.maximized = 'true';\n              maxBtn.textContent = '\\u274f';\n              maxBtn.title = 'Restore';\n              updateChild(childId, { maximized: true });\n            }\n          }\n        }, [isMaximized ? '\\u274f' : '\\u25a1']);\n        buttonContainer.appendChild(maxBtn);\n      }\n\n      // Close button (floating only)\n      if (!windowIsAnchored && !effectiveView.anchor) {\n        buttonContainer.appendChild(api.createElement('button', {\n          style: 'width: 18px; height: 18px; padding: 0; border: none; background: transparent; cursor: pointer; font-size: 14px; font-weight: bold; color: var(--color-text-secondary); display: flex; align-items: center; justify-content: center;',\n          title: 'Close',\n          onclick: async (clickE) => {\n            clickE.stopPropagation();\n            await api.detach(childId);\n            wrapper.remove();\n          }\n        }, ['\\u00d7']));\n      }\n\n      titlebar.appendChild(buttonContainer);\n\n      // Drag handler\n      if (canDrag) {\n        dragLib.attachDrag(titlebar, wrapper, {\n          onDragStart: async () => await bringToFront(childId),\n          onDragEnd: async (finalX, finalY) => {\n            await updateChild(childId, {\n              x: finalX, y: finalY,\n              width: parseInt(wrapper.style.width) || width,\n              height: parseInt(wrapper.style.height) || height,\n              anchor: null\n            });\n          }\n        });\n      }\n\n      wrapper.appendChild(titlebar);\n\n      // Corner resize handles (floating, non-maximized)\n      if (canDrag) {\n        dragLib.attachCornerResize(wrapper, api, {\n          onResizeStart: async () => await bringToFront(childId),\n          onResizeEnd: async (finalX, finalY, finalW, finalH) => {\n            await updateChild(childId, { x: finalX, y: finalY, width: finalW, height: finalH, anchor: null });\n          },\n          minWidth: MIN_WINDOW_WIDTH,\n          minHeight: MIN_WINDOW_HEIGHT\n        });\n      }\n\n      // Edge resize handle (docked windows)\n      if (windowIsEdgeAnchored || isEdgeAnchor(effectiveView.anchor)) {\n        dragLib.attachEdgeResize(wrapper, effectiveView.anchor, api, {\n          onResizeEnd: async (finalW, finalH) => {\n            await updateChild(childId, { width: finalW, height: finalH });\n          },\n          minWidth: MIN_DOCKED_WIDTH,\n          minHeight: MIN_DOCKED_HEIGHT\n        });\n      }\n\n      // Content area\n      const contentArea = api.createElement('div', {\n        class: 'window-content',\n        style: 'padding: 15px; overflow: auto; height: calc(100% - 24px);'\n      }, []);\n      contentArea.appendChild(childNode);\n      wrapper.appendChild(contentArea);\n\n      return wrapper;\n    };\n\n    // === Sibling container protocol ===\n    siblingContainer = {\n      id: item.id,\n      addSibling: async (childId, navigateTo = null) => {\n        const freshItem = await api.get(item.id);\n        const freshChildren = freshItem.attachments || [];\n        const existingChild = freshChildren.find(c => c.id === childId);\n\n        if (existingChild) {\n          const wasMinimized = existingChild.view?.minimized;\n          if (wasMinimized) await updateChild(childId, { minimized: false });\n\n          if (!isAnchored(existingChild.view?.anchor)) {\n            const newZ = await bringToFront(childId);\n            if (newZ !== null) {\n              const w = document.querySelector(`[data-parent-id=\"${item.id}\"][data-item-id=\"${childId}\"]`);\n              if (w) w.style.zIndex = newZ;\n            }\n          }\n\n          if (wasMinimized) await api.navigate(api.getCurrentRoot());\n        } else {\n          await api.attach(childId);\n\n          const existingWrappers = document.querySelectorAll(`[data-parent-id=\"${item.id}\"]`);\n          let newX = 50, newY = 50;\n          if (existingWrappers.length > 0) {\n            const lastWrapper = existingWrappers[existingWrappers.length - 1];\n            newX = (parseInt(lastWrapper.style.left) || 0) + 30;\n            newY = (parseInt(lastWrapper.style.top) || 0) + 30;\n          }\n\n          const maxZ = await getMaxZ();\n          const newZ = maxZ + 1;\n          await updateChild(childId, { x: newX, y: newY, z: newZ - baseZ });\n\n          const w = await createWindowForChild(childId, {\n            x: newX, y: newY,\n            width: DEFAULT_WINDOW_WIDTH, height: DEFAULT_WINDOW_HEIGHT,\n            z: newZ - baseZ\n          }, navigateTo);\n\n          const containerEl = document.querySelector(`[data-container-id=\"${item.id}\"]`);\n          const scrollAreaEl = containerEl?.querySelector('[data-scroll-area]');\n          if (scrollAreaEl) scrollAreaEl.appendChild(w);\n        }\n      }\n    };\n\n    // === Render children in parallel ===\n    const childRenderPromises = childrenToRender.map(async (child) => {\n      try {\n        return await createWindowForChild(child.id, child.view || {}, child.view?.navigateTo);\n      } catch (error) {\n        const cv = child.view || {};\n        return api.createElement('div', {\n          style: `position: absolute; left: ${cv.x || 0}px; top: ${cv.y || 0}px; width: ${cv.width || DEFAULT_WINDOW_WIDTH}px; padding: 15px; border: 1px solid var(--color-danger); border-radius: var(--border-radius); background: var(--color-danger-light); color: var(--color-danger); z-index: ${(cv.z || 0) + baseZ};`\n        }, ['Error rendering child: ' + child.id + ' - ' + error.message]);\n      }\n    });\n\n    const allPromises = innerViewPromise ? [innerViewPromise, ...childRenderPromises] : childRenderPromises;\n    const allResults = await Promise.all(allPromises);\n\n    if (innerViewPromise) {\n      const innerDom = allResults[0];\n      if (innerDom) {\n        innerDom.style.flex = '1';\n        innerDom.style.minHeight = '0';\n        background.appendChild(innerDom);\n      }\n      allResults.slice(1).forEach((w, i) => {\n        const target = isAnchored(childrenToRender[i].view?.anchor) ? dockOverlay : scrollArea;\n        target.appendChild(w);\n      });\n    } else {\n      allResults.forEach((w, i) => {\n        const target = isAnchored(childrenToRender[i].view?.anchor) ? dockOverlay : scrollArea;\n        target.appendChild(w);\n      });\n    }\n\n    // Render minimized pills using minimize-lib (single code path)\n    if (minimizedChildren.length > 0) {\n      const childItemCache = new Map();\n      for (const child of minimizedChildren) {\n        try { childItemCache.set(child.id, await api.get(child.id)); } catch (e) { /* skip */ }\n      }\n      minLib.renderMinimizedPills(minimizedChildren, container, api, {\n        getItemName: (child) => {\n          const ci = childItemCache.get(child.id);\n          return ci?.content?.title || ci?.name || child.id;\n        },\n        onRestore: handleRestore\n      });\n    }\n  }\n\n  // SCROLL PRESERVATION: Restore after DOM creation\n  if (scrollStates.size > 0) {\n    const restoreScroll = () => {\n      const newWindows = document.querySelectorAll(`[data-parent-id=\"${item.id}\"]`);\n      newWindows.forEach(w => {\n        const cid = w.getAttribute('data-item-id');\n        const saved = scrollStates.get(cid);\n        if (saved) {\n          const c = w.querySelector('.window-content');\n          if (c) { c.scrollTop = saved.scrollTop; c.scrollLeft = saved.scrollLeft; }\n        }\n      });\n    };\n    requestAnimationFrame(() => requestAnimationFrame(restoreScroll));\n  }\n\n  return container;\n}\n",
+    "_symbols": {
+      "getViewMenuItems": {
+        "name": "getViewMenuItems",
+        "line": 9,
+        "col": 7,
+        "endLine": 44,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(item, api)"
+      },
+      "getViewMenuItems.SPATIAL_CANVAS_ID": {
+        "name": "SPATIAL_CANVAS_ID",
+        "line": 10,
+        "col": 8,
+        "endLine": 10,
+        "endCol": 66,
+        "kind": "variable",
+        "scope": "getViewMenuItems"
+      },
+      "getViewMenuItems.viewConfig": {
+        "name": "viewConfig",
+        "line": 12,
+        "col": 8,
+        "endLine": 12,
+        "endCol": 52,
+        "kind": "variable",
+        "scope": "getViewMenuItems"
+      },
+      "getViewMenuItems.currentInnerViewId": {
+        "name": "currentInnerViewId",
+        "line": 13,
+        "col": 8,
+        "endLine": 13,
+        "endCol": 63,
+        "kind": "variable",
+        "scope": "getViewMenuItems"
+      },
+      "getViewMenuItems.views": {
+        "name": "views",
+        "line": 15,
+        "col": 8,
+        "endLine": 15,
+        "endCol": 45,
+        "kind": "variable",
+        "scope": "getViewMenuItems"
+      },
+      "getViewMenuItems.availableViews": {
+        "name": "availableViews",
+        "line": 17,
+        "col": 8,
+        "endLine": 21,
+        "endCol": 3,
+        "kind": "variable",
+        "scope": "getViewMenuItems"
+      },
+      "getViewMenuItems.sortedViews": {
+        "name": "sortedViews",
+        "line": 23,
+        "col": 8,
+        "endLine": 27,
+        "endCol": 4,
+        "kind": "variable",
+        "scope": "getViewMenuItems"
+      },
+      "getViewMenuItems.items": {
+        "name": "items",
+        "line": 29,
+        "col": 8,
+        "endLine": 29,
+        "endCol": 18,
+        "kind": "variable",
+        "scope": "getViewMenuItems"
+      },
+      "getViewMenuItems.isActive": {
+        "name": "isActive",
+        "line": 32,
+        "col": 10,
+        "endLine": 32,
+        "endCol": 51,
+        "kind": "variable",
+        "scope": "getViewMenuItems"
+      },
+      "getViewMenuItems.label": {
+        "name": "label",
+        "line": 34,
+        "col": 6,
+        "endLine": 34,
+        "endCol": 106,
+        "kind": "property",
+        "scope": "getViewMenuItems"
+      },
+      "getViewMenuItems.checked": {
+        "name": "checked",
+        "line": 35,
+        "col": 6,
+        "endLine": 35,
+        "endCol": 23,
+        "kind": "property",
+        "scope": "getViewMenuItems"
+      },
+      "getViewMenuItems.onClick": {
+        "name": "onClick",
+        "line": 36,
+        "col": 6,
+        "endLine": 39,
+        "endCol": 7,
+        "kind": "property-function",
+        "scope": "getViewMenuItems",
+        "signature": "()"
+      },
+      "getViewMenuItems.onClick.innerView": {
+        "name": "innerView",
+        "line": 37,
+        "col": 37,
+        "endLine": 37,
+        "endCol": 65,
+        "kind": "property",
+        "scope": "getViewMenuItems.onClick"
+      },
+      "getViewMenuItems.onClick.innerView.type": {
+        "name": "type",
+        "line": 37,
+        "col": 50,
+        "endLine": 37,
+        "endCol": 63,
+        "kind": "property",
+        "scope": "getViewMenuItems.onClick.innerView"
+      },
+      "render": {
+        "name": "render",
+        "line": 46,
+        "col": 7,
+        "endLine": 618,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(item, api)"
+      },
+      "render.scrollStates": {
+        "name": "scrollStates",
+        "line": 64,
+        "col": 8,
+        "endLine": 64,
+        "endCol": 32,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.existingWindows": {
+        "name": "existingWindows",
+        "line": 65,
+        "col": 8,
+        "endLine": 65,
+        "endCol": 84,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.childId": {
+        "name": "childId",
+        "line": 67,
+        "col": 10,
+        "endLine": 67,
+        "endCol": 56,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.content": {
+        "name": "content",
+        "line": 68,
+        "col": 10,
+        "endLine": 68,
+        "endCol": 60,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.scrollTop": {
+        "name": "scrollTop",
+        "line": 70,
+        "col": 34,
+        "endLine": 70,
+        "endCol": 62,
+        "kind": "property",
+        "scope": "render"
+      },
+      "render.scrollLeft": {
+        "name": "scrollLeft",
+        "line": 70,
+        "col": 64,
+        "endLine": 70,
+        "endCol": 94,
+        "kind": "property",
+        "scope": "render"
+      },
+      "render.container": {
+        "name": "container",
+        "line": 75,
+        "col": 8,
+        "endLine": 78,
+        "endCol": 8,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.dockOverlay": {
+        "name": "dockOverlay",
+        "line": 81,
+        "col": 8,
+        "endLine": 84,
+        "endCol": 8,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.scrollArea": {
+        "name": "scrollArea",
+        "line": 88,
+        "col": 8,
+        "endLine": 91,
+        "endCol": 8,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.viewConfig": {
+        "name": "viewConfig",
+        "line": 95,
+        "col": 8,
+        "endLine": 95,
+        "endCol": 52,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.innerViewConfig": {
+        "name": "innerViewConfig",
+        "line": 96,
+        "col": 8,
+        "endLine": 96,
+        "endCol": 54,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.background": {
+        "name": "background",
+        "line": 98,
+        "col": 8,
+        "endLine": 101,
+        "endCol": 8,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.innerViewPromise": {
+        "name": "innerViewPromise",
+        "line": 103,
+        "col": 6,
+        "endLine": 103,
+        "endCol": 29,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.innerViewId": {
+        "name": "innerViewId",
+        "line": 105,
+        "col": 10,
+        "endLine": 105,
+        "endCol": 44,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.innerViewModule": {
+        "name": "innerViewModule",
+        "line": 108,
+        "col": 14,
+        "endLine": 108,
+        "endCol": 62,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.hasOwnConfig": {
+        "name": "hasOwnConfig",
+        "line": 111,
+        "col": 16,
+        "endLine": 111,
+        "endCol": 73,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.innerApi": {
+        "name": "innerApi",
+        "line": 112,
+        "col": 16,
+        "endLine": 112,
+        "endCol": 45,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.currentConfig": {
+        "name": "currentConfig",
+        "line": 115,
+        "col": 18,
+        "endLine": 115,
+        "endCol": 65,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.innerView": {
+        "name": "innerView",
+        "line": 116,
+        "col": 41,
+        "endLine": 116,
+        "endCol": 102,
+        "kind": "property",
+        "scope": "render"
+      },
+      "render.style": {
+        "name": "style",
+        "line": 126,
+        "col": 10,
+        "endLine": 126,
+        "endCol": 153,
+        "kind": "property",
+        "scope": "render"
+      },
+      "render.children": {
+        "name": "children",
+        "line": 134,
+        "col": 8,
+        "endLine": 134,
+        "endCol": 41,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.empty": {
+        "name": "empty",
+        "line": 137,
+        "col": 10,
+        "endLine": 139,
+        "endCol": 106,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.innerDom": {
+        "name": "innerDom",
+        "line": 568,
+        "col": 12,
+        "endLine": 568,
+        "endCol": 36,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.updateChild": {
+        "name": "updateChild",
+        "line": 150,
+        "col": 10,
+        "endLine": 160,
+        "endCol": 5,
+        "kind": "function",
+        "scope": "render",
+        "signature": "(childId, viewUpdates)"
+      },
+      "updateChild.freshItem": {
+        "name": "freshItem",
+        "line": 151,
+        "col": 12,
+        "endLine": 151,
+        "endCol": 46,
+        "kind": "variable",
+        "scope": "updateChild"
+      },
+      "updateChild.freshChildren": {
+        "name": "freshChildren",
+        "line": 152,
+        "col": 12,
+        "endLine": 152,
+        "endCol": 55,
+        "kind": "variable",
+        "scope": "updateChild"
+      },
+      "updateChild.updatedChildren": {
+        "name": "updatedChildren",
+        "line": 153,
+        "col": 12,
+        "endLine": 158,
+        "endCol": 8,
+        "kind": "variable",
+        "scope": "updateChild"
+      },
+      "updateChild.attachments": {
+        "name": "attachments",
+        "line": 159,
+        "col": 45,
+        "endLine": 159,
+        "endCol": 73,
+        "kind": "property",
+        "scope": "updateChild"
+      },
+      "updateChild.modified": {
+        "name": "modified",
+        "line": 159,
+        "col": 75,
+        "endLine": 159,
+        "endCol": 95,
+        "kind": "property",
+        "scope": "updateChild"
+      },
+      "render.normalChildren": {
+        "name": "normalChildren",
+        "line": 163,
+        "col": 10,
+        "endLine": 163,
+        "endCol": 89,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.maximizedChildren": {
+        "name": "maximizedChildren",
+        "line": 164,
+        "col": 10,
+        "endLine": 164,
+        "endCol": 91,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.minimizedChildren": {
+        "name": "minimizedChildren",
+        "line": 165,
+        "col": 10,
+        "endLine": 165,
+        "endCol": 69,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.childrenToRender": {
+        "name": "childrenToRender",
+        "line": 166,
+        "col": 10,
+        "endLine": 166,
+        "endCol": 70,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.ANCHOR_Z": {
+        "name": "ANCHOR_Z",
+        "line": 167,
+        "col": 10,
+        "endLine": 167,
+        "endCol": 22,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.baseZ": {
+        "name": "baseZ",
+        "line": 168,
+        "col": 10,
+        "endLine": 168,
+        "endCol": 19,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.getMaxZ": {
+        "name": "getMaxZ",
+        "line": 171,
+        "col": 10,
+        "endLine": 174,
+        "endCol": 5,
+        "kind": "function",
+        "scope": "render",
+        "signature": "()"
+      },
+      "getMaxZ.freshItem": {
+        "name": "freshItem",
+        "line": 172,
+        "col": 12,
+        "endLine": 172,
+        "endCol": 46,
+        "kind": "variable",
+        "scope": "getMaxZ"
+      },
+      "render.bringToFront": {
+        "name": "bringToFront",
+        "line": 176,
+        "col": 10,
+        "endLine": 183,
+        "endCol": 5,
+        "kind": "function",
+        "scope": "render",
+        "signature": "(childId)"
+      },
+      "bringToFront.freshItem": {
+        "name": "freshItem",
+        "line": 177,
+        "col": 12,
+        "endLine": 177,
+        "endCol": 46,
+        "kind": "variable",
+        "scope": "bringToFront"
+      },
+      "bringToFront.freshChildren": {
+        "name": "freshChildren",
+        "line": 178,
+        "col": 12,
+        "endLine": 178,
+        "endCol": 55,
+        "kind": "variable",
+        "scope": "bringToFront"
+      },
+      "bringToFront.result": {
+        "name": "result",
+        "line": 179,
+        "col": 12,
+        "endLine": 179,
+        "endCol": 82,
+        "kind": "variable",
+        "scope": "bringToFront"
+      },
+      "bringToFront.z": {
+        "name": "z",
+        "line": 181,
+        "col": 35,
+        "endLine": 181,
+        "endCol": 55,
+        "kind": "property",
+        "scope": "bringToFront"
+      },
+      "render.onCycle": {
+        "name": "onCycle",
+        "line": 186,
+        "col": 10,
+        "endLine": 189,
+        "endCol": 97,
+        "kind": "function",
+        "scope": "render",
+        "signature": "(cycleItem)"
+      },
+      "onCycle.class": {
+        "name": "class",
+        "line": 187,
+        "col": 6,
+        "endLine": 187,
+        "endCol": 27,
+        "kind": "property",
+        "scope": "onCycle"
+      },
+      "onCycle.style": {
+        "name": "style",
+        "line": 188,
+        "col": 6,
+        "endLine": 188,
+        "endCol": 222,
+        "kind": "property",
+        "scope": "onCycle"
+      },
+      "render.siblingContainer": {
+        "name": "siblingContainer",
+        "line": 191,
+        "col": 8,
+        "endLine": 191,
+        "endCol": 24,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.handleRestore": {
+        "name": "handleRestore",
+        "line": 194,
+        "col": 10,
+        "endLine": 200,
+        "endCol": 5,
+        "kind": "function",
+        "scope": "render",
+        "signature": "(childId)"
+      },
+      "handleRestore.freshItem": {
+        "name": "freshItem",
+        "line": 195,
+        "col": 12,
+        "endLine": 195,
+        "endCol": 46,
+        "kind": "variable",
+        "scope": "handleRestore"
+      },
+      "handleRestore.freshChildren": {
+        "name": "freshChildren",
+        "line": 196,
+        "col": 12,
+        "endLine": 196,
+        "endCol": 55,
+        "kind": "variable",
+        "scope": "handleRestore"
+      },
+      "handleRestore.attachments": {
+        "name": "attachments",
+        "line": 198,
+        "col": 45,
+        "endLine": 198,
+        "endCol": 73,
+        "kind": "property",
+        "scope": "handleRestore"
+      },
+      "handleRestore.modified": {
+        "name": "modified",
+        "line": 198,
+        "col": 75,
+        "endLine": 198,
+        "endCol": 95,
+        "kind": "property",
+        "scope": "handleRestore"
+      },
+      "render.createWindowForChild": {
+        "name": "createWindowForChild",
+        "line": 203,
+        "col": 10,
+        "endLine": 501,
+        "endCol": 5,
+        "kind": "function",
+        "scope": "render",
+        "signature": "(childId, childView = ..., navigateTo = ...)"
+      },
+      "createWindowForChild.containerRect": {
+        "name": "containerRect",
+        "line": 205,
+        "col": 12,
+        "endLine": 205,
+        "endCol": 61,
+        "kind": "variable",
+        "scope": "createWindowForChild"
+      },
+      "createWindowForChild.containerWidth": {
+        "name": "containerWidth",
+        "line": 206,
+        "col": 12,
+        "endLine": 206,
+        "endCol": 56,
+        "kind": "variable",
+        "scope": "createWindowForChild"
+      },
+      "createWindowForChild.containerHeight": {
+        "name": "containerHeight",
+        "line": 207,
+        "col": 12,
+        "endLine": 207,
+        "endCol": 57,
+        "kind": "variable",
+        "scope": "createWindowForChild"
+      },
+      "createWindowForChild.anchor": {
+        "name": "anchor",
+        "line": 219,
+        "col": 37,
+        "endLine": 219,
+        "endCol": 61,
+        "kind": "property",
+        "scope": "createWindowForChild"
+      },
+      "createWindowForChild.windowIsAnchored": {
+        "name": "windowIsAnchored",
+        "line": 210,
+        "col": 12,
+        "endLine": 210,
+        "endCol": 49,
+        "kind": "variable",
+        "scope": "createWindowForChild"
+      },
+      "createWindowForChild.windowIsCornerAnchored": {
+        "name": "windowIsCornerAnchored",
+        "line": 211,
+        "col": 12,
+        "endLine": 211,
+        "endCol": 59,
+        "kind": "variable",
+        "scope": "createWindowForChild"
+      },
+      "createWindowForChild.windowIsEdgeAnchored": {
+        "name": "windowIsEdgeAnchored",
+        "line": 212,
+        "col": 12,
+        "endLine": 212,
+        "endCol": 55,
+        "kind": "variable",
+        "scope": "createWindowForChild"
+      },
+      "createWindowForChild.effectiveView": {
+        "name": "effectiveView",
+        "line": 303,
+        "col": 10,
+        "endLine": 303,
+        "endCol": 23,
+        "kind": "property",
+        "scope": "createWindowForChild"
+      },
+      "createWindowForChild.pinResult": {
+        "name": "pinResult",
+        "line": 217,
+        "col": 14,
+        "endLine": 217,
+        "endCol": 88,
+        "kind": "variable",
+        "scope": "createWindowForChild"
+      },
+      "createWindowForChild.x": {
+        "name": "x",
+        "line": 223,
+        "col": 10,
+        "endLine": 223,
+        "endCol": 11,
+        "kind": "variable",
+        "scope": "createWindowForChild"
+      },
+      "createWindowForChild.y": {
+        "name": "y",
+        "line": 223,
+        "col": 13,
+        "endLine": 223,
+        "endCol": 14,
+        "kind": "variable",
+        "scope": "createWindowForChild"
+      },
+      "createWindowForChild.pinned": {
+        "name": "pinned",
+        "line": 219,
+        "col": 95,
+        "endLine": 219,
+        "endCol": 107,
+        "kind": "property",
+        "scope": "createWindowForChild"
+      },
+      "createWindowForChild.width": {
+        "name": "width",
+        "line": 223,
+        "col": 16,
+        "endLine": 223,
+        "endCol": 21,
+        "kind": "variable",
+        "scope": "createWindowForChild"
+      },
+      "createWindowForChild.height": {
+        "name": "height",
+        "line": 223,
+        "col": 23,
+        "endLine": 223,
+        "endCol": 29,
+        "kind": "variable",
+        "scope": "createWindowForChild"
+      },
+      "createWindowForChild.effectiveAnchor": {
+        "name": "effectiveAnchor",
+        "line": 224,
+        "col": 12,
+        "endLine": 224,
+        "endCol": 50,
+        "kind": "variable",
+        "scope": "createWindowForChild"
+      },
+      "createWindowForChild.anchoredInsetStyle": {
+        "name": "anchoredInsetStyle",
+        "line": 225,
+        "col": 12,
+        "endLine": 225,
+        "endCol": 83,
+        "kind": "variable",
+        "scope": "createWindowForChild"
+      },
+      "createWindowForChild.z": {
+        "name": "z",
+        "line": 239,
+        "col": 12,
+        "endLine": 241,
+        "endCol": 91,
+        "kind": "variable",
+        "scope": "createWindowForChild"
+      },
+      "createWindowForChild.isMaximized": {
+        "name": "isMaximized",
+        "line": 242,
+        "col": 12,
+        "endLine": 242,
+        "endCol": 58,
+        "kind": "variable",
+        "scope": "createWindowForChild"
+      },
+      "createWindowForChild.childItem": {
+        "name": "childItem",
+        "line": 244,
+        "col": 12,
+        "endLine": 244,
+        "endCol": 46,
+        "kind": "variable",
+        "scope": "createWindowForChild"
+      },
+      "createWindowForChild.childNode": {
+        "name": "childNode",
+        "line": 245,
+        "col": 12,
+        "endLine": 245,
+        "endCol": 139,
+        "kind": "variable",
+        "scope": "createWindowForChild"
+      },
+      "createWindowForChild.wrapperStyle": {
+        "name": "wrapperStyle",
+        "line": 248,
+        "col": 10,
+        "endLine": 248,
+        "endCol": 22,
+        "kind": "variable",
+        "scope": "createWindowForChild"
+      },
+      "createWindowForChild.wrapper": {
+        "name": "wrapper",
+        "line": 302,
+        "col": 10,
+        "endLine": 302,
+        "endCol": 17,
+        "kind": "property",
+        "scope": "createWindowForChild"
+      },
+      "createWindowForChild.newZ": {
+        "name": "newZ",
+        "line": 276,
+        "col": 18,
+        "endLine": 276,
+        "endCol": 52,
+        "kind": "variable",
+        "scope": "createWindowForChild"
+      },
+      "createWindowForChild.canDrag": {
+        "name": "canDrag",
+        "line": 282,
+        "col": 12,
+        "endLine": 282,
+        "endCol": 80,
+        "kind": "variable",
+        "scope": "createWindowForChild"
+      },
+      "createWindowForChild.titlebar": {
+        "name": "titlebar",
+        "line": 285,
+        "col": 12,
+        "endLine": 288,
+        "endCol": 12,
+        "kind": "variable",
+        "scope": "createWindowForChild"
+      },
+      "createWindowForChild.menuBtn": {
+        "name": "menuBtn",
+        "line": 291,
+        "col": 12,
+        "endLine": 294,
+        "endCol": 20,
+        "kind": "variable",
+        "scope": "createWindowForChild"
+      },
+      "createWindowForChild.isAnchored": {
+        "name": "isAnchored",
+        "line": 299,
+        "col": 10,
+        "endLine": 299,
+        "endCol": 64,
+        "kind": "property",
+        "scope": "createWindowForChild"
+      },
+      "createWindowForChild.isCornerAnchored": {
+        "name": "isCornerAnchored",
+        "line": 300,
+        "col": 10,
+        "endLine": 300,
+        "endCol": 90,
+        "kind": "property",
+        "scope": "createWindowForChild"
+      },
+      "createWindowForChild.isEdgeAnchored": {
+        "name": "isEdgeAnchored",
+        "line": 301,
+        "col": 10,
+        "endLine": 301,
+        "endCol": 84,
+        "kind": "property",
+        "scope": "createWindowForChild"
+      },
+      "createWindowForChild.onPin": {
+        "name": "onPin",
+        "line": 304,
+        "col": 10,
+        "endLine": 316,
+        "endCol": 11,
+        "kind": "property-function",
+        "scope": "createWindowForChild",
+        "signature": "(w)"
+      },
+      "createWindowForChild.onPin.cEl": {
+        "name": "cEl",
+        "line": 305,
+        "col": 18,
+        "endLine": 305,
+        "endCol": 39,
+        "kind": "variable",
+        "scope": "createWindowForChild.onPin"
+      },
+      "createWindowForChild.onPin.cW": {
+        "name": "cW",
+        "line": 306,
+        "col": 18,
+        "endLine": 306,
+        "endCol": 51,
+        "kind": "variable",
+        "scope": "createWindowForChild.onPin"
+      },
+      "createWindowForChild.onPin.cH": {
+        "name": "cH",
+        "line": 307,
+        "col": 18,
+        "endLine": 307,
+        "endCol": 51,
+        "kind": "variable",
+        "scope": "createWindowForChild.onPin"
+      },
+      "createWindowForChild.onPin.pinResult": {
+        "name": "pinResult",
+        "line": 308,
+        "col": 18,
+        "endLine": 313,
+        "endCol": 22,
+        "kind": "variable",
+        "scope": "createWindowForChild.onPin"
+      },
+      "createWindowForChild.onPin.anchor": {
+        "name": "anchor",
+        "line": 314,
+        "col": 41,
+        "endLine": 314,
+        "endCol": 65,
+        "kind": "property",
+        "scope": "createWindowForChild.onPin"
+      },
+      "createWindowForChild.onPin.x": {
+        "name": "x",
+        "line": 314,
+        "col": 67,
+        "endLine": 314,
+        "endCol": 81,
+        "kind": "property",
+        "scope": "createWindowForChild.onPin"
+      },
+      "createWindowForChild.onPin.y": {
+        "name": "y",
+        "line": 314,
+        "col": 83,
+        "endLine": 314,
+        "endCol": 97,
+        "kind": "property",
+        "scope": "createWindowForChild.onPin"
+      },
+      "createWindowForChild.onPin.z": {
+        "name": "z",
+        "line": 314,
+        "col": 99,
+        "endLine": 314,
+        "endCol": 103,
+        "kind": "property",
+        "scope": "createWindowForChild.onPin"
+      },
+      "createWindowForChild.onPin.pinned": {
+        "name": "pinned",
+        "line": 314,
+        "col": 105,
+        "endLine": 314,
+        "endCol": 117,
+        "kind": "property",
+        "scope": "createWindowForChild.onPin"
+      },
+      "createWindowForChild.onUnpin": {
+        "name": "onUnpin",
+        "line": 317,
+        "col": 10,
+        "endLine": 325,
+        "endCol": 11,
+        "kind": "property-function",
+        "scope": "createWindowForChild",
+        "signature": "(w)"
+      },
+      "createWindowForChild.onUnpin.cEl": {
+        "name": "cEl",
+        "line": 318,
+        "col": 18,
+        "endLine": 318,
+        "endCol": 39,
+        "kind": "variable",
+        "scope": "createWindowForChild.onUnpin"
+      },
+      "createWindowForChild.onUnpin.cW": {
+        "name": "cW",
+        "line": 319,
+        "col": 18,
+        "endLine": 319,
+        "endCol": 51,
+        "kind": "variable",
+        "scope": "createWindowForChild.onUnpin"
+      },
+      "createWindowForChild.onUnpin.cH": {
+        "name": "cH",
+        "line": 320,
+        "col": 18,
+        "endLine": 320,
+        "endCol": 51,
+        "kind": "variable",
+        "scope": "createWindowForChild.onUnpin"
+      },
+      "createWindowForChild.onUnpin.absPos": {
+        "name": "absPos",
+        "line": 321,
+        "col": 18,
+        "endLine": 321,
+        "endCol": 75,
+        "kind": "variable",
+        "scope": "createWindowForChild.onUnpin"
+      },
+      "createWindowForChild.onUnpin.maxZ": {
+        "name": "maxZ",
+        "line": 322,
+        "col": 18,
+        "endLine": 322,
+        "endCol": 40,
+        "kind": "variable",
+        "scope": "createWindowForChild.onUnpin"
+      },
+      "createWindowForChild.onUnpin.anchor": {
+        "name": "anchor",
+        "line": 323,
+        "col": 41,
+        "endLine": 323,
+        "endCol": 53,
+        "kind": "property",
+        "scope": "createWindowForChild.onUnpin"
+      },
+      "createWindowForChild.onUnpin.x": {
+        "name": "x",
+        "line": 323,
+        "col": 55,
+        "endLine": 323,
+        "endCol": 69,
+        "kind": "property",
+        "scope": "createWindowForChild.onUnpin"
+      },
+      "createWindowForChild.onUnpin.y": {
+        "name": "y",
+        "line": 323,
+        "col": 71,
+        "endLine": 323,
+        "endCol": 84,
+        "kind": "property",
+        "scope": "createWindowForChild.onUnpin"
+      },
+      "createWindowForChild.onUnpin.width": {
+        "name": "width",
+        "line": 323,
+        "col": 86,
+        "endLine": 323,
+        "endCol": 105,
+        "kind": "property",
+        "scope": "createWindowForChild.onUnpin"
+      },
+      "createWindowForChild.onUnpin.height": {
+        "name": "height",
+        "line": 323,
+        "col": 107,
+        "endLine": 323,
+        "endCol": 128,
+        "kind": "property",
+        "scope": "createWindowForChild.onUnpin"
+      },
+      "createWindowForChild.onUnpin.z": {
+        "name": "z",
+        "line": 323,
+        "col": 130,
+        "endLine": 323,
+        "endCol": 149,
+        "kind": "property",
+        "scope": "createWindowForChild.onUnpin"
+      },
+      "createWindowForChild.onUndock": {
+        "name": "onUndock",
+        "line": 326,
+        "col": 10,
+        "endLine": 337,
+        "endCol": 11,
+        "kind": "property-function",
+        "scope": "createWindowForChild",
+        "signature": "(w)"
+      },
+      "createWindowForChild.onUndock.cEl": {
+        "name": "cEl",
+        "line": 327,
+        "col": 18,
+        "endLine": 327,
+        "endCol": 39,
+        "kind": "variable",
+        "scope": "createWindowForChild.onUndock"
+      },
+      "createWindowForChild.onUndock.cW": {
+        "name": "cW",
+        "line": 328,
+        "col": 18,
+        "endLine": 328,
+        "endCol": 51,
+        "kind": "variable",
+        "scope": "createWindowForChild.onUndock"
+      },
+      "createWindowForChild.onUndock.cH": {
+        "name": "cH",
+        "line": 329,
+        "col": 18,
+        "endLine": 329,
+        "endCol": 51,
+        "kind": "variable",
+        "scope": "createWindowForChild.onUndock"
+      },
+      "createWindowForChild.onUndock.currentLeft": {
+        "name": "currentLeft",
+        "line": 330,
+        "col": 18,
+        "endLine": 330,
+        "endCol": 59,
+        "kind": "variable",
+        "scope": "createWindowForChild.onUndock"
+      },
+      "createWindowForChild.onUndock.currentTop": {
+        "name": "currentTop",
+        "line": 331,
+        "col": 18,
+        "endLine": 331,
+        "endCol": 57,
+        "kind": "variable",
+        "scope": "createWindowForChild.onUndock"
+      },
+      "createWindowForChild.onUndock.currentWidth": {
+        "name": "currentWidth",
+        "line": 332,
+        "col": 18,
+        "endLine": 332,
+        "endCol": 80,
+        "kind": "variable",
+        "scope": "createWindowForChild.onUndock"
+      },
+      "createWindowForChild.onUndock.currentHeight": {
+        "name": "currentHeight",
+        "line": 333,
+        "col": 18,
+        "endLine": 333,
+        "endCol": 83,
+        "kind": "variable",
+        "scope": "createWindowForChild.onUndock"
+      },
+      "createWindowForChild.onUndock.maxZ": {
+        "name": "maxZ",
+        "line": 334,
+        "col": 18,
+        "endLine": 334,
+        "endCol": 40,
+        "kind": "variable",
+        "scope": "createWindowForChild.onUndock"
+      },
+      "createWindowForChild.onUndock.anchor": {
+        "name": "anchor",
+        "line": 335,
+        "col": 41,
+        "endLine": 335,
+        "endCol": 53,
+        "kind": "property",
+        "scope": "createWindowForChild.onUndock"
+      },
+      "createWindowForChild.onUndock.x": {
+        "name": "x",
+        "line": 335,
+        "col": 55,
+        "endLine": 335,
+        "endCol": 69,
+        "kind": "property",
+        "scope": "createWindowForChild.onUndock"
+      },
+      "createWindowForChild.onUndock.y": {
+        "name": "y",
+        "line": 335,
+        "col": 71,
+        "endLine": 335,
+        "endCol": 84,
+        "kind": "property",
+        "scope": "createWindowForChild.onUndock"
+      },
+      "createWindowForChild.onUndock.width": {
+        "name": "width",
+        "line": 335,
+        "col": 86,
+        "endLine": 335,
+        "endCol": 105,
+        "kind": "property",
+        "scope": "createWindowForChild.onUndock"
+      },
+      "createWindowForChild.onUndock.height": {
+        "name": "height",
+        "line": 335,
+        "col": 107,
+        "endLine": 335,
+        "endCol": 128,
+        "kind": "property",
+        "scope": "createWindowForChild.onUndock"
+      },
+      "createWindowForChild.onUndock.z": {
+        "name": "z",
+        "line": 335,
+        "col": 130,
+        "endLine": 335,
+        "endCol": 149,
+        "kind": "property",
+        "scope": "createWindowForChild.onUndock"
+      },
+      "createWindowForChild.onDock": {
+        "name": "onDock",
+        "line": 338,
+        "col": 10,
+        "endLine": 343,
+        "endCol": 11,
+        "kind": "property-function",
+        "scope": "createWindowForChild",
+        "signature": "(pos, w)"
+      },
+      "createWindowForChild.onDock.currentWidth": {
+        "name": "currentWidth",
+        "line": 339,
+        "col": 18,
+        "endLine": 339,
+        "endCol": 80,
+        "kind": "variable",
+        "scope": "createWindowForChild.onDock"
+      },
+      "createWindowForChild.onDock.currentHeight": {
+        "name": "currentHeight",
+        "line": 340,
+        "col": 18,
+        "endLine": 340,
+        "endCol": 83,
+        "kind": "variable",
+        "scope": "createWindowForChild.onDock"
+      },
+      "createWindowForChild.onDock.anchor": {
+        "name": "anchor",
+        "line": 341,
+        "col": 41,
+        "endLine": 341,
+        "endCol": 52,
+        "kind": "property",
+        "scope": "createWindowForChild.onDock"
+      },
+      "createWindowForChild.onDock.x": {
+        "name": "x",
+        "line": 341,
+        "col": 54,
+        "endLine": 341,
+        "endCol": 58,
+        "kind": "property",
+        "scope": "createWindowForChild.onDock"
+      },
+      "createWindowForChild.onDock.y": {
+        "name": "y",
+        "line": 341,
+        "col": 60,
+        "endLine": 341,
+        "endCol": 64,
+        "kind": "property",
+        "scope": "createWindowForChild.onDock"
+      },
+      "createWindowForChild.onDock.width": {
+        "name": "width",
+        "line": 341,
+        "col": 66,
+        "endLine": 341,
+        "endCol": 85,
+        "kind": "property",
+        "scope": "createWindowForChild.onDock"
+      },
+      "createWindowForChild.onDock.height": {
+        "name": "height",
+        "line": 341,
+        "col": 87,
+        "endLine": 341,
+        "endCol": 108,
+        "kind": "property",
+        "scope": "createWindowForChild.onDock"
+      },
+      "createWindowForChild.onDock.z": {
+        "name": "z",
+        "line": 341,
+        "col": 110,
+        "endLine": 341,
+        "endCol": 114,
+        "kind": "property",
+        "scope": "createWindowForChild.onDock"
+      },
+      "createWindowForChild.onDock.minimized": {
+        "name": "minimized",
+        "line": 341,
+        "col": 116,
+        "endLine": 341,
+        "endCol": 132,
+        "kind": "property",
+        "scope": "createWindowForChild.onDock"
+      },
+      "createWindowForChild.onDock.maximized": {
+        "name": "maximized",
+        "line": 341,
+        "col": 134,
+        "endLine": 341,
+        "endCol": 150,
+        "kind": "property",
+        "scope": "createWindowForChild.onDock"
+      },
+      "createWindowForChild.onDock.pinned": {
+        "name": "pinned",
+        "line": 341,
+        "col": 152,
+        "endLine": 341,
+        "endCol": 164,
+        "kind": "property",
+        "scope": "createWindowForChild.onDock"
+      },
+      "createWindowForChild.style": {
+        "name": "style",
+        "line": 440,
+        "col": 10,
+        "endLine": 440,
+        "endCol": 246,
+        "kind": "property",
+        "scope": "createWindowForChild"
+      },
+      "createWindowForChild.buttonContainer": {
+        "name": "buttonContainer",
+        "line": 354,
+        "col": 12,
+        "endLine": 356,
+        "endCol": 12,
+        "kind": "variable",
+        "scope": "createWindowForChild"
+      },
+      "createWindowForChild.anchorIndicator": {
+        "name": "anchorIndicator",
+        "line": 360,
+        "col": 14,
+        "endLine": 376,
+        "endCol": 28,
+        "kind": "variable",
+        "scope": "createWindowForChild"
+      },
+      "createWindowForChild.minimizeBtn": {
+        "name": "minimizeBtn",
+        "line": 382,
+        "col": 14,
+        "endLine": 395,
+        "endCol": 22,
+        "kind": "variable",
+        "scope": "createWindowForChild"
+      },
+      "createWindowForChild.maxBtn": {
+        "name": "maxBtn",
+        "line": 401,
+        "col": 14,
+        "endLine": 433,
+        "endCol": 47,
+        "kind": "variable",
+        "scope": "createWindowForChild"
+      },
+      "createWindowForChild.title": {
+        "name": "title",
+        "line": 441,
+        "col": 10,
+        "endLine": 441,
+        "endCol": 24,
+        "kind": "property",
+        "scope": "createWindowForChild"
+      },
+      "createWindowForChild.onclick": {
+        "name": "onclick",
+        "line": 442,
+        "col": 10,
+        "endLine": 446,
+        "endCol": 11,
+        "kind": "property-function",
+        "scope": "createWindowForChild",
+        "signature": "(clickE)"
+      },
+      "createWindowForChild.onDragStart": {
+        "name": "onDragStart",
+        "line": 455,
+        "col": 10,
+        "endLine": 455,
+        "endCol": 62,
+        "kind": "property-function",
+        "scope": "createWindowForChild",
+        "signature": "()"
+      },
+      "createWindowForChild.onDragEnd": {
+        "name": "onDragEnd",
+        "line": 456,
+        "col": 10,
+        "endLine": 463,
+        "endCol": 11,
+        "kind": "property-function",
+        "scope": "createWindowForChild",
+        "signature": "(finalX, finalY)"
+      },
+      "createWindowForChild.onDragEnd.x": {
+        "name": "x",
+        "line": 458,
+        "col": 14,
+        "endLine": 458,
+        "endCol": 23,
+        "kind": "property",
+        "scope": "createWindowForChild.onDragEnd"
+      },
+      "createWindowForChild.onDragEnd.y": {
+        "name": "y",
+        "line": 458,
+        "col": 25,
+        "endLine": 458,
+        "endCol": 34,
+        "kind": "property",
+        "scope": "createWindowForChild.onDragEnd"
+      },
+      "createWindowForChild.onDragEnd.width": {
+        "name": "width",
+        "line": 459,
+        "col": 14,
+        "endLine": 459,
+        "endCol": 59,
+        "kind": "property",
+        "scope": "createWindowForChild.onDragEnd"
+      },
+      "createWindowForChild.onDragEnd.height": {
+        "name": "height",
+        "line": 460,
+        "col": 14,
+        "endLine": 460,
+        "endCol": 62,
+        "kind": "property",
+        "scope": "createWindowForChild.onDragEnd"
+      },
+      "createWindowForChild.onDragEnd.anchor": {
+        "name": "anchor",
+        "line": 461,
+        "col": 14,
+        "endLine": 461,
+        "endCol": 26,
+        "kind": "property",
+        "scope": "createWindowForChild.onDragEnd"
+      },
+      "createWindowForChild.onResizeStart": {
+        "name": "onResizeStart",
+        "line": 472,
+        "col": 10,
+        "endLine": 472,
+        "endCol": 64,
+        "kind": "property-function",
+        "scope": "createWindowForChild",
+        "signature": "()"
+      },
+      "createWindowForChild.onResizeEnd": {
+        "name": "onResizeEnd",
+        "line": 484,
+        "col": 10,
+        "endLine": 486,
+        "endCol": 11,
+        "kind": "property-function",
+        "scope": "createWindowForChild",
+        "signature": "(finalW, finalH)"
+      },
+      "createWindowForChild.onResizeEnd.x": {
+        "name": "x",
+        "line": 474,
+        "col": 41,
+        "endLine": 474,
+        "endCol": 50,
+        "kind": "property",
+        "scope": "createWindowForChild.onResizeEnd"
+      },
+      "createWindowForChild.onResizeEnd.y": {
+        "name": "y",
+        "line": 474,
+        "col": 52,
+        "endLine": 474,
+        "endCol": 61,
+        "kind": "property",
+        "scope": "createWindowForChild.onResizeEnd"
+      },
+      "createWindowForChild.onResizeEnd.width": {
+        "name": "width",
+        "line": 485,
+        "col": 41,
+        "endLine": 485,
+        "endCol": 54,
+        "kind": "property",
+        "scope": "createWindowForChild.onResizeEnd"
+      },
+      "createWindowForChild.onResizeEnd.height": {
+        "name": "height",
+        "line": 485,
+        "col": 56,
+        "endLine": 485,
+        "endCol": 70,
+        "kind": "property",
+        "scope": "createWindowForChild.onResizeEnd"
+      },
+      "createWindowForChild.onResizeEnd.anchor": {
+        "name": "anchor",
+        "line": 474,
+        "col": 94,
+        "endLine": 474,
+        "endCol": 106,
+        "kind": "property",
+        "scope": "createWindowForChild.onResizeEnd"
+      },
+      "createWindowForChild.minWidth": {
+        "name": "minWidth",
+        "line": 487,
+        "col": 10,
+        "endLine": 487,
+        "endCol": 36,
+        "kind": "property",
+        "scope": "createWindowForChild"
+      },
+      "createWindowForChild.minHeight": {
+        "name": "minHeight",
+        "line": 488,
+        "col": 10,
+        "endLine": 488,
+        "endCol": 38,
+        "kind": "property",
+        "scope": "createWindowForChild"
+      },
+      "createWindowForChild.contentArea": {
+        "name": "contentArea",
+        "line": 493,
+        "col": 12,
+        "endLine": 496,
+        "endCol": 12,
+        "kind": "variable",
+        "scope": "createWindowForChild"
+      },
+      "render.id": {
+        "name": "id",
+        "line": 505,
+        "col": 6,
+        "endLine": 505,
+        "endCol": 17,
+        "kind": "property",
+        "scope": "render"
+      },
+      "render.addSibling": {
+        "name": "addSibling",
+        "line": 506,
+        "col": 6,
+        "endLine": 549,
+        "endCol": 7,
+        "kind": "property-function",
+        "scope": "render",
+        "signature": "(childId, navigateTo = ...)"
+      },
+      "render.addSibling.freshItem": {
+        "name": "freshItem",
+        "line": 507,
+        "col": 14,
+        "endLine": 507,
+        "endCol": 48,
+        "kind": "variable",
+        "scope": "render.addSibling"
+      },
+      "render.addSibling.freshChildren": {
+        "name": "freshChildren",
+        "line": 508,
+        "col": 14,
+        "endLine": 508,
+        "endCol": 57,
+        "kind": "variable",
+        "scope": "render.addSibling"
+      },
+      "render.addSibling.existingChild": {
+        "name": "existingChild",
+        "line": 509,
+        "col": 14,
+        "endLine": 509,
+        "endCol": 71,
+        "kind": "variable",
+        "scope": "render.addSibling"
+      },
+      "render.addSibling.wasMinimized": {
+        "name": "wasMinimized",
+        "line": 512,
+        "col": 16,
+        "endLine": 512,
+        "endCol": 60,
+        "kind": "variable",
+        "scope": "render.addSibling"
+      },
+      "render.addSibling.minimized": {
+        "name": "minimized",
+        "line": 513,
+        "col": 57,
+        "endLine": 513,
+        "endCol": 73,
+        "kind": "property",
+        "scope": "render.addSibling"
+      },
+      "render.addSibling.newZ": {
+        "name": "newZ",
+        "line": 536,
+        "col": 16,
+        "endLine": 536,
+        "endCol": 31,
+        "kind": "variable",
+        "scope": "render.addSibling"
+      },
+      "render.addSibling.w": {
+        "name": "w",
+        "line": 539,
+        "col": 16,
+        "endLine": 543,
+        "endCol": 24,
+        "kind": "variable",
+        "scope": "render.addSibling"
+      },
+      "render.addSibling.existingWrappers": {
+        "name": "existingWrappers",
+        "line": 527,
+        "col": 16,
+        "endLine": 527,
+        "endCol": 93,
+        "kind": "variable",
+        "scope": "render.addSibling"
+      },
+      "render.addSibling.newX": {
+        "name": "newX",
+        "line": 528,
+        "col": 14,
+        "endLine": 528,
+        "endCol": 23,
+        "kind": "variable",
+        "scope": "render.addSibling"
+      },
+      "render.addSibling.newY": {
+        "name": "newY",
+        "line": 528,
+        "col": 25,
+        "endLine": 528,
+        "endCol": 34,
+        "kind": "variable",
+        "scope": "render.addSibling"
+      },
+      "render.addSibling.lastWrapper": {
+        "name": "lastWrapper",
+        "line": 530,
+        "col": 18,
+        "endLine": 530,
+        "endCol": 77,
+        "kind": "variable",
+        "scope": "render.addSibling"
+      },
+      "render.addSibling.maxZ": {
+        "name": "maxZ",
+        "line": 535,
+        "col": 16,
+        "endLine": 535,
+        "endCol": 38,
+        "kind": "variable",
+        "scope": "render.addSibling"
+      },
+      "render.addSibling.x": {
+        "name": "x",
+        "line": 537,
+        "col": 39,
+        "endLine": 537,
+        "endCol": 46,
+        "kind": "property",
+        "scope": "render.addSibling"
+      },
+      "render.addSibling.y": {
+        "name": "y",
+        "line": 537,
+        "col": 48,
+        "endLine": 537,
+        "endCol": 55,
+        "kind": "property",
+        "scope": "render.addSibling"
+      },
+      "render.addSibling.z": {
+        "name": "z",
+        "line": 537,
+        "col": 57,
+        "endLine": 537,
+        "endCol": 72,
+        "kind": "property",
+        "scope": "render.addSibling"
+      },
+      "render.addSibling.containerEl": {
+        "name": "containerEl",
+        "line": 545,
+        "col": 16,
+        "endLine": 545,
+        "endCol": 88,
+        "kind": "variable",
+        "scope": "render.addSibling"
+      },
+      "render.addSibling.scrollAreaEl": {
+        "name": "scrollAreaEl",
+        "line": 546,
+        "col": 16,
+        "endLine": 546,
+        "endCol": 79,
+        "kind": "variable",
+        "scope": "render.addSibling"
+      },
+      "render.childRenderPromises": {
+        "name": "childRenderPromises",
+        "line": 553,
+        "col": 10,
+        "endLine": 562,
+        "endCol": 6,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.allPromises": {
+        "name": "allPromises",
+        "line": 564,
+        "col": 10,
+        "endLine": 564,
+        "endCol": 107,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.allResults": {
+        "name": "allResults",
+        "line": 565,
+        "col": 10,
+        "endLine": 565,
+        "endCol": 53,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.target": {
+        "name": "target",
+        "line": 580,
+        "col": 14,
+        "endLine": 580,
+        "endCol": 94,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.childItemCache": {
+        "name": "childItemCache",
+        "line": 587,
+        "col": 12,
+        "endLine": 587,
+        "endCol": 38,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.child": {
+        "name": "child",
+        "line": 588,
+        "col": 17,
+        "endLine": 588,
+        "endCol": 22,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.getItemName": {
+        "name": "getItemName",
+        "line": 592,
+        "col": 8,
+        "endLine": 595,
+        "endCol": 9,
+        "kind": "property-function",
+        "scope": "render",
+        "signature": "(child)"
+      },
+      "render.getItemName.ci": {
+        "name": "ci",
+        "line": 593,
+        "col": 16,
+        "endLine": 593,
+        "endCol": 49,
+        "kind": "variable",
+        "scope": "render.getItemName"
+      },
+      "render.onRestore": {
+        "name": "onRestore",
+        "line": 596,
+        "col": 8,
+        "endLine": 596,
+        "endCol": 32,
+        "kind": "property",
+        "scope": "render"
+      },
+      "render.restoreScroll": {
+        "name": "restoreScroll",
+        "line": 603,
+        "col": 10,
+        "endLine": 613,
+        "endCol": 5,
+        "kind": "function",
+        "scope": "render",
+        "signature": "()"
+      },
+      "restoreScroll.newWindows": {
+        "name": "newWindows",
+        "line": 604,
+        "col": 12,
+        "endLine": 604,
+        "endCol": 83,
+        "kind": "variable",
+        "scope": "restoreScroll"
+      },
+      "restoreScroll.cid": {
+        "name": "cid",
+        "line": 606,
+        "col": 14,
+        "endLine": 606,
+        "endCol": 50,
+        "kind": "variable",
+        "scope": "restoreScroll"
+      },
+      "restoreScroll.saved": {
+        "name": "saved",
+        "line": 607,
+        "col": 14,
+        "endLine": 607,
+        "endCol": 43,
+        "kind": "variable",
+        "scope": "restoreScroll"
+      },
+      "restoreScroll.c": {
+        "name": "c",
+        "line": 609,
+        "col": 16,
+        "endLine": 609,
+        "endCol": 54,
+        "kind": "variable",
+        "scope": "restoreScroll"
+      }
+    }
   },
   "attachments": []
 }

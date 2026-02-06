@@ -143,4 +143,3 @@ export function createDropdownMenu(anchorEl, items, api) {
 
   return menu;
 }
-

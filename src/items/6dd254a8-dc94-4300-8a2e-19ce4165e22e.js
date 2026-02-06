@@ -11,9 +11,9 @@ const PILL_BOTTOM = 8;
 const PILL_LEFT_START = 8;
 
 // Create a single minimized pill (idempotent — removes existing pill for same childId first)
-export function createMinimizedPill(childId, childName, pillContainer, index, api, { onRestore }) {
+export function createMinimizedPill(childId, childName, dockOverlay, index, api, { onRestore }) {
   // Remove existing pill for this child if present (idempotent)
-  const existing = pillContainer.querySelector(`[data-minimized-id="${childId}"]`);
+  const existing = dockOverlay.querySelector(`[data-minimized-id="${childId}"]`);
   if (existing) existing.remove();
 
   const pill = api.createElement('div', {
@@ -48,26 +48,26 @@ export function createMinimizedPill(childId, childName, pillContainer, index, ap
     await onRestore(childId);
   });
 
-  pillContainer.appendChild(pill);
+  dockOverlay.appendChild(pill);
   return pill;
 }
 
-// Render all minimized pills into pillContainer (used by render loop)
+// Render all minimized pills into dockOverlay (used by render loop)
 // Clears existing pills, creates one per minimized child at correct index
-export function renderMinimizedPills(minimizedChildren, pillContainer, api, { getItemName, onRestore }) {
+export function renderMinimizedPills(minimizedChildren, dockOverlay, api, { getItemName, onRestore }) {
   // Clear existing pills
-  const existing = pillContainer.querySelectorAll('[data-minimized="true"]');
+  const existing = dockOverlay.querySelectorAll('[data-minimized="true"]');
   existing.forEach(el => el.remove());
 
   minimizedChildren.forEach((child, index) => {
     const name = getItemName(child);
-    createMinimizedPill(child.id, name, pillContainer, index, api, { onRestore });
+    createMinimizedPill(child.id, name, dockOverlay, index, api, { onRestore });
   });
 }
 
 // Reposition existing pills after one is removed (e.g. after restore)
-export function repositionPills(pillContainer) {
-  const pills = pillContainer.querySelectorAll('[data-minimized="true"]');
+export function repositionPills(dockOverlay) {
+  const pills = dockOverlay.querySelectorAll('[data-minimized="true"]');
   pills.forEach((pill, i) => {
     pill.style.left = `${PILL_LEFT_START + i * PILL_STRIDE}px`;
   });
@@ -110,4 +110,3 @@ export function calculateRestore(childId, allChildren, isAnchoredFn) {
 
   return { updatedChildren };
 }
-

@@ -6,7 +6,7 @@
 
 // Get max z-index from DB only
 // children: fresh item.attachments array
-// baseZ: base z-index offset (typically 2, to stay above ANCHOR_Z=1)
+// baseZ: base z-index offset (typically 1)
 // isAnchoredFn: function to check if an anchor string means the window is anchored
 export function getMaxZ(children, baseZ, isAnchoredFn) {
   const floating = children.filter(c => !isAnchoredFn(c.view?.anchor) && !c.view?.minimized);
@@ -49,4 +49,3 @@ export function normalizeZIndices(children, isAnchoredFn) {
   });
   return result;
 }
-

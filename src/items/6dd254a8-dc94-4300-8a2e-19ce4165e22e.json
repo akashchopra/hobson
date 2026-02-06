@@ -4,9 +4,204 @@
   "type": "66666666-0000-0000-0000-000000000000",
   "content": {
     "description": "Minimize and restore handling for spatial-canvas-view windows. Single code path fixes the overlay bug where two implementations (onclick handler and render loop) created duplicate pills.\n\n## Bug Fix\n\n`createMinimizedPill` is idempotent — it removes any existing pill for the same childId before creating a new one. Both the onclick handler and the render loop call the same functions, preventing pill divergence.\n\nPills are appended as direct children of the main container (not the dock overlay or scroll area) at z-index 10000, so they always appear above all windows.\n\n## Usage\n\n```javascript\nconst minLib = await api.require('window-minimize-lib');\n\n// Onclick: optimistic hide + pill + persist\nwrapper.style.display = 'none';\nminLib.createMinimizedPill(childId, name, container, index, api, { onRestore });\nawait updateChild(childId, { minimized: true });\n\n// Render loop: batch create all pills\nminLib.renderMinimizedPills(minimizedChildren, container, api, { getItemName, onRestore });\n\n// After restoring one pill:\nminLib.repositionPills(container);\n```",
-    "code": "// Item: window-minimize-lib\n// ID: 6dd254a8-dc94-4300-8a2e-19ce4165e22e\n// Type: 66666666-0000-0000-0000-000000000000\n//\n// Minimize/restore for spatial-canvas-view. Single code path fixes overlay bug.\n\nconst PILL_WIDTH = 150;\nconst PILL_GAP = 8;\nconst PILL_STRIDE = PILL_WIDTH + PILL_GAP;\nconst PILL_BOTTOM = 8;\nconst PILL_LEFT_START = 8;\n\n// Create a single minimized pill (idempotent — removes existing pill for same childId first)\nexport function createMinimizedPill(childId, childName, pillContainer, index, api, { onRestore }) {\n  // Remove existing pill for this child if present (idempotent)\n  const existing = pillContainer.querySelector(`[data-minimized-id=\"${childId}\"]`);\n  if (existing) existing.remove();\n\n  const pill = api.createElement('div', {\n    'data-minimized-id': childId,\n    'data-minimized': 'true',\n    style: `\n      position: absolute;\n      bottom: ${PILL_BOTTOM}px;\n      left: ${PILL_LEFT_START + index * PILL_STRIDE}px;\n      width: ${PILL_WIDTH}px;\n      height: 32px;\n      background: var(--color-bg-hover);\n      border: 1px solid var(--color-border);\n      border-radius: var(--border-radius);\n      display: flex;\n      align-items: center;\n      padding: 0 8px;\n      cursor: pointer;\n      z-index: 10000;\n      pointer-events: auto;\n      box-shadow: var(--shadow-sm);\n    `,\n    title: childName\n  }, []);\n\n  const text = api.createElement('span', {\n    style: 'flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px;'\n  }, [childName]);\n  pill.appendChild(text);\n\n  pill.addEventListener('click', async () => {\n    await onRestore(childId);\n  });\n\n  pillContainer.appendChild(pill);\n  return pill;\n}\n\n// Render all minimized pills into pillContainer (used by render loop)\n// Clears existing pills, creates one per minimized child at correct index\nexport function renderMinimizedPills(minimizedChildren, pillContainer, api, { getItemName, onRestore }) {\n  // Clear existing pills\n  const existing = pillContainer.querySelectorAll('[data-minimized=\"true\"]');\n  existing.forEach(el => el.remove());\n\n  minimizedChildren.forEach((child, index) => {\n    const name = getItemName(child);\n    createMinimizedPill(child.id, name, pillContainer, index, api, { onRestore });\n  });\n}\n\n// Reposition existing pills after one is removed (e.g. after restore)\nexport function repositionPills(pillContainer) {\n  const pills = pillContainer.querySelectorAll('[data-minimized=\"true\"]');\n  pills.forEach((pill, i) => {\n    pill.style.left = `${PILL_LEFT_START + i * PILL_STRIDE}px`;\n  });\n}\n\n// Calculate what happens when restoring a window\n// Returns updated attachments array with target unminimized at front and all z-indices normalized\nexport function calculateRestore(childId, allChildren, isAnchoredFn) {\n  // Get floating, non-minimized children sorted by z (excluding the one being restored)\n  const floating = allChildren\n    .filter(c => !isAnchoredFn(c.view?.anchor) && !c.view?.minimized && c.id !== childId)\n    .map(c => ({ id: c.id, z: c.view?.z || 0 }))\n    .sort((a, b) => a.z - b.z);\n\n  // Add restored window at the end (front)\n  floating.push({ id: childId, z: floating.length });\n\n  // Build map of new z-values\n  const newZValues = new Map();\n  floating.forEach((c, idx) => {\n    newZValues.set(c.id, idx);\n  });\n\n  // Build updated children array\n  const updatedChildren = allChildren.map(c => {\n    if (c.id === childId) {\n      return {\n        ...c,\n        view: { ...(c.view || {}), minimized: false, z: newZValues.get(c.id) }\n      };\n    }\n    if (newZValues.has(c.id)) {\n      return {\n        ...c,\n        view: { ...(c.view || {}), z: newZValues.get(c.id) }\n      };\n    }\n    return c;\n  });\n\n  return { updatedChildren };\n}\n"
+    "code": "// Item: window-minimize-lib\n// ID: 6dd254a8-dc94-4300-8a2e-19ce4165e22e\n// Type: 66666666-0000-0000-0000-000000000000\n//\n// Minimize/restore for spatial-canvas-view. Single code path fixes overlay bug.\n\nconst PILL_WIDTH = 150;\nconst PILL_GAP = 8;\nconst PILL_STRIDE = PILL_WIDTH + PILL_GAP;\nconst PILL_BOTTOM = 8;\nconst PILL_LEFT_START = 8;\n\n// Create a single minimized pill (idempotent — removes existing pill for same childId first)\nexport function createMinimizedPill(childId, childName, dockOverlay, index, api, { onRestore }) {\n  // Remove existing pill for this child if present (idempotent)\n  const existing = dockOverlay.querySelector(`[data-minimized-id=\"${childId}\"]`);\n  if (existing) existing.remove();\n\n  const pill = api.createElement('div', {\n    'data-minimized-id': childId,\n    'data-minimized': 'true',\n    style: `\n      position: absolute;\n      bottom: ${PILL_BOTTOM}px;\n      left: ${PILL_LEFT_START + index * PILL_STRIDE}px;\n      width: ${PILL_WIDTH}px;\n      height: 32px;\n      background: var(--color-bg-hover);\n      border: 1px solid var(--color-border);\n      border-radius: var(--border-radius);\n      display: flex;\n      align-items: center;\n      padding: 0 8px;\n      cursor: pointer;\n      z-index: 10000;\n      pointer-events: auto;\n      box-shadow: var(--shadow-sm);\n    `,\n    title: childName\n  }, []);\n\n  const text = api.createElement('span', {\n    style: 'flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px;'\n  }, [childName]);\n  pill.appendChild(text);\n\n  pill.addEventListener('click', async () => {\n    await onRestore(childId);\n  });\n\n  dockOverlay.appendChild(pill);\n  return pill;\n}\n\n// Render all minimized pills into dockOverlay (used by render loop)\n// Clears existing pills, creates one per minimized child at correct index\nexport function renderMinimizedPills(minimizedChildren, dockOverlay, api, { getItemName, onRestore }) {\n  // Clear existing pills\n  const existing = dockOverlay.querySelectorAll('[data-minimized=\"true\"]');\n  existing.forEach(el => el.remove());\n\n  minimizedChildren.forEach((child, index) => {\n    const name = getItemName(child);\n    createMinimizedPill(child.id, name, dockOverlay, index, api, { onRestore });\n  });\n}\n\n// Reposition existing pills after one is removed (e.g. after restore)\nexport function repositionPills(dockOverlay) {\n  const pills = dockOverlay.querySelectorAll('[data-minimized=\"true\"]');\n  pills.forEach((pill, i) => {\n    pill.style.left = `${PILL_LEFT_START + i * PILL_STRIDE}px`;\n  });\n}\n\n// Calculate what happens when restoring a window\n// Returns updated attachments array with target unminimized at front and all z-indices normalized\nexport function calculateRestore(childId, allChildren, isAnchoredFn) {\n  // Get floating, non-minimized children sorted by z (excluding the one being restored)\n  const floating = allChildren\n    .filter(c => !isAnchoredFn(c.view?.anchor) && !c.view?.minimized && c.id !== childId)\n    .map(c => ({ id: c.id, z: c.view?.z || 0 }))\n    .sort((a, b) => a.z - b.z);\n\n  // Add restored window at the end (front)\n  floating.push({ id: childId, z: floating.length });\n\n  // Build map of new z-values\n  const newZValues = new Map();\n  floating.forEach((c, idx) => {\n    newZValues.set(c.id, idx);\n  });\n\n  // Build updated children array\n  const updatedChildren = allChildren.map(c => {\n    if (c.id === childId) {\n      return {\n        ...c,\n        view: { ...(c.view || {}), minimized: false, z: newZValues.get(c.id) }\n      };\n    }\n    if (newZValues.has(c.id)) {\n      return {\n        ...c,\n        view: { ...(c.view || {}), z: newZValues.get(c.id) }\n      };\n    }\n    return c;\n  });\n\n  return { updatedChildren };\n}\n",
+    "_symbols": {
+      "PILL_WIDTH": {
+        "name": "PILL_WIDTH",
+        "line": 7,
+        "col": 6,
+        "endLine": 7,
+        "endCol": 22,
+        "kind": "variable",
+        "scope": null
+      },
+      "PILL_GAP": {
+        "name": "PILL_GAP",
+        "line": 8,
+        "col": 6,
+        "endLine": 8,
+        "endCol": 18,
+        "kind": "variable",
+        "scope": null
+      },
+      "PILL_STRIDE": {
+        "name": "PILL_STRIDE",
+        "line": 9,
+        "col": 6,
+        "endLine": 9,
+        "endCol": 41,
+        "kind": "variable",
+        "scope": null
+      },
+      "PILL_BOTTOM": {
+        "name": "PILL_BOTTOM",
+        "line": 10,
+        "col": 6,
+        "endLine": 10,
+        "endCol": 21,
+        "kind": "variable",
+        "scope": null
+      },
+      "PILL_LEFT_START": {
+        "name": "PILL_LEFT_START",
+        "line": 11,
+        "col": 6,
+        "endLine": 11,
+        "endCol": 25,
+        "kind": "variable",
+        "scope": null
+      },
+      "createMinimizedPill": {
+        "name": "createMinimizedPill",
+        "line": 14,
+        "col": 7,
+        "endLine": 53,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(childId, childName, dockOverlay, index, api, { ... })"
+      },
+      "createMinimizedPill.existing": {
+        "name": "existing",
+        "line": 16,
+        "col": 8,
+        "endLine": 16,
+        "endCol": 80,
+        "kind": "variable",
+        "scope": "createMinimizedPill"
+      },
+      "createMinimizedPill.pill": {
+        "name": "pill",
+        "line": 19,
+        "col": 8,
+        "endLine": 40,
+        "endCol": 8,
+        "kind": "variable",
+        "scope": "createMinimizedPill"
+      },
+      "createMinimizedPill.text": {
+        "name": "text",
+        "line": 42,
+        "col": 8,
+        "endLine": 44,
+        "endCol": 17,
+        "kind": "variable",
+        "scope": "createMinimizedPill"
+      },
+      "renderMinimizedPills": {
+        "name": "renderMinimizedPills",
+        "line": 57,
+        "col": 7,
+        "endLine": 66,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(minimizedChildren, dockOverlay, api, { ... })"
+      },
+      "renderMinimizedPills.existing": {
+        "name": "existing",
+        "line": 59,
+        "col": 8,
+        "endLine": 59,
+        "endCol": 74,
+        "kind": "variable",
+        "scope": "renderMinimizedPills"
+      },
+      "renderMinimizedPills.name": {
+        "name": "name",
+        "line": 63,
+        "col": 10,
+        "endLine": 63,
+        "endCol": 35,
+        "kind": "variable",
+        "scope": "renderMinimizedPills"
+      },
+      "renderMinimizedPills.onRestore": {
+        "name": "onRestore",
+        "line": 64,
+        "col": 67,
+        "endLine": 64,
+        "endCol": 76,
+        "kind": "property",
+        "scope": "renderMinimizedPills"
+      },
+      "repositionPills": {
+        "name": "repositionPills",
+        "line": 69,
+        "col": 7,
+        "endLine": 74,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(dockOverlay)"
+      },
+      "repositionPills.pills": {
+        "name": "pills",
+        "line": 70,
+        "col": 8,
+        "endLine": 70,
+        "endCol": 71,
+        "kind": "variable",
+        "scope": "repositionPills"
+      },
+      "calculateRestore": {
+        "name": "calculateRestore",
+        "line": 78,
+        "col": 7,
+        "endLine": 112,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(childId, allChildren, isAnchoredFn)"
+      },
+      "calculateRestore.floating": {
+        "name": "floating",
+        "line": 80,
+        "col": 8,
+        "endLine": 83,
+        "endCol": 30,
+        "kind": "variable",
+        "scope": "calculateRestore"
+      },
+      "calculateRestore.id": {
+        "name": "id",
+        "line": 86,
+        "col": 18,
+        "endLine": 86,
+        "endCol": 29,
+        "kind": "property",
+        "scope": "calculateRestore"
+      },
+      "calculateRestore.z": {
+        "name": "z",
+        "line": 86,
+        "col": 31,
+        "endLine": 86,
+        "endCol": 49,
+        "kind": "property",
+        "scope": "calculateRestore"
+      },
+      "calculateRestore.newZValues": {
+        "name": "newZValues",
+        "line": 89,
+        "col": 8,
+        "endLine": 89,
+        "endCol": 30,
+        "kind": "variable",
+        "scope": "calculateRestore"
+      },
+      "calculateRestore.updatedChildren": {
+        "name": "updatedChildren",
+        "line": 111,
+        "col": 11,
+        "endLine": 111,
+        "endCol": 26,
+        "kind": "property",
+        "scope": "calculateRestore"
+      }
+    }
   },
-  "modified": 1770390545702,
+  "modified": 1770390457170,
   "created": 1770322000000,
   "attachments": []
 }

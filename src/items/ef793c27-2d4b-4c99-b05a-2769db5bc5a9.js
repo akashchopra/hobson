@@ -616,4 +616,3 @@ export async function render(item, api) {
 
   return container;
 }
-

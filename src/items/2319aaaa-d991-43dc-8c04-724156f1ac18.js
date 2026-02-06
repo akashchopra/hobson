@@ -125,4 +125,3 @@ export function generateInsetStyle(anchor, view) {
 
   return null;
 }
-

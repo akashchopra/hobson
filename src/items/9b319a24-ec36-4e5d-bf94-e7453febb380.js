@@ -203,4 +203,3 @@ export function attachEdgeResize(wrapper, dockDirection, api, { onResizeEnd, min
   wrapper.appendChild(handle);
   return () => handle.remove();
 }
-
