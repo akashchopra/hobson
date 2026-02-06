@@ -123,6 +123,14 @@ export async function render(value, options, api) {
   // Also refresh after layout completes to fix gutter width calculation
   requestAnimationFrame(() => cm.refresh());
 
+  // Register cleanup handler for DOM removal (prevents CodeMirror memory leaks)
+  wrapper.setAttribute('data-hobson-cleanup', '');
+  wrapper.__hobsonCleanup = () => {
+    if (cm.display?.blinker) clearInterval(cm.display.blinker);
+    resizeObserver.disconnect();
+    observer.disconnect();
+  };
+
   // Call onChange on edits
   if (onChange) {
     cm.on('change', () => {

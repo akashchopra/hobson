@@ -179,6 +179,13 @@ export async function render(value, options, api) {
   };
   editorContainer.addEventListener('click', focusHandler);
 
+  // Register cleanup handler for DOM removal (prevents CodeMirror memory leaks)
+  wrapper.setAttribute('data-hobson-cleanup', '');
+  wrapper.__hobsonCleanup = () => {
+    if (cm.display?.blinker) clearInterval(cm.display.blinker);
+    observer.disconnect();
+  };
+
   // Call onChange on edits
   if (onChange) {
     cm.on('change', () => {

@@ -8,17 +8,15 @@ const EVENT_IDS = {
   VIEWPORT_SELECTION_CHANGED: "e0e00000-0003-0001-0000-000000000000"
 };
 
-// Only state: whether we've registered the popstate handler
-let popstateHandlerRegistered = false;
-
 // Called at boot
 export async function onKernelBootComplete({ safeMode }, _api) {
   if (safeMode) return;
 
   // Register popstate handler for browser back/forward
-  if (!popstateHandlerRegistered) {
+  // Use window-level guard that survives module re-evaluation after clearCache()
+  if (!window._hobsonPopstateHandler) {
+    window._hobsonPopstateHandler = handlePopstate;
     window.addEventListener('popstate', handlePopstate);
-    popstateHandlerRegistered = true;
   }
 
   // If URL has a root, ensure viewport item is in sync

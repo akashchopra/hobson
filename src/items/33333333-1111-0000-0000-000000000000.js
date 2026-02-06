@@ -377,6 +377,9 @@ export async function loadKernel(require, storageBackend) {
       if (!mainView) return;
 
       try {
+        // Clean up resources in existing DOM tree before removing it
+        this.rendering.cleanupDOMTree(mainView);
+
         // Clear stale render instances before full re-render
         this.rendering.registry.clear();
 
@@ -817,9 +820,9 @@ export async function loadKernel(require, storageBackend) {
       return {
         // Storage operations
         get: (id) => kernel.storage.get(id),
-        set: async (item) => {
+        set: async (item, options) => {
           // Save without triggering re-render
-          await kernel.saveItem(item);
+          await kernel.saveItem(item, options);
           return item.id;
         },
         update: async (item) => {
@@ -1573,7 +1576,10 @@ export async function loadKernel(require, storageBackend) {
         document.removeEventListener('keydown', window._userKeyboardHandler);
         delete window._userKeyboardHandler;
       }
-      // _popstateHandler removed - now managed by userland viewport-manager
+      if (window._hobsonPopstateHandler) {
+        window.removeEventListener('popstate', window._hobsonPopstateHandler);
+        delete window._hobsonPopstateHandler;
+      }
       if (window._safeModeShortcut) {
         document.removeEventListener('keydown', window._safeModeShortcut);
         delete window._safeModeShortcut;

@@ -157,11 +157,33 @@ class RenderInstanceRegistry {
   }
 }
 
+// Walk a DOM subtree calling registered cleanup functions before removal.
+// Elements opt in by setting data-hobson-cleanup attribute and __hobsonCleanup function.
+function cleanupDOMTree(root) {
+  if (!root) return;
+  const cleanables = root.querySelectorAll?.('[data-hobson-cleanup]');
+  if (cleanables) {
+    for (const el of cleanables) {
+      if (typeof el.__hobsonCleanup === 'function') {
+        try { el.__hobsonCleanup(); } catch (e) { /* ignore */ }
+      }
+    }
+  }
+  if (typeof root.__hobsonCleanup === 'function') {
+    try { root.__hobsonCleanup(); } catch (e) { /* ignore */ }
+  }
+}
+
 // kernel-rendering module
 export class RenderingSystem {
   constructor(kernel) {
     this.kernel = kernel;
     this.registry = new RenderInstanceRegistry();
+  }
+
+  // Clean up resources in a DOM subtree (exposed for kernel:core's renderViewport)
+  cleanupDOMTree(root) {
+    cleanupDOMTree(root);
   }
 
   // Clear all render instances (called before full re-render)
@@ -213,6 +235,9 @@ export class RenderingSystem {
         // Replace content in existing container
         const oldDom = instance.domNode;
         if (oldDom && oldDom.parentNode) {
+          // Clean up resources (CodeMirror instances, observers, etc.) before removal
+          cleanupDOMTree(oldDom);
+
           // Unregister all instances in the old DOM subtree (including nested children)
           const nestedInstances = oldDom.querySelectorAll('[data-render-instance]');
           for (const el of nestedInstances) {
@@ -857,8 +882,8 @@ export class RenderingSystem {
       },
 
       // Save without triggering re-render
-      set: async (item) => {
-        await kernel.saveItem(item);
+      set: async (item, options) => {
+        await kernel.saveItem(item, options);
         return item.id;
       },
 

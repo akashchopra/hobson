@@ -233,6 +233,12 @@ export async function render(value, options, api) {
   };
   editorContainer.addEventListener('click', clickHandler);
 
+  // Register cleanup handler for DOM removal (prevents CodeMirror memory leaks)
+  wrapper.setAttribute('data-hobson-cleanup', '');
+  wrapper.__hobsonCleanup = () => {
+    observer.disconnect();
+  };
+
   // Re-process links when viewport changes (scroll/resize)
   cm.on('viewportChange', () => {
     requestAnimationFrame(processCommentLinks);

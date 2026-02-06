@@ -21,9 +21,9 @@ async function indexSymbols(item, api) {
     return;
   }
 
-  // Update item with new symbols
+  // Update item with new symbols (silent to avoid re-triggering watchers)
   item.content._symbols = symbols;
-  await api.set(item);
+  await api.set(item, { silent: true });
 
   console.log(`Indexed ${Object.keys(symbols).length} symbols in ${item.name || item.id}`);
 }

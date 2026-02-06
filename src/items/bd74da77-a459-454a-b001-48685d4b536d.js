@@ -286,19 +286,12 @@ export async function render(item, api) {
     };
     document.addEventListener('keydown', globalKeyHandler);
 
-    const observer = new MutationObserver((mutations) => {
-      for (const mutation of mutations) {
-        for (const node of mutation.removedNodes) {
-          if (node === container || node.contains?.(container)) {
-            document.removeEventListener('keydown', globalKeyHandler);
-            contextMenu.remove();
-            observer.disconnect();
-            return;
-          }
-        }
-      }
-    });
-    observer.observe(document.body, { childList: true, subtree: true });
+    // Register cleanup for when rendering system removes this DOM tree
+    container.setAttribute('data-hobson-cleanup', '');
+    container.__hobsonCleanup = () => {
+      document.removeEventListener('keydown', globalKeyHandler);
+      contextMenu.remove();
+    };
 
     return container;
   }
@@ -1105,21 +1098,13 @@ export async function render(item, api) {
     }
   };
   document.addEventListener('keydown', globalKeyHandler);
-  
-  // Clean up global listener when container is removed
-  const observer = new MutationObserver((mutations) => {
-    for (const mutation of mutations) {
-      for (const node of mutation.removedNodes) {
-        if (node === container || node.contains?.(container)) {
-          document.removeEventListener('keydown', globalKeyHandler);
-          contextMenu.remove();
-          observer.disconnect();
-          return;
-        }
-      }
-    }
-  });
-  observer.observe(document.body, { childList: true, subtree: true });
+
+  // Register cleanup for when rendering system removes this DOM tree
+  container.setAttribute('data-hobson-cleanup', '');
+  container.__hobsonCleanup = () => {
+    document.removeEventListener('keydown', globalKeyHandler);
+    contextMenu.remove();
+  };
 
   container.setAttribute('tabindex', '0');
   return container;
