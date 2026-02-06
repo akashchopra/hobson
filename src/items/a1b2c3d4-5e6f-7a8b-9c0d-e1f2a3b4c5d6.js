@@ -200,7 +200,8 @@ export async function render(markdown, api, options = {}) {
       const transcludedItem = await api.get(parsed.itemId);
       const isPartial = parsed.fragment || Object.keys(parsed.queryParams).length > 0;
 
-      const wrapperDiv = api.createElement('div', { className: 'transclusion-container' });
+      const wrapperDiv = api.createElement('details', { className: 'transclusion-container' });
+      wrapperDiv.setAttribute('open', '');
       wrapperDiv.style.cssText = 'background: var(--color-bg-surface-alt); border: 1px solid var(--color-border-light); border-radius: var(--border-radius); padding: 15px; margin: 15px 0;';
 
       if (isPartial) {
@@ -243,10 +244,15 @@ export async function render(markdown, api, options = {}) {
           headerDesc += ')';
         }
 
-        const header = api.createElement('div');
-        header.style.cssText = 'font-size: 12px; color: var(--color-text-secondary); margin-bottom: 10px; padding-bottom: 8px; border-bottom: 1px solid var(--color-border-light); cursor: pointer;';
-        header.textContent = 'Transcluded from: ' + headerDesc;
-        header.onclick = () => api.siblingContainer.addSibling(parsed.itemId);
+        const header = api.createElement('summary');
+        header.style.cssText = 'font-size: 12px; color: var(--color-text-secondary); padding-bottom: 8px; cursor: pointer;';
+        header.textContent = 'Transcluded from: ' + headerDesc + ' ';
+        const navLink = api.createElement('span');
+        navLink.textContent = '↗';
+        navLink.title = 'Open ' + (transcludedItem.name || transcludedItem.id);
+        navLink.style.cssText = 'color: var(--color-primary); cursor: pointer;';
+        navLink.onclick = (e) => { e.preventDefault(); e.stopPropagation(); api.siblingContainer.addSibling(parsed.itemId); };
+        header.appendChild(navLink);
         wrapperDiv.appendChild(header);
 
         // Determine render mode: explicit override > auto-detect > default (code)
@@ -280,10 +286,15 @@ export async function render(markdown, api, options = {}) {
         }
       } else {
         // Full transclusion
-        const header = api.createElement('div');
-        header.style.cssText = 'font-size: 12px; color: var(--color-text-secondary); margin-bottom: 10px; padding-bottom: 8px; border-bottom: 1px solid var(--color-border-light); cursor: pointer;';
-        header.textContent = 'Transcluded from: ' + (transcludedItem.name || transcludedItem.id);
-        header.onclick = () => api.navigate(parsed.itemId);
+        const header = api.createElement('summary');
+        header.style.cssText = 'font-size: 12px; color: var(--color-text-secondary); padding-bottom: 8px; cursor: pointer;';
+        header.textContent = 'Transcluded from: ' + (transcludedItem.name || transcludedItem.id) + ' ';
+        const navLink = api.createElement('span');
+        navLink.textContent = '↗';
+        navLink.title = 'Open ' + (transcludedItem.name || transcludedItem.id);
+        navLink.style.cssText = 'color: var(--color-primary); cursor: pointer;';
+        navLink.onclick = (e) => { e.preventDefault(); e.stopPropagation(); api.navigate(parsed.itemId); };
+        header.appendChild(navLink);
         wrapperDiv.appendChild(header);
 
         const renderedContent = await api.renderItem(parsed.itemId);
@@ -402,13 +413,19 @@ export async function render(markdown, api, options = {}) {
         const itemName = marker.getAttribute('data-item-name');
 
         // Create full chrome wrapper
-        const wrapperDiv = api.createElement('div', { className: 'transclusion-container' });
+        const wrapperDiv = api.createElement('details', { className: 'transclusion-container' });
+        wrapperDiv.setAttribute('open', '');
         wrapperDiv.style.cssText = 'background: var(--color-bg-surface-alt); border: 1px solid var(--color-border-light); border-radius: var(--border-radius); padding: 15px; margin: 15px 0;';
 
-        const header = api.createElement('div');
-        header.style.cssText = 'font-size: 12px; color: var(--color-text-secondary); margin-bottom: 10px; padding-bottom: 8px; border-bottom: 1px solid var(--color-border-light); cursor: pointer;';
-        header.textContent = 'From: ' + itemName;
-        header.onclick = () => api.siblingContainer?.addSibling(itemId);
+        const header = api.createElement('summary');
+        header.style.cssText = 'font-size: 12px; color: var(--color-text-secondary); padding-bottom: 8px; cursor: pointer;';
+        header.textContent = 'From: ' + itemName + ' ';
+        const navLink = api.createElement('span');
+        navLink.textContent = '↗';
+        navLink.title = 'Open ' + itemName;
+        navLink.style.cssText = 'color: var(--color-primary); cursor: pointer;';
+        navLink.onclick = (e) => { e.preventDefault(); e.stopPropagation(); api.siblingContainer?.addSibling(itemId); };
+        header.appendChild(navLink);
         wrapperDiv.appendChild(header);
 
         // Move marker contents into wrapper
