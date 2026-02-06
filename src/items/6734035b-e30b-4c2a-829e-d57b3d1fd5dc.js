@@ -324,14 +324,38 @@ export async function searchItems(query, api, options = {}) {
     }
     // Resolve each tag ID to its item for name lookup
     const itemById = new Map(itemsToSearch.map(i => [i.id, i]));
+    const tagItemsById = new Map();
     for (const tagId of tagIds) {
       const tagItem = itemById.get(tagId) || await api.get(tagId).catch(() => null);
       if (tagItem) {
+        tagItemsById.set(tagId, tagItem);
         const name = (tagItem.name || tagItem.content?.name || '').toLowerCase();
         if (name) {
           if (!tagCache.has(name)) tagCache.set(name, []);
           tagCache.get(name).push(tagItem.id);
         }
+      }
+    }
+    // Walk parent chains so ancestor tag names also match descendant tag IDs.
+    // e.g. tag:concept should match items tagged with primitive (child of concept).
+    for (const [tagId, tagItem] of tagItemsById) {
+      let parentId = tagItem.content?.parent;
+      const visited = new Set();
+      while (parentId && !visited.has(parentId)) {
+        visited.add(parentId);
+        let parentItem = tagItemsById.get(parentId) || itemById.get(parentId);
+        if (!parentItem) parentItem = await api.get(parentId).catch(() => null);
+        if (!parentItem) break;
+        tagItemsById.set(parentId, parentItem);
+        const parentName = (parentItem.name || parentItem.content?.name || '').toLowerCase();
+        if (parentName) {
+          if (!tagCache.has(parentName)) tagCache.set(parentName, []);
+          const ids = tagCache.get(parentName);
+          if (!ids.includes(tagId)) ids.push(tagId);
+          // Also ensure the parent's own ID is in its cache entry
+          if (!ids.includes(parentId)) ids.push(parentId);
+        }
+        parentId = parentItem.content?.parent;
       }
     }
   } catch (err) {

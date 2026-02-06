@@ -155,10 +155,40 @@ export async function onItemDeleted({ id, item }, api) {
   if (item) unindexItem(item);
 }
 
+// --- Tag hierarchy helper ---
+
+/**
+ * Collect all descendant tag IDs by walking the parentIndex.
+ * Tags use content.parent to form hierarchies (e.g. primitive's parent is concept).
+ * The parentIndex maps parentId → Set of child item IDs.
+ */
+function getDescendantTagIds(tagId) {
+  const result = [];
+  const queue = [...getFromIndex(S.parentIndex, tagId)];
+  const visited = new Set();
+  while (queue.length > 0) {
+    const id = queue.shift();
+    if (visited.has(id)) continue;
+    visited.add(id);
+    result.push(id);
+    queue.push(...getFromIndex(S.parentIndex, id));
+  }
+  return result;
+}
+
 // --- Raw index accessors ---
 
 export function getInstancesOf(typeId)      { return getFromIndex(S.typeIndex, typeId); }
-export function getItemsTaggedWith(tagId)   { return getFromIndex(S.tagIndex, tagId); }
+export function getItemsTaggedWith(tagId) {
+  const direct = getFromIndex(S.tagIndex, tagId);
+  const descendantIds = getDescendantTagIds(tagId);
+  if (descendantIds.length === 0) return direct;
+  const all = new Set(direct);
+  for (const descId of descendantIds) {
+    for (const itemId of getFromIndex(S.tagIndex, descId)) all.add(itemId);
+  }
+  return [...all];
+}
 export function getChildrenOf(parentId)     { return getFromIndex(S.parentIndex, parentId); }
 export function getSubtypesOf(typeId)       { return getFromIndex(S.extendsIndex, typeId); }
 export function getContainersOf(itemId)     { return getFromIndex(S.containerIndex, itemId); }
@@ -191,7 +221,7 @@ export async function getRelated(itemId, api) {
 
     // Inverse
     instances: getFromIndex(S.typeIndex, itemId),
-    taggedWith: getFromIndex(S.tagIndex, itemId),
+    taggedWith: getItemsTaggedWith(itemId),
     children: getFromIndex(S.parentIndex, itemId),
     subtypes: getFromIndex(S.extendsIndex, itemId),
     containers: getFromIndex(S.containerIndex, itemId),
