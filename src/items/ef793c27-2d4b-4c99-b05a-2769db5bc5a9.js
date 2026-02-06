@@ -86,11 +86,26 @@ export async function render(item, api) {
   });
 
   // Main container - position relative for absolute children
-  // overflow: auto allows scrolling to off-screen floating windows
+  // overflow: hidden — scrolling is handled by the scrollArea child
   const container = api.createElement('div', {
     'data-container-id': item.id,
-    style: 'position: relative; width: 100%; height: 100%; overflow: auto;'
+    style: 'position: relative; width: 100%; height: 100%; overflow: hidden;'
   }, []);
+
+  // Scrollable area for background and floating windows
+  const scrollArea = api.createElement('div', {
+    'data-scroll-area': 'true',
+    style: 'position: absolute; inset: 0; overflow: auto;'
+  }, []);
+  container.appendChild(scrollArea);
+
+  // Non-scrolling overlay for anchored/docked windows
+  // pointer-events: none so scrollArea remains interactive; each docked window sets pointer-events: auto
+  const dockOverlay = api.createElement('div', {
+    'data-dock-overlay': 'true',
+    style: 'position: absolute; inset: 0; pointer-events: none; overflow: hidden;'
+  }, []);
+  container.appendChild(dockOverlay);
 
   // Get view config for inner view (persisted in parent's child entry or viewport root)
   const viewConfig = await api.getViewConfig() || {};
@@ -151,7 +166,7 @@ export async function render(item, api) {
     })();
   }
 
-  container.appendChild(background);
+  scrollArea.appendChild(background);
 
   // === ANCHOR-BASED POSITIONING HELPERS ===
 
@@ -247,7 +262,7 @@ export async function render(item, api) {
     }, [
       'No items yet. Use View As > Spatial Canvas to set a background view, or add children via REPL.'
     ]);
-    container.appendChild(empty);
+    scrollArea.appendChild(empty);
   } else if (children.length === 0 && innerViewPromise) {
     // Inner view but no children - await inner view now
     const innerDom = await innerViewPromise;
@@ -400,13 +415,46 @@ export async function render(item, api) {
 
       // Calculate position based on anchor
       let x, y, width, height;
-      if (windowIsAnchored || effectiveView.anchor) {
-        const pos = calculateAbsolutePosition(effectiveView, containerWidth, containerHeight);
-        // Add scroll offset so anchored windows stay in viewport
-        x = pos.left + container.scrollLeft;
-        y = pos.top + container.scrollTop;
-        width = pos.width;
-        height = pos.height;
+      let anchoredInsetStyle = null; // CSS inset string for docked/pinned windows
+      const effectiveAnchor = effectiveView.anchor;
+      if (windowIsAnchored || effectiveAnchor) {
+        width = effectiveView.width || DEFAULT_WINDOW_WIDTH;
+        height = effectiveView.height || DEFAULT_WINDOW_HEIGHT;
+        const ox = effectiveView.x || 0;
+        const oy = effectiveView.y || 0;
+
+        // Edge-anchored (docked) windows use CSS inset positioning in the non-scrolling overlay
+        if (isEdgeAnchor(effectiveAnchor)) {
+          switch (effectiveAnchor) {
+            case 'left':
+              anchoredInsetStyle = `left: 0; top: 0; bottom: 0; width: ${width}px;`;
+              break;
+            case 'right':
+              anchoredInsetStyle = `right: 0; top: 0; bottom: 0; width: ${width}px;`;
+              break;
+            case 'top':
+              anchoredInsetStyle = `left: 0; right: 0; top: 0; height: ${height}px;`;
+              break;
+            case 'bottom':
+              anchoredInsetStyle = `left: 0; right: 0; bottom: 0; height: ${height}px;`;
+              break;
+          }
+        } else {
+          // Corner-anchored (pinned) windows
+          switch (effectiveAnchor) {
+            case 'top-right':
+              anchoredInsetStyle = `right: ${ox}px; top: ${oy}px; width: ${width}px; height: ${height}px;`;
+              break;
+            case 'bottom-left':
+              anchoredInsetStyle = `left: ${ox}px; bottom: ${oy}px; width: ${width}px; height: ${height}px;`;
+              break;
+            case 'bottom-right':
+              anchoredInsetStyle = `right: ${ox}px; bottom: ${oy}px; width: ${width}px; height: ${height}px;`;
+              break;
+          }
+        }
+        x = 0;
+        y = 0;
       } else {
         x = effectiveView.x || 0;
         y = effectiveView.y || 0;
@@ -423,20 +471,36 @@ export async function render(item, api) {
       const childItem = await api.get(childId);
       const childNode = await api.renderItem(childId, effectiveView.type ? effectiveView : null, { onCycle, siblingContainer, navigateTo });
 
-      // Base styles - override if maximized
-      let wrapperStyle = `
-        position: absolute;
-        left: ${x}px;
-        top: ${y}px;
-        width: ${width}px;
-        height: ${height}px;
-        z-index: ${z};
-        border: 1px solid var(--color-border-light);
-        border-radius: var(--border-radius);
-        background: var(--color-bg-surface-alt);
-        overflow: hidden;
-        box-shadow: var(--shadow-sm);
-      `;
+      // Base styles - override if maximized or anchored
+      let wrapperStyle;
+      if (anchoredInsetStyle) {
+        // Anchored windows live in the non-scrolling dockOverlay and use CSS inset positioning
+        wrapperStyle = `
+          position: absolute;
+          ${anchoredInsetStyle}
+          z-index: ${z};
+          pointer-events: auto;
+          border: 1px solid var(--color-border-light);
+          border-radius: var(--border-radius);
+          background: var(--color-bg-surface-alt);
+          overflow: hidden;
+          box-shadow: var(--shadow-sm);
+        `;
+      } else {
+        wrapperStyle = `
+          position: absolute;
+          left: ${x}px;
+          top: ${y}px;
+          width: ${width}px;
+          height: ${height}px;
+          z-index: ${z};
+          border: 1px solid var(--color-border-light);
+          border-radius: var(--border-radius);
+          background: var(--color-bg-surface-alt);
+          overflow: hidden;
+          box-shadow: var(--shadow-sm);
+        `;
+      }
 
       if (isMaximized) {
         wrapperStyle = `
@@ -783,7 +847,7 @@ export async function render(item, api) {
             // Immediate DOM update for responsiveness
             wrapper.style.display = 'none';
 
-            // Create minimized box immediately
+            // Create minimized box immediately (in dockOverlay so it doesn't scroll)
             const existingMinimized = container.querySelectorAll('[data-minimized="true"]');
             const minIndex = existingMinimized.length;
             const minBox = api.createElement('div', {
@@ -804,6 +868,7 @@ export async function render(item, api) {
                 padding: 0 8px;
                 cursor: pointer;
                 z-index: 10000;
+                pointer-events: auto;
               `,
               onclick: async () => {
                 // Restore: remove this box, show wrapper
@@ -816,7 +881,8 @@ export async function render(item, api) {
                 updateChild(childId, { minimized: false });
               }
             }, [childItem.content?.title || childItem.name || childId.slice(0,8)]);
-            container.appendChild(minBox);
+            const dockOvl = container.querySelector('[data-dock-overlay]');
+            (dockOvl || container).appendChild(minBox);
 
             // Persist to DB (fire and forget)
             updateChild(childId, { minimized: true, maximized: false });
@@ -1140,15 +1206,13 @@ export async function render(item, api) {
               if (edge === 'right' && edgeAnchor === 'left') {
                 wrapper.style.width = Math.max(MIN_DOCKED_WIDTH, startWidth + deltaX) + 'px';
               } else if (edge === 'left' && edgeAnchor === 'right') {
-                const newWidth = Math.max(MIN_DOCKED_WIDTH, startWidth - deltaX);
-                wrapper.style.width = newWidth + 'px';
-                wrapper.style.left = (startLeft + startWidth - newWidth) + 'px';
+                // CSS right:0 handles positioning — just change width
+                wrapper.style.width = Math.max(MIN_DOCKED_WIDTH, startWidth - deltaX) + 'px';
               } else if (edge === 'bottom' && edgeAnchor === 'top') {
                 wrapper.style.height = Math.max(MIN_DOCKED_HEIGHT, startHeight + deltaY) + 'px';
               } else if (edge === 'top' && edgeAnchor === 'bottom') {
-                const newHeight = Math.max(MIN_DOCKED_HEIGHT, startHeight - deltaY);
-                wrapper.style.height = newHeight + 'px';
-                wrapper.style.top = (startTop + startHeight - newHeight) + 'px';
+                // CSS bottom:0 handles positioning — just change height
+                wrapper.style.height = Math.max(MIN_DOCKED_HEIGHT, startHeight - deltaY) + 'px';
               }
             };
 
@@ -1262,10 +1326,11 @@ export async function render(item, api) {
             z: newZ - baseZ
           }, navigateTo);
 
-          // Find the container element in the DOM and append
+          // Find the scroll area in the DOM and append (new siblings are always floating)
           const containerEl = document.querySelector(`[data-container-id="${item.id}"]`);
-          if (containerEl) {
-            containerEl.appendChild(wrapper);
+          const scrollAreaEl = containerEl?.querySelector('[data-scroll-area]');
+          if (scrollAreaEl) {
+            scrollAreaEl.appendChild(wrapper);
           }
         }
       }
@@ -1316,10 +1381,18 @@ export async function render(item, api) {
         innerDom.style.minHeight = '0';
         background.appendChild(innerDom);
       }
-      // Child wrappers are the rest of the results
-      allResults.slice(1).forEach(wrapper => container.appendChild(wrapper));
+      // Child wrappers are the rest of the results — route to scrollArea or dockOverlay
+      allResults.slice(1).forEach((wrapper, i) => {
+        const child = childrenToRender[i];
+        const target = isAnchored(child.view?.anchor) ? dockOverlay : scrollArea;
+        target.appendChild(wrapper);
+      });
     } else {
-      allResults.forEach(wrapper => container.appendChild(wrapper));
+      allResults.forEach((wrapper, i) => {
+        const child = childrenToRender[i];
+        const target = isAnchored(child.view?.anchor) ? dockOverlay : scrollArea;
+        target.appendChild(wrapper);
+      });
     }
 
     // Render minimized windows at bottom
@@ -1350,6 +1423,7 @@ export async function render(item, api) {
             cursor: pointer;
             z-index: 9999;
             box-shadow: var(--shadow-sm);
+            pointer-events: auto;
           `,
           title: itemName,
           onclick: async () => {
@@ -1405,62 +1479,14 @@ export async function render(item, api) {
         }, [itemName]);
 
         minimizedBox.appendChild(text);
-        container.appendChild(minimizedBox);
+        dockOverlay.appendChild(minimizedBox);
       } catch (error) {
         console.error('Error rendering minimized item:', childId, error);
       }
     }
 
-    // Update anchored window positions on container resize or scroll
-    // Anchored windows stay in the viewport (sticky behavior) - scroll offset is added
-    const updateAnchoredWindowPositions = (containerWidth, containerHeight, scrollLeft, scrollTop) => {
-      const windowWrappers = container.querySelectorAll('[data-anchor]');
-      windowWrappers.forEach(wrapper => {
-        const anchorAttr = wrapper.getAttribute('data-anchor');
-        if (!anchorAttr || anchorAttr === 'top-left' || anchorAttr === '') return;
-
-        const childIdAttr = wrapper.getAttribute('data-item-id');
-        const childEntry = children.find(c => c.id === childIdAttr);
-        if (!childEntry) return;
-
-        const view = childEntry.view || {};
-        const pos = calculateAbsolutePosition({ ...view, anchor: anchorAttr }, containerWidth, containerHeight);
-
-        // Add scroll offset so anchored windows stay in viewport
-        wrapper.style.left = (pos.left + scrollLeft) + 'px';
-        wrapper.style.top = (pos.top + scrollTop) + 'px';
-        wrapper.style.width = pos.width + 'px';
-        wrapper.style.height = pos.height + 'px';
-      });
-    };
-
-    // Track container dimensions for scroll handler
-    let lastContainerWidth = container.clientWidth || 1000;
-    let lastContainerHeight = container.clientHeight || 600;
-
-    const resizeObserver = new ResizeObserver(entries => {
-      for (const entry of entries) {
-        lastContainerWidth = entry.contentRect.width;
-        lastContainerHeight = entry.contentRect.height;
-        updateAnchoredWindowPositions(
-          lastContainerWidth,
-          lastContainerHeight,
-          container.scrollLeft,
-          container.scrollTop
-        );
-      }
-    });
-    resizeObserver.observe(container);
-
-    // Scroll handler to keep anchored windows in viewport
-    container.addEventListener('scroll', () => {
-      updateAnchoredWindowPositions(
-        lastContainerWidth,
-        lastContainerHeight,
-        container.scrollLeft,
-        container.scrollTop
-      );
-    });
+    // Anchored windows are positioned via CSS inset properties in the non-scrolling dockOverlay.
+    // No ResizeObserver or scroll handler needed — CSS handles repositioning automatically.
   }
 
   // SCROLL PRESERVATION: Restore scroll positions after DOM is created

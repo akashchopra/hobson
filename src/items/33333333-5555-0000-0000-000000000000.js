@@ -870,8 +870,9 @@ export class RenderingSystem {
       },
 
       // Deprecated: use set() instead
+      // Passes silent: true so position/layout saves don't trigger event cascades
       updateSilent: async (item) => {
-        await kernel.saveItem(item);
+        await kernel.saveItem(item, { silent: true });
         return item.id;
       },
 

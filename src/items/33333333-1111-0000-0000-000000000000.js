@@ -377,6 +377,9 @@ export async function loadKernel(require, storageBackend) {
       if (!mainView) return;
 
       try {
+        // Clear stale render instances before full re-render
+        this.rendering.registry.clear();
+
         // Render the viewport item itself
         // The viewport renderer will show the root or empty state
         const dom = await this.rendering.renderItem(IDS.VIEWPORT);
