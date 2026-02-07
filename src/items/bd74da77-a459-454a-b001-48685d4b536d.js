@@ -979,7 +979,7 @@ export async function render(item, api) {
         if (!kernel._elementInspector) {
           try {
             const inspectorModule = await kernel.moduleSystem.require('element-inspector');
-            const replApi = kernel.createREPLAPI();
+            const replApi = kernel.createAPI();
             kernel._elementInspector = inspectorModule.activate(replApi);
           } catch (e) {
             console.warn('Could not load element-inspector:', e.message);

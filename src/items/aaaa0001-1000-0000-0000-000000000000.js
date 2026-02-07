@@ -28,7 +28,7 @@ const FILENAMES = {
 export async function collect(tier, api) {
   if (!api) {
     // Allow calling from REPL where api is global
-    api = window.kernel?.createREPLAPI();
+    api = window.kernel?.createAPI();
   }
   
   if (!TIER_TAGS[tier]) {
@@ -141,7 +141,7 @@ function sortForExport(items) {
  */
 export async function download(tier, api) {
   if (!api) {
-    api = window.kernel?.createREPLAPI();
+    api = window.kernel?.createAPI();
   }
   
   const items = await collect(tier, api);
@@ -166,7 +166,7 @@ export async function download(tier, api) {
  */
 export async function summary(api) {
   if (!api) {
-    api = window.kernel?.createREPLAPI();
+    api = window.kernel?.createAPI();
   }
   
   const result = {};
@@ -189,7 +189,7 @@ export async function summary(api) {
  */
 export async function tierOf(itemId, api) {
   if (!api) {
-    api = window.kernel?.createREPLAPI();
+    api = window.kernel?.createAPI();
   }
   
   const item = await api.get(itemId);

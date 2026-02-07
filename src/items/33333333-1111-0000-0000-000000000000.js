@@ -123,6 +123,80 @@ export async function loadKernel(require, storageBackend) {
   const { RenderingSystem } = await require(IDS.KERNEL_RENDERING_SYSTEM);
   const { SafeMode } = await require(IDS.KERNEL_SAFE_MODE);
 
+  // Sort items in dependency order for import (types before their instances)
+  // Uses topological sort based on type and extends fields
+  function sortItemsForImport(items) {
+    const itemMap = new Map(items.map(i => [i.id, i]));
+    const itemIds = new Set(items.map(i => i.id));
+
+    // Build dependency graph
+    // dependsOn[A] = [B, C] means A depends on B and C (they must be saved first)
+    const dependsOn = new Map();
+
+    for (const item of items) {
+      const deps = [];
+
+      // Type dependency (required for validation)
+      if (item.type && itemIds.has(item.type) && item.type !== item.id) {
+        deps.push(item.type);
+      }
+
+      // Extends dependency (for completeness)
+      if (item.extends && itemIds.has(item.extends) && item.extends !== item.id) {
+        deps.push(item.extends);
+      }
+
+      dependsOn.set(item.id, deps);
+    }
+
+    // Topological sort using Kahn's algorithm
+    // Build reverse graph: mustComeBefore[B] = [A, D] means B must come before A and D
+    const mustComeBefore = new Map();
+    const inDegree = new Map();
+
+    for (const item of items) {
+      inDegree.set(item.id, dependsOn.get(item.id).length);
+
+      for (const dep of dependsOn.get(item.id)) {
+        if (!mustComeBefore.has(dep)) mustComeBefore.set(dep, []);
+        mustComeBefore.get(dep).push(item.id);
+      }
+    }
+
+    // Start with items that have no dependencies in the import set
+    const queue = [];
+    for (const [id, degree] of inDegree) {
+      if (degree === 0) queue.push(id);
+    }
+
+    const result = [];
+    while (queue.length > 0) {
+      const id = queue.shift();
+      result.push(itemMap.get(id));
+
+      for (const dependent of (mustComeBefore.get(id) || [])) {
+        const newDegree = inDegree.get(dependent) - 1;
+        inDegree.set(dependent, newDegree);
+        if (newDegree === 0) {
+          queue.push(dependent);
+        }
+      }
+    }
+
+    // Handle cycles: append remaining items (they may fail validation)
+    if (result.length < items.length) {
+      const resultIds = new Set(result.map(i => i.id));
+      for (const item of items) {
+        if (!resultIds.has(item.id)) {
+          result.push(item);
+        }
+      }
+      console.warn(`[import] Circular dependencies detected - some items may fail validation`);
+    }
+
+    return result;
+  }
+
   class Kernel {
     constructor() {
       this.IDS = IDS;
@@ -252,7 +326,7 @@ export async function loadKernel(require, storageBackend) {
         if (this.debugMode) {
           try {
             const inspectorModule = await this.moduleSystem.require('element-inspector');
-            const api = this.createREPLAPI();
+            const api = this.createAPI();
             this._elementInspector = inspectorModule.activate(api);
           } catch (e) {
             console.warn('Could not load element-inspector:', e.message);
@@ -411,7 +485,7 @@ export async function loadKernel(require, storageBackend) {
       try {
         const itemPalette = await this.moduleSystem.require('item-palette');
         if (itemPalette?.show) {
-          await itemPalette.show(this.createREPLAPI());
+          await itemPalette.show(this.createAPI());
           return;
         }
       } catch {
@@ -737,98 +811,81 @@ export async function loadKernel(require, storageBackend) {
     }
 
     // -------------------------------------------------------------------------
-    // REPL API
+    // Unified API
     // -------------------------------------------------------------------------
 
-    createREPLAPI() {
+    createAPI(containerItem = null, context = {}) {
       const kernel = this;
+      const rendering = this.rendering;
 
-      // Sort items in dependency order for import (types before their instances)
-      // Uses topological sort based on type and extends fields
-      function sortItemsForImport(items) {
-        const itemMap = new Map(items.map(i => [i.id, i]));
-        const itemIds = new Set(items.map(i => i.id));
+      const api = {
+        // --- Create DOM elements ---
+        createElement(tag, props = {}, children = []) {
+          const element = document.createElement(tag);
 
-        // Build dependency graph
-        // dependsOn[A] = [B, C] means A depends on B and C (they must be saved first)
-        const dependsOn = new Map();
-
-        for (const item of items) {
-          const deps = [];
-
-          // Type dependency (required for validation)
-          if (item.type && itemIds.has(item.type) && item.type !== item.id) {
-            deps.push(item.type);
-          }
-
-          // Extends dependency (for completeness)
-          if (item.extends && itemIds.has(item.extends) && item.extends !== item.id) {
-            deps.push(item.extends);
-          }
-
-          dependsOn.set(item.id, deps);
-        }
-
-        // Topological sort using Kahn's algorithm
-        // Build reverse graph: mustComeBefore[B] = [A, D] means B must come before A and D
-        const mustComeBefore = new Map();
-        const inDegree = new Map();
-
-        for (const item of items) {
-          inDegree.set(item.id, dependsOn.get(item.id).length);
-
-          for (const dep of dependsOn.get(item.id)) {
-            if (!mustComeBefore.has(dep)) mustComeBefore.set(dep, []);
-            mustComeBefore.get(dep).push(item.id);
-          }
-        }
-
-        // Start with items that have no dependencies in the import set
-        const queue = [];
-        for (const [id, degree] of inDegree) {
-          if (degree === 0) queue.push(id);
-        }
-
-        const result = [];
-        while (queue.length > 0) {
-          const id = queue.shift();
-          result.push(itemMap.get(id));
-
-          for (const dependent of (mustComeBefore.get(id) || [])) {
-            const newDegree = inDegree.get(dependent) - 1;
-            inDegree.set(dependent, newDegree);
-            if (newDegree === 0) {
-              queue.push(dependent);
+          // Debug attribution (only when containerItem present)
+          if (containerItem) {
+            const debugActive = context.debug || kernel.debugMode;
+            if (debugActive) {
+              if (context.viewId) {
+                element.setAttribute('data-view-id', context.viewId);
+              }
+              element.setAttribute('data-for-item', containerItem.id);
+              try {
+                const stack = new Error().stack;
+                const location = rendering.parseSourceLocation(stack);
+                if (location) {
+                  element.setAttribute('data-source', location.itemName);
+                  element.setAttribute('data-source-line', String(location.line));
+                }
+              } catch (e) { /* ignore */ }
             }
           }
-        }
 
-        // Handle cycles: append remaining items (they may fail validation)
-        if (result.length < items.length) {
-          const resultIds = new Set(result.map(i => i.id));
-          for (const item of items) {
-            if (!resultIds.has(item.id)) {
-              result.push(item);
+          for (const [key, value] of Object.entries(props)) {
+            if (key.startsWith("on") && typeof value === "function") {
+              const eventName = key.substring(2).toLowerCase();
+              element.addEventListener(eventName, value);
+            } else if (key === "class") {
+              element.className = value;
+            } else if (key === "style" && typeof value === "string") {
+              element.style.cssText = value;
+            } else {
+              element.setAttribute(key, value);
             }
           }
-          console.warn(`[import] Circular dependencies detected - some items may fail validation`);
-        }
 
-        return result;
-      }
+          for (const child of children) {
+            if (typeof child === "string") {
+              element.appendChild(document.createTextNode(child));
+            } else if (child instanceof Node) {
+              element.appendChild(child);
+            } else if (Array.isArray(child)) {
+              // Handle array shorthand: [tag, props, children]
+              const [childTag, childProps = {}, childChildren = []] = child;
+              const childElement = api.createElement(childTag, childProps, childChildren);
+              element.appendChild(childElement);
+            }
+          }
 
-      return {
-        // Storage operations
+          return element;
+        },
+
+        // --- Storage operations ---
         get: (id) => kernel.storage.get(id),
         set: async (item, options) => {
-          // Save without triggering re-render
           await kernel.saveItem(item, options);
           return item.id;
         },
         update: async (item) => {
-          // Save and trigger re-render
           await kernel.saveItem(item);
           await kernel.renderViewport();
+          return item.id;
+        },
+        // Deprecated: use set() instead
+        // Passes silent: true so position/layout saves don't trigger event cascades
+        updateSilent: async (item) => {
+          await kernel.saveItem(item, { silent: true });
           return item.id;
         },
         delete: (id) => kernel.deleteItem(id),
@@ -836,21 +893,86 @@ export async function loadKernel(require, storageBackend) {
         getAll: () => kernel.storage.getAll(),
         getAllRaw: () => kernel.storage.getAllRaw(),
 
-        // Code operations
+        // --- Code operations ---
         require: (name) => kernel.moduleSystem.require(name),
         typeChainIncludes: (typeId, targetId) => kernel.moduleSystem.typeChainIncludes(typeId, targetId),
 
-        // Rendering operations
-        renderItem: (itemId, viewId) => kernel.rendering.renderItem(itemId, viewId),
-        rerenderItem: (itemId) => kernel.rendering.rerenderItem(itemId),
-        rerenderByView: (viewId) => kernel.rendering.rerenderByView(viewId),
-        rerenderByType: (typeId) => kernel.rendering.rerenderByType(typeId),
-        getViews: (typeId) => kernel.rendering.getViews(typeId),
-        getDefaultView: (typeId) => kernel.rendering.getDefaultView(typeId),
-        findView: (typeId) => kernel.rendering.findView(typeId),
-        getEffectiveView: (itemId) => kernel.rendering.getEffectiveView(itemId),
+        // --- Rendering operations ---
+        // viewIdOrConfig can be: null, string (view GUID), or object { type, ...viewProps }
+        renderItem: async (itemId, viewIdOrConfig, options) => {
+          // Extract view ID and config from the parameter
+          let viewId = null;
+          let viewConfig = null;
+          if (typeof viewIdOrConfig === 'string') {
+            viewId = viewIdOrConfig;
+          } else if (viewIdOrConfig && typeof viewIdOrConfig === 'object') {
+            viewId = viewIdOrConfig.type || null;
+            viewConfig = viewIdOrConfig;
+          }
 
-        // Preferred view management
+          // Merge decorator and viewConfig into context for propagation
+          const decorator = options?.decorator || context.decorator;
+          const siblingContainer = options?.siblingContainer !== undefined
+            ? options.siblingContainer
+            : context.siblingContainer;
+          const navigateTo = options?.navigateTo !== undefined
+            ? options.navigateTo
+            : context.navigateTo;
+          const mergedContext = {
+            ...context,
+            decorator,
+            viewConfig,
+            parentId: containerItem ? containerItem.id : null,
+            siblingContainer,
+            navigateTo
+          };
+
+          const domNode = await rendering.renderItem(itemId, viewId, options || {}, mergedContext);
+
+          // Apply decorator if present (from options or inherited context)
+          if (domNode && decorator) {
+            try {
+              const item = await kernel.storage.get(itemId);
+              await decorator(domNode, itemId, item);
+            } catch (e) {
+              console.warn('Decorator error:', e);
+            }
+          }
+          return domNode;
+        },
+
+        rerenderItem: (itemId) => rendering.rerenderItem(itemId),
+        rerenderByView: (viewId) => rendering.rerenderByView(viewId),
+        rerenderByType: (typeId) => rendering.rerenderByType(typeId),
+        renderViewport: () => kernel.renderViewport(),
+
+        // --- View discovery ---
+        getViews: (typeId) => rendering.getViews(typeId),
+        getDefaultView: (typeId) => rendering.getDefaultView(typeId),
+        findView: (typeId) => rendering.findView(typeId),
+        getEffectiveView: (itemId) => rendering.getEffectiveView(itemId),
+        getContextualView: async (itemId, parentId) => {
+          if (!parentId) return null;
+          try {
+            const parent = await kernel.storage.get(parentId);
+            const childSpec = parent.attachments?.find(c =>
+              (typeof c === 'string' ? c : c.id) === itemId
+            );
+            if (childSpec && typeof childSpec === 'object' && childSpec.view?.type) {
+              return childSpec.view.type;
+            }
+          } catch (e) {
+            // Parent not found
+          }
+          return null;
+        },
+        getTypeName: async (itemId) => {
+          const item = await kernel.storage.get(itemId);
+          const typeItem = await kernel.storage.get(item.type);
+          return typeItem.name || typeItem.id.slice(0, 8);
+        },
+
+        // --- Preferred view management ---
         setPreferredView: async (itemId, viewId) => {
           const item = await kernel.storage.get(itemId);
           if (viewId) {
@@ -860,42 +982,85 @@ export async function loadKernel(require, storageBackend) {
           }
           item.modified = Date.now();
           await kernel.saveItem(item);
-          await kernel.renderViewport();
-          return item.preferredView || null;
-        },
 
+          // If this is a type definition, re-render all items of this type
+          if (item.type === IDS.TYPE_DEFINITION) {
+            await rendering.rerenderByType(itemId);
+          } else {
+            await rendering.rerenderItem(itemId);
+          }
+        },
         getPreferredView: async (itemId) => {
           const item = await kernel.storage.get(itemId);
           return item.preferredView || null;
         },
+        setTypePreferredView: async (itemId, viewId) => {
+          const item = await kernel.storage.get(itemId);
+          const typeItem = await kernel.storage.get(item.type);
+          if (viewId) {
+            typeItem.preferredView = viewId;
+          } else {
+            delete typeItem.preferredView;
+          }
+          typeItem.modified = Date.now();
+          await kernel.saveItem(typeItem);
+          await rendering.rerenderByType(item.type);
+        },
+        getTypePreferredView: async (itemId) => {
+          const item = await kernel.storage.get(itemId);
+          const typeItem = await kernel.storage.get(item.type);
+          return typeItem.preferredView || null;
+        },
 
-        // Parent-child operations
-        setAttachmentView: (parentId, itemId, viewId) => kernel.setAttachmentView(parentId, itemId, viewId),
+        // --- Parent-child operations (arity-detecting) ---
+        attach: async (...args) => {
+          if (args.length === 1 && containerItem) {
+            // 1-param: attach(itemId) — uses containerItem
+            await kernel.attach(containerItem.id, args[0]);
+          } else {
+            // 2-param: attach(parentId, itemId) — explicit
+            await kernel.attach(args[0], args[1]);
+          }
+        },
+        detach: async (...args) => {
+          if (args.length === 1 && containerItem) {
+            // 1-param: detach(itemId) — uses containerItem
+            await kernel.detach(containerItem.id, args[0]);
+          } else {
+            // 2-param: detach(parentId, itemId) — explicit
+            await kernel.detach(args[0], args[1]);
+          }
+        },
+        setAttachmentView: async (...args) => {
+          if (args.length === 2 && containerItem) {
+            // 2-param: setAttachmentView(itemId, viewId) — uses containerItem
+            await kernel.setAttachmentView(containerItem.id, args[0], args[1]);
+          } else {
+            // 3-param: setAttachmentView(parentId, itemId, viewId)
+            await kernel.setAttachmentView(args[0], args[1], args[2]);
+          }
+        },
         findContainerOf: (itemId) => kernel.findContainerOf(itemId),
-        attach: (parentId, itemId) => kernel.attach(parentId, itemId),
-        detach: (parentId, itemId) => kernel.detach(parentId, itemId),
 
         // Cycle detection (advisory - for UIs that want to warn before creating cycles)
         wouldCreateCycle: (parentId, attachmentId) => kernel.wouldCreateCycle(parentId, attachmentId),
         hasCycle: (itemId) => kernel.hasCycle(itemId),
 
-        // Navigation (params: { field, line, col } for line highlighting)
-        // Delegates to userland viewport-manager
+        // --- Navigation ---
         navigate: async (id, params) => {
           const vpMgr = await kernel.moduleSystem.require('viewport-manager');
           return vpMgr.navigate(id, params);
         },
+        getCurrentRoot: () => {
+          const vpMgr = kernel.moduleSystem.getCached('viewport-manager');
+          return vpMgr?.getRoot() || null;
+        },
 
-        // Render viewport (for userland to trigger re-renders)
-        renderViewport: () => kernel.renderViewport(),
-
-        // Export
+        // --- Import/Export ---
         export: async (singleFile = true) => {
           console.log("api.export:", singleFile);
           return kernel.export(singleFile);
         },
-
-        // Import
         import: async () => {
           return new Promise((resolve, reject) => {
             const input = document.createElement("input");
@@ -1012,11 +1177,42 @@ export async function loadKernel(require, storageBackend) {
           });
         },
 
-        // Well-known IDs
+        // --- Events ---
+        events: {
+          on: (eventTypeId, handler) => kernel.events.on(eventTypeId, handler),
+          off: (eventTypeId, handler) => kernel.events.off(eventTypeId, handler),
+          emit: (event) => kernel.events.emit(event),
+          list: () => kernel.events.getRegisteredEvents()
+        },
+
+        // --- Render instances ---
+        instances: {
+          getByItemId: (itemId) => rendering.registry.getByItemId(itemId),
+          getByViewId: (viewId) => rendering.registry.getByViewId(viewId),
+          get: (instanceId) => rendering.registry.get(instanceId),
+          getAll: () => rendering.registry.getAll(),
+          getSummary: () => rendering.registry.getSummary(),
+          clear: () => rendering.registry.clear()
+        },
+
+        // --- UI operations ---
+        editRaw: (itemId) => kernel.editItemRaw(itemId),
+        showItemList: () => kernel.showItemList(),
+
+        // --- Compat: createREPLContext returns a context-free API ---
+        createREPLContext: () => kernel.createAPI(),
+
+        // --- Well-known IDs ---
         IDS,
         EVENT_IDS,
 
-        // Helper functions
+        // --- Instance ID (for nested Hobson instances) ---
+        getInstanceId: () => kernel.storage.instanceId,
+
+        // --- Debug mode ---
+        isDebugMode: () => context.debug || kernel.debugMode,
+
+        // --- Helper functions ---
         helpers: {
           findByName: async (name) => {
             const items = await kernel.storage.query({ name });
@@ -1038,7 +1234,7 @@ export async function loadKernel(require, storageBackend) {
           }
         },
 
-        // Viewport - fully delegates to userland libraries (no kernel fallback)
+        // --- Viewport ---
         viewport: {
           select: async (itemId, parentId) => {
             const selMgr = await kernel.moduleSystem.require('selection-manager');
@@ -1057,7 +1253,6 @@ export async function loadKernel(require, storageBackend) {
             return selMgr?.getSelectionParent() || null;
           },
           getRoot: () => {
-            // Sync: reads from URL (authoritative source for root)
             const params = new URLSearchParams(window.location.search);
             return params.get('root');
           },
@@ -1081,28 +1276,149 @@ export async function loadKernel(require, storageBackend) {
             const vpMgr = await kernel.moduleSystem.require('viewport-manager');
             return await vpMgr.restorePreviousRootView();
           }
-        },
-
-        // Events (Phase 2: object-based emit, type hierarchy dispatch)
-        // on(eventTypeId, handler) - subscribe to event type GUID
-        // emit({ type: eventTypeId, content: {...} }) - emit event object
-        events: {
-          on: (eventTypeId, handler) => kernel.events.on(eventTypeId, handler),
-          off: (eventTypeId, handler) => kernel.events.off(eventTypeId, handler),
-          emit: (event) => kernel.events.emit(event),
-          list: () => kernel.events.getRegisteredEvents()
-        },
-
-        // Render instances (Phase 2)
-        instances: {
-          getByItemId: (itemId) => kernel.rendering.registry.getByItemId(itemId),
-          getByViewId: (viewId) => kernel.rendering.registry.getByViewId(viewId),
-          get: (instanceId) => kernel.rendering.registry.get(instanceId),
-          getAll: () => kernel.rendering.registry.getAll(),
-          getSummary: () => kernel.rendering.registry.getSummary(),
-          clear: () => kernel.rendering.registry.clear()
         }
       };
+
+      // --- Context layer (only when containerItem provided) ---
+      if (containerItem) {
+        api.getViewConfig = async () => {
+          if (context.viewConfig) {
+            return context.viewConfig;
+          }
+          if (context.parentId === IDS.VIEWPORT) {
+            const vpMgr = await kernel.moduleSystem.require('viewport-manager');
+            if (vpMgr.getRoot() === containerItem.id) {
+              return await vpMgr.getRootViewConfig();
+            }
+          }
+          return null;
+        };
+
+        api.updateViewConfig = async (updates) => {
+          const parentId = context.parentId;
+
+          if (parentId === IDS.VIEWPORT) {
+            const vpMgr = await kernel.moduleSystem.require('viewport-manager');
+            if (vpMgr.getRoot() === containerItem.id) {
+              await vpMgr.updateRootViewConfig(updates);
+              return true;
+            }
+          }
+
+          if (!parentId) {
+            console.warn('updateViewConfig: no parent ID in context');
+            return false;
+          }
+
+          const parent = await kernel.storage.get(parentId);
+          const childIndex = parent.attachments?.findIndex(c => c.id === containerItem.id);
+          if (childIndex < 0) {
+            console.warn('updateViewConfig: item not found in parent attachments');
+            return false;
+          }
+
+          const currentChild = parent.attachments[childIndex];
+          parent.attachments[childIndex] = {
+            ...currentChild,
+            view: { ...(currentChild.view || {}), ...updates }
+          };
+          parent.modified = Date.now();
+
+          await kernel.saveItem(parent);
+          return true;
+        };
+
+        api.getParentId = () => context.parentId || null;
+        api.getViewId = () => context.viewId || null;
+        api.getNavigateTo = () => context.navigateTo || null;
+        api.getCurrentItem = () => containerItem;
+
+        Object.defineProperty(api, 'siblingContainer', {
+          get: () => context.siblingContainer || null
+        });
+
+        api.create = async (item, addAsChild = false) => {
+          const newItem = {
+            ...item,
+            id: item.id || crypto.randomUUID(),
+            attachments: item.attachments || []
+          };
+
+          await kernel.saveItem(newItem);
+
+          if (addAsChild) {
+            await kernel.attach(containerItem.id, newItem.id);
+          }
+
+          return newItem.id;
+        };
+
+        api.createChild = async (type, content = {}) => {
+          const newItem = {
+            type,
+            content,
+            attachments: []
+          };
+          const id = await api.create(newItem, true);
+          await kernel.renderViewport();
+          return id;
+        };
+
+        api.restorePreviousView = async (itemId) => {
+          const vpMgr = kernel.moduleSystem.getCached('viewport-manager');
+          const isViewportRoot = vpMgr && vpMgr.getRoot() === itemId;
+
+          if (isViewportRoot) {
+            if (vpMgr.restorePreviousRootView) {
+              const restored = await vpMgr.restorePreviousRootView();
+              if (restored) {
+                await kernel.renderViewport();
+                return true;
+              }
+            }
+            if (await vpMgr.getRootView()) {
+              await vpMgr.setRootView(null, false);
+              await kernel.renderViewport();
+              return true;
+            }
+            return false;
+          }
+
+          const renderingParentId = context.parentId;
+          const parent = renderingParentId
+            ? await kernel.storage.get(renderingParentId)
+            : await kernel.findContainerOf(itemId);
+          if (!parent) {
+            return false;
+          }
+
+          const childIndex = parent.attachments.findIndex(c => c.id === itemId);
+          if (childIndex < 0) return false;
+
+          const childSpec = parent.attachments[childIndex];
+          if (childSpec.previousView) {
+            parent.attachments[childIndex] = {
+              ...childSpec,
+              view: { ...childSpec.previousView },
+              previousView: undefined
+            };
+          } else if (childSpec.view && 'type' in childSpec.view) {
+            const { type, ...viewWithoutType } = childSpec.view;
+            parent.attachments[childIndex] = {
+              ...childSpec,
+              view: Object.keys(viewWithoutType).length > 0 ? viewWithoutType : undefined,
+              previousView: undefined
+            };
+          } else {
+            return false;
+          }
+          await kernel.saveItem(parent);
+          await kernel.renderViewport();
+          return true;
+        };
+      }
+
+      return api;
     }
 
     // -------------------------------------------------------------------------
@@ -1459,7 +1775,7 @@ export async function loadKernel(require, storageBackend) {
 
         // Use full REPL API for watch handlers (libraries need full access)
         // Renderer API is too limited - it lacks import, export, etc.
-        const api = this.createREPLAPI();
+        const api = this.createAPI();
 
         // Call the handler with event content (preserves existing handler signatures)
         await module[handlerName](event.content, api);
