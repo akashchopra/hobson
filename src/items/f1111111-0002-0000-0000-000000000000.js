@@ -75,7 +75,7 @@ async function persistRootChange(newRootId, previousRootId) {
   // Different root - clear view config
   viewport.attachments = newRootId ? [{ id: newRootId }] : [];
   viewport.modified = Date.now();
-  await window.kernel.saveItem(viewport);
+  await window.kernel.saveItem(viewport, { silent: true });
 }
 
 // Get navigation params from URL
@@ -119,7 +119,7 @@ async function updateChildSpec(updater) {
 
     viewport.attachments = [updated];
     viewport.modified = Date.now();
-    await window.kernel.saveItem(viewport);
+    await window.kernel.saveItem(viewport, { silent: true });
   } catch (e) {
     console.warn('[viewport-manager] Failed to update viewport item:', e);
   }

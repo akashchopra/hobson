@@ -98,11 +98,17 @@ export async function render(value, options, api) {
 
   // Refresh CodeMirror when container is resized
   // Self-cleaning: disconnects when element is removed from DOM
-  const resizeObserver = new ResizeObserver(() => {
+  // Size-change guard prevents cm.refresh() ↔ ResizeObserver oscillation
+  let lastObsWidth = 0, lastObsHeight = 0;
+  const resizeObserver = new ResizeObserver((entries) => {
     if (!editorContainer.isConnected) {
       resizeObserver.disconnect();
       return;
     }
+    const { width, height } = entries[0].contentRect;
+    if (width === lastObsWidth && height === lastObsHeight) return;
+    lastObsWidth = width;
+    lastObsHeight = height;
     cm.refresh();
   });
   resizeObserver.observe(editorContainer);

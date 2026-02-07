@@ -43,9 +43,9 @@ export async function render(item, api) {
       rootSpec = { id: urlRoot };  // No view config from URL
       
       // Update viewport item to match URL (for consistency on next render)
-      // Do this silently via api.set to avoid re-render loop
+      // Silent to avoid triggering watcher dispatch and re-render loop
       const updatedViewport = { ...item, attachments: [{ id: urlRoot }], modified: Date.now() };
-      await api.set(updatedViewport);
+      await api.set(updatedViewport, { silent: true });
     } catch {
       // URL root doesn't exist - fall back to stored root
       console.warn('[viewport-view] URL root not found:', urlRoot);
