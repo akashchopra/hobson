@@ -1,7 +1,3 @@
-// Item Palette Library
-// Provides the item search/navigation modal. Moved from kernel to userland.
-// See [item-palette documentation](item://f1111111-0005-0000-0000-000000000000)
-
 let api = null;
 let searchLib = null;
 
