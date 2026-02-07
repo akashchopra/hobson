@@ -198,10 +198,17 @@ async function renderTaggedWithGrouped(label, tagGroups, selectedId, api) {
   }, [label]);
   group.appendChild(groupLabel);
 
+  // Get root tag name for full path display
+  let rootName;
+  try {
+    const rootItem = await api.get(selectedId);
+    rootName = rootItem?.name || selectedId.substring(0, 8);
+  } catch (e) { rootName = selectedId.substring(0, 8); }
+
   for (const { tagId, items } of tagGroups) {
     const path = tagId === selectedId
-      ? '(direct)'
-      : await buildTagPath(tagId, selectedId, api);
+      ? rootName
+      : rootName + '/' + await buildTagPath(tagId, selectedId, api);
 
     const subSection = api.createElement('div', {
       style: 'margin-left: 8px; margin-bottom: 8px;'
