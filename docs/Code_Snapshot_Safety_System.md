@@ -73,14 +73,13 @@ Each snapshot captures the complete previous state of a code item:
     source_id: "<id of the code item that was changed>",
     source_name: "<name of the code item at time of snapshot>",
     source_type: "<type of the code item>",
-    previous_code: "<the full content.code string before the edit>",
-    previous_content: { ... },                       // full content object (not just code)
+    previous_content: { ... },                       // full content object before the edit
     snapshot_reason: "pre-save"                       // or "manual" for user-triggered snapshots
   }
 }
 ```
 
-**Why store `previous_content` in full, not just `previous_code`?** Code items sometimes have meaningful non-code content — `watches`, `for_type`, `capabilities`, `description`. Capturing the complete content object makes restore truly lossless. The `previous_code` field is redundant but useful for quick display in the snapshot view without parsing the full content.
+**Why store the full `previous_content`, not just `code`?** Code items have meaningful non-code content — `watches`, `for_type`, `capabilities`, `description`. Capturing the complete content object makes restore truly lossless. The code is accessible as `previous_content.code` when needed for display.
 
 ### Snapshot Library: `code-snapshot-manager`
 
@@ -111,9 +110,10 @@ A library item with a declarative watch that fires on every code item update.
 
 ```javascript
 export async function onItemUpdated({ id, item, previous }, api) {
-  // Only snapshot if code actually changed
-  if (!previous || !previous.content?.code) return;
-  if (previous.content.code === item.content.code) return;
+  if (!previous || !previous.content) return;
+
+  // Only snapshot if content actually changed
+  if (JSON.stringify(previous.content) === JSON.stringify(item.content)) return;
 
   // Don't snapshot snapshots (prevent infinite recursion)
   // The type check in the watch filter handles this already
@@ -131,7 +131,6 @@ export async function onItemUpdated({ id, item, previous }, api) {
       source_id: id,
       source_name: previous.name || item.name,
       source_type: previous.type,
-      previous_code: previous.content.code,
       previous_content: { ...previous.content },
       snapshot_reason: "pre-save"
     }
@@ -327,7 +326,7 @@ Additionally, the `exportAllData()` function should be defined in the bootloader
 **Testing:**
 
 - Edit any code item → verify a `code-snapshot` item is created
-- Edit a code item without changing code (e.g. change description) → verify no snapshot is created
+- Save a code item without changing any content → verify no snapshot is created
 - Edit the same item 5 times → verify 5 snapshots exist with correct `source_id`
 - Call `restore()` from REPL → verify the code item reverts and a new snapshot is created of the pre-restore state
 - Call `pruneHistory()` from REPL → verify old snapshots are deleted
