@@ -85,21 +85,21 @@ export async function render(widget, api) {
   if (forwardSection) body.appendChild(forwardSection);
 
   // Render inverse groups
-  const inverseSection = await renderSection('Inverse', INVERSE_GROUPS, related, api);
+  const inverseSection = await renderSection('Inverse', INVERSE_GROUPS, related, api, { relatedLib, selectedId });
   if (inverseSection) body.appendChild(inverseSection);
 
   return container;
 }
 
-async function renderSection(sectionLabel, groups, related, api) {
+async function renderSection(sectionLabel, groups, related, api, context) {
   const nonEmpty = [];
 
   for (const [label, key, isSingle] of groups) {
     const value = related[key];
     if (isSingle) {
-      if (value) nonEmpty.push([label, [value]]);
+      if (value) nonEmpty.push([label, [value], key]);
     } else {
-      if (Array.isArray(value) && value.length > 0) nonEmpty.push([label, value]);
+      if (Array.isArray(value) && value.length > 0) nonEmpty.push([label, value, key]);
     }
   }
 
@@ -114,7 +114,16 @@ async function renderSection(sectionLabel, groups, related, api) {
   }, [sectionLabel]);
   section.appendChild(heading);
 
-  for (const [label, ids] of nonEmpty) {
+  for (const [label, ids, key] of nonEmpty) {
+    // Special grouped rendering for Tagged With when sub-tags exist
+    if (key === 'taggedWith' && context?.relatedLib) {
+      const tagGroups = context.relatedLib.getItemsTaggedWithGrouped(context.selectedId);
+      if (tagGroups.length > 1) {
+        const group = await renderTaggedWithGrouped(label, tagGroups, context.selectedId, api);
+        section.appendChild(group);
+        continue;
+      }
+    }
     const group = await renderGroup(label, ids, api);
     section.appendChild(group);
   }
@@ -163,6 +172,78 @@ async function renderGroup(label, ids, api) {
   }
 
   group.appendChild(list);
+  return group;
+}
+
+async function buildTagPath(tagId, rootId, api) {
+  const parts = [];
+  let currentId = tagId;
+  while (currentId && currentId !== rootId) {
+    let item;
+    try { item = await api.get(currentId); } catch (e) { break; }
+    if (!item) break;
+    parts.unshift(item.name || currentId.substring(0, 8));
+    currentId = item.content?.parent;
+  }
+  return parts.join('/');
+}
+
+async function renderTaggedWithGrouped(label, tagGroups, selectedId, api) {
+  const group = api.createElement('div', {
+    style: 'margin-bottom: 12px;'
+  }, []);
+
+  const groupLabel = api.createElement('div', {
+    style: 'font-weight: 600; margin-bottom: 4px; font-size: 13px;'
+  }, [label]);
+  group.appendChild(groupLabel);
+
+  for (const { tagId, items } of tagGroups) {
+    const path = tagId === selectedId
+      ? '(direct)'
+      : await buildTagPath(tagId, selectedId, api);
+
+    const subSection = api.createElement('div', {
+      style: 'margin-left: 8px; margin-bottom: 8px;'
+    }, []);
+
+    const subLabel = api.createElement('div', {
+      style: 'font-weight: 500; font-size: 12px; color: var(--color-border-dark); margin-bottom: 2px;'
+    }, [path + ' (' + items.length + ')']);
+    subSection.appendChild(subLabel);
+
+    const list = api.createElement('div', {
+      style: 'padding-left: 8px;'
+    }, []);
+
+    const uniqueIds = [...new Set(items)];
+    const nameMap = new Map();
+    for (const id of uniqueIds) {
+      let it;
+      try { it = await api.get(id); } catch (e) { it = null; }
+      nameMap.set(id, (it?.name || '').toLowerCase());
+    }
+    uniqueIds.sort((a, b) => nameMap.get(a).localeCompare(nameMap.get(b)));
+
+    const truncated = uniqueIds.length > TRUNCATE_LIMIT;
+    const displayIds = truncated ? uniqueIds.slice(0, TRUNCATE_LIMIT) : uniqueIds;
+
+    for (const id of displayIds) {
+      const link = await renderItemLink(id, api);
+      list.appendChild(link);
+    }
+
+    if (truncated) {
+      const more = api.createElement('div', {
+        style: 'font-size: 12px; color: var(--color-border-dark); font-style: italic; padding: 2px 0;'
+      }, ['\u2026 and ' + (uniqueIds.length - TRUNCATE_LIMIT) + ' more']);
+      list.appendChild(more);
+    }
+
+    subSection.appendChild(list);
+    group.appendChild(subSection);
+  }
+
   return group;
 }
 

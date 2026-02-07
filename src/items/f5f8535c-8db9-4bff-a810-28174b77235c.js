@@ -231,6 +231,18 @@ export async function getRelated(itemId, api) {
   };
 }
 
+export function getItemsTaggedWithGrouped(tagId) {
+  const groups = [];
+  const direct = getFromIndex(S.tagIndex, tagId);
+  if (direct.length > 0) groups.push({ tagId, items: direct });
+  const descendantIds = getDescendantTagIds(tagId);
+  for (const descId of descendantIds) {
+    const items = getFromIndex(S.tagIndex, descId);
+    if (items.length > 0) groups.push({ tagId: descId, items });
+  }
+  return groups;
+}
+
 export function isBuilt() { return S.built; }
 
 export async function ensureBuilt(api) {
