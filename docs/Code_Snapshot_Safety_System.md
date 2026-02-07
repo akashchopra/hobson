@@ -49,7 +49,7 @@ A type definition item establishing snapshots as a first-class concept.
   type: "11111111-0000-0000-0000-000000000000",  // type_definition
   created: Date.now(),
   modified: Date.now(),
-  children: [],
+  attachments: [],
   content: {
     description: "A point-in-time snapshot of a code item's previous state, created automatically before each save.",
     extends: "00000000-0000-0000-0000-000000000000"  // extends atom
@@ -68,7 +68,7 @@ Each snapshot captures the complete previous state of a code item:
   type: "dddddddd-0000-0000-0000-000000000000",     // code-snapshot
   created: <timestamp of snapshot creation>,
   modified: <timestamp of snapshot creation>,
-  children: [],
+  attachments: [],
   content: {
     source_id: "<id of the code item that was changed>",
     source_name: "<name of the code item at time of snapshot>",
@@ -93,7 +93,7 @@ A library item with a declarative watch that fires on every code item update.
   type: "66666666-0000-0000-0000-000000000000",      // library
   created: Date.now(),
   modified: Date.now(),
-  children: [],
+  attachments: [],
   content: {
     description: "Automatically creates snapshots before code item saves. Provides restore and history APIs.",
     watches: [
@@ -126,7 +126,7 @@ export async function onItemUpdated({ id, item, previous }, api) {
     type: "dddddddd-0000-0000-0000-000000000000",   // code-snapshot type
     created: Date.now(),
     modified: Date.now(),
-    children: [],
+    attachments: [],
     content: {
       source_id: id,
       source_name: previous.name || item.name,
@@ -322,7 +322,7 @@ Additionally, the `exportAllData()` function should be defined in the bootloader
 1. `code-snapshot` type definition item
 2. `code-snapshot-manager` library item (with watch + handler)
 
-**Where they live:** Added to `item-backup.json` (not `initial-kernel.json` — these are userland items, not kernel).
+**Where they live:** Added as individual JSON files in `src/items/` (not kernel items — these are userland).
 
 **Testing:**
 
@@ -450,9 +450,9 @@ A watch that periodically prunes old snapshots based on configurable rules (e.g.
 
 | Layer | What | Where | Scope | Kernel change? |
 |-------|------|-------|-------|----------------|
-| 1 | Snapshot watch + library | `item-backup.json` | All code items | No (uses existing events + watches) |
-| 1 | Snapshot type definition | `item-backup.json` | Type system | No |
-| 1 | Snapshot + history views | `item-backup.json` | UI | No |
+| 1 | Snapshot watch + library | `src/items/` | All code items | No (uses existing events + watches) |
+| 1 | Snapshot type definition | `src/items/` | Type system | No |
+| 1 | Snapshot + history views | `src/items/` | UI | No |
 | 2 | Boot failure recovery UI | `bootstrap.html` | Bootloader | Yes (~60 lines, additive only) |
 
 The result: every code edit in Hobson is automatically reversible. In normal operation, users browse history and restore through the UI. In the rare case where a kernel edit breaks boot, the bootloader itself offers snapshot-based recovery — no dev tools, no data loss, no panic.
