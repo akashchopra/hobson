@@ -198,6 +198,44 @@ export async function render(markdown, api, options = {}) {
 
     try {
       const transcludedItem = await api.get(parsed.itemId);
+
+      // Functional transclusion: ?call=fnName requires item as module, calls export
+      if (parsed.queryParams.call) {
+        const module = await api.require(parsed.itemId);
+        const fnName = parsed.queryParams.call;
+        const fn = module[fnName];
+        if (typeof fn !== 'function') throw new Error('Export not found: ' + fnName);
+
+        const result = await fn(api, parsed.queryParams);
+
+        const wrapperDiv = api.createElement('details', { className: 'transclusion-container' });
+        wrapperDiv.setAttribute('open', '');
+        wrapperDiv.style.cssText = 'background: var(--color-bg-surface-alt); border: 1px solid var(--color-border-light); border-radius: var(--border-radius); padding: 15px; margin: 15px 0;';
+
+        const header = api.createElement('summary');
+        header.style.cssText = 'font-size: 12px; color: var(--color-text-secondary); padding-bottom: 8px; cursor: pointer;';
+        header.textContent = 'From: ' + (transcludedItem.name || transcludedItem.id.slice(0, 8)) + '.' + fnName + '() ';
+        const navLink = api.createElement('span');
+        navLink.textContent = '↗';
+        navLink.title = 'Open ' + (transcludedItem.name || transcludedItem.id);
+        navLink.style.cssText = 'color: var(--color-primary); cursor: pointer;';
+        navLink.onclick = (e) => { e.preventDefault(); e.stopPropagation(); api.siblingContainer ? api.siblingContainer.addSibling(parsed.itemId) : api.navigate(parsed.itemId); };
+        header.appendChild(navLink);
+        wrapperDiv.appendChild(header);
+
+        if (result?.nodeType) {
+          wrapperDiv.appendChild(result);
+        } else {
+          const rendered = await render(result || '', api, { markdownit });
+          wrapperDiv.appendChild(rendered);
+        }
+
+        img.parentNode.replaceChild(wrapperDiv, img);
+        perf?.mark(`transclusion-${transclusionCount}-end`);
+        perf?.measure(`transclusion-${transclusionCount}`, `transclusion-${transclusionCount}-start`, `transclusion-${transclusionCount}-end`);
+        continue;
+      }
+
       const isPartial = parsed.fragment || Object.keys(parsed.queryParams).length > 0;
 
       const wrapperDiv = api.createElement('details', { className: 'transclusion-container' });
@@ -352,90 +390,96 @@ export async function render(markdown, api, options = {}) {
       const fn = new AsyncFunction('api', 'transclude', 'transcludeEach', queryCode);
       const result = await fn(api, transclude, transcludeEach);
 
-      // Render the result as markdown
-      const resultHtml = markdownit.render(result || '');
       const resultDiv = api.createElement('div', { className: 'query-result' });
-      resultDiv.innerHTML = resultHtml;
 
-      // Process item:// links in the query result
-      const resultLinks = resultDiv.querySelectorAll('a[data-item-link]');
-      resultLinks.forEach(link => {
-        const href = link.getAttribute('data-item-link');
-        const parsed = parseItemUrl(href);
-        if (parsed) {
-          link.onclick = (e) => {
-            e.preventDefault();
-            const navigateTo = {
-              field: parsed.fragment,
-              line: parsed.queryParams.lines ? parseInt(parsed.queryParams.lines) : null,
-              region: parsed.queryParams.region || null,
-              symbol: parsed.queryParams.symbol || null
+      if (result?.nodeType) {
+        // DOM node returned — insert directly
+        resultDiv.appendChild(result);
+      } else {
+        // String returned — render as markdown (existing behaviour)
+        const resultHtml = markdownit.render(result || '');
+        resultDiv.innerHTML = resultHtml;
+
+        // Process item:// links in the query result
+        const resultLinks = resultDiv.querySelectorAll('a[data-item-link]');
+        resultLinks.forEach(link => {
+          const href = link.getAttribute('data-item-link');
+          const parsed = parseItemUrl(href);
+          if (parsed) {
+            link.onclick = (e) => {
+              e.preventDefault();
+              const navigateTo = {
+                field: parsed.fragment,
+                line: parsed.queryParams.lines ? parseInt(parsed.queryParams.lines) : null,
+                region: parsed.queryParams.region || null,
+                symbol: parsed.queryParams.symbol || null
+              };
+              const hasNavigation = navigateTo.field || navigateTo.line || navigateTo.region || navigateTo.symbol;
+
+              if (api.siblingContainer) {
+                api.siblingContainer.addSibling(parsed.itemId, hasNavigation ? navigateTo : null);
+              } else {
+                api.navigate(parsed.itemId, hasNavigation ? navigateTo : null);
+              }
             };
-            const hasNavigation = navigateTo.field || navigateTo.line || navigateTo.region || navigateTo.symbol;
+            link.style.cssText = 'color: var(--color-primary); text-decoration: none; border-bottom: 1px solid var(--color-primary); cursor: pointer;';
+          }
+        });
 
-            if (api.siblingContainer) {
-              api.siblingContainer.addSibling(parsed.itemId, hasNavigation ? navigateTo : null);
-            } else {
-              api.navigate(parsed.itemId, hasNavigation ? navigateTo : null);
-            }
-          };
-          link.style.cssText = 'color: var(--color-primary); text-decoration: none; border-bottom: 1px solid var(--color-primary); cursor: pointer;';
+        // Process transclude:// links (subtle chrome)
+        const transcludeLinks = resultDiv.querySelectorAll('a[href^="transclude://"]');
+        for (const link of transcludeLinks) {
+          const href = link.getAttribute('href');
+          const match = href.match(/^transclude:\/\/([^?]+)\?name=(.+)$/);
+          if (match) {
+            const itemId = match[1];
+            const itemName = decodeURIComponent(match[2]);
+
+            // Style as subtle chrome
+            link.style.cssText = 'color: var(--color-border-dark); font-size: 0.75em; margin-left: 3px; cursor: pointer; text-decoration: none; vertical-align: super;';
+            link.title = 'From: ' + itemName;
+            link.onclick = (e) => {
+              e.preventDefault();
+              if (api.siblingContainer) {
+                api.siblingContainer.addSibling(itemId);
+              } else {
+                api.navigate(itemId);
+              }
+            };
+          }
         }
-      });
 
-      // Process transclude:// links (subtle chrome)
-      const transcludeLinks = resultDiv.querySelectorAll('a[href^="transclude://"]');
-      for (const link of transcludeLinks) {
-        const href = link.getAttribute('href');
-        const match = href.match(/^transclude:\/\/([^?]+)\?name=(.+)$/);
-        if (match) {
-          const itemId = match[1];
-          const itemName = decodeURIComponent(match[2]);
+        // Process full transclusion markers
+        const fullMarkers = resultDiv.querySelectorAll('.query-transclude-full');
+        for (const marker of fullMarkers) {
+          const itemId = marker.getAttribute('data-item-id');
+          const itemName = marker.getAttribute('data-item-name');
 
-          // Style as subtle chrome
-          link.style.cssText = 'color: var(--color-border-dark); font-size: 0.75em; margin-left: 3px; cursor: pointer; text-decoration: none; vertical-align: super;';
-          link.title = 'From: ' + itemName;
-          link.onclick = (e) => {
-            e.preventDefault();
-            if (api.siblingContainer) {
-              api.siblingContainer.addSibling(itemId);
-            } else {
-              api.navigate(itemId);
-            }
-          };
+          // Create full chrome wrapper
+          const wrapperDiv = api.createElement('details', { className: 'transclusion-container' });
+          wrapperDiv.setAttribute('open', '');
+          wrapperDiv.style.cssText = 'background: var(--color-bg-surface-alt); border: 1px solid var(--color-border-light); border-radius: var(--border-radius); padding: 15px; margin: 15px 0;';
+
+          const header = api.createElement('summary');
+          header.style.cssText = 'font-size: 12px; color: var(--color-text-secondary); padding-bottom: 8px; cursor: pointer;';
+          header.textContent = 'From: ' + itemName + ' ';
+          const navLink = api.createElement('span');
+          navLink.textContent = '↗';
+          navLink.title = 'Open ' + itemName;
+          navLink.style.cssText = 'color: var(--color-primary); cursor: pointer;';
+          navLink.onclick = (e) => { e.preventDefault(); e.stopPropagation(); api.siblingContainer?.addSibling(itemId); };
+          header.appendChild(navLink);
+          wrapperDiv.appendChild(header);
+
+          // Move marker contents into wrapper
+          const contentDiv = api.createElement('div');
+          while (marker.firstChild) {
+            contentDiv.appendChild(marker.firstChild);
+          }
+          wrapperDiv.appendChild(contentDiv);
+
+          marker.parentNode.replaceChild(wrapperDiv, marker);
         }
-      }
-
-      // Process full transclusion markers
-      const fullMarkers = resultDiv.querySelectorAll('.query-transclude-full');
-      for (const marker of fullMarkers) {
-        const itemId = marker.getAttribute('data-item-id');
-        const itemName = marker.getAttribute('data-item-name');
-
-        // Create full chrome wrapper
-        const wrapperDiv = api.createElement('details', { className: 'transclusion-container' });
-        wrapperDiv.setAttribute('open', '');
-        wrapperDiv.style.cssText = 'background: var(--color-bg-surface-alt); border: 1px solid var(--color-border-light); border-radius: var(--border-radius); padding: 15px; margin: 15px 0;';
-
-        const header = api.createElement('summary');
-        header.style.cssText = 'font-size: 12px; color: var(--color-text-secondary); padding-bottom: 8px; cursor: pointer;';
-        header.textContent = 'From: ' + itemName + ' ';
-        const navLink = api.createElement('span');
-        navLink.textContent = '↗';
-        navLink.title = 'Open ' + itemName;
-        navLink.style.cssText = 'color: var(--color-primary); cursor: pointer;';
-        navLink.onclick = (e) => { e.preventDefault(); e.stopPropagation(); api.siblingContainer?.addSibling(itemId); };
-        header.appendChild(navLink);
-        wrapperDiv.appendChild(header);
-
-        // Move marker contents into wrapper
-        const contentDiv = api.createElement('div');
-        while (marker.firstChild) {
-          contentDiv.appendChild(marker.firstChild);
-        }
-        wrapperDiv.appendChild(contentDiv);
-
-        marker.parentNode.replaceChild(wrapperDiv, marker);
       }
 
       // Replace the pre block with the result
