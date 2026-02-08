@@ -1,6 +1,6 @@
 // Sortable List View - Phases 1-3: Display, Item Picker, Drag-and-Drop
 
-const COMPACT_CARD_VIEW_ID = 'd4e5f6a7-b8c9-4d0e-a1b2-c3d4e5f6a7b8';
+const INLINE_CARD_VIEW_ID = 'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d';
 
 export async function render(item, api) {
   const container = api.createElement('div', {
@@ -64,8 +64,8 @@ async function renderChildren(listContainer, parentItem, api) {
     return;
   }
 
-  const compactViews = await api.query({ name: 'compact-card-view' });
-  const defaultViewId = compactViews[0]?.id || COMPACT_CARD_VIEW_ID;
+  const inlineViews = await api.query({ name: 'inline-card-view' });
+  const defaultViewId = inlineViews[0]?.id || INLINE_CARD_VIEW_ID;
 
   for (let i = 0; i < attachments.length; i++) {
     const childSpec = attachments[i];
@@ -89,19 +89,19 @@ async function createListItem(childId, index, viewId, parentItem, api, listConta
     'data-parent-id': parentItem.id,
     'data-index': index,
     class: 'sortable-list-item',
-    style: 'display: flex; align-items: stretch; background: var(--color-bg-surface); border: 1px solid var(--color-border-light); border-radius: var(--border-radius); margin-bottom: 8px; overflow: hidden;'
+    style: 'display: flex; align-items: center; margin-bottom: 4px;'
   }, []);
 
   const dragHandle = api.createElement('div', {
     class: 'drag-handle',
-    style: 'width: 32px; background: var(--color-bg-body); border-right: 1px solid var(--color-border-light); display: flex; align-items: center; justify-content: center; cursor: grab; user-select: none; flex-shrink: 0; color: var(--color-border-dark);',
+    style: 'width: 24px; display: flex; align-items: center; justify-content: center; cursor: grab; user-select: none; flex-shrink: 0; color: var(--color-border-dark);',
     title: 'Drag to reorder'
   }, ['\u2261']);
-  dragHandle.onmouseover = () => { dragHandle.style.background = 'var(--color-bg-hover)'; };
-  dragHandle.onmouseout = () => { dragHandle.style.background = 'var(--color-bg-body)'; };
+  dragHandle.onmouseover = () => { dragHandle.style.color = 'var(--color-text-secondary)'; };
+  dragHandle.onmouseout = () => { dragHandle.style.color = 'var(--color-border-dark)'; };
 
   const contentArea = api.createElement('div', {
-    style: 'flex: 1; padding: 12px; min-width: 0;'
+    style: 'flex: 1; padding: 2px 4px; min-width: 0;'
   }, []);
 
   try {
@@ -115,7 +115,7 @@ async function createListItem(childId, index, viewId, parentItem, api, listConta
   }
 
   const actions = api.createElement('div', {
-    style: 'width: 32px; border-left: 1px solid var(--color-border-light); display: flex; align-items: center; justify-content: center; flex-shrink: 0;'
+    style: 'width: 24px; display: flex; align-items: center; justify-content: center; flex-shrink: 0;'
   }, []);
 
   const removeButton = api.createElement('button', {
