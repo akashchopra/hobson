@@ -2,25 +2,12 @@
 // ID: bd74da77-a459-454a-b001-48685d4b536d
 // Type: aaaaaaaa-0000-0000-0000-000000000000
 
-// Item: viewport-view
-// ID: bd74da77-a459-454a-b001-48685d4b536d
-// Type: aaaaaaaa-0000-0000-0000-000000000000
-
-// Item: viewport-view
-// ID: bd74da77-a459-454a-b001-48685d4b536d
-// Type: aaaaaaaa-0000-0000-0000-000000000000
-
-// Default window dimensions for new spatial children
-const DEFAULT_WINDOW_WIDTH = 600;
-const DEFAULT_WINDOW_HEIGHT = 500;
-
 export async function render(item, api) {
   // Load dependencies
   // Note: Libraries under active development should be required where used, not here.
   // See docs/Hot-Reloading Libraries.md for the pattern.
   const cssLoader = await api.require('css-loader-lib');
   await cssLoader.loadCSS('context-menu-css', api);
-  const searchLib = await api.require('item-search-lib');
 
   // Determine root: URL takes precedence over viewport item
   // This allows direct linking and avoids flash on initial load
@@ -72,144 +59,6 @@ export async function render(item, api) {
     class: 'viewport-container',
     style: 'display: flex; flex-direction: column; height: 100%; position: relative;'
   }, []);
-
-  // Helper: Add child item to a parent
-  // parentId: the item to add a child to
-  // clickCoords: {x, y} if adding from a spatial context, null otherwise
-  const addChildToItem = async (parentId, clickCoords) => {
-    // Re-require to pick up any edits (see docs/Hot-Reloading Libraries.md)
-    const typePicker = await api.require('type-picker-lib');
-    const selectedType = await typePicker.showTypePicker(api);
-    if (!selectedType) return;
-
-    const newItem = {
-      id: crypto.randomUUID(),
-      name: new Date().toISOString(),
-      type: selectedType,
-      created: Date.now(),
-      modified: Date.now(),
-      attachments: [],
-      content: {}
-    };
-
-    await api.set(newItem);
-
-    // Get parent and determine if it's being rendered spatially
-    const parent = await api.get(parentId);
-    const attachments = parent.attachments || [];
-    
-    // Check if parent is rendered spatially by looking at existing attachments
-    // If attachments have position data (view.x, view.y), it's spatial
-    const isSpatial = attachments.length > 0 
-      ? attachments.some(c => c.view?.x !== undefined || c.view?.y !== undefined)
-      : false;
-
-    if (isSpatial || clickCoords) {
-      // Spatial: add with position in view object
-      const maxZ = attachments.length > 0 ? Math.max(...attachments.map(c => c.view?.z || 1000)) : 999;
-      const x = clickCoords?.x || 50;
-      const y = clickCoords?.y || 50;
-      
-      attachments.push({
-        id: newItem.id,
-        view: {
-          x: x,
-          y: y,
-          width: DEFAULT_WINDOW_WIDTH,
-          height: DEFAULT_WINDOW_HEIGHT,
-          z: maxZ + 1
-        }
-      });
-    } else {
-      // Non-spatial: just add the ID reference
-      attachments.push({ id: newItem.id });
-    }
-
-    parent.attachments = attachments;
-    parent.modified = Date.now();
-    await api.update(parent);
-    api.viewport.select(newItem.id, parentId);
-
-    // Scroll new item into view after DOM updates
-    setTimeout(() => {
-      const el = document.querySelector(`[data-item-id="${newItem.id}"]`);
-      el?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-    }, 0);
-  };
-
-  // Helper: Add existing item as child to a parent
-  const addExistingChildToItem = async (parentId, childId, clickCoords) => {
-    const parent = await api.get(parentId);
-    const attachments = parent.attachments || [];
-
-    // Check if already a child
-    if (attachments.some(c => c.id === childId)) {
-      alert('This item is already attached.');
-      return;
-    }
-
-    // Check if parent is rendered spatially
-    const isSpatial = attachments.length > 0
-      ? attachments.some(c => c.view?.x !== undefined || c.view?.y !== undefined)
-      : false;
-
-    if (isSpatial || clickCoords) {
-      const maxZ = attachments.length > 0 ? Math.max(...attachments.map(c => c.view?.z || 1000)) : 999;
-      const x = clickCoords?.x || 50;
-      const y = clickCoords?.y || 50;
-
-      attachments.push({
-        id: childId,
-        view: {
-          x: x,
-          y: y,
-          width: DEFAULT_WINDOW_WIDTH,
-          height: DEFAULT_WINDOW_HEIGHT,
-          z: maxZ + 1
-        }
-      });
-    } else {
-      attachments.push({ id: childId });
-    }
-
-    parent.attachments = attachments;
-    parent.modified = Date.now();
-    await api.update(parent);
-    api.viewport.select(childId, parentId);
-
-    // Scroll new item into view after DOM updates
-    setTimeout(() => {
-      const el = document.querySelector(`[data-item-id="${childId}"]`);
-      el?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-    }, 0);
-  };
-
-  // Helper: Show item picker modal for adding existing item
-  const showExistingItemPicker = async (parentId, clickCoords) => {
-    // Re-require to pick up any edits (see docs/Hot-Reloading Libraries.md)
-    const modalLib = await api.require('modal-lib');
-
-    const searchContainer = api.createElement('div', {}, []);
-
-    const { close } = modalLib.showModal({
-      title: 'Add Existing Item',
-      width: '600px',
-      maxHeight: '80vh',
-      api,
-      content: searchContainer
-    });
-
-    // createSearchUI called after modal is in DOM so autoFocus works
-    searchLib.createSearchUI(
-      searchContainer,
-      async (selectedItem) => {
-        close();
-        await addExistingChildToItem(parentId, selectedItem.id, clickCoords);
-      },
-      api,
-      { placeholder: 'Search for items to add...', autoFocus: true }
-    );
-  };
 
   // Context menu for empty/background state
   // Append to document.body so it's always above windows (which can have high z-indices)
@@ -587,11 +436,10 @@ export async function render(item, api) {
     contextMenu.innerHTML = '';
     lastContextMenuCoords = { x, y };
 
-    // "Add Child" submenu
-    const addChildItem = api.createElement('div', { class: 'context-menu-item context-menu-submenu' }, ['Add Child']);
-    const addChildSubmenu = api.createElement('div', { class: 'context-menu-submenu-items' }, []);
+    // Re-require to pick up any edits
+    const menuLib = await api.require('context-menu-lib');
 
-    // Helper to get click coords for spatial layouts
+    // Helper to get click coords for spatial layouts (reads viewport DOM state)
     const getClickCoords = () => {
       let clickCoords = null;
       if (selectedParentId) {
@@ -607,24 +455,11 @@ export async function render(item, api) {
       return clickCoords;
     };
 
-    // "New Item..." option
-    const newItemOption = api.createElement('div', { class: 'context-menu-item' }, ['New Item...']);
-    newItemOption.onclick = async () => {
-      hideContextMenu();
-      await addChildToItem(itemId, getClickCoords());
-    };
-    addChildSubmenu.appendChild(newItemOption);
-
-    // "Existing Item..." option
-    const existingItemOption = api.createElement('div', { class: 'context-menu-item' }, ['Existing Item...']);
-    existingItemOption.onclick = () => {
-      hideContextMenu();
-      showExistingItemPicker(itemId, getClickCoords());
-    };
-    addChildSubmenu.appendChild(existingItemOption);
-
-    addChildItem.appendChild(addChildSubmenu);
-    contextMenu.appendChild(addChildItem);
+    // Add Child submenu (from context-menu-lib)
+    contextMenu.appendChild(menuLib.buildAddChildSubmenu(api, itemId, {
+      onDismiss: hideContextMenu,
+      getClickCoords
+    }));
 
     // Separator
     contextMenu.appendChild(api.createElement('div', { class: 'context-menu-separator' }, []));
@@ -818,7 +653,6 @@ export async function render(item, api) {
     contextMenu.appendChild(api.createElement('div', { class: 'context-menu-separator' }, []));
 
     // Simple actions (from context-menu-lib)
-    const menuLib = await api.require('context-menu-lib');
     contextMenu.appendChild(menuLib.buildSimpleActions(api, itemId, {
       onDismiss: hideContextMenu,
       parentId: selectedParentId,
