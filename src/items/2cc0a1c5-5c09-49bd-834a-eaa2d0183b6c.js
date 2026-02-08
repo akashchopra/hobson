@@ -482,8 +482,10 @@ export async function buildViewAsSubmenu(api, itemId, context) {
   };
 }
 
-// Internal: View Settings Modal - shows all three levels of view preferences
-async function showViewSettingsModal(api, itemId, parentId) {
+// Internal: Build the view settings panel content (three-level preference UI).
+// When onRefresh is provided, selects and clear buttons are interactive.
+// When onRefresh is null (inert/documentation mode), selects are disabled and no handlers attached.
+async function buildViewSettingsPanelContent(api, itemId, parentId, onRefresh) {
   const item = await api.get(itemId);
   const typeItem = await api.get(item.type);
   const typeName = typeItem.name || 'item';
@@ -506,13 +508,6 @@ async function showViewSettingsModal(api, itemId, parentId) {
     }
   };
 
-  const itemName = item.name || item.content?.title || item.id.slice(0, 8);
-
-  // Re-require to pick up any edits (see docs/Hot-Reloading Libraries.md)
-  const modalLib = await api.require('modal-lib');
-  let closeModal;
-
-  // Body (will be passed to modal-lib as content)
   const body = api.createElement('div', {}, []);
 
   // Current effective view
@@ -521,7 +516,7 @@ async function showViewSettingsModal(api, itemId, parentId) {
   currentSection.innerHTML = 'Currently showing: <strong>' + effectiveName + '</strong>';
   body.appendChild(currentSection);
 
-  // Helper to create a section
+  // Helper to create a section with a select dropdown
   const createSection = (label, description, currentViewId, onSelect, onClear) => {
     const section = api.createElement('div', { style: 'margin-bottom: 20px;' }, []);
 
@@ -533,14 +528,14 @@ async function showViewSettingsModal(api, itemId, parentId) {
 
     const controlRow = api.createElement('div', { style: 'display: flex; gap: 8px; align-items: center;' }, []);
 
-    const select = api.createElement('select', { style: 'flex: 1; padding: 6px 8px; border: 1px solid var(--border-color, #ccc); border-radius: 4px;' }, []);
+    const selectAttrs = { style: 'flex: 1; padding: 6px 8px; border: 1px solid var(--border-color, #ccc); border-radius: 4px;' };
+    if (!onRefresh) selectAttrs.disabled = true;
+    const select = api.createElement('select', selectAttrs, []);
 
-    // None option
     const noneOpt = api.createElement('option', { value: '' }, ['None']);
     if (!currentViewId) noneOpt.selected = true;
     select.appendChild(noneOpt);
 
-    // View options - sorted alphabetically
     const sortedViews = [...views].sort((a, b) => {
       const nameA = a.view.content?.displayName || a.view.name || a.view.id.slice(0, 8);
       const nameB = b.view.content?.displayName || b.view.name || b.view.id.slice(0, 8);
@@ -553,7 +548,7 @@ async function showViewSettingsModal(api, itemId, parentId) {
       select.appendChild(opt);
     }
 
-    select.onchange = () => onSelect(select.value || null);
+    if (onSelect) select.onchange = () => onSelect(select.value || null);
     controlRow.appendChild(select);
 
     if (currentViewId && onClear) {
@@ -568,7 +563,7 @@ async function showViewSettingsModal(api, itemId, parentId) {
     return section;
   };
 
-  // Helper to create read-only section (for contextual)
+  // Helper to create read-only section (for contextual override)
   const createReadOnlySection = (label, description, currentViewId, onClear) => {
     const section = api.createElement('div', { style: 'margin-bottom: 20px;' }, []);
 
@@ -596,19 +591,12 @@ async function showViewSettingsModal(api, itemId, parentId) {
     return section;
   };
 
-  // Refresh modal after changes
-  const refreshModal = async () => {
-    closeModal();
-    await showViewSettingsModal(api, itemId, parentId);
-  };
-
   // Section 1: In this context (read-only, set via View As menu)
   const contextSection = createReadOnlySection(
     'In this context',
     'Override for this location only (set via "View As..." menu)',
     contextualViewId,
-    contextualViewId ? async () => {
-      // Clear contextual override
+    (contextualViewId && onRefresh) ? async () => {
       if (parentId) {
         await api.setAttachmentView(parentId, itemId, null);
         await api.rerenderItem(itemId);
@@ -616,7 +604,7 @@ async function showViewSettingsModal(api, itemId, parentId) {
         await api.viewport.setRootView(null);
         await api.navigate(api.viewport.getRoot());
       }
-      await refreshModal();
+      await onRefresh();
     } : null
   );
   body.appendChild(contextSection);
@@ -629,13 +617,13 @@ async function showViewSettingsModal(api, itemId, parentId) {
     'For this item',
     'Default view wherever this item appears',
     itemPreferredViewId,
-    async (viewId) => {
+    onRefresh ? async (viewId) => {
       await api.setPreferredView(itemId, viewId);
-      await refreshModal();
-    },
-    itemPreferredViewId ? async () => {
+      await onRefresh();
+    } : null,
+    (itemPreferredViewId && onRefresh) ? async () => {
       await api.setPreferredView(itemId, null);
-      await refreshModal();
+      await onRefresh();
     } : null
   );
   body.appendChild(itemSection);
@@ -649,13 +637,13 @@ async function showViewSettingsModal(api, itemId, parentId) {
     'For all ' + typeDisplayName + 's',
     'Default view for items of this type',
     typePreferredViewId,
-    async (viewId) => {
+    onRefresh ? async (viewId) => {
       await api.setPreferredView(item.type, viewId);
-      await refreshModal();
-    },
-    typePreferredViewId ? async () => {
+      await onRefresh();
+    } : null,
+    (typePreferredViewId && onRefresh) ? async () => {
       await api.setPreferredView(item.type, null);
-      await refreshModal();
+      await onRefresh();
     } : null
   );
   body.appendChild(typeSection);
@@ -665,6 +653,23 @@ async function showViewSettingsModal(api, itemId, parentId) {
     style: 'margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border-color, #ddd); font-size: 12px; color: var(--text-secondary, #888); text-align: center;'
   }, ['Resolution order: context \u2192 item \u2192 type \u2192 system']);
   body.appendChild(noteEl);
+
+  return body;
+}
+
+// Internal: Show the view settings modal (wraps the panel in modal-lib)
+async function showViewSettingsModal(api, itemId, parentId) {
+  const modalLib = await api.require('modal-lib');
+  let closeModal;
+
+  const onRefresh = async () => {
+    closeModal();
+    await showViewSettingsModal(api, itemId, parentId);
+  };
+
+  const body = await buildViewSettingsPanelContent(api, itemId, parentId, onRefresh);
+  const item = await api.get(itemId);
+  const itemName = item.name || item.content?.title || item.id.slice(0, 8);
 
   const { close } = modalLib.showModal({
     title: 'View Settings for "' + itemName + '"',
@@ -688,6 +693,17 @@ export function buildViewSettingsItem(api, itemId, context) {
     };
   }
   return el;
+}
+
+/**
+ * Build the view settings panel as a standalone DOM node.
+ * Used for functional transclusion: item://context-menu-lib?call=buildViewSettingsPanel&itemId=...
+ * Shows current view preferences in inert mode (disabled selects, no handlers).
+ */
+export async function buildViewSettingsPanel(api, params) {
+  const itemId = typeof params === 'string' ? params : params.itemId;
+  const parentId = (typeof params === 'object' && params.parentId) || null;
+  return buildViewSettingsPanelContent(api, itemId, parentId, null);
 }
 
 /**
