@@ -296,8 +296,512 @@ export function buildSimpleActions(api, itemId, context) {
 }
 
 /**
+ * Build "View As..." submenu showing available views for an item.
+ * Returns { fragment, viewState } where viewState contains debugViews,
+ * currentViewId, and effectiveViewId for use by buildDebugSubmenu.
+ * When context is null, items are inert (no onclick) — used in documentation.
+ */
+export async function buildViewAsSubmenu(api, itemId, context) {
+  const menuItem = await api.get(itemId);
+  const frag = document.createDocumentFragment();
+
+  const displayAsItem = api.createElement('div', { class: 'context-menu-item context-menu-submenu' }, ['View As...']);
+  const displayAsSubmenu = api.createElement('div', { class: 'context-menu-submenu-items' }, []);
+
+  // Get available views for this type
+  const views = await api.getViews(menuItem.type);
+
+  // Get current view override (for checkmark display)
+  let currentViewId = null;
+  if (context) {
+    if (context.parentId) {
+      const parent = await api.get(context.parentId);
+      const childSpec = parent.attachments?.find(c => c.id === itemId);
+      currentViewId = childSpec?.view?.type || null;
+    } else {
+      currentViewId = await api.viewport.getRootView();
+    }
+  }
+
+  // Get effective view from preferences (fallback if no contextual override)
+  const effectiveView = await api.getEffectiveView(itemId);
+  const effectiveViewId = effectiveView?.id || null;
+
+  // The view to use as background when switching to a wrapper view:
+  // Prefer the explicit contextual override (currentViewId), fall back to effective view
+  const currentlyRenderedViewId = currentViewId || effectiveViewId;
+
+  // Separate normal views from debug views
+  const normalViews = views.filter(v => v.view.content?.category !== 'debug' && v.view.content?.category !== 'hidden');
+  const debugViews = views.filter(v => v.view.content?.category === 'debug');
+
+  if (normalViews.length === 0) {
+    const noViews = api.createElement('div', { class: 'context-menu-item disabled' }, ['(No views available)']);
+    displayAsSubmenu.appendChild(noViews);
+  } else {
+    // Sort views alphabetically by display name
+    const sortedViews = [...normalViews].sort((a, b) => {
+      const nameA = a.view.content?.displayName || a.view.name || a.view.id.slice(0, 8);
+      const nameB = b.view.content?.displayName || b.view.name || b.view.id.slice(0, 8);
+      return nameA.localeCompare(nameB);
+    });
+
+    for (const { view } of sortedViews) {
+      const isActive = (currentViewId || effectiveViewId) === view.id;
+      let label = view.content?.displayName || view.name || view.id.slice(0, 8);
+      if (isActive) label += ' \u2713';
+
+      // Check if active view has submenu items to contribute
+      let viewMenuItems = null;
+      if (isActive && context) {
+        try {
+          const viewModule = await api.require(view.id);
+          if (viewModule && typeof viewModule.getViewMenuItems === 'function') {
+            // Create wrapped API with correct context for the nested item
+            const wrappedApi = {
+              ...api,
+              getViewConfig: async () => {
+                if (context.parentId) {
+                  const parent = await api.get(context.parentId);
+                  const childSpec = parent.attachments?.find(c => c.id === itemId);
+                  return childSpec?.view || null;
+                } else {
+                  return await api.viewport.getRootViewConfig();
+                }
+              },
+              updateViewConfig: async (updates) => {
+                if (context.parentId) {
+                  const parent = await api.get(context.parentId);
+                  const childIndex = parent.attachments?.findIndex(c => c.id === itemId);
+                  if (childIndex >= 0) {
+                    const currentChild = parent.attachments[childIndex];
+                    parent.attachments[childIndex] = {
+                      ...currentChild,
+                      view: { ...(currentChild.view || {}), ...updates }
+                    };
+                    parent.modified = Date.now();
+                    await api.set(parent);
+                    return true;
+                  }
+                } else {
+                  await api.viewport.updateRootViewConfig(updates);
+                  return true;
+                }
+                return false;
+              },
+              getParentId: () => context.parentId || null
+            };
+            viewMenuItems = await viewModule.getViewMenuItems(menuItem, wrappedApi);
+          }
+        } catch (e) {
+          // View module doesn't export getViewMenuItems or failed to load
+        }
+      }
+
+      if (viewMenuItems && viewMenuItems.length > 0) {
+        // Active view with submenu items - create submenu
+        const viewOption = api.createElement('div', {
+          class: 'context-menu-item context-menu-submenu' + (isActive ? ' selected' : '')
+        }, [label]);
+
+        const viewSubmenu = api.createElement('div', { class: 'context-menu-submenu-items' }, []);
+
+        for (const menuItemDef of viewMenuItems) {
+          const subItem = api.createElement('div', {
+            class: 'context-menu-item' + (menuItemDef.checked ? ' selected' : '')
+          }, [menuItemDef.label]);
+
+          if (context) {
+            subItem.onclick = async () => {
+              context.onDismiss();
+              if (menuItemDef.onClick) {
+                await menuItemDef.onClick();
+              }
+            };
+          }
+          viewSubmenu.appendChild(subItem);
+        }
+
+        viewOption.appendChild(viewSubmenu);
+        displayAsSubmenu.appendChild(viewOption);
+      } else {
+        // Normal view option - click to switch
+        const viewOption = api.createElement('div', {
+          class: 'context-menu-item' + (isActive ? ' selected' : '')
+        }, []);
+
+        viewOption.textContent = label;
+
+        if (context) {
+          viewOption.onclick = async () => {
+            context.onDismiss();
+            if (context.parentId) {
+              const parent = await api.get(context.parentId);
+              const childIndex = parent.attachments.findIndex(c => c.id === itemId);
+              if (childIndex >= 0) {
+                const currentChild = parent.attachments[childIndex];
+                const currentView = currentChild.view || {};
+
+                const newView = {
+                  ...currentView,
+                  type: view.id,
+                  innerView: currentlyRenderedViewId ? { type: currentlyRenderedViewId } : undefined
+                };
+
+                parent.attachments[childIndex] = {
+                  ...currentChild,
+                  previousView: currentView.type ? { ...currentView } : null,
+                  view: newView
+                };
+                parent.modified = Date.now();
+                await api.set(parent);
+              }
+              await api.rerenderItem(itemId);
+            } else {
+              await api.viewport.updateRootViewConfig({
+                type: view.id,
+                innerView: currentlyRenderedViewId ? { type: currentlyRenderedViewId } : undefined
+              });
+              await api.rerenderItem(itemId);
+            }
+          };
+        }
+        displayAsSubmenu.appendChild(viewOption);
+      }
+    }
+  }
+
+  displayAsItem.appendChild(displayAsSubmenu);
+  frag.appendChild(displayAsItem);
+
+  return {
+    fragment: frag,
+    viewState: { debugViews, currentViewId, effectiveViewId }
+  };
+}
+
+// Internal: View Settings Modal - shows all three levels of view preferences
+async function showViewSettingsModal(api, itemId, parentId) {
+  const item = await api.get(itemId);
+  const typeItem = await api.get(item.type);
+  const typeName = typeItem.name || 'item';
+  const views = await api.getViews(item.type);
+  const effectiveView = await api.getEffectiveView(itemId);
+
+  // Get current values at each level
+  const contextualViewId = await api.getContextualView(itemId, parentId);
+  const itemPreferredViewId = item.preferredView || null;
+  const typePreferredViewId = typeItem.preferredView || null;
+
+  // Helper to get view name by ID
+  const getViewName = async (viewId) => {
+    if (!viewId) return 'None';
+    try {
+      const v = await api.get(viewId);
+      return v.content?.displayName || v.name || viewId.slice(0, 8);
+    } catch {
+      return viewId.slice(0, 8) + ' (missing)';
+    }
+  };
+
+  const itemName = item.name || item.content?.title || item.id.slice(0, 8);
+
+  // Re-require to pick up any edits (see docs/Hot-Reloading Libraries.md)
+  const modalLib = await api.require('modal-lib');
+  let closeModal;
+
+  // Body (will be passed to modal-lib as content)
+  const body = api.createElement('div', {}, []);
+
+  // Current effective view
+  const effectiveName = await getViewName(effectiveView?.id);
+  const currentSection = api.createElement('div', { style: 'margin-bottom: 16px; padding: 12px; background: var(--bg-secondary, #f5f5f5); border-radius: 6px;' }, []);
+  currentSection.innerHTML = 'Currently showing: <strong>' + effectiveName + '</strong>';
+  body.appendChild(currentSection);
+
+  // Helper to create a section
+  const createSection = (label, description, currentViewId, onSelect, onClear) => {
+    const section = api.createElement('div', { style: 'margin-bottom: 20px;' }, []);
+
+    const labelEl = api.createElement('div', { style: 'font-weight: 600; margin-bottom: 4px;' }, [label]);
+    section.appendChild(labelEl);
+
+    const descEl = api.createElement('div', { style: 'font-size: 13px; color: var(--text-secondary, #666); margin-bottom: 8px;' }, [description]);
+    section.appendChild(descEl);
+
+    const controlRow = api.createElement('div', { style: 'display: flex; gap: 8px; align-items: center;' }, []);
+
+    const select = api.createElement('select', { style: 'flex: 1; padding: 6px 8px; border: 1px solid var(--border-color, #ccc); border-radius: 4px;' }, []);
+
+    // None option
+    const noneOpt = api.createElement('option', { value: '' }, ['None']);
+    if (!currentViewId) noneOpt.selected = true;
+    select.appendChild(noneOpt);
+
+    // View options - sorted alphabetically
+    const sortedViews = [...views].sort((a, b) => {
+      const nameA = a.view.content?.displayName || a.view.name || a.view.id.slice(0, 8);
+      const nameB = b.view.content?.displayName || b.view.name || b.view.id.slice(0, 8);
+      return nameA.localeCompare(nameB);
+    });
+    for (const { view } of sortedViews) {
+      const opt = api.createElement('option', { value: view.id }, []);
+      opt.textContent = view.content?.displayName || view.name || view.id.slice(0, 8);
+      if (view.id === currentViewId) opt.selected = true;
+      select.appendChild(opt);
+    }
+
+    select.onchange = () => onSelect(select.value || null);
+    controlRow.appendChild(select);
+
+    if (currentViewId && onClear) {
+      const clearBtn = api.createElement('button', {
+        style: 'padding: 6px 12px; border: 1px solid var(--border-color, #ccc); border-radius: 4px; background: var(--bg-primary, white); cursor: pointer;',
+        onclick: onClear
+      }, ['Clear']);
+      controlRow.appendChild(clearBtn);
+    }
+
+    section.appendChild(controlRow);
+    return section;
+  };
+
+  // Helper to create read-only section (for contextual)
+  const createReadOnlySection = (label, description, currentViewId, onClear) => {
+    const section = api.createElement('div', { style: 'margin-bottom: 20px;' }, []);
+
+    const labelEl = api.createElement('div', { style: 'font-weight: 600; margin-bottom: 4px;' }, [label]);
+    section.appendChild(labelEl);
+
+    const descEl = api.createElement('div', { style: 'font-size: 13px; color: var(--text-secondary, #666); margin-bottom: 8px;' }, [description]);
+    section.appendChild(descEl);
+
+    const controlRow = api.createElement('div', { style: 'display: flex; gap: 8px; align-items: center;' }, []);
+
+    const valueEl = api.createElement('span', { style: 'flex: 1; padding: 6px 8px; background: var(--bg-secondary, #f0f0f0); border-radius: 4px;' }, []);
+    getViewName(currentViewId).then(name => { valueEl.textContent = name; });
+    controlRow.appendChild(valueEl);
+
+    if (currentViewId && onClear) {
+      const clearBtn = api.createElement('button', {
+        style: 'padding: 6px 12px; border: 1px solid var(--border-color, #ccc); border-radius: 4px; background: var(--bg-primary, white); cursor: pointer;',
+        onclick: onClear
+      }, ['Clear']);
+      controlRow.appendChild(clearBtn);
+    }
+
+    section.appendChild(controlRow);
+    return section;
+  };
+
+  // Refresh modal after changes
+  const refreshModal = async () => {
+    closeModal();
+    await showViewSettingsModal(api, itemId, parentId);
+  };
+
+  // Section 1: In this context (read-only, set via View As menu)
+  const contextSection = createReadOnlySection(
+    'In this context',
+    'Override for this location only (set via "View As..." menu)',
+    contextualViewId,
+    contextualViewId ? async () => {
+      // Clear contextual override
+      if (parentId) {
+        await api.setAttachmentView(parentId, itemId, null);
+        await api.rerenderItem(itemId);
+      } else {
+        await api.viewport.setRootView(null);
+        await api.navigate(api.viewport.getRoot());
+      }
+      await refreshModal();
+    } : null
+  );
+  body.appendChild(contextSection);
+
+  // Divider
+  body.appendChild(api.createElement('hr', { style: 'border: none; border-top: 1px solid var(--border-color, #ddd); margin: 16px 0;' }, []));
+
+  // Section 2: For this item
+  const itemSection = createSection(
+    'For this item',
+    'Default view wherever this item appears',
+    itemPreferredViewId,
+    async (viewId) => {
+      await api.setPreferredView(itemId, viewId);
+      await refreshModal();
+    },
+    itemPreferredViewId ? async () => {
+      await api.setPreferredView(itemId, null);
+      await refreshModal();
+    } : null
+  );
+  body.appendChild(itemSection);
+
+  // Divider
+  body.appendChild(api.createElement('hr', { style: 'border: none; border-top: 1px solid var(--border-color, #ddd); margin: 16px 0;' }, []));
+
+  // Section 3: For all [Type]s
+  const typeDisplayName = typeName.charAt(0).toUpperCase() + typeName.slice(1);
+  const typeSection = createSection(
+    'For all ' + typeDisplayName + 's',
+    'Default view for items of this type',
+    typePreferredViewId,
+    async (viewId) => {
+      await api.setPreferredView(item.type, viewId);
+      await refreshModal();
+    },
+    typePreferredViewId ? async () => {
+      await api.setPreferredView(item.type, null);
+      await refreshModal();
+    } : null
+  );
+  body.appendChild(typeSection);
+
+  // Resolution note
+  const noteEl = api.createElement('div', {
+    style: 'margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border-color, #ddd); font-size: 12px; color: var(--text-secondary, #888); text-align: center;'
+  }, ['Resolution order: context \u2192 item \u2192 type \u2192 system']);
+  body.appendChild(noteEl);
+
+  const { close } = modalLib.showModal({
+    title: 'View Settings for "' + itemName + '"',
+    width: '420px',
+    api,
+    content: body
+  });
+  closeModal = close;
+}
+
+/**
+ * Build a "View Settings..." menu item that opens the view settings modal.
+ * When context is null, item is inert (no onclick) — used in documentation.
+ */
+export function buildViewSettingsItem(api, itemId, context) {
+  const el = api.createElement('div', { class: 'context-menu-item' }, ['View Settings...']);
+  if (context) {
+    el.onclick = async () => {
+      context.onDismiss();
+      await showViewSettingsModal(api, itemId, context.parentId);
+    };
+  }
+  return el;
+}
+
+/**
+ * Build "Debug" submenu with debug views and system debug tools.
+ * When context is null, items are inert (no onclick) — used in documentation.
+ * context.debugViews, context.currentViewId, context.effectiveViewId come from viewState.
+ */
+export async function buildDebugSubmenu(api, itemId, context) {
+  const frag = document.createDocumentFragment();
+  const debugItem = api.createElement('div', { class: 'context-menu-item context-menu-submenu' }, ['Debug']);
+  const debugSubmenu = api.createElement('div', { class: 'context-menu-submenu-items' }, []);
+
+  const debugViews = context?.debugViews || [];
+  const currentViewId = context?.currentViewId || null;
+  const effectiveViewId = context?.effectiveViewId || null;
+
+  // Debug views (Raw JSON, etc.)
+  if (debugViews.length > 0) {
+    const sortedDebugViews = [...debugViews].sort((a, b) => {
+      const nameA = a.view.content?.displayName || a.view.name || a.view.id.slice(0, 8);
+      const nameB = b.view.content?.displayName || b.view.name || b.view.id.slice(0, 8);
+      return nameA.localeCompare(nameB);
+    });
+
+    for (const { view } of sortedDebugViews) {
+      const isActive = (currentViewId || effectiveViewId) === view.id;
+      const viewOption = api.createElement('div', {
+        class: 'context-menu-item' + (isActive ? ' selected' : '')
+      }, []);
+
+      let label = view.content?.displayName || view.name || view.id.slice(0, 8);
+      if (isActive) label += ' \u2713';
+      viewOption.textContent = label;
+
+      if (context) {
+        viewOption.onclick = async () => {
+          context.onDismiss();
+          if (context.parentId) {
+            await api.setAttachmentView(context.parentId, itemId, view.id);
+            await api.rerenderItem(itemId);
+          } else {
+            await api.viewport.setRootView(view.id);
+            await api.navigate(api.viewport.getRoot());
+          }
+        };
+      }
+      debugSubmenu.appendChild(viewOption);
+    }
+
+    // Separator between debug views and debug options
+    debugSubmenu.appendChild(api.createElement('div', { class: 'context-menu-separator' }, []));
+  }
+
+  // Enable Debug Mode option
+  const isDebugMode = window.kernel?.debugMode || false;
+  const debugModeOption = api.createElement('div', {
+    class: 'context-menu-item' + (isDebugMode ? ' selected' : '')
+  }, [isDebugMode ? 'Debug Mode \u2713' : 'Enable Debug Mode']);
+  if (context) {
+    debugModeOption.onclick = async () => {
+      context.onDismiss();
+      const kernel = window.kernel;
+      if (!kernel) return;
+
+      kernel.debugMode = !kernel.debugMode;
+
+      if (kernel.debugMode) {
+        if (!kernel._elementInspector) {
+          try {
+            const inspectorModule = await kernel.moduleSystem.require('element-inspector');
+            const replApi = kernel.createAPI();
+            kernel._elementInspector = inspectorModule.activate(replApi);
+          } catch (e) {
+            console.warn('Could not load element-inspector:', e.message);
+          }
+        }
+        await api.navigate(api.viewport.getRoot());
+      } else {
+        if (kernel._elementInspector) {
+          try {
+            const inspectorModule = await kernel.moduleSystem.require('element-inspector');
+            inspectorModule.deactivate();
+            kernel._elementInspector = null;
+          } catch (e) {
+            console.warn('Could not deactivate element-inspector:', e.message);
+          }
+        }
+        await api.navigate(api.viewport.getRoot());
+      }
+    };
+  }
+  debugSubmenu.appendChild(debugModeOption);
+
+  // Toggle Inspector option (only when debug mode is active)
+  if (isDebugMode && window.kernel?._elementInspector) {
+    const inspectorActive = window.kernel._elementInspector.isActive();
+    const inspectorOption = api.createElement('div', {
+      class: 'context-menu-item' + (inspectorActive ? ' selected' : '')
+    }, [inspectorActive ? 'Inspector Mode \u2713' : 'Toggle Inspector (Ctrl+Shift+.)']);
+    if (context) {
+      inspectorOption.onclick = () => {
+        context.onDismiss();
+        window.kernel._elementInspector.toggle();
+      };
+    }
+    debugSubmenu.appendChild(inspectorOption);
+  }
+
+  debugItem.appendChild(debugSubmenu);
+  frag.appendChild(debugItem);
+  return frag;
+}
+
+/**
  * Build the full item context menu.
- * Phase 2b: Add Child submenu + simple actions. Later phases add View As, etc.
+ * Includes all sections: Add Child, View As, View Settings, simple actions, Debug.
  */
 export async function buildItemMenu(api, paramsOrItemId, context) {
   const itemId = typeof paramsOrItemId === 'string' ? paramsOrItemId : paramsOrItemId.itemId;
@@ -308,13 +812,21 @@ export async function buildItemMenu(api, paramsOrItemId, context) {
     await cssLoader.loadCSS('context-menu-css', api);
   }
 
+  const sep = () => api.createElement('div', { class: 'context-menu-separator' }, []);
+
   const container = api.createElement('div', {
     class: 'context-menu',
     style: 'position: static; display: block; box-shadow: none; max-width: 220px;'
   });
 
   container.appendChild(buildAddChildSubmenu(api, itemId, context));
-  container.appendChild(api.createElement('div', { class: 'context-menu-separator' }, []));
+  container.appendChild(sep());
+  const { fragment } = await buildViewAsSubmenu(api, itemId, context);
+  container.appendChild(fragment);
+  container.appendChild(buildViewSettingsItem(api, itemId, context));
+  container.appendChild(sep());
   container.appendChild(buildSimpleActions(api, itemId, context));
+  container.appendChild(sep());
+  container.appendChild(await buildDebugSubmenu(api, itemId, context));
   return container;
 }
