@@ -817,110 +817,13 @@ export async function render(item, api) {
     // Separator
     contextMenu.appendChild(api.createElement('div', { class: 'context-menu-separator' }, []));
 
-    // Copy ID
-    const copyIdItem = api.createElement('div', { class: 'context-menu-item' }, ['Copy ID']);
-    copyIdItem.onclick = async () => {
-      hideContextMenu();
-      await navigator.clipboard.writeText(itemId);
-      console.log('Copied ID:', itemId);
-    };
-    contextMenu.appendChild(copyIdItem);
-
-    // Duplicate
-    const duplicateItem = api.createElement('div', { class: 'context-menu-item' }, ['Duplicate']);
-    duplicateItem.onclick = async () => {
-      hideContextMenu();
-      const original = await api.get(itemId);
-      const newContent = { ...original.content };
-      if (newContent.title) newContent.title += ' (copy)';
-      const duplicate = {
-        id: crypto.randomUUID(),
-        name: original.name ? original.name + ' (copy)' : undefined,
-        type: original.type,
-        created: Date.now(),
-        modified: Date.now(),
-        attachments: [],
-        content: newContent
-      };
-      await api.set(duplicate);
-
-      // Open the duplicate the same way views do: via siblingContainer if in spatial context
-      const instances = api.instances.getByItemId(itemId);
-      const siblingContainer = instances?.[0]?.siblingContainer;
-      if (siblingContainer) {
-        siblingContainer.addSibling(duplicate.id);
-      } else {
-        await api.navigate(duplicate.id);
-      }
-    };
-    contextMenu.appendChild(duplicateItem);
-
-    // Make Root
-    const makeRootItem = api.createElement('div', { class: 'context-menu-item' }, ['Make Root']);
-    makeRootItem.onclick = async () => {
-      hideContextMenu();
-      // Preserve the current view config when making this item the root
-      let viewConfig = null;
-      if (selectedParentId) {
-        // Get the view config from the parent's attachments array
-        const parent = await api.get(selectedParentId);
-        const childSpec = parent.attachments?.find(c => c.id === itemId);
-        viewConfig = childSpec?.view || null;
-      }
-      await api.navigate(itemId);
-      // Set the preserved view config as the root view config
-      if (viewConfig) {
-        // Set view type if present
-        if (viewConfig.type) {
-          await setRootView(viewConfig.type);
-        }
-        // Set other view config properties
-        const { type, ...otherConfig } = viewConfig;
-        if (Object.keys(otherConfig).length > 0 && api.viewport.updateRootViewConfig) {
-          await api.viewport.updateRootViewConfig(otherConfig);
-        }
-        await window.kernel.renderViewport();  // Re-render with the view config
-      }
-    };
-    contextMenu.appendChild(makeRootItem);
-
-    // Export as JSON
-    const exportItem = api.createElement('div', { class: 'context-menu-item' }, ['Export as JSON']);
-    exportItem.onclick = async () => {
-      hideContextMenu();
-      const itemData = await api.get(itemId);
-      const json = JSON.stringify(itemData, null, 2);
-      const blob = new Blob([json], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = (itemData.name || itemData.content?.title || itemId.slice(0, 8)) + '.json';
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-    };
-    contextMenu.appendChild(exportItem);
-
-    // Delete
-    contextMenu.appendChild(api.createElement('div', { class: 'context-menu-separator' }, []));
-    const deleteItem = api.createElement('div', { class: 'context-menu-item', style: 'color: var(--color-danger);' }, ['Delete']);
-    deleteItem.onclick = async () => {
-      hideContextMenu();
-      const itemData = await api.get(itemId);
-      const itemLabel = itemData.name || itemData.content?.title || itemId.slice(0, 8);
-
-      if (confirm('Delete "' + itemLabel + '"? This cannot be undone.')) {
-        await api.delete(itemId);
-        if (itemId === rootId) {
-          const WORKSPACE_ID = '00000000-0000-0000-0000-000000000006';
-          await api.navigate(WORKSPACE_ID);
-        } else {
-          await api.navigate(rootId);
-        }
-      }
-    };
-    contextMenu.appendChild(deleteItem);
+    // Simple actions (from context-menu-lib)
+    const menuLib = await api.require('context-menu-lib');
+    contextMenu.appendChild(menuLib.buildSimpleActions(api, itemId, {
+      onDismiss: hideContextMenu,
+      parentId: selectedParentId,
+      rootId
+    }));
 
     // Debug submenu (at the bottom, after Delete)
     contextMenu.appendChild(api.createElement('div', { class: 'context-menu-separator' }, []));
