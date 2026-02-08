@@ -874,12 +874,12 @@ export async function buildItemMenu(api, paramsOrItemId, context) {
 
   container.appendChild(buildAddChildSubmenu(api, itemId, context));
   container.appendChild(sep());
-  const { fragment } = await buildViewAsSubmenu(api, itemId, context);
+  const { fragment, viewState } = await buildViewAsSubmenu(api, itemId, context);
   container.appendChild(fragment);
   container.appendChild(buildViewSettingsItem(api, itemId, context));
   container.appendChild(sep());
   container.appendChild(buildSimpleActions(api, itemId, context));
   container.appendChild(sep());
-  container.appendChild(await buildDebugSubmenu(api, itemId, context));
+  container.appendChild(await buildDebugSubmenu(api, itemId, { ...context, ...viewState }));
   return container;
 }
