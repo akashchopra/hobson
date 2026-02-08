@@ -157,21 +157,23 @@ export function buildAddChildSubmenu(api, itemId, context) {
   const addChildItem = api.createElement('div', { class: 'context-menu-item context-menu-submenu' }, ['Add Child']);
   const addChildSubmenu = api.createElement('div', { class: 'context-menu-submenu-items' }, []);
 
+  const newItemOption = api.createElement('div', { class: 'context-menu-item' }, ['New Item...']);
   if (context) {
-    const newItemOption = api.createElement('div', { class: 'context-menu-item' }, ['New Item...']);
     newItemOption.onclick = async () => {
       context.onDismiss();
       await addChildToItem(api, itemId, context.getClickCoords());
     };
-    addChildSubmenu.appendChild(newItemOption);
+  }
+  addChildSubmenu.appendChild(newItemOption);
 
-    const existingItemOption = api.createElement('div', { class: 'context-menu-item' }, ['Existing Item...']);
+  const existingItemOption = api.createElement('div', { class: 'context-menu-item' }, ['Existing Item...']);
+  if (context) {
     existingItemOption.onclick = () => {
       context.onDismiss();
       showExistingItemPicker(api, itemId, context.getClickCoords());
     };
-    addChildSubmenu.appendChild(existingItemOption);
   }
+  addChildSubmenu.appendChild(existingItemOption);
 
   addChildItem.appendChild(addChildSubmenu);
   frag.appendChild(addChildItem);
