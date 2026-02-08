@@ -800,6 +800,41 @@ export async function buildDebugSubmenu(api, itemId, context) {
 }
 
 /**
+ * Build the background/empty context menu (Search Items, Open REPL).
+ * When context is null, items are inert (no onclick) — used in documentation.
+ */
+export function buildEmptyMenu(api, context) {
+  const frag = document.createDocumentFragment();
+
+  // Search Items
+  const searchItem = api.createElement('div', { class: 'context-menu-item' }, ['Search Items (Cmd+K)']);
+  if (context) {
+    searchItem.onclick = () => {
+      context.onDismiss();
+      api.showItemList();
+    };
+  }
+  frag.appendChild(searchItem);
+
+  // Open REPL
+  const replItem = api.createElement('div', { class: 'context-menu-item' }, ['Open REPL (Esc)']);
+  if (context) {
+    replItem.onclick = async () => {
+      context.onDismiss();
+      try {
+        const replUi = await api.require('repl-ui');
+        await replUi.toggle();
+      } catch {
+        await window.kernel?.repl?.toggle();
+      }
+    };
+  }
+  frag.appendChild(replItem);
+
+  return frag;
+}
+
+/**
  * Build the full item context menu.
  * Includes all sections: Add Child, View As, View Settings, simple actions, Debug.
  */

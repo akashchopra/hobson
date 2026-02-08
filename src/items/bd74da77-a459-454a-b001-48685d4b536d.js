@@ -74,30 +74,11 @@ export async function render(item, api) {
     contextMenu.innerHTML = '';
   };
 
-  const showEmptyContextMenu = (x, y) => {
+  const showEmptyContextMenu = async (x, y) => {
     contextMenu.innerHTML = '';
 
-    // Search Items
-    const searchItem = api.createElement('div', { class: 'context-menu-item' }, ['Search Items (Cmd+K)']);
-    searchItem.onclick = () => {
-      hideContextMenu();
-      api.showItemList();
-    };
-    contextMenu.appendChild(searchItem);
-
-    // Open REPL
-    const replItem = api.createElement('div', { class: 'context-menu-item' }, ['Open REPL (Esc)']);
-    replItem.onclick = async () => {
-      hideContextMenu();
-      try {
-        const replUi = await api.require('repl-ui');
-        await replUi.toggle();
-      } catch {
-        // Fallback to kernel if repl-ui not available
-        await window.kernel?.repl?.toggle();
-      }
-    };
-    contextMenu.appendChild(replItem);
+    const menuLib = await api.require('context-menu-lib');
+    contextMenu.appendChild(menuLib.buildEmptyMenu(api, { onDismiss: hideContextMenu }));
 
     // Position menu
     const menuWidth = 180, menuHeight = 100;
