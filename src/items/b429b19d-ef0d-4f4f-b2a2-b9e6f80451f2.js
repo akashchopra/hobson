@@ -159,13 +159,14 @@ export async function render(item, api) {
       fieldElement = await fieldView.render(value, {
         mode: hint.mode || 'readonly',
         onChange,
-        label: hint.label,
         placeholder: hint.placeholder,
         // Pass scroll params if this is the navigation target
         scrollToRegion: isNavigationTarget ? navigateTo.region : null,
         scrollToLines: isNavigationTarget ? navigateTo.lines : null,  // "5" or "10-20"
         scrollToSymbol: isNavigationTarget ? navigateTo.symbol : null,
-        ...hint
+        ...hint,
+        // Suppress inner label when collapsible (summary provides it)
+        label: hint.collapsible ? null : hint.label,
       }, api);
     } catch (renderError) {
       console.error('Error rendering field:', path, 'with view:', fieldViewName, renderError);
@@ -174,7 +175,19 @@ export async function render(item, api) {
       fieldElement.textContent = 'Error: ' + renderError.message;
     }
 
-    scrollArea.appendChild(fieldElement);
+    // Wrap in collapsible <details> if requested
+    if (hint.collapsible) {
+      const details = api.createElement('details');
+      if (!hint.startCollapsed) details.setAttribute('open', '');
+      const summary = api.createElement('summary');
+      summary.textContent = hint.label || fieldName;
+      summary.style.cssText = 'cursor: pointer; font-size: 13px; font-weight: 500; color: var(--color-text-secondary); user-select: none; padding: 2px 0;';
+      details.appendChild(summary);
+      details.appendChild(fieldElement);
+      scrollArea.appendChild(details);
+    } else {
+      scrollArea.appendChild(fieldElement);
+    }
 
     // Add divider after field if requested
     if (hint.dividerAfter) {
