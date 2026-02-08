@@ -738,7 +738,7 @@ export async function buildDebugSubmenu(api, itemId, context) {
       if (isActive) label += ' \u2713';
       viewOption.textContent = label;
 
-      if (context) {
+      if (context?.onDismiss) {
         viewOption.onclick = async () => {
           context.onDismiss();
           if (context.parentId) {
@@ -762,7 +762,7 @@ export async function buildDebugSubmenu(api, itemId, context) {
   const debugModeOption = api.createElement('div', {
     class: 'context-menu-item' + (isDebugMode ? ' selected' : '')
   }, [isDebugMode ? 'Debug Mode \u2713' : 'Enable Debug Mode']);
-  if (context) {
+  if (context?.onDismiss) {
     debugModeOption.onclick = async () => {
       context.onDismiss();
       const kernel = window.kernel;
@@ -803,7 +803,7 @@ export async function buildDebugSubmenu(api, itemId, context) {
     const inspectorOption = api.createElement('div', {
       class: 'context-menu-item' + (inspectorActive ? ' selected' : '')
     }, [inspectorActive ? 'Inspector Mode \u2713' : 'Toggle Inspector (Ctrl+Shift+.)']);
-    if (context) {
+    if (context?.onDismiss) {
       inspectorOption.onclick = () => {
         context.onDismiss();
         window.kernel._elementInspector.toggle();
