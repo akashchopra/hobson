@@ -697,7 +697,7 @@ export function buildViewSettingsItem(api, itemId, context) {
 
 /**
  * Build the view settings panel as a standalone DOM node.
- * Used for functional transclusion: item://context-menu-lib?call=buildViewSettingsPanel&itemId=...
+ * Used for functional transclusion: item://2cc0a1c5-5c09-49bd-834a-eaa2d0183b6c?call=buildViewSettingsPanel&itemId=...
  * Shows current view preferences in inert mode (disabled selects, no handlers).
  */
 export async function buildViewSettingsPanel(api, params) {
