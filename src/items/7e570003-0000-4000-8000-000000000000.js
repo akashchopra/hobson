@@ -142,40 +142,66 @@ function createTestRow(testItem) {
       }
     },
     setResults(results, passed, failed) {
+      const total = passed + failed;
       if (failed === 0) {
         indicator.textContent = '\u2713';
         indicator.style.color = '#22c55e';
-        countSpan.textContent = `${passed}/${passed} passed`;
+        countSpan.textContent = `${passed}/${total} passed`;
         countSpan.style.color = '#22c55e';
       } else {
         indicator.textContent = '\u2717';
         indicator.style.color = '#ef4444';
-        countSpan.textContent = `${passed}/${passed + failed} passed`;
+        countSpan.textContent = `${passed}/${total} passed`;
         countSpan.style.color = '#ef4444';
       }
 
-      // Show details for failures
+      // Show every individual test result
       detailsContainer.innerHTML = '';
-      for (const r of results) {
-        if (!r.passed) {
-          const failLine = document.createElement('div');
-          failLine.style.cssText = 'padding:3px 0; font-size:12px;';
 
+      // Auto-expand if there are failures, collapse if all passed
+      let expanded = failed > 0;
+
+      const toggle = document.createElement('div');
+      toggle.style.cssText = 'font-size:11px; color:var(--text-secondary, #6b7280); cursor:pointer; user-select:none; padding:2px 0;';
+      const updateToggle = () => {
+        toggle.textContent = expanded ? '\u25BE hide details' : '\u25B8 show details';
+      };
+      updateToggle();
+      toggle.addEventListener('click', () => {
+        expanded = !expanded;
+        updateToggle();
+        listEl.style.display = expanded ? 'block' : 'none';
+      });
+      detailsContainer.appendChild(toggle);
+
+      const listEl = document.createElement('div');
+      listEl.style.display = expanded ? 'block' : 'none';
+
+      for (const r of results) {
+        const line = document.createElement('div');
+        line.style.cssText = 'padding:2px 0; font-size:12px;';
+
+        if (r.passed) {
+          line.style.color = '#22c55e';
+          line.textContent = '\u2713 ' + r.name;
+        } else {
           const failName = document.createElement('div');
-          failName.style.cssText = 'color:#ef4444;';
+          failName.style.color = '#ef4444';
           failName.textContent = '\u2717 ' + r.name;
-          failLine.appendChild(failName);
+          line.appendChild(failName);
 
           if (r.error) {
             const errMsg = document.createElement('div');
             errMsg.style.cssText = 'color:#9ca3af; padding-left:16px; font-family:var(--font-mono, monospace); font-size:11px; white-space:pre-wrap; word-break:break-all;';
             errMsg.textContent = r.error;
-            failLine.appendChild(errMsg);
+            line.appendChild(errMsg);
           }
-
-          detailsContainer.appendChild(failLine);
         }
+
+        listEl.appendChild(line);
       }
+
+      detailsContainer.appendChild(listEl);
     }
   };
 }
