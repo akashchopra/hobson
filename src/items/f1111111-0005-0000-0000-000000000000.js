@@ -32,6 +32,13 @@ export async function show(_api) {
   }
   const searchItem = searchItems[0];
 
+  // Reset search state so modal opens fresh and clears stale results in background
+  searchItem.content = { ...searchItem.content, currentQuery: '' };
+  searchItem.attachments = [];
+  searchItem.modified = Date.now();
+  await api.set(searchItem);
+  await api.rerenderItem(searchItem.id);
+
   // Set the Modal Frame's attachment to the Item Search
   const frame = await api.get(MODAL_FRAME_ID);
   frame.attachments = [{ id: searchItem.id }];
