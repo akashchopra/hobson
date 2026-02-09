@@ -270,7 +270,7 @@ export async function render(item, api) {
       // Click to bring to front (floating, non-maximized only)
       if (!windowIsAnchored && !effectiveView.anchor && !isMaximized) {
         wrapper.addEventListener('mousedown', async (e) => {
-          if (!e.target.classList.contains('titlebar') &&
+          if (!e.target.closest('.titlebar') &&
               !e.target.classList.contains('resize-handle') &&
               !e.target.closest('a')) {
             const newZ = await bringToFront(childId);
