@@ -148,6 +148,56 @@ async function showExistingItemPicker(api, parentId, clickCoords) {
   );
 }
 
+// Internal: show related items for an item in a modal
+const MODAL_FRAME_ID = 'b0b0b0b0-0002-0000-0000-000000000000';
+const MODAL_FRAME_VIEW_ID = 'b0b0b0b0-0001-0000-0000-000000000000';
+const RELATED_WIDGET_TYPE_ID = '1e9ffc8d-0e0d-4020-9865-b4ca6a05cbae';
+
+async function showRelatedItemsModal(api, targetItemId) {
+  // Remove existing modal if present
+  const existing = document.getElementById('related-items-modal-overlay');
+  if (existing) existing.remove();
+
+  // Create a transient related-items-widget with targetId set
+  const widgetId = 'b0b0b0b0-f001-0000-0000-000000000000';
+  const targetItem = await api.get(targetItemId);
+  await api.set({
+    id: widgetId,
+    name: 'Related: ' + (targetItem.name || targetItemId.substring(0, 8)),
+    type: RELATED_WIDGET_TYPE_ID,
+    created: Date.now(),
+    modified: Date.now(),
+    attachments: [],
+    content: { targetId: targetItemId }
+  });
+
+  // Set as Modal Frame's attachment
+  const frame = await api.get(MODAL_FRAME_ID);
+  frame.attachments = [{ id: widgetId }];
+  frame.modified = Date.now();
+  await api.set(frame);
+
+  // Build siblingContainer for the modal (same pattern as item-palette)
+  const rootId = api.getCurrentRoot();
+  const hasSpatialCanvas = !!document.querySelector(`[data-container-id="${rootId}"]`);
+  const siblingContainer = {
+    id: rootId,
+    addSibling: async (childId) => {
+      if (hasSpatialCanvas) {
+        await api.attach(rootId, childId);
+        await api.rerenderItem(rootId);
+      } else {
+        api.navigate(childId);
+      }
+    }
+  };
+
+  // Render and append to body
+  const overlayNode = await api.renderItem(MODAL_FRAME_ID, MODAL_FRAME_VIEW_ID, { siblingContainer });
+  overlayNode.id = 'related-items-modal-overlay';
+  document.body.appendChild(overlayNode);
+}
+
 /**
  * Build "Add Child" submenu with "New Item..." and "Existing Item..." options.
  * When context is null, items are inert (no onclick) — used in documentation.
@@ -272,6 +322,16 @@ export function buildSimpleActions(api, itemId, context) {
     };
   }
   frag.appendChild(exportEl);
+
+  // Related Items
+  const relatedEl = api.createElement('div', { class: 'context-menu-item' }, ['Related Items...']);
+  if (context) {
+    relatedEl.onclick = async () => {
+      context.onDismiss();
+      await showRelatedItemsModal(api, itemId);
+    };
+  }
+  frag.appendChild(relatedEl);
 
   // Separator + Delete
   frag.appendChild(api.createElement('div', { class: 'context-menu-separator' }, []));

@@ -40,7 +40,9 @@ export async function render(widget, api) {
   // Ensure indexes are built (rebuilds if module cache was cleared)
   await relatedLib.ensureBuilt(api);
 
-  const selectedId = selectionMgr.getSelection();
+  // Prefer explicit targetId on the widget (e.g. from modal context menu),
+  // fall back to global selection (e.g. docked widget watching viewport)
+  const selectedId = widget.content?.targetId || selectionMgr.getSelection();
 
   // Header - shows selection state
   const header = api.createElement('div', {
