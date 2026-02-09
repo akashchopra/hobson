@@ -245,7 +245,7 @@ export async function render(item, api) {
     contextMenu.appendChild(api.createElement('div', { class: 'context-menu-separator' }, []));
 
     // Simple actions
-    contextMenu.appendChild(menuLib.buildSimpleActions(api, itemId, {
+    contextMenu.appendChild(await menuLib.buildSimpleActions(api, itemId, {
       onDismiss: hideContextMenu, parentId: selectedParentId, rootId
     }));
     contextMenu.appendChild(api.createElement('div', { class: 'context-menu-separator' }, []));

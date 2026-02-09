@@ -2,6 +2,7 @@
 // See [item-search-lib documentation](item://6734035b-e30b-4c2a-829e-d57b3d1fd5dc)
 
 const TYPE_DEFINITION_ID = '11111111-0000-0000-0000-000000000000';
+const STARRED_TAG_ID = 'c0c0c0c0-0060-0000-0000-000000000000';
 
 // [BEGIN:tokenize]
 /**
@@ -378,6 +379,43 @@ export async function searchItems(query, api, options = {}) {
 }
 // [END:searchItems]
 
+// [BEGIN:getStarredItems]
+/**
+ * Get items tagged with "starred", sorted by most recently modified
+ */
+export async function getStarredItems(api, options = {}) {
+  const { targetContainer, allItems } = options;
+  let itemsToSearch;
+
+  if (allItems) {
+    itemsToSearch = allItems;
+  } else if (targetContainer) {
+    try {
+      const container = await api.get(targetContainer);
+      const childIds = (container.attachments || []).map(c =>
+        typeof c === 'string' ? c : c.id
+      );
+      itemsToSearch = await Promise.all(
+        childIds.map(id => api.get(id).catch(() => null))
+      );
+      itemsToSearch = itemsToSearch.filter(i => i !== null);
+    } catch (err) {
+      itemsToSearch = [];
+    }
+  } else {
+    itemsToSearch = await api.getAll();
+  }
+
+  const starred = itemsToSearch.filter(item => {
+    const tags = item.content?.tags || [];
+    return tags.includes(STARRED_TAG_ID);
+  });
+
+  starred.sort((a, b) => (b.modified || 0) - (a.modified || 0));
+  return starred;
+}
+// [END:getStarredItems]
+
 // [BEGIN:createSearchUI]
 /**
  * Create a search UI widget
@@ -425,13 +463,69 @@ export function createSearchUI(containerEl, onSelect, api, options = {}) {
   let searchTimeout = null;
   let currentQuery = savedQuery;
 
+  const renderResultItem = (item) => {
+    const resultDiv = api.createElement('div', {
+      style: 'padding: 12px; margin-bottom: 8px; background: var(--color-bg-surface); border: 1px solid var(--color-border-light); border-radius: var(--border-radius); cursor: pointer; transition: all 0.2s;'
+    }, []);
+
+    const itemTitle = api.createElement('div', {
+      style: 'font-weight: 500; color: var(--color-text); margin-bottom: 6px; font-size: 15px;'
+    }, [item.name || item.content?.title || item.id]);
+    resultDiv.appendChild(itemTitle);
+
+    const previewText = item.content?.body || item.content?.description ||
+                       JSON.stringify(item.content).substring(0, 150);
+    const preview = api.createElement('div', {
+      style: 'font-size: 13px; color: var(--color-text-secondary); margin-bottom: 6px; line-height: 1.4; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;'
+    }, [previewText.substring(0, 200)]);
+    resultDiv.appendChild(preview);
+
+    const meta = api.createElement('div', {
+      style: 'font-size: 12px; color: var(--color-border-dark);'
+    }, [
+      'Type: ' + item.type.substring(0, 8) + '... | Modified: ' +
+      new Date(item.modified).toLocaleDateString()
+    ]);
+    resultDiv.appendChild(meta);
+
+    resultDiv.onclick = () => { onSelect(item); };
+
+    resultDiv.onmouseover = () => {
+      resultDiv.style.background = 'var(--color-bg-surface-alt)';
+      resultDiv.style.borderColor = 'var(--color-primary)';
+      resultDiv.style.transform = 'translateX(4px)';
+    };
+    resultDiv.onmouseout = () => {
+      resultDiv.style.background = 'white';
+      resultDiv.style.borderColor = 'var(--color-border-light)';
+      resultDiv.style.transform = 'translateX(0)';
+    };
+
+    resultsList.appendChild(resultDiv);
+  };
+
   const executeSearch = async (query) => {
     currentQuery = query;
 
     if (!query || query.trim().length === 0) {
-      statusDiv.style.display = 'block';
-      resultsList.style.display = 'none';
-      statusDiv.textContent = 'Type to search...';
+      // Show starred items as defaults
+      const starred = await getStarredItems(api, { targetContainer });
+      if (starred.length === 0) {
+        statusDiv.style.display = 'block';
+        resultsList.style.display = 'none';
+        statusDiv.textContent = 'Type to search...';
+        return;
+      }
+      statusDiv.style.display = 'none';
+      resultsList.style.display = 'block';
+      resultsList.innerHTML = '';
+
+      const header = api.createElement('div', {
+        style: 'margin-bottom: 15px; font-size: 14px; color: var(--color-text-secondary); font-weight: 500;'
+      }, ['\u2605 Starred']);
+      resultsList.appendChild(header);
+
+      starred.forEach(item => renderResultItem(item));
       return;
     }
 
@@ -507,46 +601,7 @@ export function createSearchUI(containerEl, onSelect, api, options = {}) {
       }, ['Found ' + matches.length + ' item' + (matches.length === 1 ? '' : 's')]);
       resultsList.appendChild(countHeader);
 
-      matches.forEach(item => {
-        const resultDiv = api.createElement('div', {
-          style: 'padding: 12px; margin-bottom: 8px; background: var(--color-bg-surface); border: 1px solid var(--color-border-light); border-radius: var(--border-radius); cursor: pointer; transition: all 0.2s;'
-        }, []);
-
-        const itemTitle = api.createElement('div', {
-          style: 'font-weight: 500; color: var(--color-text); margin-bottom: 6px; font-size: 15px;'
-        }, [item.name || item.content?.title || item.id]);
-        resultDiv.appendChild(itemTitle);
-
-        const previewText = item.content?.body || item.content?.description ||
-                           JSON.stringify(item.content).substring(0, 150);
-        const preview = api.createElement('div', {
-          style: 'font-size: 13px; color: var(--color-text-secondary); margin-bottom: 6px; line-height: 1.4; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;'
-        }, [previewText.substring(0, 200)]);
-        resultDiv.appendChild(preview);
-
-        const meta = api.createElement('div', {
-          style: 'font-size: 12px; color: var(--color-border-dark);'
-        }, [
-          'Type: ' + item.type.substring(0, 8) + '... | Modified: ' +
-          new Date(item.modified).toLocaleDateString()
-        ]);
-        resultDiv.appendChild(meta);
-
-        resultDiv.onclick = () => { onSelect(item); };
-
-        resultDiv.onmouseover = () => {
-          resultDiv.style.background = 'var(--color-bg-surface-alt)';
-          resultDiv.style.borderColor = 'var(--color-primary)';
-          resultDiv.style.transform = 'translateX(4px)';
-        };
-        resultDiv.onmouseout = () => {
-          resultDiv.style.background = 'white';
-          resultDiv.style.borderColor = 'var(--color-border-light)';
-          resultDiv.style.transform = 'translateX(0)';
-        };
-
-        resultsList.appendChild(resultDiv);
-      });
+      matches.forEach(item => renderResultItem(item));
     }
   };
 
@@ -567,9 +622,8 @@ export function createSearchUI(containerEl, onSelect, api, options = {}) {
     setTimeout(() => input.focus(), 0);
   }
 
-  if (savedQuery && savedQuery.trim().length > 0) {
-    executeSearch(savedQuery);
-  }
+  // Show starred items immediately, or run saved query
+  executeSearch(savedQuery);
 
   return {
     performSearch: executeSearch,

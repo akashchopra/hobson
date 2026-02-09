@@ -5,7 +5,7 @@ export async function render(search, api) {
 
   const container = api.createElement('div', {
     class: 'item-search-view',
-    style: 'max-width: 800px; margin: 0 auto; padding: 20px;'
+    style: 'width: 100%; max-width: 800px; margin: 0 auto; padding: 20px; box-sizing: border-box;'
   }, []);
 
   // Header
@@ -104,7 +104,7 @@ export async function render(search, api) {
     const query = search.content?.currentQuery || '';
     const attachments = search.attachments || [];
 
-    if (!query || query.trim().length === 0) {
+    if ((!query || query.trim().length === 0) && attachments.length === 0) {
       const emptyMsg = api.createElement('div', {
         style: 'padding: 40px; text-align: center; color: var(--color-border-dark); font-style: italic;'
       }, ['Type to search...']);
@@ -152,9 +152,13 @@ export async function render(search, api) {
       resultsArea.appendChild(noResults);
     } else {
       // Has results - render attachments with their specified view or compact view
+      const isStarred = !query || query.trim().length === 0;
+      const headerText = isStarred
+        ? '\u2605 Starred'
+        : 'Found ' + attachments.length + ' item' + (attachments.length === 1 ? '' : 's');
       const countHeader = api.createElement('div', {
         style: 'margin-bottom: 15px; font-size: 14px; color: var(--color-text-secondary); font-weight: 500;'
-      }, ['Found ' + attachments.length + ' item' + (attachments.length === 1 ? '' : 's')]);
+      }, [headerText]);
       resultsArea.appendChild(countHeader);
 
       const resultsList = api.createElement('div', {}, []);
@@ -168,6 +172,17 @@ export async function render(search, api) {
           const childNode = await api.renderItem(childId, childViewId, { onCycle });
           // data-item-id is set automatically by api.renderItem()
           childNode.setAttribute('data-parent-id', search.id);
+
+          // Starred items navigate to root instead of opening as siblings
+          if (isStarred) {
+            childNode.addEventListener('click', (e) => {
+              e.stopPropagation();
+              e.preventDefault();
+              document.getElementById('item-palette-overlay')?.remove();
+              api.navigate(childId);
+            }, true);
+          }
+
           resultsList.appendChild(childNode);
         } catch (err) {
           const errorNode = api.createElement('div', {
@@ -181,34 +196,31 @@ export async function render(search, api) {
     }
   };
 
-  // Initial render of existing results
-  await renderResults();
-
   // Search execution with debouncing
   let searchTimeout = null;
 
   const executeSearch = async (query) => {
-    // Update attachments with search results
     const targetContainer = search.content?.target_container || null;
-    const matches = await searchLib.searchItems(query, api, { targetContainer });
+    let matches;
+    if (!query || query.trim().length === 0) {
+      matches = await searchLib.getStarredItems(api, { targetContainer });
+    } else {
+      matches = await searchLib.searchItems(query, api, { targetContainer });
+    }
 
-    // Store results as attachments and save query
-    const updated = {
-      ...search,
-      attachments: matches.map(m => ({ id: m.id })),
-      content: {
-        ...search.content,
-        currentQuery: query
-      }
-    };
-
-    await api.set(updated);
-
-    // Update local reference and re-render results
-    search.attachments = updated.attachments;
-    search.content = updated.content;
+    search.attachments = matches.map(m => ({ id: m.id }));
+    search.content = { ...search.content, currentQuery: query };
+    search.modified = Date.now();
+    await api.set(search);
     await renderResults();
   };
+
+  // Initial render — fetch starred items if no saved query, otherwise render saved results
+  if (!search.content?.currentQuery) {
+    await executeSearch('');
+  } else {
+    await renderResults();
+  }
 
   input.oninput = (e) => {
     const query = e.target.value;

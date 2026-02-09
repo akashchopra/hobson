@@ -8,6 +8,7 @@
 // Default window dimensions for new spatial children
 const DEFAULT_WINDOW_WIDTH = 600;
 const DEFAULT_WINDOW_HEIGHT = 500;
+const STARRED_TAG_ID = 'c0c0c0c0-0060-0000-0000-000000000000';
 
 // Internal: add a new child item to a parent
 // parentId: the item to add a child to
@@ -273,7 +274,7 @@ export function buildAddChildSubmenu(api, itemId, context) {
  * Build simple action menu items.
  * When context is null, items are inert (no onclick) — used in documentation.
  */
-export function buildSimpleActions(api, itemId, context) {
+export async function buildSimpleActions(api, itemId, context) {
   const frag = document.createDocumentFragment();
 
   // Copy ID
@@ -361,6 +362,29 @@ export function buildSimpleActions(api, itemId, context) {
     };
   }
   frag.appendChild(exportEl);
+
+  // Star / Unstar
+  const itemData = await api.get(itemId);
+  const isStarred = (itemData.content?.tags || []).includes(STARRED_TAG_ID);
+  const starEl = api.createElement('div', { class: 'context-menu-item' }, [isStarred ? 'Unstar' : 'Star']);
+  if (context) {
+    starEl.onclick = async () => {
+      context.onDismiss();
+      const item = await api.get(itemId);
+      if (!item.content) item.content = {};
+      if (!item.content.tags) item.content.tags = [];
+      const tags = item.content.tags;
+      const idx = tags.indexOf(STARRED_TAG_ID);
+      if (idx >= 0) {
+        tags.splice(idx, 1);
+      } else {
+        tags.push(STARRED_TAG_ID);
+      }
+      item.modified = Date.now();
+      await api.set(item);
+    };
+  }
+  frag.appendChild(starEl);
 
   // Related Items
   const relatedEl = api.createElement('div', { class: 'context-menu-item' }, ['Related Items...']);
@@ -977,7 +1001,7 @@ export async function buildItemMenu(api, paramsOrItemId, context) {
   container.appendChild(fragment);
   container.appendChild(buildViewSettingsItem(api, itemId, context));
   container.appendChild(sep());
-  container.appendChild(buildSimpleActions(api, itemId, context));
+  container.appendChild(await buildSimpleActions(api, itemId, context));
   container.appendChild(sep());
   container.appendChild(await buildDebugSubmenu(api, itemId, { ...context, ...viewState }));
   return container;
