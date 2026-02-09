@@ -3,12 +3,431 @@
   "name": "event-definition-view",
   "type": "aaaaaaaa-0000-0000-0000-000000000000",
   "created": 1770480152364,
-  "modified": 1770480152364,
+  "modified": 1770480202085,
   "content": {
     "for_type": "e0e00000-0000-0000-0000-000000000000",
     "displayName": "Event Definition",
     "description": "Read-only reference card for event definitions. Shows event name, category badge, markdown description, payload schema, and usage snippet.",
-    "code": "// Event Definition View \u2014 read-only reference card for event items\n\nexport async function render(item, api) {\n  const container = api.createElement('div', {\n    class: 'event-definition-view',\n    style: 'display: flex; flex-direction: column; gap: 16px; padding: 20px; height: 100%; overflow-y: auto;'\n  }, []);\n\n  // Resolve category type name for badge\n  let categoryName = '';\n  let badgeBg = 'var(--color-bg-surface-alt)';\n  let badgeColor = 'var(--color-text-secondary)';\n  try {\n    const typeItem = await api.get(item.type);\n    categoryName = typeItem?.name || '';\n    if (categoryName.includes('system')) {\n      badgeBg = 'var(--color-warning-light)';\n      badgeColor = 'var(--color-warning)';\n    } else if (categoryName.includes('item')) {\n      badgeBg = 'var(--color-primary-light)';\n      badgeColor = 'var(--color-primary)';\n    } else if (categoryName.includes('viewport')) {\n      badgeBg = 'var(--color-success-light)';\n      badgeColor = 'var(--color-success)';\n    }\n  } catch {}\n\n  // Header: event name in monospace + category badge\n  const header = api.createElement('div', {\n    style: 'display: flex; align-items: center; gap: 12px; flex-wrap: wrap;'\n  }, []);\n\n  const nameEl = api.createElement('h2', {\n    style: 'margin: 0; font-family: var(--font-mono, monospace); font-size: 20px; color: var(--color-text);'\n  }, [item.name || 'Unnamed Event']);\n  header.appendChild(nameEl);\n\n  if (categoryName) {\n    const badge = api.createElement('span', {\n      style: `font-size: 12px; padding: 2px 10px; border-radius: 10px; background: ${badgeBg}; color: ${badgeColor}; white-space: nowrap;`\n    }, [categoryName]);\n    header.appendChild(badge);\n  }\n\n  container.appendChild(header);\n\n  // Description (rendered as markdown)\n  if (item.content?.description) {\n    const descSection = api.createElement('div', {\n      style: 'line-height: 1.5;'\n    }, []);\n    const hobsonMarkdown = await api.require('hobson-markdown');\n    const rendered = await hobsonMarkdown.render(item.content.description, api);\n    descSection.appendChild(rendered);\n    container.appendChild(descSection);\n  }\n\n  // Payload schema\n  if (item.content?.payload && Object.keys(item.content.payload).length > 0) {\n    const payloadSection = api.createElement('div', {\n      style: 'display: flex; flex-direction: column; gap: 8px;'\n    }, []);\n\n    const payloadLabel = api.createElement('h3', {\n      style: 'margin: 0; font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--color-text-secondary);'\n    }, ['Payload']);\n    payloadSection.appendChild(payloadLabel);\n\n    const schemaEl = renderPayloadSchema(item.content.payload, api);\n    payloadSection.appendChild(schemaEl);\n    container.appendChild(payloadSection);\n  }\n\n  // Usage snippet\n  const snippetSection = api.createElement('div', {\n    style: 'display: flex; flex-direction: column; gap: 8px;'\n  }, []);\n\n  const snippetLabel = api.createElement('h3', {\n    style: 'margin: 0; font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--color-text-secondary);'\n  }, ['Usage']);\n  snippetSection.appendChild(snippetLabel);\n\n  const snippet = buildUsageSnippet(item);\n  const pre = api.createElement('pre', {\n    style: 'margin: 0; padding: 12px; background: var(--color-bg-body); border: 1px solid var(--color-border-light); border-radius: var(--border-radius); overflow-x: auto; font-size: 13px; line-height: 1.4; position: relative;'\n  }, []);\n  const code = api.createElement('code', {}, [snippet]);\n  pre.appendChild(code);\n\n  const copyBtn = api.createElement('button', {\n    style: 'position: absolute; top: 6px; right: 6px; padding: 2px 8px; font-size: 11px; background: var(--color-bg-surface); border: 1px solid var(--color-border-light); border-radius: var(--border-radius); cursor: pointer; color: var(--color-text-secondary);',\n    onclick: () => {\n      navigator.clipboard.writeText(snippet);\n      copyBtn.textContent = 'Copied!';\n      setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1500);\n    }\n  }, ['Copy']);\n  pre.appendChild(copyBtn);\n\n  snippetSection.appendChild(pre);\n  container.appendChild(snippetSection);\n\n  return container;\n}\n\nfunction renderPayloadSchema(payload, api, depth = 0) {\n  const wrapper = api.createElement('div', {\n    style: depth === 0\n      ? 'border: 1px solid var(--color-border-light); border-radius: var(--border-radius); overflow: hidden;'\n      : ''\n  }, []);\n\n  const entries = Object.entries(payload);\n  entries.forEach(([key, value], i) => {\n    const isNested = typeof value === 'object' && value !== null;\n    const isLast = i === entries.length - 1 && !isNested;\n    const borderStyle = isLast ? '' : 'border-bottom: 1px solid var(--color-border-light);';\n    const indent = 12 + depth * 20;\n\n    const row = api.createElement('div', {\n      style: `display: flex; align-items: baseline; padding: 8px 12px; padding-left: ${indent}px; ${borderStyle}`\n    }, []);\n\n    const keyEl = api.createElement('code', {\n      style: 'font-size: 13px; color: var(--color-primary); flex-shrink: 0; min-width: 100px;'\n    }, [key]);\n    row.appendChild(keyEl);\n\n    if (isNested) {\n      const hint = api.createElement('span', {\n        style: 'font-size: 12px; color: var(--color-text-tertiary); margin-left: 8px;'\n      }, ['{...}']);\n      row.appendChild(hint);\n      wrapper.appendChild(row);\n\n      // Render nested fields inline (flatten into same container)\n      const nestedEntries = Object.entries(value);\n      nestedEntries.forEach(([nKey, nValue], ni) => {\n        const nIsNested = typeof nValue === 'object' && nValue !== null;\n        const nIsLast = ni === nestedEntries.length - 1 && !nIsNested;\n        const nBorderStyle = (nIsLast && isLast) ? '' : 'border-bottom: 1px solid var(--color-border-light);';\n        const nIndent = 12 + (depth + 1) * 20;\n\n        const nRow = api.createElement('div', {\n          style: `display: flex; align-items: baseline; padding: 8px 12px; padding-left: ${nIndent}px; ${nBorderStyle}`\n        }, []);\n\n        const nKeyEl = api.createElement('code', {\n          style: 'font-size: 13px; color: var(--color-primary); flex-shrink: 0; min-width: 100px;'\n        }, [nKey]);\n        nRow.appendChild(nKeyEl);\n\n        const nValEl = api.createElement('span', {\n          style: 'font-size: 13px; color: var(--color-text-secondary); margin-left: 12px;'\n        }, [String(nValue)]);\n        nRow.appendChild(nValEl);\n\n        wrapper.appendChild(nRow);\n      });\n    } else {\n      const valEl = api.createElement('span', {\n        style: 'font-size: 13px; color: var(--color-text-secondary); margin-left: 12px;'\n      }, [String(value)]);\n      row.appendChild(valEl);\n      wrapper.appendChild(row);\n    }\n  });\n\n  return wrapper;\n}\n\nfunction buildUsageSnippet(item) {\n  const eventId = item.id;\n  const payload = item.content?.payload;\n\n  // Build destructured params from top-level payload keys\n  let params = '';\n  if (payload) {\n    const keys = Object.keys(payload);\n    if (keys.length > 0) {\n      params = '{ ' + keys.join(', ') + ' }';\n    }\n  }\n\n  const lines = [`api.events.on('${eventId}', (event) => {`];\n  if (params) {\n    lines.push(`  const ${params} = event.content;`);\n  }\n  lines.push(`  // ...`);\n  lines.push(`});`);\n\n  return lines.join('\\n');\n}\n"
+    "code": "// Event Definition View — read-only reference card for event items\n\nexport async function render(item, api) {\n  const container = api.createElement('div', {\n    class: 'event-definition-view',\n    style: 'display: flex; flex-direction: column; gap: 16px; padding: 20px; height: 100%; overflow-y: auto;'\n  }, []);\n\n  // Resolve category type name for badge\n  let categoryName = '';\n  let badgeBg = 'var(--color-bg-surface-alt)';\n  let badgeColor = 'var(--color-text-secondary)';\n  try {\n    const typeItem = await api.get(item.type);\n    categoryName = typeItem?.name || '';\n    if (categoryName.includes('system')) {\n      badgeBg = 'var(--color-warning-light)';\n      badgeColor = 'var(--color-warning)';\n    } else if (categoryName.includes('item')) {\n      badgeBg = 'var(--color-primary-light)';\n      badgeColor = 'var(--color-primary)';\n    } else if (categoryName.includes('viewport')) {\n      badgeBg = 'var(--color-success-light)';\n      badgeColor = 'var(--color-success)';\n    }\n  } catch {}\n\n  // Header: event name in monospace + category badge\n  const header = api.createElement('div', {\n    style: 'display: flex; align-items: center; gap: 12px; flex-wrap: wrap;'\n  }, []);\n\n  const nameEl = api.createElement('h2', {\n    style: 'margin: 0; font-family: var(--font-mono, monospace); font-size: 20px; color: var(--color-text);'\n  }, [item.name || 'Unnamed Event']);\n  header.appendChild(nameEl);\n\n  if (categoryName) {\n    const badge = api.createElement('span', {\n      style: `font-size: 12px; padding: 2px 10px; border-radius: 10px; background: ${badgeBg}; color: ${badgeColor}; white-space: nowrap;`\n    }, [categoryName]);\n    header.appendChild(badge);\n  }\n\n  container.appendChild(header);\n\n  // Description (rendered as markdown)\n  if (item.content?.description) {\n    const descSection = api.createElement('div', {\n      style: 'line-height: 1.5;'\n    }, []);\n    const hobsonMarkdown = await api.require('hobson-markdown');\n    const rendered = await hobsonMarkdown.render(item.content.description, api);\n    descSection.appendChild(rendered);\n    container.appendChild(descSection);\n  }\n\n  // Payload schema\n  if (item.content?.payload && Object.keys(item.content.payload).length > 0) {\n    const payloadSection = api.createElement('div', {\n      style: 'display: flex; flex-direction: column; gap: 8px;'\n    }, []);\n\n    const payloadLabel = api.createElement('h3', {\n      style: 'margin: 0; font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--color-text-secondary);'\n    }, ['Payload']);\n    payloadSection.appendChild(payloadLabel);\n\n    const schemaEl = renderPayloadSchema(item.content.payload, api);\n    payloadSection.appendChild(schemaEl);\n    container.appendChild(payloadSection);\n  }\n\n  // Usage snippet\n  const snippetSection = api.createElement('div', {\n    style: 'display: flex; flex-direction: column; gap: 8px;'\n  }, []);\n\n  const snippetLabel = api.createElement('h3', {\n    style: 'margin: 0; font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--color-text-secondary);'\n  }, ['Usage']);\n  snippetSection.appendChild(snippetLabel);\n\n  const snippet = buildUsageSnippet(item);\n  const pre = api.createElement('pre', {\n    style: 'margin: 0; padding: 12px; background: var(--color-bg-body); border: 1px solid var(--color-border-light); border-radius: var(--border-radius); overflow-x: auto; font-size: 13px; line-height: 1.4; position: relative;'\n  }, []);\n  const code = api.createElement('code', {}, [snippet]);\n  pre.appendChild(code);\n\n  const copyBtn = api.createElement('button', {\n    style: 'position: absolute; top: 6px; right: 6px; padding: 2px 8px; font-size: 11px; background: var(--color-bg-surface); border: 1px solid var(--color-border-light); border-radius: var(--border-radius); cursor: pointer; color: var(--color-text-secondary);',\n    onclick: () => {\n      navigator.clipboard.writeText(snippet);\n      copyBtn.textContent = 'Copied!';\n      setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1500);\n    }\n  }, ['Copy']);\n  pre.appendChild(copyBtn);\n\n  snippetSection.appendChild(pre);\n  container.appendChild(snippetSection);\n\n  return container;\n}\n\nfunction renderPayloadSchema(payload, api, depth = 0) {\n  const wrapper = api.createElement('div', {\n    style: depth === 0\n      ? 'border: 1px solid var(--color-border-light); border-radius: var(--border-radius); overflow: hidden;'\n      : ''\n  }, []);\n\n  const entries = Object.entries(payload);\n  entries.forEach(([key, value], i) => {\n    const isNested = typeof value === 'object' && value !== null;\n    const isLast = i === entries.length - 1 && !isNested;\n    const borderStyle = isLast ? '' : 'border-bottom: 1px solid var(--color-border-light);';\n    const indent = 12 + depth * 20;\n\n    const row = api.createElement('div', {\n      style: `display: flex; align-items: baseline; padding: 8px 12px; padding-left: ${indent}px; ${borderStyle}`\n    }, []);\n\n    const keyEl = api.createElement('code', {\n      style: 'font-size: 13px; color: var(--color-primary); flex-shrink: 0; min-width: 100px;'\n    }, [key]);\n    row.appendChild(keyEl);\n\n    if (isNested) {\n      const hint = api.createElement('span', {\n        style: 'font-size: 12px; color: var(--color-text-tertiary); margin-left: 8px;'\n      }, ['{...}']);\n      row.appendChild(hint);\n      wrapper.appendChild(row);\n\n      // Render nested fields inline (flatten into same container)\n      const nestedEntries = Object.entries(value);\n      nestedEntries.forEach(([nKey, nValue], ni) => {\n        const nIsNested = typeof nValue === 'object' && nValue !== null;\n        const nIsLast = ni === nestedEntries.length - 1 && !nIsNested;\n        const nBorderStyle = (nIsLast && isLast) ? '' : 'border-bottom: 1px solid var(--color-border-light);';\n        const nIndent = 12 + (depth + 1) * 20;\n\n        const nRow = api.createElement('div', {\n          style: `display: flex; align-items: baseline; padding: 8px 12px; padding-left: ${nIndent}px; ${nBorderStyle}`\n        }, []);\n\n        const nKeyEl = api.createElement('code', {\n          style: 'font-size: 13px; color: var(--color-primary); flex-shrink: 0; min-width: 100px;'\n        }, [nKey]);\n        nRow.appendChild(nKeyEl);\n\n        const nValEl = api.createElement('span', {\n          style: 'font-size: 13px; color: var(--color-text-secondary); margin-left: 12px;'\n        }, [String(nValue)]);\n        nRow.appendChild(nValEl);\n\n        wrapper.appendChild(nRow);\n      });\n    } else {\n      const valEl = api.createElement('span', {\n        style: 'font-size: 13px; color: var(--color-text-secondary); margin-left: 12px;'\n      }, [String(value)]);\n      row.appendChild(valEl);\n      wrapper.appendChild(row);\n    }\n  });\n\n  return wrapper;\n}\n\nfunction buildUsageSnippet(item) {\n  const eventId = item.id;\n  const payload = item.content?.payload;\n\n  // Build destructured params from top-level payload keys\n  let params = '';\n  if (payload) {\n    const keys = Object.keys(payload);\n    if (keys.length > 0) {\n      params = '{ ' + keys.join(', ') + ' }';\n    }\n  }\n\n  const lines = [`api.events.on('${eventId}', (event) => {`];\n  if (params) {\n    lines.push(`  const ${params} = event.content;`);\n  }\n  lines.push(`  // ...`);\n  lines.push(`});`);\n\n  return lines.join('\\n');\n}\n",
+    "_symbols": {
+      "render": {
+        "name": "render",
+        "line": 3,
+        "col": 7,
+        "endLine": 105,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(item, api)"
+      },
+      "render.container": {
+        "name": "container",
+        "line": 4,
+        "col": 8,
+        "endLine": 7,
+        "endCol": 8,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.categoryName": {
+        "name": "categoryName",
+        "line": 10,
+        "col": 6,
+        "endLine": 10,
+        "endCol": 23,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.badgeBg": {
+        "name": "badgeBg",
+        "line": 11,
+        "col": 6,
+        "endLine": 11,
+        "endCol": 45,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.badgeColor": {
+        "name": "badgeColor",
+        "line": 12,
+        "col": 6,
+        "endLine": 12,
+        "endCol": 48,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.typeItem": {
+        "name": "typeItem",
+        "line": 14,
+        "col": 10,
+        "endLine": 14,
+        "endCol": 45,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.header": {
+        "name": "header",
+        "line": 29,
+        "col": 8,
+        "endLine": 31,
+        "endCol": 8,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.nameEl": {
+        "name": "nameEl",
+        "line": 33,
+        "col": 8,
+        "endLine": 35,
+        "endCol": 36,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.badge": {
+        "name": "badge",
+        "line": 39,
+        "col": 10,
+        "endLine": 41,
+        "endCol": 22,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.descSection": {
+        "name": "descSection",
+        "line": 49,
+        "col": 10,
+        "endLine": 51,
+        "endCol": 10,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.hobsonMarkdown": {
+        "name": "hobsonMarkdown",
+        "line": 52,
+        "col": 10,
+        "endLine": 52,
+        "endCol": 63,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.rendered": {
+        "name": "rendered",
+        "line": 53,
+        "col": 10,
+        "endLine": 53,
+        "endCol": 79,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.payloadSection": {
+        "name": "payloadSection",
+        "line": 60,
+        "col": 10,
+        "endLine": 62,
+        "endCol": 10,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.payloadLabel": {
+        "name": "payloadLabel",
+        "line": 64,
+        "col": 10,
+        "endLine": 66,
+        "endCol": 19,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.schemaEl": {
+        "name": "schemaEl",
+        "line": 69,
+        "col": 10,
+        "endLine": 69,
+        "endCol": 67,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.snippetSection": {
+        "name": "snippetSection",
+        "line": 75,
+        "col": 8,
+        "endLine": 77,
+        "endCol": 8,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.snippetLabel": {
+        "name": "snippetLabel",
+        "line": 79,
+        "col": 8,
+        "endLine": 81,
+        "endCol": 15,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.snippet": {
+        "name": "snippet",
+        "line": 84,
+        "col": 8,
+        "endLine": 84,
+        "endCol": 41,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.pre": {
+        "name": "pre",
+        "line": 85,
+        "col": 8,
+        "endLine": 87,
+        "endCol": 8,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.code": {
+        "name": "code",
+        "line": 88,
+        "col": 8,
+        "endLine": 88,
+        "endCol": 55,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.copyBtn": {
+        "name": "copyBtn",
+        "line": 91,
+        "col": 8,
+        "endLine": 98,
+        "endCol": 14,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "renderPayloadSchema": {
+        "name": "renderPayloadSchema",
+        "line": 107,
+        "col": 0,
+        "endLine": 171,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(payload, api, depth = ...)"
+      },
+      "renderPayloadSchema.wrapper": {
+        "name": "wrapper",
+        "line": 108,
+        "col": 8,
+        "endLine": 112,
+        "endCol": 8,
+        "kind": "variable",
+        "scope": "renderPayloadSchema"
+      },
+      "renderPayloadSchema.entries": {
+        "name": "entries",
+        "line": 114,
+        "col": 8,
+        "endLine": 114,
+        "endCol": 41,
+        "kind": "variable",
+        "scope": "renderPayloadSchema"
+      },
+      "renderPayloadSchema.isNested": {
+        "name": "isNested",
+        "line": 116,
+        "col": 10,
+        "endLine": 116,
+        "endCol": 64,
+        "kind": "variable",
+        "scope": "renderPayloadSchema"
+      },
+      "renderPayloadSchema.isLast": {
+        "name": "isLast",
+        "line": 117,
+        "col": 10,
+        "endLine": 117,
+        "endCol": 56,
+        "kind": "variable",
+        "scope": "renderPayloadSchema"
+      },
+      "renderPayloadSchema.borderStyle": {
+        "name": "borderStyle",
+        "line": 118,
+        "col": 10,
+        "endLine": 118,
+        "endCol": 91,
+        "kind": "variable",
+        "scope": "renderPayloadSchema"
+      },
+      "renderPayloadSchema.indent": {
+        "name": "indent",
+        "line": 119,
+        "col": 10,
+        "endLine": 119,
+        "endCol": 34,
+        "kind": "variable",
+        "scope": "renderPayloadSchema"
+      },
+      "renderPayloadSchema.row": {
+        "name": "row",
+        "line": 121,
+        "col": 10,
+        "endLine": 123,
+        "endCol": 10,
+        "kind": "variable",
+        "scope": "renderPayloadSchema"
+      },
+      "renderPayloadSchema.keyEl": {
+        "name": "keyEl",
+        "line": 125,
+        "col": 10,
+        "endLine": 127,
+        "endCol": 13,
+        "kind": "variable",
+        "scope": "renderPayloadSchema"
+      },
+      "renderPayloadSchema.hint": {
+        "name": "hint",
+        "line": 131,
+        "col": 12,
+        "endLine": 133,
+        "endCol": 19,
+        "kind": "variable",
+        "scope": "renderPayloadSchema"
+      },
+      "renderPayloadSchema.nestedEntries": {
+        "name": "nestedEntries",
+        "line": 138,
+        "col": 12,
+        "endLine": 138,
+        "endCol": 49,
+        "kind": "variable",
+        "scope": "renderPayloadSchema"
+      },
+      "renderPayloadSchema.nIsNested": {
+        "name": "nIsNested",
+        "line": 140,
+        "col": 14,
+        "endLine": 140,
+        "endCol": 71,
+        "kind": "variable",
+        "scope": "renderPayloadSchema"
+      },
+      "renderPayloadSchema.nIsLast": {
+        "name": "nIsLast",
+        "line": 141,
+        "col": 14,
+        "endLine": 141,
+        "endCol": 69,
+        "kind": "variable",
+        "scope": "renderPayloadSchema"
+      },
+      "renderPayloadSchema.nBorderStyle": {
+        "name": "nBorderStyle",
+        "line": 142,
+        "col": 14,
+        "endLine": 142,
+        "endCol": 109,
+        "kind": "variable",
+        "scope": "renderPayloadSchema"
+      },
+      "renderPayloadSchema.nIndent": {
+        "name": "nIndent",
+        "line": 143,
+        "col": 14,
+        "endLine": 143,
+        "endCol": 45,
+        "kind": "variable",
+        "scope": "renderPayloadSchema"
+      },
+      "renderPayloadSchema.nRow": {
+        "name": "nRow",
+        "line": 145,
+        "col": 14,
+        "endLine": 147,
+        "endCol": 14,
+        "kind": "variable",
+        "scope": "renderPayloadSchema"
+      },
+      "renderPayloadSchema.nKeyEl": {
+        "name": "nKeyEl",
+        "line": 149,
+        "col": 14,
+        "endLine": 151,
+        "endCol": 18,
+        "kind": "variable",
+        "scope": "renderPayloadSchema"
+      },
+      "renderPayloadSchema.nValEl": {
+        "name": "nValEl",
+        "line": 154,
+        "col": 14,
+        "endLine": 156,
+        "endCol": 28,
+        "kind": "variable",
+        "scope": "renderPayloadSchema"
+      },
+      "renderPayloadSchema.valEl": {
+        "name": "valEl",
+        "line": 162,
+        "col": 12,
+        "endLine": 164,
+        "endCol": 25,
+        "kind": "variable",
+        "scope": "renderPayloadSchema"
+      },
+      "buildUsageSnippet": {
+        "name": "buildUsageSnippet",
+        "line": 173,
+        "col": 0,
+        "endLine": 194,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(item)"
+      },
+      "buildUsageSnippet.eventId": {
+        "name": "eventId",
+        "line": 174,
+        "col": 8,
+        "endLine": 174,
+        "endCol": 25,
+        "kind": "variable",
+        "scope": "buildUsageSnippet"
+      },
+      "buildUsageSnippet.payload": {
+        "name": "payload",
+        "line": 175,
+        "col": 8,
+        "endLine": 175,
+        "endCol": 39,
+        "kind": "variable",
+        "scope": "buildUsageSnippet"
+      },
+      "buildUsageSnippet.params": {
+        "name": "params",
+        "line": 178,
+        "col": 6,
+        "endLine": 178,
+        "endCol": 17,
+        "kind": "variable",
+        "scope": "buildUsageSnippet"
+      },
+      "buildUsageSnippet.keys": {
+        "name": "keys",
+        "line": 180,
+        "col": 10,
+        "endLine": 180,
+        "endCol": 37,
+        "kind": "variable",
+        "scope": "buildUsageSnippet"
+      },
+      "buildUsageSnippet.lines": {
+        "name": "lines",
+        "line": 186,
+        "col": 8,
+        "endLine": 186,
+        "endCol": 60,
+        "kind": "variable",
+        "scope": "buildUsageSnippet"
+      }
+    }
   },
   "attachments": []
 }

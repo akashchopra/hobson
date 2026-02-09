@@ -11,12 +11,12 @@ export async function render(item, api) {
   // List container (created first so header can reference it)
   const listContainer = api.createElement('div', {
     class: 'sortable-list-items',
-    style: 'flex: 1; overflow-y: auto; padding: 16px;'
+    style: 'flex: 1; overflow-y: auto; padding-left: 2px; padding-top: 4px; padding-bottom: 10px; padding-right: 2px;'
   }, []);
 
   // Header section
-  const header = createHeader(item, api, listContainer);
-  container.appendChild(header);
+  //const header = createHeader(item, api, listContainer);
+  //container.appendChild(header);
   container.appendChild(listContainer);
 
   // Initial render
@@ -27,7 +27,7 @@ export async function render(item, api) {
 
 function createHeader(item, api, listContainer) {
   const header = api.createElement('div', {
-    style: 'padding: 16px; border-bottom: 2px solid var(--color-border-light); background: var(--color-bg-surface);'
+    style: 'padding: 2px; border-bottom: 2px solid var(--color-border-light); background: var(--color-bg-surface);'
   }, []);
 
   const titleRow = api.createElement('div', {
@@ -38,15 +38,7 @@ function createHeader(item, api, listContainer) {
     style: 'margin: 0; font-size: 20px;'
   }, [item.name || 'Untitled List']);
 
-  //const addButton = api.createElement('button', {
-  //  style: 'padding: 8px 16px; background: var(--color-primary); color: white; border: none; border-radius: var(--border-radius); cursor: pointer; font-size: 14px;',
-  //  onclick: () => showItemPicker(item, api, listContainer)
-  //}, ['+ Add Item']);
-  //addButton.onmouseover = () => { addButton.style.background = 'var(--color-primary-hover)'; };
-  //addButton.onmouseout = () => { addButton.style.background = 'var(--color-primary)'; };
-
   titleRow.appendChild(title);
-  //titleRow.appendChild(addButton);
   header.appendChild(titleRow);
 
   return header;

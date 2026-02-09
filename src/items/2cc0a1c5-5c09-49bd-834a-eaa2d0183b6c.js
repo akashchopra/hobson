@@ -295,14 +295,14 @@ export async function buildSimpleActions(api, itemId, context) {
       context.onDismiss();
       const original = await api.get(itemId);
       const newContent = { ...original.content };
-      if (newContent.title) newContent.title += ' (copy)';
+      
       const duplicate = {
         id: crypto.randomUUID(),
         name: original.name ? original.name + ' (copy)' : undefined,
         type: original.type,
         created: Date.now(),
         modified: Date.now(),
-        attachments: [],
+        attachments: [...(original.attachments || [])],
         content: newContent
       };
       await api.set(duplicate);

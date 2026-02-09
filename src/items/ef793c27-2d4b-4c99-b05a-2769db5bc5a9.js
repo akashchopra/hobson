@@ -492,7 +492,7 @@ export async function render(item, api) {
       // Content area
       const contentArea = api.createElement('div', {
         class: 'window-content',
-        style: 'padding: 15px; overflow: auto; height: calc(100% - 24px);'
+        style: 'padding: 1px; overflow: auto; height: calc(100% - 24px);'
       }, []);
       contentArea.appendChild(childNode);
       wrapper.appendChild(contentArea);

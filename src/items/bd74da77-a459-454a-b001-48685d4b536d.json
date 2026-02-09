@@ -3,7 +3,7 @@
   "name": "viewport-view",
   "type": "aaaaaaaa-0000-0000-0000-000000000000",
   "created": 1768506119995,
-  "modified": 1770643802416,
+  "modified": 1770643821854,
   "content": {
     "description": "The viewport's view - renders the navigation chrome around the current root item. This is the top-level container that frames all user interaction with Hobson.\n\n## Responsibilities\n\n- **Root Resolution**: Reads root item from URL (`?root=`) or viewport item's attachments\n- **Title Management**: Updates browser tab title to show current item name\n- **Item Selection**: Tracks selected item for context menu operations\n- **Context Menus**: Right-click menu for View As, Add Child, Delete, Copy ID, etc.\n- **View Settings Modal**: Three-level preference management (context/item/type)\n- **Keyboard Shortcuts**: Cmd+K (search), Esc (clear selection)\n\n## View Preference System\n\nThe viewport manages the full view resolution hierarchy:\n1. Contextual override (stored in parent's child spec or viewport's root view)\n2. Item's `preferredView` field\n3. Type's `preferredView` field\n4. Type chain lookup (via [kernel:rendering](item://33333333-5555-0000-0000-000000000000))\n\n## Item Decorator\n\nApplies `data-item-id` attributes and tooltips to rendered items for:\n- Selection highlighting\n- Context menu targeting\n- Debug mode introspection",
     "for_type": "77777777-0000-0000-0000-000000000000",
@@ -13,29 +13,11 @@
     ],
     "code": "// Item: viewport-view\n// ID: bd74da77-a459-454a-b001-48685d4b536d\n// Type: aaaaaaaa-0000-0000-0000-000000000000\n\nexport async function render(item, api) {\n  // Load dependencies\n  // Note: Libraries under active development should be required where used, not here.\n  // See docs/Hot-Reloading Libraries.md for the pattern.\n  const cssLoader = await api.require('css-loader-lib');\n  await cssLoader.loadCSS('context-menu-css', api);\n\n  // Determine root: URL takes precedence over viewport item\n  // This allows direct linking and avoids flash on initial load\n  const urlParams = new URLSearchParams(window.location.search);\n  const urlRoot = urlParams.get('root');\n  \n  // The viewport item stores rootId in attachments[0]\n  const storedSpec = item.attachments?.[0];\n  const storedRootId = storedSpec?.id || storedSpec;\n  \n  // Use URL root if present and valid, otherwise use stored root\n  let rootId = storedRootId;\n  let rootSpec = storedSpec;\n  \n  if (urlRoot && urlRoot !== storedRootId) {\n    // URL has different root - verify it exists\n    try {\n      await api.get(urlRoot);\n      rootId = urlRoot;\n      rootSpec = { id: urlRoot };  // No view config from URL\n      \n      // Update viewport item to match URL (for consistency on next render)\n      // Silent to avoid triggering watcher dispatch and re-render loop\n      const updatedViewport = { ...item, attachments: [{ id: urlRoot }], modified: Date.now() };\n      await api.set(updatedViewport, { silent: true });\n    } catch {\n      // URL root doesn't exist - fall back to stored root\n      console.warn('[viewport-view] URL root not found:', urlRoot);\n    }\n  }\n  \n  // Read view type from new schema (view.type) or fall back to old flat format\n  const rootViewId = rootSpec?.view?.type || rootSpec?.view || rootSpec?.renderer || null;\n\n  // Update browser tab title\n  const updateBrowserTitle = async (itemId) => {\n    if (!itemId) {\n      document.title = 'Hobson';\n      return;\n    }\n    const rootItem = await api.get(itemId);\n    const itemName = rootItem?.content?.title || rootItem?.name || itemId.slice(0, 8);\n    document.title = itemName + ' - Hobson';\n  };\n  await updateBrowserTitle(rootId);\n\n  // Create main container\n  const container = api.createElement('div', {\n    class: 'viewport-container',\n    style: 'display: flex; flex-direction: column; height: 100%; position: relative;'\n  }, []);\n\n  // Context menu for empty/background state\n  // Append to document.body so it's always above windows (which can have high z-indices)\n  const contextMenu = api.createElement('div', {\n    id: 'context-menu',\n    class: 'context-menu',\n    style: 'display: none;'\n  }, []);\n  document.body.appendChild(contextMenu);\n\n  const hideContextMenu = () => {\n    contextMenu.style.display = 'none';\n    contextMenu.innerHTML = '';\n  };\n\n  const showEmptyContextMenu = async (x, y) => {\n    contextMenu.innerHTML = '';\n\n    const menuLib = await api.require('context-menu-lib');\n    contextMenu.appendChild(menuLib.buildEmptyMenu(api, { onDismiss: hideContextMenu }));\n\n    // Position menu\n    const menuWidth = 180, menuHeight = 100;\n    let menuX = x, menuY = y;\n    if (x + menuWidth > window.innerWidth) menuX = window.innerWidth - menuWidth - 10;\n    if (y + menuHeight > window.innerHeight) menuY = window.innerHeight - menuHeight - 10;\n    contextMenu.style.left = menuX + 'px';\n    contextMenu.style.top = menuY + 'px';\n    contextMenu.style.display = 'block';\n  };\n\n  // If no root, show empty state\n  if (!rootId) {\n    const empty = api.createElement('div', {\n      style: 'padding: 40px; text-align: center; color: var(--color-text-secondary); flex: 1;'\n    }, []);\n    empty.innerHTML = 'No item selected.<br><br><span style=\"font-size: 14px;\">Cmd+K - Search items<br>Ctrl+\\\\ - Open REPL<br>Right-click - Context menu</span>';\n    container.appendChild(empty);\n\n    // Handle right-click on empty state\n    container.addEventListener('contextmenu', (e) => {\n      if (e.shiftKey) return;\n      e.preventDefault();\n      showEmptyContextMenu(e.clientX, e.clientY);\n    });\n\n    container.addEventListener('click', () => hideContextMenu());\n\n    // Keyboard shortcuts for empty state\n    const globalKeyHandler = (e) => {\n      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {\n        e.preventDefault();\n        api.showItemList();\n      }\n    };\n    document.addEventListener('keydown', globalKeyHandler);\n\n    // Register cleanup for when rendering system removes this DOM tree\n    container.setAttribute('data-hobson-cleanup', '');\n    container.__hobsonCleanup = () => {\n      document.removeEventListener('keydown', globalKeyHandler);\n      contextMenu.remove();\n    };\n\n    return container;\n  }\n\n  // Decorator for rendered items - adds data-item-id and tooltip\n  // This is viewport-specific; users can customize by modifying this function\n  const itemDecorator = async (dom, itemId, item) => {\n    dom.setAttribute('data-item-id', itemId);\n    \n    // Add tooltip with item name, type, and tags\n    const itemName = item.name || item.content?.title || itemId.slice(0, 8);\n    let typeName = item.type.slice(0, 8);\n    try {\n      const typeItem = await api.get(item.type);\n      typeName = typeItem.name || typeName;\n    } catch {}\n    \n    let titleText = itemName + ' (' + typeName + ')';\n    \n    // Add tags to tooltip if present\n    if (item.tags?.length) {\n      const tagNames = await Promise.all(item.tags.map(async tagId => {\n        try {\n          const tag = await api.get(tagId);\n          return tag.content?.name || tag.name || tagId.slice(0, 8);\n        } catch {\n          return tagId.slice(0, 8);\n        }\n      }));\n      titleText += '\\nTags: ' + tagNames.join(', ');\n    }\n    \n    dom.setAttribute('title', titleText);\n  };\n\n  // Render the root item with decorator for viewport integration\n  // Pass the full view config object so the renderer can access and update its view state\n  let rootNode;\n  try {\n    rootNode = await api.renderItem(rootId, rootSpec?.view || null, { decorator: itemDecorator });\n  } catch (error) {\n    rootNode = api.createElement('div', {\n      style: 'padding: 20px; color: var(--color-danger); background: var(--color-danger-light); border: 1px solid var(--color-danger); border-radius: var(--border-radius);'\n    }, ['Error rendering item: ' + error.message]);\n  }\n\n  const contentArea = api.createElement('div', {\n    'data-item-id': rootId,\n    class: 'viewport-content',\n    style: 'flex: 1; overflow: auto; display: flex; flex-direction: column; min-height: 0;'\n  }, [rootNode]);\n\n  container.appendChild(contentArea);\n\n  let selectedItemId = null;\n  let selectedParentId = null;\n  let selectedElement = null;\n  let lastContextMenuCoords = { x: 0, y: 0 };\n\n  const updateSelectionVisual = () => {\n    container.querySelectorAll('[data-item-id].item-selected').forEach(el => el.classList.remove('item-selected'));\n    if (selectedElement) {\n      selectedElement.classList.add('item-selected');\n    }\n  };\n\n  const selectItem = (itemId, itemElement) => {\n    selectedItemId = itemId;\n    selectedParentId = itemElement?.getAttribute('data-parent-id') || null;\n    selectedElement = itemElement;\n    api.viewport.select(itemId, selectedParentId);\n    updateSelectionVisual();\n  };\n\n  const clearSelection = () => {\n    selectedItemId = null;\n    selectedParentId = null;\n    selectedElement = null;\n    api.viewport.clearSelection();\n    updateSelectionVisual();\n  };\n\n  const showContextMenu = async (x, y, itemId) => {\n    const menuItem = await api.get(itemId);\n    contextMenu.innerHTML = '';\n    lastContextMenuCoords = { x, y };\n\n    const menuLib = await api.require('context-menu-lib');\n\n    const getClickCoords = () => {\n      let clickCoords = null;\n      if (selectedParentId) {\n        const canvas = document.querySelector('[data-parent-id=\"' + selectedParentId + '\"]')?.parentElement;\n        if (canvas) {\n          const rect = canvas.getBoundingClientRect();\n          clickCoords = {\n            x: lastContextMenuCoords.x - rect.left + canvas.scrollLeft,\n            y: lastContextMenuCoords.y - rect.top + canvas.scrollTop\n          };\n        }\n      }\n      return clickCoords;\n    };\n\n    // Add Child submenu\n    contextMenu.appendChild(menuLib.buildAddChildSubmenu(api, itemId, {\n      onDismiss: hideContextMenu, getClickCoords\n    }));\n    contextMenu.appendChild(api.createElement('div', { class: 'context-menu-separator' }, []));\n\n    // View As submenu\n    const { fragment: viewAsFragment, viewState } = await menuLib.buildViewAsSubmenu(api, itemId, {\n      onDismiss: hideContextMenu, parentId: selectedParentId\n    });\n    contextMenu.appendChild(viewAsFragment);\n\n    // View Settings\n    contextMenu.appendChild(menuLib.buildViewSettingsItem(api, itemId, {\n      onDismiss: hideContextMenu, parentId: selectedParentId\n    }));\n    contextMenu.appendChild(api.createElement('div', { class: 'context-menu-separator' }, []));\n\n    // Simple actions\n    contextMenu.appendChild(await menuLib.buildSimpleActions(api, itemId, {\n      onDismiss: hideContextMenu, parentId: selectedParentId, rootId\n    }));\n    contextMenu.appendChild(api.createElement('div', { class: 'context-menu-separator' }, []));\n\n    // Debug submenu\n    contextMenu.appendChild(await menuLib.buildDebugSubmenu(api, itemId, {\n      onDismiss: hideContextMenu, parentId: selectedParentId, ...viewState\n    }));\n\n    // Position menu\n    const menuWidth = 180, menuHeight = 400, submenuWidth = 160;\n    let menuX = x, menuY = y;\n    if (x + menuWidth > window.innerWidth) menuX = window.innerWidth - menuWidth - 10;\n    if (y + menuHeight > window.innerHeight) menuY = window.innerHeight - menuHeight - 10;\n    contextMenu.style.left = menuX + 'px';\n    contextMenu.style.top = menuY + 'px';\n    contextMenu.style.display = 'block';\n\n    if (menuX + menuWidth + submenuWidth > window.innerWidth) {\n      contextMenu.classList.add('submenu-left');\n    } else {\n      contextMenu.classList.remove('submenu-left');\n    }\n  };\n\n  const findItemElement = (target) => {\n    let element = target.closest('[data-parent-id][data-item-id]');\n    if (!element) element = target.closest('[data-item-id]');\n    return element;\n  };\n\n  container.addEventListener('click', (e) => {\n    hideContextMenu();\n    const itemElement = findItemElement(e.target);\n    if (itemElement) {\n      selectItem(itemElement.getAttribute('data-item-id'), itemElement);\n      e.stopPropagation();\n    } else {\n      clearSelection();\n    }\n  });\n\n  container.addEventListener('contextmenu', (e) => {\n    // Let browser menu through if modifier key held\n    if (e.shiftKey) {\n      return; // Don't preventDefault, let browser handle it\n    }\n    e.preventDefault();\n    const itemElement = findItemElement(e.target);\n    if (itemElement) {\n      const itemId = itemElement.getAttribute('data-item-id');\n      selectItem(itemId, itemElement);\n      showContextMenu(e.clientX, e.clientY, itemId);\n    } else {\n      // Clicked on background - show background context menu\n      clearSelection();\n      showEmptyContextMenu(e.clientX, e.clientY);\n    }\n  });\n\n  // Keyboard shortcuts\n  const handleKeydown = (e) => {\n    // Cmd+K or Ctrl+K: Open item list\n    if ((e.metaKey || e.ctrlKey) && e.key === 'k') {\n      e.preventDefault();\n      api.showItemList();\n      return;\n    }\n    \n    // Escape: Hide context menu or clear selection\n    if (e.key === 'Escape') {\n      if (contextMenu.style.display !== 'none') hideContextMenu();\n      else clearSelection();\n    }\n  };\n\n  container.addEventListener('keydown', handleKeydown);\n  \n  // Also listen at document level for Cmd+K (so it works even when container not focused)\n  const globalKeyHandler = (e) => {\n    if ((e.metaKey || e.ctrlKey) && e.key === 'k') {\n      e.preventDefault();\n      api.showItemList();\n    }\n  };\n  document.addEventListener('keydown', globalKeyHandler);\n\n  // Register cleanup for when rendering system removes this DOM tree\n  container.setAttribute('data-hobson-cleanup', '');\n  container.__hobsonCleanup = () => {\n    document.removeEventListener('keydown', globalKeyHandler);\n    contextMenu.remove();\n  };\n\n  container.setAttribute('tabindex', '0');\n  return container;\n}\n",
     "_symbols": {
-      "DEFAULT_WINDOW_WIDTH": {
-        "name": "DEFAULT_WINDOW_WIDTH",
-        "line": 14,
-        "col": 6,
-        "endLine": 14,
-        "endCol": 32,
-        "kind": "variable",
-        "scope": null
-      },
-      "DEFAULT_WINDOW_HEIGHT": {
-        "name": "DEFAULT_WINDOW_HEIGHT",
-        "line": 15,
-        "col": 6,
-        "endLine": 15,
-        "endCol": 33,
-        "kind": "variable",
-        "scope": null
-      },
       "render": {
         "name": "render",
-        "line": 17,
+        "line": 5,
         "col": 7,
-        "endLine": 1111,
+        "endLine": 345,
         "endCol": 1,
         "kind": "function",
         "scope": null,
@@ -43,135 +25,126 @@
       },
       "render.cssLoader": {
         "name": "cssLoader",
-        "line": 21,
+        "line": 9,
         "col": 8,
-        "endLine": 21,
+        "endLine": 9,
         "endCol": 55,
-        "kind": "variable",
-        "scope": "render"
-      },
-      "render.searchLib": {
-        "name": "searchLib",
-        "line": 23,
-        "col": 8,
-        "endLine": 23,
-        "endCol": 56,
         "kind": "variable",
         "scope": "render"
       },
       "render.urlParams": {
         "name": "urlParams",
-        "line": 27,
+        "line": 14,
         "col": 8,
-        "endLine": 27,
+        "endLine": 14,
         "endCol": 63,
         "kind": "variable",
         "scope": "render"
       },
       "render.urlRoot": {
         "name": "urlRoot",
-        "line": 28,
+        "line": 15,
         "col": 8,
-        "endLine": 28,
+        "endLine": 15,
         "endCol": 39,
         "kind": "variable",
         "scope": "render"
       },
       "render.storedSpec": {
         "name": "storedSpec",
-        "line": 31,
+        "line": 18,
         "col": 8,
-        "endLine": 31,
+        "endLine": 18,
         "endCol": 42,
         "kind": "variable",
         "scope": "render"
       },
       "render.storedRootId": {
         "name": "storedRootId",
-        "line": 32,
+        "line": 19,
         "col": 8,
-        "endLine": 32,
+        "endLine": 19,
         "endCol": 51,
         "kind": "variable",
         "scope": "render"
       },
       "render.rootId": {
         "name": "rootId",
-        "line": 35,
+        "line": 22,
         "col": 6,
-        "endLine": 35,
+        "endLine": 22,
         "endCol": 27,
         "kind": "variable",
         "scope": "render"
       },
       "render.rootSpec": {
         "name": "rootSpec",
-        "line": 36,
+        "line": 23,
         "col": 6,
-        "endLine": 36,
+        "endLine": 23,
         "endCol": 27,
         "kind": "variable",
         "scope": "render"
       },
       "render.id": {
         "name": "id",
-        "line": 43,
+        "line": 30,
         "col": 19,
-        "endLine": 43,
+        "endLine": 30,
         "endCol": 30,
         "kind": "property",
         "scope": "render"
       },
       "render.updatedViewport": {
         "name": "updatedViewport",
-        "line": 47,
+        "line": 34,
         "col": 12,
-        "endLine": 47,
+        "endLine": 34,
         "endCol": 95,
         "kind": "variable",
         "scope": "render"
       },
       "updatedViewport.attachments": {
         "name": "attachments",
-        "line": 47,
+        "line": 34,
         "col": 41,
-        "endLine": 47,
+        "endLine": 34,
         "endCol": 71,
         "kind": "property",
         "scope": "updatedViewport"
       },
       "updatedViewport.modified": {
         "name": "modified",
-        "line": 47,
+        "line": 34,
         "col": 73,
-        "endLine": 47,
+        "endLine": 34,
         "endCol": 93,
         "kind": "property",
         "scope": "updatedViewport"
       },
       "render.silent": {
         "name": "silent",
-        "line": 48,
+        "line": 35,
         "col": 39,
-        "endLine": 48,
+        "endLine": 35,
         "endCol": 51,
         "kind": "property",
         "scope": "render"
       },
       "render.rootViewId": {
         "name": "rootViewId",
-        "line": 56,
+        "line": 43,
         "col": 8,
-        "endLine": 56,
+        "endLine": 43,
         "endCol": 89,
         "kind": "variable",
         "scope": "render"
       },
       "render.updateBrowserTitle": {
         "name": "updateBrowserTitle",
-        "line": 59,
+        "line": 46,
         "col": 8,
-        "endLine": 67,
+        "endLine": 54,
         "endCol": 3,
         "kind": "function",
         "scope": "render",
@@ -179,489 +152,45 @@
       },
       "updateBrowserTitle.rootItem": {
         "name": "rootItem",
-        "line": 64,
+        "line": 51,
         "col": 10,
-        "endLine": 64,
+        "endLine": 51,
         "endCol": 42,
         "kind": "variable",
         "scope": "updateBrowserTitle"
       },
       "updateBrowserTitle.itemName": {
         "name": "itemName",
-        "line": 65,
+        "line": 52,
         "col": 10,
-        "endLine": 65,
+        "endLine": 52,
         "endCol": 85,
         "kind": "variable",
         "scope": "updateBrowserTitle"
       },
       "render.container": {
         "name": "container",
-        "line": 71,
+        "line": 58,
         "col": 8,
-        "endLine": 74,
+        "endLine": 61,
         "endCol": 8,
         "kind": "variable",
         "scope": "render"
       },
-      "render.addChildToItem": {
-        "name": "addChildToItem",
-        "line": 79,
-        "col": 8,
-        "endLine": 138,
-        "endCol": 3,
-        "kind": "function",
-        "scope": "render",
-        "signature": "(parentId, clickCoords)"
-      },
-      "addChildToItem.typePicker": {
-        "name": "typePicker",
-        "line": 81,
-        "col": 10,
-        "endLine": 81,
-        "endCol": 59,
-        "kind": "variable",
-        "scope": "addChildToItem"
-      },
-      "addChildToItem.selectedType": {
-        "name": "selectedType",
-        "line": 82,
-        "col": 10,
-        "endLine": 82,
-        "endCol": 61,
-        "kind": "variable",
-        "scope": "addChildToItem"
-      },
-      "addChildToItem.newItem": {
-        "name": "newItem",
-        "line": 85,
-        "col": 10,
-        "endLine": 93,
-        "endCol": 5,
-        "kind": "variable",
-        "scope": "addChildToItem"
-      },
-      "newItem.id": {
-        "name": "id",
-        "line": 86,
-        "col": 6,
-        "endLine": 86,
-        "endCol": 29,
-        "kind": "property",
-        "scope": "newItem"
-      },
-      "newItem.name": {
-        "name": "name",
-        "line": 87,
-        "col": 6,
-        "endLine": 87,
-        "endCol": 36,
-        "kind": "property",
-        "scope": "newItem"
-      },
-      "newItem.type": {
-        "name": "type",
-        "line": 88,
-        "col": 6,
-        "endLine": 88,
-        "endCol": 24,
-        "kind": "property",
-        "scope": "newItem"
-      },
-      "newItem.created": {
-        "name": "created",
-        "line": 89,
-        "col": 6,
-        "endLine": 89,
-        "endCol": 25,
-        "kind": "property",
-        "scope": "newItem"
-      },
-      "newItem.modified": {
-        "name": "modified",
-        "line": 90,
-        "col": 6,
-        "endLine": 90,
-        "endCol": 26,
-        "kind": "property",
-        "scope": "newItem"
-      },
-      "newItem.attachments": {
-        "name": "attachments",
-        "line": 91,
-        "col": 6,
-        "endLine": 91,
-        "endCol": 21,
-        "kind": "property",
-        "scope": "newItem"
-      },
-      "newItem.content": {
-        "name": "content",
-        "line": 92,
-        "col": 6,
-        "endLine": 92,
-        "endCol": 17,
-        "kind": "property",
-        "scope": "newItem"
-      },
-      "addChildToItem.parent": {
-        "name": "parent",
-        "line": 98,
-        "col": 10,
-        "endLine": 98,
-        "endCol": 42,
-        "kind": "variable",
-        "scope": "addChildToItem"
-      },
-      "addChildToItem.attachments": {
-        "name": "attachments",
-        "line": 99,
-        "col": 10,
-        "endLine": 99,
-        "endCol": 48,
-        "kind": "variable",
-        "scope": "addChildToItem"
-      },
-      "addChildToItem.isSpatial": {
-        "name": "isSpatial",
-        "line": 103,
-        "col": 10,
-        "endLine": 105,
-        "endCol": 13,
-        "kind": "variable",
-        "scope": "addChildToItem"
-      },
-      "addChildToItem.maxZ": {
-        "name": "maxZ",
-        "line": 109,
-        "col": 12,
-        "endLine": 109,
-        "endCol": 102,
-        "kind": "variable",
-        "scope": "addChildToItem"
-      },
-      "addChildToItem.x": {
-        "name": "x",
-        "line": 110,
-        "col": 12,
-        "endLine": 110,
-        "endCol": 36,
-        "kind": "variable",
-        "scope": "addChildToItem"
-      },
-      "addChildToItem.y": {
-        "name": "y",
-        "line": 111,
-        "col": 12,
-        "endLine": 111,
-        "endCol": 36,
-        "kind": "variable",
-        "scope": "addChildToItem"
-      },
-      "addChildToItem.id": {
-        "name": "id",
-        "line": 125,
-        "col": 25,
-        "endLine": 125,
-        "endCol": 39,
-        "kind": "property",
-        "scope": "addChildToItem"
-      },
-      "addChildToItem.view": {
-        "name": "view",
-        "line": 115,
-        "col": 8,
-        "endLine": 121,
-        "endCol": 9,
-        "kind": "property",
-        "scope": "addChildToItem"
-      },
-      "addChildToItem.view.x": {
-        "name": "x",
-        "line": 116,
-        "col": 10,
-        "endLine": 116,
-        "endCol": 14,
-        "kind": "property",
-        "scope": "addChildToItem.view"
-      },
-      "addChildToItem.view.y": {
-        "name": "y",
-        "line": 117,
-        "col": 10,
-        "endLine": 117,
-        "endCol": 14,
-        "kind": "property",
-        "scope": "addChildToItem.view"
-      },
-      "addChildToItem.view.width": {
-        "name": "width",
-        "line": 118,
-        "col": 10,
-        "endLine": 118,
-        "endCol": 37,
-        "kind": "property",
-        "scope": "addChildToItem.view"
-      },
-      "addChildToItem.view.height": {
-        "name": "height",
-        "line": 119,
-        "col": 10,
-        "endLine": 119,
-        "endCol": 39,
-        "kind": "property",
-        "scope": "addChildToItem.view"
-      },
-      "addChildToItem.view.z": {
-        "name": "z",
-        "line": 120,
-        "col": 10,
-        "endLine": 120,
-        "endCol": 21,
-        "kind": "property",
-        "scope": "addChildToItem.view"
-      },
-      "addChildToItem.el": {
-        "name": "el",
-        "line": 135,
-        "col": 12,
-        "endLine": 135,
-        "endCol": 73,
-        "kind": "variable",
-        "scope": "addChildToItem"
-      },
-      "addChildToItem.behavior": {
-        "name": "behavior",
-        "line": 136,
-        "col": 27,
-        "endLine": 136,
-        "endCol": 45,
-        "kind": "property",
-        "scope": "addChildToItem"
-      },
-      "addChildToItem.block": {
-        "name": "block",
-        "line": 136,
-        "col": 47,
-        "endLine": 136,
-        "endCol": 63,
-        "kind": "property",
-        "scope": "addChildToItem"
-      },
-      "render.addExistingChildToItem": {
-        "name": "addExistingChildToItem",
-        "line": 141,
-        "col": 8,
-        "endLine": 185,
-        "endCol": 3,
-        "kind": "function",
-        "scope": "render",
-        "signature": "(parentId, childId, clickCoords)"
-      },
-      "addExistingChildToItem.parent": {
-        "name": "parent",
-        "line": 142,
-        "col": 10,
-        "endLine": 142,
-        "endCol": 42,
-        "kind": "variable",
-        "scope": "addExistingChildToItem"
-      },
-      "addExistingChildToItem.attachments": {
-        "name": "attachments",
-        "line": 143,
-        "col": 10,
-        "endLine": 143,
-        "endCol": 48,
-        "kind": "variable",
-        "scope": "addExistingChildToItem"
-      },
-      "addExistingChildToItem.isSpatial": {
-        "name": "isSpatial",
-        "line": 152,
-        "col": 10,
-        "endLine": 154,
-        "endCol": 13,
-        "kind": "variable",
-        "scope": "addExistingChildToItem"
-      },
-      "addExistingChildToItem.maxZ": {
-        "name": "maxZ",
-        "line": 157,
-        "col": 12,
-        "endLine": 157,
-        "endCol": 102,
-        "kind": "variable",
-        "scope": "addExistingChildToItem"
-      },
-      "addExistingChildToItem.x": {
-        "name": "x",
-        "line": 158,
-        "col": 12,
-        "endLine": 158,
-        "endCol": 36,
-        "kind": "variable",
-        "scope": "addExistingChildToItem"
-      },
-      "addExistingChildToItem.y": {
-        "name": "y",
-        "line": 159,
-        "col": 12,
-        "endLine": 159,
-        "endCol": 36,
-        "kind": "variable",
-        "scope": "addExistingChildToItem"
-      },
-      "addExistingChildToItem.id": {
-        "name": "id",
-        "line": 172,
-        "col": 25,
-        "endLine": 172,
-        "endCol": 36,
-        "kind": "property",
-        "scope": "addExistingChildToItem"
-      },
-      "addExistingChildToItem.view": {
-        "name": "view",
-        "line": 163,
-        "col": 8,
-        "endLine": 169,
-        "endCol": 9,
-        "kind": "property",
-        "scope": "addExistingChildToItem"
-      },
-      "addExistingChildToItem.view.x": {
-        "name": "x",
-        "line": 164,
-        "col": 10,
-        "endLine": 164,
-        "endCol": 14,
-        "kind": "property",
-        "scope": "addExistingChildToItem.view"
-      },
-      "addExistingChildToItem.view.y": {
-        "name": "y",
-        "line": 165,
-        "col": 10,
-        "endLine": 165,
-        "endCol": 14,
-        "kind": "property",
-        "scope": "addExistingChildToItem.view"
-      },
-      "addExistingChildToItem.view.width": {
-        "name": "width",
-        "line": 166,
-        "col": 10,
-        "endLine": 166,
-        "endCol": 37,
-        "kind": "property",
-        "scope": "addExistingChildToItem.view"
-      },
-      "addExistingChildToItem.view.height": {
-        "name": "height",
-        "line": 167,
-        "col": 10,
-        "endLine": 167,
-        "endCol": 39,
-        "kind": "property",
-        "scope": "addExistingChildToItem.view"
-      },
-      "addExistingChildToItem.view.z": {
-        "name": "z",
-        "line": 168,
-        "col": 10,
-        "endLine": 168,
-        "endCol": 21,
-        "kind": "property",
-        "scope": "addExistingChildToItem.view"
-      },
-      "addExistingChildToItem.el": {
-        "name": "el",
-        "line": 182,
-        "col": 12,
-        "endLine": 182,
-        "endCol": 70,
-        "kind": "variable",
-        "scope": "addExistingChildToItem"
-      },
-      "addExistingChildToItem.behavior": {
-        "name": "behavior",
-        "line": 183,
-        "col": 27,
-        "endLine": 183,
-        "endCol": 45,
-        "kind": "property",
-        "scope": "addExistingChildToItem"
-      },
-      "addExistingChildToItem.block": {
-        "name": "block",
-        "line": 183,
-        "col": 47,
-        "endLine": 183,
-        "endCol": 63,
-        "kind": "property",
-        "scope": "addExistingChildToItem"
-      },
-      "render.showExistingItemPicker": {
-        "name": "showExistingItemPicker",
-        "line": 188,
-        "col": 8,
-        "endLine": 212,
-        "endCol": 3,
-        "kind": "function",
-        "scope": "render",
-        "signature": "(parentId, clickCoords)"
-      },
-      "showExistingItemPicker.modalLib": {
-        "name": "modalLib",
-        "line": 190,
-        "col": 10,
-        "endLine": 190,
-        "endCol": 51,
-        "kind": "variable",
-        "scope": "showExistingItemPicker"
-      },
-      "showExistingItemPicker.searchContainer": {
-        "name": "searchContainer",
-        "line": 192,
-        "col": 10,
-        "endLine": 192,
-        "endCol": 60,
-        "kind": "variable",
-        "scope": "showExistingItemPicker"
-      },
-      "showExistingItemPicker.placeholder": {
-        "name": "placeholder",
-        "line": 210,
-        "col": 8,
-        "endLine": 210,
-        "endCol": 49,
-        "kind": "property",
-        "scope": "showExistingItemPicker"
-      },
-      "showExistingItemPicker.autoFocus": {
-        "name": "autoFocus",
-        "line": 210,
-        "col": 51,
-        "endLine": 210,
-        "endCol": 66,
-        "kind": "property",
-        "scope": "showExistingItemPicker"
-      },
       "render.contextMenu": {
         "name": "contextMenu",
-        "line": 216,
+        "line": 65,
         "col": 8,
-        "endLine": 220,
+        "endLine": 69,
         "endCol": 8,
         "kind": "variable",
         "scope": "render"
       },
       "render.hideContextMenu": {
         "name": "hideContextMenu",
-        "line": 223,
+        "line": 72,
         "col": 8,
-        "endLine": 226,
+        "endLine": 75,
         "endCol": 3,
         "kind": "function",
         "scope": "render",
@@ -669,91 +198,82 @@
       },
       "render.showEmptyContextMenu": {
         "name": "showEmptyContextMenu",
-        "line": 228,
+        "line": 77,
         "col": 8,
-        "endLine": 261,
+        "endLine": 91,
         "endCol": 3,
         "kind": "function",
         "scope": "render",
         "signature": "(x, y)"
       },
-      "showEmptyContextMenu.searchItem": {
-        "name": "searchItem",
-        "line": 232,
+      "showEmptyContextMenu.menuLib": {
+        "name": "menuLib",
+        "line": 80,
         "col": 10,
-        "endLine": 232,
-        "endCol": 105,
+        "endLine": 80,
+        "endCol": 57,
         "kind": "variable",
         "scope": "showEmptyContextMenu"
       },
-      "showEmptyContextMenu.replItem": {
-        "name": "replItem",
-        "line": 240,
-        "col": 10,
-        "endLine": 240,
-        "endCol": 98,
-        "kind": "variable",
-        "scope": "showEmptyContextMenu"
-      },
-      "showEmptyContextMenu.replUi": {
-        "name": "replUi",
-        "line": 244,
-        "col": 14,
-        "endLine": 244,
-        "endCol": 51,
-        "kind": "variable",
+      "showEmptyContextMenu.onDismiss": {
+        "name": "onDismiss",
+        "line": 81,
+        "col": 58,
+        "endLine": 81,
+        "endCol": 84,
+        "kind": "property",
         "scope": "showEmptyContextMenu"
       },
       "showEmptyContextMenu.menuWidth": {
         "name": "menuWidth",
-        "line": 254,
+        "line": 84,
         "col": 10,
-        "endLine": 254,
+        "endLine": 84,
         "endCol": 25,
         "kind": "variable",
         "scope": "showEmptyContextMenu"
       },
       "showEmptyContextMenu.menuHeight": {
         "name": "menuHeight",
-        "line": 254,
+        "line": 84,
         "col": 27,
-        "endLine": 254,
+        "endLine": 84,
         "endCol": 43,
         "kind": "variable",
         "scope": "showEmptyContextMenu"
       },
       "showEmptyContextMenu.menuX": {
         "name": "menuX",
-        "line": 255,
+        "line": 85,
         "col": 8,
-        "endLine": 255,
+        "endLine": 85,
         "endCol": 17,
         "kind": "variable",
         "scope": "showEmptyContextMenu"
       },
       "showEmptyContextMenu.menuY": {
         "name": "menuY",
-        "line": 255,
+        "line": 85,
         "col": 19,
-        "endLine": 255,
+        "endLine": 85,
         "endCol": 28,
         "kind": "variable",
         "scope": "showEmptyContextMenu"
       },
       "render.empty": {
         "name": "empty",
-        "line": 265,
+        "line": 95,
         "col": 10,
-        "endLine": 267,
+        "endLine": 97,
         "endCol": 10,
         "kind": "variable",
         "scope": "render"
       },
       "render.globalKeyHandler": {
         "name": "globalKeyHandler",
-        "line": 1094,
+        "line": 328,
         "col": 8,
-        "endLine": 1099,
+        "endLine": 333,
         "endCol": 3,
         "kind": "function",
         "scope": "render",
@@ -761,9 +281,9 @@
       },
       "render.itemDecorator": {
         "name": "itemDecorator",
-        "line": 301,
+        "line": 131,
         "col": 8,
-        "endLine": 328,
+        "endLine": 158,
         "endCol": 3,
         "kind": "function",
         "scope": "render",
@@ -771,144 +291,144 @@
       },
       "itemDecorator.itemName": {
         "name": "itemName",
-        "line": 305,
+        "line": 135,
         "col": 10,
-        "endLine": 305,
+        "endLine": 135,
         "endCol": 75,
         "kind": "variable",
         "scope": "itemDecorator"
       },
       "itemDecorator.typeName": {
         "name": "typeName",
-        "line": 306,
+        "line": 136,
         "col": 8,
-        "endLine": 306,
+        "endLine": 136,
         "endCol": 40,
         "kind": "variable",
         "scope": "itemDecorator"
       },
       "itemDecorator.typeItem": {
         "name": "typeItem",
-        "line": 308,
+        "line": 138,
         "col": 12,
-        "endLine": 308,
+        "endLine": 138,
         "endCol": 47,
         "kind": "variable",
         "scope": "itemDecorator"
       },
       "itemDecorator.titleText": {
         "name": "titleText",
-        "line": 312,
+        "line": 142,
         "col": 8,
-        "endLine": 312,
+        "endLine": 142,
         "endCol": 52,
         "kind": "variable",
         "scope": "itemDecorator"
       },
       "itemDecorator.tagNames": {
         "name": "tagNames",
-        "line": 316,
+        "line": 146,
         "col": 12,
-        "endLine": 323,
+        "endLine": 153,
         "endCol": 9,
         "kind": "variable",
         "scope": "itemDecorator"
       },
       "render.rootNode": {
         "name": "rootNode",
-        "line": 332,
+        "line": 162,
         "col": 6,
-        "endLine": 332,
+        "endLine": 162,
         "endCol": 14,
         "kind": "variable",
         "scope": "render"
       },
       "render.decorator": {
         "name": "decorator",
-        "line": 334,
+        "line": 164,
         "col": 70,
-        "endLine": 334,
+        "endLine": 164,
         "endCol": 94,
         "kind": "property",
         "scope": "render"
       },
       "render.style": {
         "name": "style",
-        "line": 337,
+        "line": 167,
         "col": 6,
-        "endLine": 337,
+        "endLine": 167,
         "endCol": 172,
         "kind": "property",
         "scope": "render"
       },
       "render.contentArea": {
         "name": "contentArea",
-        "line": 341,
+        "line": 171,
         "col": 8,
-        "endLine": 345,
+        "endLine": 175,
         "endCol": 16,
         "kind": "variable",
         "scope": "render"
       },
       "render.selectedItemId": {
         "name": "selectedItemId",
-        "line": 349,
+        "line": 179,
         "col": 6,
-        "endLine": 349,
+        "endLine": 179,
         "endCol": 27,
         "kind": "variable",
         "scope": "render"
       },
       "render.selectedParentId": {
         "name": "selectedParentId",
-        "line": 350,
+        "line": 180,
         "col": 6,
-        "endLine": 350,
+        "endLine": 180,
         "endCol": 29,
         "kind": "variable",
         "scope": "render"
       },
       "render.selectedElement": {
         "name": "selectedElement",
-        "line": 351,
+        "line": 181,
         "col": 6,
-        "endLine": 351,
+        "endLine": 181,
         "endCol": 28,
         "kind": "variable",
         "scope": "render"
       },
       "render.lastContextMenuCoords": {
         "name": "lastContextMenuCoords",
-        "line": 352,
+        "line": 182,
         "col": 6,
-        "endLine": 352,
+        "endLine": 182,
         "endCol": 44,
         "kind": "variable",
         "scope": "render"
       },
       "lastContextMenuCoords.x": {
         "name": "x",
-        "line": 352,
+        "line": 182,
         "col": 32,
-        "endLine": 352,
+        "endLine": 182,
         "endCol": 36,
         "kind": "property",
         "scope": "lastContextMenuCoords"
       },
       "lastContextMenuCoords.y": {
         "name": "y",
-        "line": 352,
+        "line": 182,
         "col": 38,
-        "endLine": 352,
+        "endLine": 182,
         "endCol": 42,
         "kind": "property",
         "scope": "lastContextMenuCoords"
       },
       "render.updateSelectionVisual": {
         "name": "updateSelectionVisual",
-        "line": 354,
+        "line": 184,
         "col": 8,
-        "endLine": 359,
+        "endLine": 189,
         "endCol": 3,
         "kind": "function",
         "scope": "render",
@@ -916,9 +436,9 @@
       },
       "render.selectItem": {
         "name": "selectItem",
-        "line": 361,
+        "line": 191,
         "col": 8,
-        "endLine": 367,
+        "endLine": 197,
         "endCol": 3,
         "kind": "function",
         "scope": "render",
@@ -926,423 +446,19 @@
       },
       "render.clearSelection": {
         "name": "clearSelection",
-        "line": 369,
+        "line": 199,
         "col": 8,
-        "endLine": 375,
+        "endLine": 205,
         "endCol": 3,
         "kind": "function",
         "scope": "render",
         "signature": "()"
-      },
-      "render.setChildView": {
-        "name": "setChildView",
-        "line": 378,
-        "col": 8,
-        "endLine": 380,
-        "endCol": 3,
-        "kind": "function",
-        "scope": "render",
-        "signature": "(parentId, childId, viewId)"
-      },
-      "render.setRootView": {
-        "name": "setRootView",
-        "line": 383,
-        "col": 8,
-        "endLine": 385,
-        "endCol": 3,
-        "kind": "function",
-        "scope": "render",
-        "signature": "(viewId)"
-      },
-      "render.getRootView": {
-        "name": "getRootView",
-        "line": 388,
-        "col": 8,
-        "endLine": 390,
-        "endCol": 3,
-        "kind": "function",
-        "scope": "render",
-        "signature": "()"
-      },
-      "render.showViewSettingsModal": {
-        "name": "showViewSettingsModal",
-        "line": 393,
-        "col": 8,
-        "endLine": 583,
-        "endCol": 3,
-        "kind": "function",
-        "scope": "render",
-        "signature": "(itemId, parentId)"
-      },
-      "showViewSettingsModal.item": {
-        "name": "item",
-        "line": 394,
-        "col": 10,
-        "endLine": 394,
-        "endCol": 38,
-        "kind": "variable",
-        "scope": "showViewSettingsModal"
-      },
-      "showViewSettingsModal.typeItem": {
-        "name": "typeItem",
-        "line": 395,
-        "col": 10,
-        "endLine": 395,
-        "endCol": 45,
-        "kind": "variable",
-        "scope": "showViewSettingsModal"
-      },
-      "showViewSettingsModal.typeName": {
-        "name": "typeName",
-        "line": 396,
-        "col": 10,
-        "endLine": 396,
-        "endCol": 44,
-        "kind": "variable",
-        "scope": "showViewSettingsModal"
-      },
-      "showViewSettingsModal.views": {
-        "name": "views",
-        "line": 397,
-        "col": 10,
-        "endLine": 397,
-        "endCol": 47,
-        "kind": "variable",
-        "scope": "showViewSettingsModal"
-      },
-      "showViewSettingsModal.effectiveView": {
-        "name": "effectiveView",
-        "line": 398,
-        "col": 10,
-        "endLine": 398,
-        "endCol": 60,
-        "kind": "variable",
-        "scope": "showViewSettingsModal"
-      },
-      "showViewSettingsModal.contextualViewId": {
-        "name": "contextualViewId",
-        "line": 401,
-        "col": 10,
-        "endLine": 401,
-        "endCol": 74,
-        "kind": "variable",
-        "scope": "showViewSettingsModal"
-      },
-      "showViewSettingsModal.itemPreferredViewId": {
-        "name": "itemPreferredViewId",
-        "line": 402,
-        "col": 10,
-        "endLine": 402,
-        "endCol": 58,
-        "kind": "variable",
-        "scope": "showViewSettingsModal"
-      },
-      "showViewSettingsModal.typePreferredViewId": {
-        "name": "typePreferredViewId",
-        "line": 403,
-        "col": 10,
-        "endLine": 403,
-        "endCol": 62,
-        "kind": "variable",
-        "scope": "showViewSettingsModal"
-      },
-      "showViewSettingsModal.getViewName": {
-        "name": "getViewName",
-        "line": 406,
-        "col": 10,
-        "endLine": 414,
-        "endCol": 5,
-        "kind": "function",
-        "scope": "showViewSettingsModal",
-        "signature": "(viewId)"
-      },
-      "getViewName.v": {
-        "name": "v",
-        "line": 409,
-        "col": 14,
-        "endLine": 409,
-        "endCol": 39,
-        "kind": "variable",
-        "scope": "getViewName"
-      },
-      "showViewSettingsModal.itemName": {
-        "name": "itemName",
-        "line": 416,
-        "col": 10,
-        "endLine": 416,
-        "endCol": 76,
-        "kind": "variable",
-        "scope": "showViewSettingsModal"
-      },
-      "showViewSettingsModal.modalLib": {
-        "name": "modalLib",
-        "line": 419,
-        "col": 10,
-        "endLine": 419,
-        "endCol": 51,
-        "kind": "variable",
-        "scope": "showViewSettingsModal"
-      },
-      "showViewSettingsModal.closeModal": {
-        "name": "closeModal",
-        "line": 420,
-        "col": 8,
-        "endLine": 420,
-        "endCol": 18,
-        "kind": "variable",
-        "scope": "showViewSettingsModal"
-      },
-      "showViewSettingsModal.body": {
-        "name": "body",
-        "line": 423,
-        "col": 10,
-        "endLine": 423,
-        "endCol": 49,
-        "kind": "variable",
-        "scope": "showViewSettingsModal"
-      },
-      "showViewSettingsModal.effectiveName": {
-        "name": "effectiveName",
-        "line": 426,
-        "col": 10,
-        "endLine": 426,
-        "endCol": 62,
-        "kind": "variable",
-        "scope": "showViewSettingsModal"
-      },
-      "showViewSettingsModal.currentSection": {
-        "name": "currentSection",
-        "line": 427,
-        "col": 10,
-        "endLine": 427,
-        "endCol": 167,
-        "kind": "variable",
-        "scope": "showViewSettingsModal"
-      },
-      "showViewSettingsModal.createSection": {
-        "name": "createSection",
-        "line": 432,
-        "col": 10,
-        "endLine": 476,
-        "endCol": 5,
-        "kind": "function",
-        "scope": "showViewSettingsModal",
-        "signature": "(label, description, currentViewId, onSelect, onClear)"
-      },
-      "createSection.section": {
-        "name": "section",
-        "line": 433,
-        "col": 12,
-        "endLine": 433,
-        "endCol": 85,
-        "kind": "variable",
-        "scope": "createSection"
-      },
-      "createSection.labelEl": {
-        "name": "labelEl",
-        "line": 435,
-        "col": 12,
-        "endLine": 435,
-        "endCol": 107,
-        "kind": "variable",
-        "scope": "createSection"
-      },
-      "createSection.descEl": {
-        "name": "descEl",
-        "line": 438,
-        "col": 12,
-        "endLine": 438,
-        "endCol": 147,
-        "kind": "variable",
-        "scope": "createSection"
-      },
-      "createSection.controlRow": {
-        "name": "controlRow",
-        "line": 441,
-        "col": 12,
-        "endLine": 441,
-        "endCol": 113,
-        "kind": "variable",
-        "scope": "createSection"
-      },
-      "createSection.select": {
-        "name": "select",
-        "line": 443,
-        "col": 12,
-        "endLine": 443,
-        "endCol": 158,
-        "kind": "variable",
-        "scope": "createSection"
-      },
-      "createSection.noneOpt": {
-        "name": "noneOpt",
-        "line": 446,
-        "col": 12,
-        "endLine": 446,
-        "endCol": 74,
-        "kind": "variable",
-        "scope": "createSection"
-      },
-      "createSection.sortedViews": {
-        "name": "sortedViews",
-        "line": 451,
-        "col": 12,
-        "endLine": 455,
-        "endCol": 8,
-        "kind": "variable",
-        "scope": "createSection"
-      },
-      "createSection.opt": {
-        "name": "opt",
-        "line": 457,
-        "col": 14,
-        "endLine": 457,
-        "endCol": 71,
-        "kind": "variable",
-        "scope": "createSection"
-      },
-      "createSection.clearBtn": {
-        "name": "clearBtn",
-        "line": 467,
-        "col": 14,
-        "endLine": 470,
-        "endCol": 21,
-        "kind": "variable",
-        "scope": "createSection"
-      },
-      "showViewSettingsModal.createReadOnlySection": {
-        "name": "createReadOnlySection",
-        "line": 479,
-        "col": 10,
-        "endLine": 504,
-        "endCol": 5,
-        "kind": "function",
-        "scope": "showViewSettingsModal",
-        "signature": "(label, description, currentViewId, onClear)"
-      },
-      "createReadOnlySection.section": {
-        "name": "section",
-        "line": 480,
-        "col": 12,
-        "endLine": 480,
-        "endCol": 85,
-        "kind": "variable",
-        "scope": "createReadOnlySection"
-      },
-      "createReadOnlySection.labelEl": {
-        "name": "labelEl",
-        "line": 482,
-        "col": 12,
-        "endLine": 482,
-        "endCol": 107,
-        "kind": "variable",
-        "scope": "createReadOnlySection"
-      },
-      "createReadOnlySection.descEl": {
-        "name": "descEl",
-        "line": 485,
-        "col": 12,
-        "endLine": 485,
-        "endCol": 147,
-        "kind": "variable",
-        "scope": "createReadOnlySection"
-      },
-      "createReadOnlySection.controlRow": {
-        "name": "controlRow",
-        "line": 488,
-        "col": 12,
-        "endLine": 488,
-        "endCol": 113,
-        "kind": "variable",
-        "scope": "createReadOnlySection"
-      },
-      "createReadOnlySection.valueEl": {
-        "name": "valueEl",
-        "line": 490,
-        "col": 12,
-        "endLine": 490,
-        "endCol": 154,
-        "kind": "variable",
-        "scope": "createReadOnlySection"
-      },
-      "createReadOnlySection.clearBtn": {
-        "name": "clearBtn",
-        "line": 495,
-        "col": 14,
-        "endLine": 498,
-        "endCol": 21,
-        "kind": "variable",
-        "scope": "createReadOnlySection"
-      },
-      "showViewSettingsModal.refreshModal": {
-        "name": "refreshModal",
-        "line": 507,
-        "col": 10,
-        "endLine": 510,
-        "endCol": 5,
-        "kind": "function",
-        "scope": "showViewSettingsModal",
-        "signature": "()"
-      },
-      "showViewSettingsModal.contextSection": {
-        "name": "contextSection",
-        "line": 513,
-        "col": 10,
-        "endLine": 528,
-        "endCol": 5,
-        "kind": "variable",
-        "scope": "showViewSettingsModal"
-      },
-      "showViewSettingsModal.style": {
-        "name": "style",
-        "line": 551,
-        "col": 47,
-        "endLine": 551,
-        "endCol": 134,
-        "kind": "property",
-        "scope": "showViewSettingsModal"
-      },
-      "showViewSettingsModal.itemSection": {
-        "name": "itemSection",
-        "line": 535,
-        "col": 10,
-        "endLine": 547,
-        "endCol": 5,
-        "kind": "variable",
-        "scope": "showViewSettingsModal"
-      },
-      "showViewSettingsModal.typeDisplayName": {
-        "name": "typeDisplayName",
-        "line": 554,
-        "col": 10,
-        "endLine": 554,
-        "endCol": 80,
-        "kind": "variable",
-        "scope": "showViewSettingsModal"
-      },
-      "showViewSettingsModal.typeSection": {
-        "name": "typeSection",
-        "line": 555,
-        "col": 10,
-        "endLine": 567,
-        "endCol": 5,
-        "kind": "variable",
-        "scope": "showViewSettingsModal"
-      },
-      "showViewSettingsModal.noteEl": {
-        "name": "noteEl",
-        "line": 571,
-        "col": 10,
-        "endLine": 573,
-        "endCol": 75,
-        "kind": "variable",
-        "scope": "showViewSettingsModal"
       },
       "render.showContextMenu": {
         "name": "showContextMenu",
-        "line": 585,
+        "line": 207,
         "col": 8,
-        "endLine": 1038,
+        "endLine": 272,
         "endCol": 3,
         "kind": "function",
         "scope": "render",
@@ -1350,877 +466,180 @@
       },
       "showContextMenu.menuItem": {
         "name": "menuItem",
-        "line": 586,
+        "line": 208,
         "col": 10,
-        "endLine": 586,
+        "endLine": 208,
         "endCol": 42,
         "kind": "variable",
         "scope": "showContextMenu"
       },
       "showContextMenu.x": {
         "name": "x",
-        "line": 588,
+        "line": 210,
         "col": 30,
-        "endLine": 588,
+        "endLine": 210,
         "endCol": 31,
         "kind": "property",
         "scope": "showContextMenu"
       },
       "showContextMenu.y": {
         "name": "y",
-        "line": 588,
+        "line": 210,
         "col": 33,
-        "endLine": 588,
+        "endLine": 210,
         "endCol": 34,
         "kind": "property",
         "scope": "showContextMenu"
       },
-      "showContextMenu.addChildItem": {
-        "name": "addChildItem",
-        "line": 591,
+      "showContextMenu.menuLib": {
+        "name": "menuLib",
+        "line": 212,
         "col": 10,
-        "endLine": 591,
-        "endCol": 117,
-        "kind": "variable",
-        "scope": "showContextMenu"
-      },
-      "showContextMenu.addChildSubmenu": {
-        "name": "addChildSubmenu",
-        "line": 592,
-        "col": 10,
-        "endLine": 592,
-        "endCol": 97,
+        "endLine": 212,
+        "endCol": 57,
         "kind": "variable",
         "scope": "showContextMenu"
       },
       "showContextMenu.getClickCoords": {
         "name": "getClickCoords",
-        "line": 595,
-        "col": 10,
-        "endLine": 608,
-        "endCol": 5,
-        "kind": "function",
-        "scope": "showContextMenu",
-        "signature": "()"
+        "line": 231,
+        "col": 34,
+        "endLine": 231,
+        "endCol": 48,
+        "kind": "property",
+        "scope": "showContextMenu"
       },
       "getClickCoords.clickCoords": {
         "name": "clickCoords",
-        "line": 596,
+        "line": 215,
         "col": 10,
-        "endLine": 596,
+        "endLine": 215,
         "endCol": 28,
         "kind": "variable",
         "scope": "getClickCoords"
       },
       "getClickCoords.canvas": {
         "name": "canvas",
-        "line": 598,
+        "line": 217,
         "col": 14,
-        "endLine": 598,
+        "endLine": 217,
         "endCol": 107,
         "kind": "variable",
         "scope": "getClickCoords"
       },
       "getClickCoords.rect": {
         "name": "rect",
-        "line": 600,
+        "line": 219,
         "col": 16,
-        "endLine": 600,
+        "endLine": 219,
         "endCol": 53,
         "kind": "variable",
         "scope": "getClickCoords"
       },
       "getClickCoords.x": {
         "name": "x",
-        "line": 602,
+        "line": 221,
         "col": 12,
-        "endLine": 602,
+        "endLine": 221,
         "endCol": 70,
         "kind": "property",
         "scope": "getClickCoords"
       },
       "getClickCoords.y": {
         "name": "y",
-        "line": 603,
+        "line": 222,
         "col": 12,
-        "endLine": 603,
+        "endLine": 222,
         "endCol": 68,
         "kind": "property",
         "scope": "getClickCoords"
       },
-      "showContextMenu.newItemOption": {
-        "name": "newItemOption",
-        "line": 611,
-        "col": 10,
-        "endLine": 611,
-        "endCol": 99,
-        "kind": "variable",
-        "scope": "showContextMenu"
-      },
-      "showContextMenu.existingItemOption": {
-        "name": "existingItemOption",
-        "line": 619,
-        "col": 10,
-        "endLine": 619,
-        "endCol": 109,
-        "kind": "variable",
+      "showContextMenu.onDismiss": {
+        "name": "onDismiss",
+        "line": 255,
+        "col": 6,
+        "endLine": 255,
+        "endCol": 32,
+        "kind": "property",
         "scope": "showContextMenu"
       },
       "showContextMenu.class": {
         "name": "class",
-        "line": 962,
-        "col": 58,
-        "endLine": 962,
-        "endCol": 89,
-        "kind": "property",
-        "scope": "showContextMenu"
-      },
-      "showContextMenu.displayAsItem": {
-        "name": "displayAsItem",
-        "line": 633,
-        "col": 10,
-        "endLine": 633,
-        "endCol": 119,
-        "kind": "variable",
-        "scope": "showContextMenu"
-      },
-      "showContextMenu.displayAsSubmenu": {
-        "name": "displayAsSubmenu",
-        "line": 634,
-        "col": 10,
-        "endLine": 634,
-        "endCol": 98,
-        "kind": "variable",
-        "scope": "showContextMenu"
-      },
-      "showContextMenu.views": {
-        "name": "views",
-        "line": 637,
-        "col": 10,
-        "endLine": 637,
-        "endCol": 51,
-        "kind": "variable",
-        "scope": "showContextMenu"
-      },
-      "showContextMenu.currentViewId": {
-        "name": "currentViewId",
-        "line": 640,
-        "col": 8,
-        "endLine": 640,
-        "endCol": 28,
-        "kind": "variable",
-        "scope": "showContextMenu"
-      },
-      "showContextMenu.parent": {
-        "name": "parent",
-        "line": 866,
-        "col": 14,
-        "endLine": 866,
-        "endCol": 54,
-        "kind": "variable",
-        "scope": "showContextMenu"
-      },
-      "showContextMenu.childSpec": {
-        "name": "childSpec",
-        "line": 867,
-        "col": 14,
-        "endLine": 867,
-        "endCol": 72,
-        "kind": "variable",
-        "scope": "showContextMenu"
-      },
-      "showContextMenu.effectiveView": {
-        "name": "effectiveView",
-        "line": 650,
-        "col": 10,
-        "endLine": 650,
-        "endCol": 60,
-        "kind": "variable",
-        "scope": "showContextMenu"
-      },
-      "showContextMenu.effectiveViewId": {
-        "name": "effectiveViewId",
-        "line": 651,
-        "col": 10,
-        "endLine": 651,
-        "endCol": 53,
-        "kind": "variable",
-        "scope": "showContextMenu"
-      },
-      "showContextMenu.currentlyRenderedViewId": {
-        "name": "currentlyRenderedViewId",
-        "line": 655,
-        "col": 10,
-        "endLine": 655,
-        "endCol": 68,
-        "kind": "variable",
-        "scope": "showContextMenu"
-      },
-      "showContextMenu.normalViews": {
-        "name": "normalViews",
-        "line": 658,
-        "col": 10,
-        "endLine": 658,
-        "endCol": 120,
-        "kind": "variable",
-        "scope": "showContextMenu"
-      },
-      "showContextMenu.debugViews": {
-        "name": "debugViews",
-        "line": 659,
-        "col": 10,
-        "endLine": 659,
-        "endCol": 78,
-        "kind": "variable",
-        "scope": "showContextMenu"
-      },
-      "showContextMenu.noViews": {
-        "name": "noViews",
-        "line": 662,
-        "col": 12,
-        "endLine": 662,
-        "endCol": 113,
-        "kind": "variable",
-        "scope": "showContextMenu"
-      },
-      "showContextMenu.sortedViews": {
-        "name": "sortedViews",
-        "line": 666,
-        "col": 12,
-        "endLine": 670,
-        "endCol": 8,
-        "kind": "variable",
-        "scope": "showContextMenu"
-      },
-      "showContextMenu.isActive": {
-        "name": "isActive",
-        "line": 939,
-        "col": 14,
-        "endLine": 939,
-        "endCol": 71,
-        "kind": "variable",
-        "scope": "showContextMenu"
-      },
-      "showContextMenu.label": {
-        "name": "label",
-        "line": 944,
-        "col": 12,
-        "endLine": 944,
-        "endCol": 81,
-        "kind": "variable",
-        "scope": "showContextMenu"
-      },
-      "showContextMenu.viewMenuItems": {
-        "name": "viewMenuItems",
-        "line": 678,
-        "col": 12,
-        "endLine": 678,
-        "endCol": 32,
-        "kind": "variable",
-        "scope": "showContextMenu"
-      },
-      "showContextMenu.viewModule": {
-        "name": "viewModule",
-        "line": 681,
-        "col": 18,
-        "endLine": 681,
-        "endCol": 57,
-        "kind": "variable",
-        "scope": "showContextMenu"
-      },
-      "showContextMenu.wrappedApi": {
-        "name": "wrappedApi",
-        "line": 685,
-        "col": 20,
-        "endLine": 722,
-        "endCol": 15,
-        "kind": "variable",
-        "scope": "showContextMenu"
-      },
-      "wrappedApi.getViewConfig": {
-        "name": "getViewConfig",
-        "line": 688,
-        "col": 16,
-        "endLine": 697,
-        "endCol": 17,
-        "kind": "property-function",
-        "scope": "wrappedApi",
-        "signature": "()"
-      },
-      "wrappedApi.getViewConfig.parent": {
-        "name": "parent",
-        "line": 690,
-        "col": 26,
-        "endLine": 690,
-        "endCol": 66,
-        "kind": "variable",
-        "scope": "wrappedApi.getViewConfig"
-      },
-      "wrappedApi.getViewConfig.childSpec": {
-        "name": "childSpec",
-        "line": 691,
-        "col": 26,
-        "endLine": 691,
-        "endCol": 84,
-        "kind": "variable",
-        "scope": "wrappedApi.getViewConfig"
-      },
-      "wrappedApi.updateViewConfig": {
-        "name": "updateViewConfig",
-        "line": 699,
-        "col": 16,
-        "endLine": 719,
-        "endCol": 17,
-        "kind": "property-function",
-        "scope": "wrappedApi",
-        "signature": "(updates)"
-      },
-      "wrappedApi.updateViewConfig.parent": {
-        "name": "parent",
-        "line": 701,
-        "col": 26,
-        "endLine": 701,
-        "endCol": 66,
-        "kind": "variable",
-        "scope": "wrappedApi.updateViewConfig"
-      },
-      "wrappedApi.updateViewConfig.childIndex": {
-        "name": "childIndex",
-        "line": 702,
-        "col": 26,
-        "endLine": 702,
-        "endCol": 90,
-        "kind": "variable",
-        "scope": "wrappedApi.updateViewConfig"
-      },
-      "wrappedApi.updateViewConfig.currentChild": {
-        "name": "currentChild",
-        "line": 704,
-        "col": 28,
-        "endLine": 704,
-        "endCol": 73,
-        "kind": "variable",
-        "scope": "wrappedApi.updateViewConfig"
-      },
-      "wrappedApi.updateViewConfig.view": {
-        "name": "view",
-        "line": 707,
-        "col": 24,
-        "endLine": 707,
-        "endCol": 74,
-        "kind": "property",
-        "scope": "wrappedApi.updateViewConfig"
-      },
-      "wrappedApi.getParentId": {
-        "name": "getParentId",
-        "line": 721,
-        "col": 16,
-        "endLine": 721,
-        "endCol": 59,
-        "kind": "property-function",
-        "scope": "wrappedApi",
-        "signature": "()"
-      },
-      "showContextMenu.viewOption": {
-        "name": "viewOption",
-        "line": 940,
-        "col": 14,
-        "endLine": 942,
-        "endCol": 14,
-        "kind": "variable",
-        "scope": "showContextMenu"
-      },
-      "showContextMenu.viewSubmenu": {
-        "name": "viewSubmenu",
-        "line": 736,
-        "col": 16,
-        "endLine": 736,
-        "endCol": 99,
-        "kind": "variable",
-        "scope": "showContextMenu"
-      },
-      "showContextMenu.menuItemDef": {
-        "name": "menuItemDef",
-        "line": 738,
-        "col": 21,
-        "endLine": 738,
-        "endCol": 32,
-        "kind": "variable",
-        "scope": "showContextMenu"
-      },
-      "showContextMenu.subItem": {
-        "name": "subItem",
-        "line": 739,
-        "col": 18,
-        "endLine": 741,
-        "endCol": 35,
-        "kind": "variable",
-        "scope": "showContextMenu"
-      },
-      "showContextMenu.childIndex": {
-        "name": "childIndex",
-        "line": 768,
-        "col": 20,
-        "endLine": 768,
-        "endCol": 83,
-        "kind": "variable",
-        "scope": "showContextMenu"
-      },
-      "showContextMenu.currentChild": {
-        "name": "currentChild",
-        "line": 770,
-        "col": 22,
-        "endLine": 770,
-        "endCol": 67,
-        "kind": "variable",
-        "scope": "showContextMenu"
-      },
-      "showContextMenu.currentView": {
-        "name": "currentView",
-        "line": 771,
-        "col": 22,
-        "endLine": 771,
-        "endCol": 59,
-        "kind": "variable",
-        "scope": "showContextMenu"
-      },
-      "showContextMenu.newView": {
-        "name": "newView",
-        "line": 774,
-        "col": 22,
-        "endLine": 779,
-        "endCol": 17,
-        "kind": "variable",
-        "scope": "showContextMenu"
-      },
-      "newView.type": {
-        "name": "type",
-        "line": 776,
-        "col": 18,
-        "endLine": 776,
-        "endCol": 31,
-        "kind": "property",
-        "scope": "newView"
-      },
-      "newView.innerView": {
-        "name": "innerView",
-        "line": 778,
-        "col": 18,
-        "endLine": 778,
-        "endCol": 100,
-        "kind": "property",
-        "scope": "newView"
-      },
-      "showContextMenu.previousView": {
-        "name": "previousView",
-        "line": 784,
-        "col": 18,
-        "endLine": 784,
-        "endCol": 76,
-        "kind": "property",
-        "scope": "showContextMenu"
-      },
-      "showContextMenu.view": {
-        "name": "view",
-        "line": 785,
-        "col": 18,
-        "endLine": 785,
-        "endCol": 31,
-        "kind": "property",
-        "scope": "showContextMenu"
-      },
-      "showContextMenu.type": {
-        "name": "type",
-        "line": 795,
-        "col": 16,
-        "endLine": 795,
-        "endCol": 29,
-        "kind": "property",
-        "scope": "showContextMenu"
-      },
-      "showContextMenu.innerView": {
-        "name": "innerView",
-        "line": 796,
-        "col": 16,
-        "endLine": 796,
-        "endCol": 98,
-        "kind": "property",
-        "scope": "showContextMenu"
-      },
-      "showContextMenu.viewSettingsItem": {
-        "name": "viewSettingsItem",
-        "line": 810,
-        "col": 10,
-        "endLine": 810,
-        "endCol": 107,
-        "kind": "variable",
-        "scope": "showContextMenu"
-      },
-      "showContextMenu.copyIdItem": {
-        "name": "copyIdItem",
-        "line": 821,
-        "col": 10,
-        "endLine": 821,
-        "endCol": 92,
-        "kind": "variable",
-        "scope": "showContextMenu"
-      },
-      "showContextMenu.duplicateItem": {
-        "name": "duplicateItem",
-        "line": 830,
-        "col": 10,
-        "endLine": 830,
-        "endCol": 97,
-        "kind": "variable",
-        "scope": "showContextMenu"
-      },
-      "showContextMenu.original": {
-        "name": "original",
-        "line": 833,
-        "col": 12,
-        "endLine": 833,
-        "endCol": 44,
-        "kind": "variable",
-        "scope": "showContextMenu"
-      },
-      "showContextMenu.newContent": {
-        "name": "newContent",
-        "line": 834,
-        "col": 12,
-        "endLine": 834,
-        "endCol": 48,
-        "kind": "variable",
-        "scope": "showContextMenu"
-      },
-      "showContextMenu.duplicate": {
-        "name": "duplicate",
-        "line": 836,
-        "col": 12,
-        "endLine": 844,
-        "endCol": 7,
-        "kind": "variable",
-        "scope": "showContextMenu"
-      },
-      "duplicate.id": {
-        "name": "id",
-        "line": 837,
-        "col": 8,
-        "endLine": 837,
-        "endCol": 31,
-        "kind": "property",
-        "scope": "duplicate"
-      },
-      "duplicate.name": {
-        "name": "name",
-        "line": 838,
-        "col": 8,
-        "endLine": 838,
-        "endCol": 67,
-        "kind": "property",
-        "scope": "duplicate"
-      },
-      "duplicate.type": {
-        "name": "type",
-        "line": 839,
-        "col": 8,
-        "endLine": 839,
-        "endCol": 27,
-        "kind": "property",
-        "scope": "duplicate"
-      },
-      "duplicate.created": {
-        "name": "created",
-        "line": 840,
-        "col": 8,
-        "endLine": 840,
-        "endCol": 27,
-        "kind": "property",
-        "scope": "duplicate"
-      },
-      "duplicate.modified": {
-        "name": "modified",
-        "line": 841,
-        "col": 8,
-        "endLine": 841,
-        "endCol": 28,
-        "kind": "property",
-        "scope": "duplicate"
-      },
-      "duplicate.attachments": {
-        "name": "attachments",
-        "line": 842,
-        "col": 8,
-        "endLine": 842,
-        "endCol": 23,
-        "kind": "property",
-        "scope": "duplicate"
-      },
-      "duplicate.content": {
-        "name": "content",
-        "line": 843,
-        "col": 8,
-        "endLine": 843,
-        "endCol": 27,
-        "kind": "property",
-        "scope": "duplicate"
-      },
-      "showContextMenu.instances": {
-        "name": "instances",
-        "line": 848,
-        "col": 12,
-        "endLine": 848,
-        "endCol": 57,
-        "kind": "variable",
-        "scope": "showContextMenu"
-      },
-      "showContextMenu.siblingContainer": {
-        "name": "siblingContainer",
-        "line": 849,
-        "col": 12,
-        "endLine": 849,
-        "endCol": 63,
-        "kind": "variable",
-        "scope": "showContextMenu"
-      },
-      "showContextMenu.makeRootItem": {
-        "name": "makeRootItem",
-        "line": 859,
-        "col": 10,
-        "endLine": 859,
-        "endCol": 96,
-        "kind": "variable",
-        "scope": "showContextMenu"
-      },
-      "showContextMenu.viewConfig": {
-        "name": "viewConfig",
-        "line": 863,
-        "col": 10,
-        "endLine": 863,
-        "endCol": 27,
-        "kind": "variable",
-        "scope": "showContextMenu"
-      },
-      "showContextMenu.exportItem": {
-        "name": "exportItem",
-        "line": 888,
-        "col": 10,
-        "endLine": 888,
-        "endCol": 99,
-        "kind": "variable",
-        "scope": "showContextMenu"
-      },
-      "showContextMenu.itemData": {
-        "name": "itemData",
-        "line": 910,
-        "col": 12,
-        "endLine": 910,
-        "endCol": 44,
-        "kind": "variable",
-        "scope": "showContextMenu"
-      },
-      "showContextMenu.json": {
-        "name": "json",
-        "line": 892,
-        "col": 12,
-        "endLine": 892,
-        "endCol": 52,
-        "kind": "variable",
-        "scope": "showContextMenu"
-      },
-      "showContextMenu.blob": {
-        "name": "blob",
-        "line": 893,
-        "col": 12,
-        "endLine": 893,
-        "endCol": 65,
-        "kind": "variable",
-        "scope": "showContextMenu"
-      },
-      "showContextMenu.url": {
-        "name": "url",
-        "line": 894,
-        "col": 12,
-        "endLine": 894,
-        "endCol": 43,
-        "kind": "variable",
-        "scope": "showContextMenu"
-      },
-      "showContextMenu.a": {
-        "name": "a",
-        "line": 895,
-        "col": 12,
-        "endLine": 895,
-        "endCol": 43,
-        "kind": "variable",
-        "scope": "showContextMenu"
-      },
-      "showContextMenu.deleteItem": {
-        "name": "deleteItem",
-        "line": 907,
-        "col": 10,
-        "endLine": 907,
-        "endCol": 129,
-        "kind": "variable",
-        "scope": "showContextMenu"
-      },
-      "showContextMenu.itemLabel": {
-        "name": "itemLabel",
-        "line": 911,
-        "col": 12,
-        "endLine": 911,
+        "line": 251,
+        "col": 55,
+        "endLine": 251,
         "endCol": 86,
-        "kind": "variable",
+        "kind": "property",
         "scope": "showContextMenu"
       },
-      "showContextMenu.WORKSPACE_ID": {
-        "name": "WORKSPACE_ID",
-        "line": 916,
-        "col": 16,
-        "endLine": 916,
-        "endCol": 69,
-        "kind": "variable",
+      "showContextMenu.parentId": {
+        "name": "parentId",
+        "line": 255,
+        "col": 34,
+        "endLine": 255,
+        "endCol": 60,
+        "kind": "property",
         "scope": "showContextMenu"
       },
-      "showContextMenu.debugItem": {
-        "name": "debugItem",
-        "line": 927,
-        "col": 10,
-        "endLine": 927,
-        "endCol": 110,
-        "kind": "variable",
-        "scope": "showContextMenu"
-      },
-      "showContextMenu.debugSubmenu": {
-        "name": "debugSubmenu",
-        "line": 928,
-        "col": 10,
-        "endLine": 928,
-        "endCol": 94,
-        "kind": "variable",
-        "scope": "showContextMenu"
-      },
-      "showContextMenu.sortedDebugViews": {
-        "name": "sortedDebugViews",
-        "line": 932,
-        "col": 12,
-        "endLine": 936,
-        "endCol": 8,
-        "kind": "variable",
-        "scope": "showContextMenu"
-      },
-      "showContextMenu.isDebugMode": {
-        "name": "isDebugMode",
-        "line": 966,
-        "col": 10,
-        "endLine": 966,
-        "endCol": 57,
-        "kind": "variable",
-        "scope": "showContextMenu"
-      },
-      "showContextMenu.debugModeOption": {
-        "name": "debugModeOption",
-        "line": 967,
-        "col": 10,
-        "endLine": 969,
-        "endCol": 65,
-        "kind": "variable",
-        "scope": "showContextMenu"
-      },
-      "showContextMenu.kernel": {
-        "name": "kernel",
-        "line": 972,
-        "col": 12,
-        "endLine": 972,
-        "endCol": 34,
-        "kind": "variable",
-        "scope": "showContextMenu"
-      },
-      "showContextMenu.inspectorModule": {
-        "name": "inspectorModule",
-        "line": 994,
-        "col": 18,
-        "endLine": 994,
-        "endCol": 90,
-        "kind": "variable",
-        "scope": "showContextMenu"
-      },
-      "showContextMenu.replApi": {
-        "name": "replApi",
-        "line": 982,
-        "col": 18,
-        "endLine": 982,
-        "endCol": 50,
-        "kind": "variable",
-        "scope": "showContextMenu"
-      },
-      "showContextMenu.inspectorActive": {
-        "name": "inspectorActive",
-        "line": 1009,
-        "col": 12,
-        "endLine": 1009,
-        "endCol": 72,
-        "kind": "variable",
-        "scope": "showContextMenu"
-      },
-      "showContextMenu.inspectorOption": {
-        "name": "inspectorOption",
-        "line": 1010,
-        "col": 12,
-        "endLine": 1012,
-        "endCol": 89,
-        "kind": "variable",
+      "showContextMenu.rootId": {
+        "name": "rootId",
+        "line": 249,
+        "col": 62,
+        "endLine": 249,
+        "endCol": 68,
+        "kind": "property",
         "scope": "showContextMenu"
       },
       "showContextMenu.menuWidth": {
         "name": "menuWidth",
-        "line": 1024,
+        "line": 259,
         "col": 10,
-        "endLine": 1024,
+        "endLine": 259,
         "endCol": 25,
         "kind": "variable",
         "scope": "showContextMenu"
       },
       "showContextMenu.menuHeight": {
         "name": "menuHeight",
-        "line": 1024,
+        "line": 259,
         "col": 27,
-        "endLine": 1024,
+        "endLine": 259,
         "endCol": 43,
         "kind": "variable",
         "scope": "showContextMenu"
       },
       "showContextMenu.submenuWidth": {
         "name": "submenuWidth",
-        "line": 1024,
+        "line": 259,
         "col": 45,
-        "endLine": 1024,
+        "endLine": 259,
         "endCol": 63,
         "kind": "variable",
         "scope": "showContextMenu"
       },
       "showContextMenu.menuX": {
         "name": "menuX",
-        "line": 1025,
+        "line": 260,
         "col": 8,
-        "endLine": 1025,
+        "endLine": 260,
         "endCol": 17,
         "kind": "variable",
         "scope": "showContextMenu"
       },
       "showContextMenu.menuY": {
         "name": "menuY",
-        "line": 1025,
+        "line": 260,
         "col": 19,
-        "endLine": 1025,
+        "endLine": 260,
         "endCol": 28,
         "kind": "variable",
         "scope": "showContextMenu"
       },
       "render.findItemElement": {
         "name": "findItemElement",
-        "line": 1040,
+        "line": 274,
         "col": 8,
-        "endLine": 1044,
+        "endLine": 278,
         "endCol": 3,
         "kind": "function",
         "scope": "render",
@@ -2228,36 +647,36 @@
       },
       "findItemElement.element": {
         "name": "element",
-        "line": 1041,
+        "line": 275,
         "col": 8,
-        "endLine": 1041,
+        "endLine": 275,
         "endCol": 66,
         "kind": "variable",
         "scope": "findItemElement"
       },
       "render.itemElement": {
         "name": "itemElement",
-        "line": 1063,
+        "line": 297,
         "col": 10,
-        "endLine": 1063,
+        "endLine": 297,
         "endCol": 49,
         "kind": "variable",
         "scope": "render"
       },
       "render.itemId": {
         "name": "itemId",
-        "line": 1065,
+        "line": 299,
         "col": 12,
-        "endLine": 1065,
+        "endLine": 299,
         "endCol": 61,
         "kind": "variable",
         "scope": "render"
       },
       "render.handleKeydown": {
         "name": "handleKeydown",
-        "line": 1076,
+        "line": 310,
         "col": 8,
-        "endLine": 1089,
+        "endLine": 323,
         "endCol": 3,
         "kind": "function",
         "scope": "render",
