@@ -5,16 +5,18 @@ export function createSuite(name) {
 
   function test(testName, fn) {
     const fullName = name ? `${name} > ${testName}` : testName;
+    const symbol = fn.name || null;
     try {
       fn();
-      results.push({ name: fullName, passed: true });
+      results.push({ name: fullName, passed: true, symbol });
     } catch (e) {
-      results.push({ name: fullName, passed: false, error: e.message });
+      results.push({ name: fullName, passed: false, error: e.message, symbol });
     }
   }
 
   async function testAsync(testName, fn, timeout = DEFAULT_TIMEOUT) {
     const fullName = name ? `${name} > ${testName}` : testName;
+    const symbol = fn.name || null;
     try {
       await Promise.race([
         fn(),
@@ -22,9 +24,9 @@ export function createSuite(name) {
           setTimeout(() => reject(new Error(`Timed out after ${timeout}ms`)), timeout)
         )
       ]);
-      results.push({ name: fullName, passed: true });
+      results.push({ name: fullName, passed: true, symbol });
     } catch (e) {
-      results.push({ name: fullName, passed: false, error: e.message });
+      results.push({ name: fullName, passed: false, error: e.message, symbol });
     }
   }
 

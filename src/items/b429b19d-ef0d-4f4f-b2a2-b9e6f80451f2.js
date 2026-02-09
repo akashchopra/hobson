@@ -11,11 +11,13 @@
 function getNavigateToFromURL() {
   const params = new URLSearchParams(window.location.search);
   const field = params.get('field');
-  if (!field) return null;
+  const symbol = params.get('symbol');
+  if (!field && !symbol) return null;
   return {
-    field,
+    field: field || null,
     region: params.get('region') || null,
-    lines: params.get('lines') || null  // "5" or "10-20"
+    lines: params.get('lines') || null,  // "5" or "10-20"
+    symbol: symbol || null
   };
 }
 

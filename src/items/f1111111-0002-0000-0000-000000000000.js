@@ -143,11 +143,15 @@ export async function navigate(itemId, params = {}) {
   url.searchParams.delete('field');
   url.searchParams.delete('line');
   url.searchParams.delete('col');
+  url.searchParams.delete('symbol');
+  url.searchParams.delete('region');
 
   // Add optional navigation params
   if (params.field) url.searchParams.set('field', params.field);
   if (params.line) url.searchParams.set('line', params.line);
   if (params.col) url.searchParams.set('col', params.col);
+  if (params.symbol) url.searchParams.set('symbol', params.symbol);
+  if (params.region) url.searchParams.set('region', params.region);
 
   // Only push to history if URL is actually changing
   if (url.href !== window.location.href) {

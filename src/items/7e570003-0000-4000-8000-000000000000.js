@@ -39,13 +39,15 @@ export async function render(item, api) {
 
   // Discover test items
   const allItems = await api.getAll();
-  const testItems = allItems.filter(i => i.content?.tags?.includes(TEST_TAG_ID));
+  const testItems = allItems.filter(i =>
+    i.content?.tags?.includes(TEST_TAG_ID) && i.name && i.content?.code
+  );
   summaryBar.textContent = `${testItems.length} test${testItems.length === 1 ? '' : 's'} found`;
 
   // Build test item rows
   const rows = [];
   for (const testItem of testItems) {
-    const row = createTestRow(testItem);
+    const row = createTestRow(testItem, api);
     rows.push(row);
     resultsArea.appendChild(row.el);
   }
@@ -96,7 +98,7 @@ export async function render(item, api) {
   return container;
 }
 
-function createTestRow(testItem) {
+function createTestRow(testItem, api) {
   const el = document.createElement('div');
   el.style.cssText = 'padding:6px 16px;';
 
@@ -181,21 +183,34 @@ function createTestRow(testItem) {
         const line = document.createElement('div');
         line.style.cssText = 'padding:2px 0; font-size:12px;';
 
-        if (r.passed) {
-          line.style.color = '#22c55e';
-          line.textContent = '\u2713 ' + r.name;
-        } else {
-          const failName = document.createElement('div');
-          failName.style.color = '#ef4444';
-          failName.textContent = '\u2717 ' + r.name;
-          line.appendChild(failName);
+        const icon = r.passed ? '\u2713 ' : '\u2717 ';
+        const color = r.passed ? '#22c55e' : '#ef4444';
 
-          if (r.error) {
-            const errMsg = document.createElement('div');
-            errMsg.style.cssText = 'color:#9ca3af; padding-left:16px; font-family:var(--font-mono, monospace); font-size:11px; white-space:pre-wrap; word-break:break-all;';
-            errMsg.textContent = r.error;
-            line.appendChild(errMsg);
+        const nameEl = document.createElement('a');
+        nameEl.style.cssText = `color:${color}; cursor:pointer; text-decoration:none; border-bottom:1px solid transparent;`;
+        nameEl.onmouseenter = () => nameEl.style.borderBottomColor = color;
+        nameEl.onmouseleave = () => nameEl.style.borderBottomColor = 'transparent';
+        nameEl.textContent = icon + r.name;
+        nameEl.title = r.symbol ? `${testItem.name} \u2192 ${r.symbol}` : testItem.name;
+
+        nameEl.onclick = (e) => {
+          e.preventDefault();
+          const params = { field: 'code' };
+          if (r.symbol) params.symbol = r.symbol;
+          if (api.siblingContainer) {
+            api.siblingContainer.addSibling(testItem.id, params);
+          } else {
+            api.navigate(testItem.id, params);
           }
+        };
+
+        line.appendChild(nameEl);
+
+        if (!r.passed && r.error) {
+          const errMsg = document.createElement('div');
+          errMsg.style.cssText = 'color:#9ca3af; padding-left:16px; font-family:var(--font-mono, monospace); font-size:11px; white-space:pre-wrap; word-break:break-all;';
+          errMsg.textContent = r.error;
+          line.appendChild(errMsg);
         }
 
         listEl.appendChild(line);
@@ -235,6 +250,11 @@ async function runTestItem(testItem, api, testArea) {
       // deletion should use get() which returns null for missing items.
     },
     require: (name) => api.require(name),
+    typeChainIncludes: (typeId, targetId) => api.typeChainIncludes(typeId, targetId),
+    attach: (parentId, itemId) => api.attach(parentId, itemId),
+    detach: (parentId, itemId) => api.detach(parentId, itemId),
+    findContainerOf: (itemId) => api.findContainerOf(itemId),
+    events: api.events,
 
     openViewport: async (itemId, viewId) => {
       const viewport = document.createElement('div');

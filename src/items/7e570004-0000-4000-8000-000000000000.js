@@ -2,10 +2,10 @@ const NOTE_TYPE = '871ae771-b9b1-4f40-8c7f-d9038bfb69c3';
 
 export async function run(api) {
   const { createSuite, assert, assertEquals } = await api.require('test-lib');
-  const { test, testAsync, getResults } = createSuite('Storage');
+  const { testAsync, getResults } = createSuite('Storage');
   const created = [];
 
-  await testAsync('creates an item via set()', async () => {
+  async function createsAnItem() {
     const id = crypto.randomUUID();
     const item = await api.set({
       id,
@@ -17,9 +17,9 @@ export async function run(api) {
     assertEquals(item.id, id, 'Returned item should have correct id');
     assert(item.created, 'Returned item should have created timestamp');
     assert(item.modified, 'Returned item should have modified timestamp');
-  });
+  }
 
-  await testAsync('retrieves an item via get()', async () => {
+  async function retrievesAnItem() {
     const id = created[0];
     assert(id, 'Need a previously created item');
     const item = await api.get(id);
@@ -27,12 +27,11 @@ export async function run(api) {
     assertEquals(item.id, id);
     assertEquals(item.type, NOTE_TYPE);
     assertEquals(item.content.description, 'Test note for storage-tests');
-  });
+  }
 
-  await testAsync('updates an item', async () => {
+  async function updatesAnItem() {
     const id = created[0];
     const before = await api.get(id);
-    // Small delay so modified timestamp can differ
     await new Promise(r => setTimeout(r, 10));
     const updated = await api.set({
       ...before,
@@ -40,16 +39,16 @@ export async function run(api) {
     });
     assert(updated.modified >= before.modified, 'modified should be >= original');
     assertEquals(updated.content.description, 'Updated description');
-  });
+  }
 
-  await testAsync('queries items by type', async () => {
+  async function queriesByType() {
     const results = await api.query({ type: NOTE_TYPE });
     assert(Array.isArray(results), 'query() should return an array');
     const found = results.find(i => i.id === created[0]);
     assert(found, 'Query results should include the created item');
-  });
+  }
 
-  await testAsync('overwrites an item via set()', async () => {
+  async function overwritesAnItem() {
     const id = created[0];
     const replaced = await api.set({
       id,
@@ -58,7 +57,13 @@ export async function run(api) {
     });
     assertEquals(replaced.id, id, 'Should keep the same id');
     assertEquals(replaced.content.description, 'Completely replaced');
-  });
+  }
+
+  await testAsync('creates an item via set()', createsAnItem);
+  await testAsync('retrieves an item via get()', retrievesAnItem);
+  await testAsync('updates an item', updatesAnItem);
+  await testAsync('queries items by type', queriesByType);
+  await testAsync('overwrites an item via set()', overwritesAnItem);
 
   return getResults();
 }
