@@ -18,6 +18,9 @@ async function addChildToItem(api, parentId, clickCoords) {
   const selectedType = await typePicker.showTypePicker(api);
   if (!selectedType) return;
 
+  // Find editable view so new items open in edit mode
+  const editView = await findEditableView(api, selectedType);
+
   const newItem = {
     id: crypto.randomUUID(),
     name: new Date().toISOString(),
@@ -46,19 +49,21 @@ async function addChildToItem(api, parentId, clickCoords) {
     const x = clickCoords?.x || 50;
     const y = clickCoords?.y || 50;
 
-    attachments.push({
-      id: newItem.id,
-      view: {
-        x: x,
-        y: y,
-        width: DEFAULT_WINDOW_WIDTH,
-        height: DEFAULT_WINDOW_HEIGHT,
-        z: maxZ + 1
-      }
-    });
+    const view = {
+      x: x,
+      y: y,
+      width: DEFAULT_WINDOW_WIDTH,
+      height: DEFAULT_WINDOW_HEIGHT,
+      z: maxZ + 1
+    };
+    if (editView) view.type = editView.id;
+
+    attachments.push({ id: newItem.id, view });
   } else {
-    // Non-spatial: just add the ID reference
-    attachments.push({ id: newItem.id });
+    // Non-spatial: just add the ID reference, with edit view if available
+    const spec = { id: newItem.id };
+    if (editView) spec.view = { type: editView.id };
+    attachments.push(spec);
   }
 
   parent.attachments = attachments;
@@ -196,6 +201,40 @@ async function showRelatedItemsModal(api, targetItemId) {
   const overlayNode = await api.renderItem(MODAL_FRAME_ID, MODAL_FRAME_VIEW_ID, { siblingContainer });
   overlayNode.id = 'related-items-modal-overlay';
   document.body.appendChild(overlayNode);
+}
+
+/**
+ * Find the editable view for a given type.
+ * Returns the view item if found, or null.
+ * Prefers direct (non-inherited) matches over inherited ones.
+ * Skips debug/hidden category views.
+ */
+export async function findEditableView(api, typeId) {
+  const views = await api.getViews(typeId);
+  let bestMatch = null;
+  let bestIsDirect = false;
+
+  for (const { view, inherited } of views) {
+    // Skip debug/hidden views
+    const category = view.content?.category;
+    if (category === 'debug' || category === 'hidden') continue;
+
+    // Check if any field in ui_hints has mode: "editable"
+    const hints = view.content?.ui_hints;
+    if (!hints) continue;
+
+    const hasEditable = Object.values(hints).some(h => h.mode === 'editable');
+    if (!hasEditable) continue;
+
+    const isDirect = !inherited;
+    // Prefer direct match over inherited
+    if (!bestMatch || (isDirect && !bestIsDirect)) {
+      bestMatch = view;
+      bestIsDirect = isDirect;
+    }
+  }
+
+  return bestMatch;
 }
 
 /**

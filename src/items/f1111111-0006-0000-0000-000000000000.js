@@ -40,6 +40,7 @@ export function show() {
     <table style="width: 100%; border-collapse: collapse;">
       <tr><td style="padding: 8px 16px 8px 0;"><kbd style="background: var(--color-bg-hover); padding: 2px 8px; border-radius: var(--border-radius); border: 1px solid var(--color-border);">Ctrl+\</kbd></td><td>Toggle REPL</td></tr>
       <tr><td style="padding: 8px 16px 8px 0;"><kbd style="background: var(--color-bg-hover); padding: 2px 8px; border-radius: var(--border-radius); border: 1px solid var(--color-border);">Cmd+K</kbd></td><td>Search items</td></tr>
+      <tr><td style="padding: 8px 16px 8px 0;"><kbd style="background: var(--color-bg-hover); padding: 2px 8px; border-radius: var(--border-radius); border: 1px solid var(--color-border);">Ctrl+E</kbd></td><td>Edit selected item</td></tr>
       <tr><td style="padding: 8px 16px 8px 0;"><kbd style="background: var(--color-bg-hover); padding: 2px 8px; border-radius: var(--border-radius); border: 1px solid var(--color-border);">Cmd+?</kbd></td><td>Show this help</td></tr>
     </table>
     <h3 style="margin-top: 20px; margin-bottom: 12px;">Mouse</h3>
