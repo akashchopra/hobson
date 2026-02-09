@@ -95,7 +95,7 @@ export async function render(item, api) {
     const empty = api.createElement('div', {
       style: 'padding: 40px; text-align: center; color: var(--color-text-secondary); flex: 1;'
     }, []);
-    empty.innerHTML = 'No item selected.<br><br><span style="font-size: 14px;">Cmd+K - Search items<br>Esc - Open REPL<br>Right-click - Context menu</span>';
+    empty.innerHTML = 'No item selected.<br><br><span style="font-size: 14px;">Cmd+K - Search items<br>Ctrl+\\ - Open REPL<br>Right-click - Context menu</span>';
     container.appendChild(empty);
 
     // Handle right-click on empty state

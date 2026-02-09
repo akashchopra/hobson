@@ -83,9 +83,7 @@ export async function onKernelBootComplete({ safeMode }, _api) {
   // Register keyboard handler for toggle
   if (!window._replKeyboardHandler) {
     window._replKeyboardHandler = async (e) => {
-      if (e.key === 'Escape') {
-        await toggle();
-      } else if (e.ctrlKey && e.key === '\\') {
+      if (e.ctrlKey && e.key === '\\') {
         await toggle();
       }
     };
@@ -133,7 +131,7 @@ function createPanel() {
   
   const hint = document.createElement('span');
   hint.className = 'repl-hint';
-  hint.textContent = 'Escape or Ctrl+\\ to toggle';
+  hint.textContent = 'Ctrl+\\ to toggle';
   collapseBar.appendChild(hint);
   
   const expandIcon = document.createElement('span');

@@ -895,7 +895,7 @@ export function buildEmptyMenu(api, context) {
   frag.appendChild(searchItem);
 
   // Open REPL
-  const replItem = api.createElement('div', { class: 'context-menu-item' }, ['Open REPL (Esc)']);
+  const replItem = api.createElement('div', { class: 'context-menu-item' }, ['Open REPL (Ctrl+\)']);
   if (context) {
     replItem.onclick = async () => {
       context.onDismiss();
