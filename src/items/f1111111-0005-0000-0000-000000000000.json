@@ -3,15 +3,15 @@
   "type": "66666666-0000-0000-0000-000000000000",
   "name": "item-palette",
   "created": 1738368000000,
-  "modified": 1770474620674,
+  "modified": 1770500000000,
   "watches": [
     {
       "event": "e0e00000-0002-0002-0000-000000000000"
     }
   ],
   "content": {
-    "description": "Item search/navigation modal. Provides Cmd+K item palette functionality. Moved from kernel to userland.",
-    "code": "let api = null;\nlet searchLib = null;\n\nexport async function onKernelBootComplete({ safeMode }, _api) {\n  if (safeMode) return;\n  api = _api;\n  searchLib = await api.require('item-search-lib');\n}\n\n// [BEGIN:show]\nexport async function show(_api) {\n  // Lazy init: use passed api if module was reloaded after import\n  if (_api && !api) {\n    api = _api;\n    searchLib = await api.require('item-search-lib');\n  }\n\n  if (!api) {\n    console.warn('item-palette: not initialized (no api available)');\n    return;\n  }\n\n  // Remove existing modal if present\n  hide();\n\n  const overlay = document.createElement(\"div\");\n  overlay.id = \"item-list-overlay\";\n  overlay.style.cssText = `\n    position: fixed;\n    top: 0;\n    left: 0;\n    right: 0;\n    bottom: 0;\n    background: rgba(0, 0, 0, 0.5);\n    display: flex;\n    align-items: flex-start;\n    justify-content: center;\n    padding-top: 10vh;\n    z-index: 10000000;\n  `;\n\n  const modal = document.createElement(\"div\");\n  modal.style.cssText = `\n    background: var(--color-bg-surface);\n    border-radius: 8px;\n    width: 600px;\n    max-width: 90vw;\n    max-height: 70vh;\n    display: flex;\n    flex-direction: column;\n    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);\n  `;\n\n  // Search input\n  const searchContainer = document.createElement(\"div\");\n  searchContainer.style.cssText = \"padding: 16px; border-bottom: 1px solid var(--color-border-light);\";\n\n  const searchInput = document.createElement(\"input\");\n  searchInput.type = \"text\";\n  searchInput.placeholder = \"Search items... (type:xxx, tag:xxx, #xxx)\";\n  searchInput.style.cssText = \"width: 100%; padding: 8px 12px; font-size: 16px; border: 1px solid var(--color-border-light); border-radius: var(--border-radius); outline: none;\";\n  searchContainer.appendChild(searchInput);\n  modal.appendChild(searchContainer);\n\n  // Item list container\n  const listContainer = document.createElement(\"div\");\n  listContainer.style.cssText = \"flex: 1; overflow: auto; padding: 8px;\";\n  modal.appendChild(listContainer);\n\n  // Pre-fetch all items for empty query display\n  const allItems = await api.getAll();\n  allItems.sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id));\n\n  let searchTimeout = null;\n\n  const renderItems = (items) => {\n    listContainer.innerHTML = \"\";\n\n    for (const item of items) {\n      const row = document.createElement(\"div\");\n      row.style.cssText = \"padding: 8px 12px; cursor: pointer; border-radius: var(--border-radius); display: flex; justify-content: space-between; align-items: center;\";\n      row.onmouseenter = () => row.style.background = \"var(--color-bg-hover)\";\n      row.onmouseleave = () => row.style.background = \"\";\n\n      const info = document.createElement(\"div\");\n      const name = document.createElement(\"div\");\n      name.style.fontWeight = \"500\";\n      name.textContent = item.name || item.id.slice(0, 8);\n      info.appendChild(name);\n\n      // Metadata\n      const typeItem = allItems.find(i => i.id == item.type);\n      const meta = document.createElement(\"div\");\n      meta.style.cssText = 'font-size: 12px; color: var(--color-text-secondary);';\n      meta.textContent = typeItem.name;\n      info.appendChild(meta);\n\n      row.appendChild(info);\n\n      // Click to navigate\n      row.onclick = () => {\n        hide();\n        api.navigate(item.id);\n      };\n\n      listContainer.appendChild(row);\n    }\n\n    if (items.length === 0) {\n      const empty = document.createElement(\"div\");\n      empty.style.cssText = \"padding: 20px; text-align: center; color: var(--color-text-secondary);\";\n      empty.textContent = \"No items found\";\n      listContainer.appendChild(empty);\n    }\n  };\n\n  const doSearch = async (query) => {\n    if (!query || query.trim().length === 0) {\n      renderItems(allItems);\n      return;\n    }\n\n    listContainer.innerHTML = '<div style=\"padding: 20px; text-align: center; color: var(--color-text-secondary);\">Searching...</div>';\n\n    const results = await searchLib.searchItems(query, api, { allItems });\n    renderItems(results);\n  };\n\n  // Initial render\n  renderItems(allItems);\n\n  searchInput.oninput = () => {\n    if (searchTimeout) clearTimeout(searchTimeout);\n    searchTimeout = setTimeout(() => doSearch(searchInput.value), 150);\n  };\n\n  overlay.appendChild(modal);\n\n  // Close on overlay click\n  overlay.onclick = (e) => {\n    if (e.target === overlay) {\n      hide();\n    }\n  };\n\n  // Close on Escape\n  const escHandler = (e) => {\n    if (e.key === \"Escape\") {\n      hide();\n      document.removeEventListener(\"keydown\", escHandler);\n    }\n  };\n  document.addEventListener(\"keydown\", escHandler);\n\n  document.body.appendChild(overlay);\n  searchInput.focus();\n}\n// [END:show]\n\nexport function hide() {\n  const existing = document.getElementById(\"item-list-overlay\");\n  if (existing) {\n    existing.remove();\n  }\n}\n",
+    "description": "Item search/navigation modal. Provides Cmd+K item palette functionality. Opens Item Search as a modal via the Modal Frame wrapper item.",
+    "code": "let api = null;\n\nconst MODAL_FRAME_ID = 'b0b0b0b0-0002-0000-0000-000000000000';\nconst MODAL_FRAME_VIEW_ID = 'b0b0b0b0-0001-0000-0000-000000000000';\nconst ITEM_SEARCH_TYPE_ID = '7ac3cf17-2c10-454a-bc06-24db64e440c4';\n\nexport async function onKernelBootComplete({ safeMode }, _api) {\n  if (safeMode) return;\n  api = _api;\n}\n\n// [BEGIN:show]\nexport async function show(_api) {\n  // Lazy init: use passed api if module was reloaded after import\n  if (_api && !api) {\n    api = _api;\n  }\n\n  if (!api) {\n    console.warn('item-palette: not initialized (no api available)');\n    return;\n  }\n\n  // Remove existing modal if present\n  hide();\n\n  // Find the Item Search item\n  const searchItems = await api.query({ type: ITEM_SEARCH_TYPE_ID });\n  if (searchItems.length === 0) {\n    console.warn('item-palette: no item-search item found');\n    return;\n  }\n  const searchItem = searchItems[0];\n\n  // Set the Modal Frame's attachment to the Item Search\n  const frame = await api.get(MODAL_FRAME_ID);\n  frame.attachments = [{ id: searchItem.id }];\n  frame.modified = Date.now();\n  await api.set(frame);\n\n  // Build a siblingContainer appropriate for the current root view.\n  // Spatial canvas: attach + rerender (opens as a window).\n  // Anything else: navigate (siblingContainer protocol not available outside render path).\n  const rootId = api.getCurrentRoot();\n  const hasSpatialCanvas = !!document.querySelector(`[data-container-id=\"${rootId}\"]`);\n  const siblingContainer = {\n    id: rootId,\n    addSibling: async (childId) => {\n      if (hasSpatialCanvas) {\n        await api.attach(rootId, childId);\n        await api.rerenderItem(rootId);\n      } else {\n        api.navigate(childId);\n      }\n    }\n  };\n\n  // Render the frame with modal-frame-view and append directly to body\n  const overlayNode = await api.renderItem(MODAL_FRAME_ID, MODAL_FRAME_VIEW_ID, { siblingContainer });\n  overlayNode.id = 'item-palette-overlay';\n  document.body.appendChild(overlayNode);\n}\n// [END:show]\n\nexport function hide() {\n  const existing = document.getElementById('item-palette-overlay');\n  if (existing) {\n    existing.remove();\n  }\n}\n",
     "_symbols": {
       "api": {
         "name": "api",
@@ -22,20 +22,38 @@
         "kind": "variable",
         "scope": null
       },
-      "searchLib": {
-        "name": "searchLib",
-        "line": 2,
-        "col": 4,
-        "endLine": 2,
-        "endCol": 20,
+      "MODAL_FRAME_ID": {
+        "name": "MODAL_FRAME_ID",
+        "line": 3,
+        "col": 6,
+        "endLine": 3,
+        "endCol": 62,
+        "kind": "variable",
+        "scope": null
+      },
+      "MODAL_FRAME_VIEW_ID": {
+        "name": "MODAL_FRAME_VIEW_ID",
+        "line": 4,
+        "col": 6,
+        "endLine": 4,
+        "endCol": 67,
+        "kind": "variable",
+        "scope": null
+      },
+      "ITEM_SEARCH_TYPE_ID": {
+        "name": "ITEM_SEARCH_TYPE_ID",
+        "line": 5,
+        "col": 6,
+        "endLine": 5,
+        "endCol": 67,
         "kind": "variable",
         "scope": null
       },
       "onKernelBootComplete": {
         "name": "onKernelBootComplete",
-        "line": 4,
+        "line": 7,
         "col": 7,
-        "endLine": 8,
+        "endLine": 10,
         "endCol": 1,
         "kind": "function",
         "scope": null,
@@ -43,197 +61,23 @@
       },
       "show": {
         "name": "show",
-        "line": 11,
+        "line": 13,
         "col": 7,
-        "endLine": 157,
+        "endLine": 55,
         "endCol": 1,
         "kind": "function",
         "scope": null,
         "signature": "(_api)"
       },
-      "show.overlay": {
-        "name": "overlay",
-        "line": 26,
-        "col": 8,
-        "endLine": 26,
-        "endCol": 47,
-        "kind": "variable",
-        "scope": "show"
-      },
-      "show.modal": {
-        "name": "modal",
-        "line": 42,
-        "col": 8,
-        "endLine": 42,
-        "endCol": 45,
-        "kind": "variable",
-        "scope": "show"
-      },
-      "show.searchContainer": {
-        "name": "searchContainer",
-        "line": 55,
-        "col": 8,
-        "endLine": 55,
-        "endCol": 55,
-        "kind": "variable",
-        "scope": "show"
-      },
-      "show.searchInput": {
-        "name": "searchInput",
-        "line": 58,
-        "col": 8,
-        "endLine": 58,
-        "endCol": 53,
-        "kind": "variable",
-        "scope": "show"
-      },
-      "show.listContainer": {
-        "name": "listContainer",
-        "line": 66,
-        "col": 8,
-        "endLine": 66,
-        "endCol": 53,
-        "kind": "variable",
-        "scope": "show"
-      },
-      "show.allItems": {
-        "name": "allItems",
-        "line": 71,
-        "col": 8,
-        "endLine": 71,
-        "endCol": 37,
-        "kind": "variable",
-        "scope": "show"
-      },
-      "show.searchTimeout": {
-        "name": "searchTimeout",
-        "line": 74,
-        "col": 6,
-        "endLine": 74,
-        "endCol": 26,
-        "kind": "variable",
-        "scope": "show"
-      },
-      "show.renderItems": {
-        "name": "renderItems",
-        "line": 76,
-        "col": 8,
-        "endLine": 115,
-        "endCol": 3,
-        "kind": "function",
-        "scope": "show",
-        "signature": "(items)"
-      },
-      "renderItems.item": {
-        "name": "item",
-        "line": 79,
-        "col": 15,
-        "endLine": 79,
-        "endCol": 19,
-        "kind": "variable",
-        "scope": "renderItems"
-      },
-      "renderItems.row": {
-        "name": "row",
-        "line": 80,
-        "col": 12,
-        "endLine": 80,
-        "endCol": 47,
-        "kind": "variable",
-        "scope": "renderItems"
-      },
-      "renderItems.info": {
-        "name": "info",
-        "line": 85,
-        "col": 12,
-        "endLine": 85,
-        "endCol": 48,
-        "kind": "variable",
-        "scope": "renderItems"
-      },
-      "renderItems.name": {
-        "name": "name",
-        "line": 86,
-        "col": 12,
-        "endLine": 86,
-        "endCol": 48,
-        "kind": "variable",
-        "scope": "renderItems"
-      },
-      "renderItems.typeItem": {
-        "name": "typeItem",
-        "line": 92,
-        "col": 12,
-        "endLine": 92,
-        "endCol": 60,
-        "kind": "variable",
-        "scope": "renderItems"
-      },
-      "renderItems.meta": {
-        "name": "meta",
-        "line": 93,
-        "col": 12,
-        "endLine": 93,
-        "endCol": 48,
-        "kind": "variable",
-        "scope": "renderItems"
-      },
-      "renderItems.empty": {
-        "name": "empty",
-        "line": 110,
-        "col": 12,
-        "endLine": 110,
-        "endCol": 49,
-        "kind": "variable",
-        "scope": "renderItems"
-      },
-      "show.doSearch": {
-        "name": "doSearch",
-        "line": 117,
-        "col": 8,
-        "endLine": 127,
-        "endCol": 3,
-        "kind": "function",
-        "scope": "show",
-        "signature": "(query)"
-      },
-      "doSearch.results": {
-        "name": "results",
-        "line": 125,
-        "col": 10,
-        "endLine": 125,
-        "endCol": 73,
-        "kind": "variable",
-        "scope": "doSearch"
-      },
-      "show.escHandler": {
-        "name": "escHandler",
-        "line": 147,
-        "col": 8,
-        "endLine": 152,
-        "endCol": 3,
-        "kind": "function",
-        "scope": "show",
-        "signature": "(e)"
-      },
       "hide": {
         "name": "hide",
-        "line": 160,
+        "line": 58,
         "col": 7,
-        "endLine": 165,
+        "endLine": 63,
         "endCol": 1,
         "kind": "function",
         "scope": null,
         "signature": "()"
-      },
-      "hide.existing": {
-        "name": "existing",
-        "line": 161,
-        "col": 8,
-        "endLine": 161,
-        "endCol": 63,
-        "kind": "variable",
-        "scope": "hide"
       }
     }
   },
