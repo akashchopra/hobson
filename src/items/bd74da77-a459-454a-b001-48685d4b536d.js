@@ -161,7 +161,21 @@ export async function render(item, api) {
   // Pass the full view config object so the renderer can access and update its view state
   let rootNode;
   try {
-    rootNode = await api.renderItem(rootId, rootSpec?.view || null, { decorator: itemDecorator });
+    rootNode = await api.renderItem(rootId, rootSpec?.view || null, {
+      decorator: itemDecorator,
+      onCycle: async () => {
+        // Root item is already rendered above — show this viewport's own data
+        // Load default-view (Raw JSON) directly to bypass cycle detection
+        try {
+          const defaultView = await api.require('kernel:default-view');
+          return await defaultView.render(item, api);
+        } catch (e) {
+          return api.createElement('div', {
+            style: 'padding: 20px; color: var(--color-text-secondary); font-style: italic; text-align: center;'
+          }, [item.name || item.id.substring(0, 8)]);
+        }
+      }
+    });
   } catch (error) {
     rootNode = api.createElement('div', {
       style: 'padding: 20px; color: var(--color-danger); background: var(--color-danger-light); border: 1px solid var(--color-danger); border-radius: var(--border-radius);'
