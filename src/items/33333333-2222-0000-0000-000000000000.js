@@ -4,6 +4,7 @@
 // The backend handles IndexedDB access and ID prefixing for nested instances.
 
 // [BEGIN:Storage]
+/** Storage layer — delegates to the IndexedDB backend, with in-memory caching. */
 export class Storage {
   constructor(backend) {
     this.backend = backend;
@@ -11,14 +12,22 @@ export class Storage {
     this._allCached = false;
   }
 
+  /** Get the nested instance ID (null for main instance).
+   * @returns {string|null}
+   */
   get instanceId() {
     return this.backend.instanceId || null;
   }
 
+  /** Initialize storage (no-op — backend is initialized by bootloader). */
   async initialize() {
     // Backend is already initialized by the bootloader
   }
 
+  /** Retrieve an item by ID. Throws if not found.
+   * @param {string} id - Item GUID
+   * @returns {Promise<Object>} The item
+   */
   async get(id) {
     const cached = this._cache.get(id);
     if (cached) return cached;
@@ -30,17 +39,28 @@ export class Storage {
     return result;
   }
 
+  /** Validate and persist an item.
+   * @param {Object} item - The item to save
+   * @param {Object} [kernel] - Kernel reference for validation context
+   */
   async set(item, kernel) {
     await this._validateItem(item, kernel);
     await this.backend.set(item);
     this._cache.set(item.id, item);
   }
 
+  /** Delete an item from storage and cache.
+   * @param {string} id - Item GUID to delete
+   */
   async delete(id) {
     this._cache.delete(id);
     return this.backend.delete(id);
   }
 
+  /** Find items matching a filter object (key-value pairs matched against item fields).
+   * @param {Object} filter - e.g. {type: "...", name: "..."}
+   * @returns {Promise<Object[]>} Matching items (excludes nested instance items)
+   */
   async query(filter) {
     if (this._allCached) {
       // Match backend behavior: exclude nested instance items (have ':' in ID)
@@ -58,6 +78,9 @@ export class Storage {
     return this.backend.query(filter);
   }
 
+  /** Get all items (excludes nested instance items). Populates cache on first call.
+   * @returns {Promise<Object[]>}
+   */
   async getAll() {
     if (this._allCached) {
       const items = [];
@@ -74,6 +97,9 @@ export class Storage {
     return items;
   }
 
+  /** Get all items including nested instance items.
+   * @returns {Promise<Object[]>}
+   */
   async getAllRaw() {
     if (this.backend.getAllRaw) {
       return this.backend.getAllRaw();
@@ -81,6 +107,10 @@ export class Storage {
     return this.backend.getAll();
   }
 
+  /** Delete all items whose ID starts with a prefix.
+   * @param {string} prefix - ID prefix to match
+   * @returns {Promise<number>} Number of items deleted
+   */
   async deleteByPrefix(prefix) {
     const allItems = await this.getAllRaw();
     const toDelete = allItems.filter(item => item.id.startsWith(prefix));
@@ -90,6 +120,10 @@ export class Storage {
     return toDelete.length;
   }
 
+  /** Check if an item exists in storage.
+   * @param {string} id - Item GUID
+   * @returns {Promise<boolean>}
+   */
   async exists(id) {
     if (this._cache.has(id)) return true;
     try {
@@ -101,7 +135,10 @@ export class Storage {
   }
 
   // [BEGIN:validateItem]
-  // Validates items before storage - type chain and name uniqueness
+  /** Validate an item before storage — checks type chain and code name uniqueness.
+   * @param {Object} item - The item to validate
+   * @param {Object} [kernel] - Kernel reference for code item checks
+   */
   async _validateItem(item, kernel) {
     // See [item/atom](item://00000000-0000-0000-0000-000000000000)
     const ITEM_ID = kernel?.IDS?.ITEM || "00000000-0000-0000-0000-000000000000";

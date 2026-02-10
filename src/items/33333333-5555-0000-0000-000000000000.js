@@ -1,5 +1,8 @@
 
-// Parse stack trace to extract source item name and line number
+/** Parse a stack trace to extract the source item name and line number.
+ * @param {string} stack - Error stack trace string
+ * @returns {{itemName: string, line: number}|null}
+ */
 function parseSourceLocation(stack) {
   const lines = stack.split('\n');
   for (const line of lines) {
@@ -17,7 +20,8 @@ function parseSourceLocation(stack) {
   return null;
 }
 
-// Render Instance Registry - tracks what's currently rendered
+/** Render Instance Registry — tracks what's currently rendered on screen.
+ * Indexes instances by itemId, viewId, and parentId for efficient lookup. */
 class RenderInstanceRegistry {
   constructor() {
     this.instances = new Map();      // instanceId -> InstanceInfo
@@ -27,6 +31,14 @@ class RenderInstanceRegistry {
     this.nextId = 1;
   }
 
+  /** Register a new render instance and index it.
+   * @param {HTMLElement} domNode - The rendered DOM element
+   * @param {string} itemId - Item GUID
+   * @param {string} viewId - View GUID used to render
+   * @param {string|null} parentId - Parent item GUID (null for root)
+   * @param {HTMLElement|null} [siblingContainer] - Sibling container element
+   * @returns {number} The new instance ID
+   */
   register(domNode, itemId, viewId, parentId, siblingContainer = null) {
     const instanceId = this.nextId++;
 
@@ -69,6 +81,10 @@ class RenderInstanceRegistry {
     return instanceId;
   }
 
+  /** Unregister a render instance and remove from all indexes.
+   * @param {number} instanceId
+   * @returns {boolean} True if found and removed
+   */
   unregister(instanceId) {
     const info = this.instances.get(instanceId);
     if (!info) return false;
@@ -98,6 +114,10 @@ class RenderInstanceRegistry {
     return true;
   }
 
+  /** Unregister all instances belonging to a parent.
+   * @param {string|null} parentId
+   * @returns {number} Number removed
+   */
   unregisterByParent(parentId) {
     const parentKey = parentId || '__root__';
     const instanceIds = this.byParentId.get(parentKey);
@@ -110,6 +130,9 @@ class RenderInstanceRegistry {
     return count;
   }
 
+  /** Clear all render instances.
+   * @returns {number} Number cleared
+   */
   clear() {
     const count = this.instances.size;
     this.instances.clear();
@@ -119,22 +142,38 @@ class RenderInstanceRegistry {
     return count;
   }
 
+  /** Get a render instance by ID.
+   * @param {number} instanceId
+   * @returns {Object|null}
+   */
   get(instanceId) {
     return this.instances.get(instanceId) || null;
   }
 
+  /** Get all render instances for an item.
+   * @param {string} itemId
+   * @returns {Object[]}
+   */
   getByItemId(itemId) {
     const instanceIds = this.byItemId.get(itemId);
     if (!instanceIds) return [];
     return [...instanceIds].map(id => this.instances.get(id)).filter(Boolean);
   }
 
+  /** Get all render instances using a specific view.
+   * @param {string} viewId
+   * @returns {Object[]}
+   */
   getByViewId(viewId) {
     const instanceIds = this.byViewId.get(viewId);
     if (!instanceIds) return [];
     return [...instanceIds].map(id => this.instances.get(id)).filter(Boolean);
   }
 
+  /** Get all render instances belonging to a parent.
+   * @param {string|null} parentId
+   * @returns {Object[]}
+   */
   getByParentId(parentId) {
     const parentKey = parentId || '__root__';
     const instanceIds = this.byParentId.get(parentKey);
@@ -142,11 +181,16 @@ class RenderInstanceRegistry {
     return [...instanceIds].map(id => this.instances.get(id)).filter(Boolean);
   }
 
+  /** Get all render instances.
+   * @returns {Object[]}
+   */
   getAll() {
     return [...this.instances.values()];
   }
 
-  // For debugging: summary of current state
+  /** Get a summary of current render state.
+   * @returns {{totalInstances: number, uniqueItems: number, uniqueViews: number, uniqueParents: number}}
+   */
   getSummary() {
     return {
       totalInstances: this.instances.size,
@@ -157,8 +201,10 @@ class RenderInstanceRegistry {
   }
 }
 
-// Walk a DOM subtree calling registered cleanup functions before removal.
-// Elements opt in by setting data-hobson-cleanup attribute and __hobsonCleanup function.
+/** Walk a DOM subtree calling registered cleanup functions before removal.
+ * Elements opt in via data-hobson-cleanup attribute and __hobsonCleanup function.
+ * @param {HTMLElement} root - Root element to walk
+ */
 function cleanupDOMTree(root) {
   if (!root) return;
   const cleanables = root.querySelectorAll?.('[data-hobson-cleanup]');
@@ -174,29 +220,39 @@ function cleanupDOMTree(root) {
   }
 }
 
-// kernel-rendering module
+/** Rendering system — resolves views, renders items to DOM, and manages re-renders. */
 export class RenderingSystem {
   constructor(kernel) {
     this.kernel = kernel;
     this.registry = new RenderInstanceRegistry();
   }
 
-  // Expose parseSourceLocation for kernel:core's createElement debug attribution
+  /** Parse a stack trace to extract source item name and line number.
+   * @param {string} stack - Error stack trace string
+   * @returns {{itemName: string, line: number}|null}
+   */
   parseSourceLocation(stack) {
     return parseSourceLocation(stack);
   }
 
-  // Clean up resources in a DOM subtree (exposed for kernel:core's renderViewport)
+  /** Clean up resources in a DOM subtree before removal.
+   * @param {HTMLElement} root - Root element to clean up
+   */
   cleanupDOMTree(root) {
     cleanupDOMTree(root);
   }
 
-  // Clear all render instances (called before full re-render)
+  /** Clear all render instances (called before full re-render).
+   * @returns {number} Number cleared
+   */
   clearInstances() {
     return this.registry.clear();
   }
 
-  // Partial re-render: update specific item(s) in place without full viewport re-render (Phase 3)
+  /** Re-render all visible instances of an item in place (partial re-render).
+   * @param {string} itemId - Item GUID to re-render
+   * @returns {Promise<{updated: number, total?: number, notFound?: boolean}>}
+   */
   async rerenderItem(itemId) {
     // Find existing instance(s) for this item
     const instances = this.registry.getByItemId(itemId);
@@ -266,7 +322,10 @@ export class RenderingSystem {
     return { updated, total: instances.length };
   }
 
-  // Re-render all items using a specific view (useful when view code changes)
+  /** Re-render all items currently using a specific view.
+   * @param {string} viewId - View GUID
+   * @returns {Promise<{updated: number, items?: number, notFound?: boolean}>}
+   */
   async rerenderByView(viewId) {
     const instances = this.registry.getByViewId(viewId);
 
@@ -294,7 +353,10 @@ export class RenderingSystem {
     return { updated, items: processedItems.size };
   }
 
-  // Re-render all items of a given type (for when type preference changes)
+  /** Re-render all items of a given type (skips items with their own preferred view).
+   * @param {string} typeId - Type GUID
+   * @returns {Promise<{updated: number}>}
+   */
   async rerenderByType(typeId) {
     const instances = this.registry.getAll();
     let updated = 0;
@@ -315,6 +377,13 @@ export class RenderingSystem {
     return { updated };
   }
 
+  /** Render an item as a DOM element using a specified or resolved view.
+   * @param {string} itemId - Item GUID to render
+   * @param {string|null} [viewId] - View GUID (null for auto-resolve via preference hierarchy)
+   * @param {Object} [options] - Render options (onCycle callback, etc.)
+   * @param {Object} [context] - Render context (parentId, renderPath, viewConfig, etc.)
+   * @returns {Promise<HTMLElement>}
+   */
   async renderItem(itemId, viewId = null, options = {}, context = {}) {
     const IDS = this.kernel.IDS;
     const renderPath = context.renderPath || [];
@@ -408,7 +477,10 @@ export class RenderingSystem {
     }
   }
 
-  // Resolve view using preference hierarchy: item.preferredView → type.preferredView → type chain
+  /** Resolve a view using the preference hierarchy: item.preferredView → type.preferredView → type chain.
+   * @param {Object} item - The item to find a view for
+   * @returns {Promise<Object>} The resolved view item
+   */
   async resolveView(item) {
     // 1. Check item's preferred view
     if (item.preferredView) {
@@ -439,7 +511,10 @@ export class RenderingSystem {
     return await this.findView(item.type);
   }
 
-  // Find view for a type (walks up extends chain, falls back to type chain for backwards compat)
+  /** Find a view for a type, walking up the extends chain. Falls back to default-view.
+   * @param {string} typeId - Type GUID
+   * @returns {Promise<Object>} The view item
+   */
   async findView(typeId) {
     const IDS = this.kernel.IDS;
 
@@ -487,7 +562,10 @@ export class RenderingSystem {
     return await this.kernel.storage.get(IDS.DEFAULT_VIEW);
   }
 
-  // Get all views for a type (including inherited from extends chain)
+  /** Get all views for a type (including inherited from extends chain).
+   * @param {string} typeId - Type GUID
+   * @returns {Promise<Array<{view: Object, forType: string, inherited: boolean, isDefault?: boolean}>>}
+   */
   async getViews(typeId) {
     const IDS = this.kernel.IDS;
     const result = [];
@@ -554,19 +632,28 @@ export class RenderingSystem {
     return result;
   }
 
-  // Get the default view for a type
+  /** Get the first view found for a type.
+   * @param {string} typeId - Type GUID
+   * @returns {Promise<Object|null>} The view item, or null
+   */
   async getDefaultView(typeId) {
     const views = await this.getViews(typeId);
     return views.length > 0 ? views[0].view : null;
   }
 
-  // Get the view that would be used for a specific item (full preference hierarchy)
+  /** Get the view that would be used for a specific item (full preference hierarchy).
+   * @param {string} itemId - Item GUID
+   * @returns {Promise<Object>} The resolved view item
+   */
   async getEffectiveView(itemId) {
     const item = await this.kernel.storage.get(itemId);
     return await this.resolveView(item);
   }
 
-  // Get the type-level preferred view (for showing in modal)
+  /** Get the type-level preferred view (falls back to findView).
+   * @param {string} typeId - Type GUID
+   * @returns {Promise<Object>} The view item
+   */
   async getTypePreferredView(typeId) {
     try {
       const typeItem = await this.kernel.storage.get(typeId);
@@ -579,6 +666,11 @@ export class RenderingSystem {
     return await this.findView(typeId);
   }
 
+  /** Create a DOM element showing a render error with an edit button.
+   * @param {Error} error - The render error
+   * @param {string} itemId - Item GUID that failed to render
+   * @returns {HTMLElement}
+   */
   createErrorView(error, itemId) {
     const container = document.createElement("div");
     container.className = "render-error";

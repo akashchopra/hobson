@@ -1,11 +1,17 @@
 export async function loadKernel(require, storageBackend) {
-  // Event system - Phase 2: Object-based emit with type hierarchy dispatch
+  /** Event bus with hierarchical type dispatch.
+   * Subscribing to a parent event type (e.g., ITEM_EVENT) receives all child events. */
   class EventBus {
     constructor(kernel) {
       this.kernel = kernel;  // Reference for eventTypeCache access
       this.listeners = new Map();
     }
 
+    /** Subscribe to an event type. Returns an unsubscribe function.
+     * @param {string} eventTypeId - Event type GUID to subscribe to
+     * @param {Function} handler - Called with event object {type, content, timestamp}
+     * @returns {Function} Unsubscribe function
+     */
     on(eventTypeId, handler) {
       // Subscribe to an event type GUID
       // Subscribing to a parent type (e.g., ITEM_EVENT) will receive all child events
@@ -16,6 +22,10 @@ export async function loadKernel(require, storageBackend) {
       return () => this.off(eventTypeId, handler);
     }
 
+    /** Unsubscribe a handler from an event type.
+     * @param {string} eventTypeId - Event type GUID
+     * @param {Function} handler - The handler to remove
+     */
     off(eventTypeId, handler) {
       const handlers = this.listeners.get(eventTypeId);
       if (handlers) {
@@ -23,6 +33,9 @@ export async function loadKernel(require, storageBackend) {
       }
     }
 
+    /** Emit an event, dispatching to all matching subscribers (including parent types).
+     * @param {Object} event - Event object with {type: eventTypeGUID, content: {...}}
+     */
     emit(event) {
       // event = { type: eventTypeId, content: {...} }
       // Add timestamp if not present
@@ -58,6 +71,9 @@ export async function loadKernel(require, storageBackend) {
       }
     }
 
+    /** Get all event type GUIDs that have active listeners.
+     * @returns {string[]} Array of event type GUIDs
+     */
     getRegisteredEvents() {
       return [...this.listeners.keys()];
     }
@@ -123,8 +139,11 @@ export async function loadKernel(require, storageBackend) {
   const { RenderingSystem } = await require(IDS.KERNEL_RENDERING_SYSTEM);
   const { SafeMode } = await require(IDS.KERNEL_SAFE_MODE);
 
-  // Sort items in dependency order for import (types before their instances)
-  // Uses topological sort based on type and extends fields
+  /** Sort items in dependency order for import (types before their instances).
+   * Uses topological sort based on type and extends fields.
+   * @param {Object[]} items - Items to sort
+   * @returns {Object[]} Sorted items
+   */
   function sortItemsForImport(items) {
     const itemMap = new Map(items.map(i => [i.id, i]));
     const itemIds = new Set(items.map(i => i.id));
@@ -197,6 +216,7 @@ export async function loadKernel(require, storageBackend) {
     return result;
   }
 
+  /** Core kernel — manages storage, events, rendering, and the unified API. */
   class Kernel {
     constructor() {
       this.IDS = IDS;
@@ -223,6 +243,7 @@ export async function loadKernel(require, storageBackend) {
       this.rootElement.innerHTML = '<div id="main-view"></div>';
     }
 
+    /** Initialize the kernel: storage, seed items, event cache, watches, and first render. */
     async boot() {
       const perf = window.hobsonPerf;
       perf?.mark('storage-init-start');
@@ -335,6 +356,7 @@ export async function loadKernel(require, storageBackend) {
       }
     }
 
+    /** Verify seed items exist in storage (warns if missing). */
     async ensureSeedItems() {
       // Check if seeds exist
       try {
@@ -349,6 +371,8 @@ export async function loadKernel(require, storageBackend) {
     // Event Type Cache (for hierarchical event dispatch)
     // -------------------------------------------------------------------------
 
+    /** Build a cache mapping event type IDs to their ancestor chains and names.
+     * Also builds the watcher index for efficient event dispatch. */
     async buildEventTypeCache() {
       // Build a cache mapping each event definition ID to:
       // - ancestors: Set of all type IDs in the chain (for type hierarchy dispatch)
@@ -440,6 +464,10 @@ export async function loadKernel(require, storageBackend) {
       return chain;
     }
 
+    /** Get the full type chain from an item up to atom.
+     * @param {string} itemId - Starting item GUID
+     * @returns {Promise<string[]>} Array of type GUIDs
+     */
     async getTypeChain(itemId) {
       // Returns array of all type IDs from this item up to atom (inclusive)
       const chain = [itemId];
@@ -465,6 +493,7 @@ export async function loadKernel(require, storageBackend) {
       return chain;
     }
 
+    /** Load and apply kernel CSS styles from the kernel:styles item. */
     async applyStyles() {
       // Remove existing kernel styles if present (allows hot-reload)
       const existing = document.getElementById('kernel-styles');
@@ -493,6 +522,7 @@ export async function loadKernel(require, storageBackend) {
     // getStartingRoot() removed - viewport-view reads URL directly
     // navigateToItem() removed - use userland viewport-manager.navigate()
 
+    /** Render the viewport item into #main-view. Re-entrant safe. */
     async renderViewport() {
       const mainView = this.rootElement.querySelector('#main-view');
       if (!mainView) return;
@@ -542,6 +572,7 @@ export async function loadKernel(require, storageBackend) {
     // Item List and Raw Editor
     // -------------------------------------------------------------------------
 
+    /** Show the searchable item palette (delegates to userland item-palette if available). */
     async showItemList() {
       // Try userland library first
       try {
@@ -679,6 +710,7 @@ export async function loadKernel(require, storageBackend) {
       searchInput.focus();
     }
 
+    /** Remove the item list overlay if present. */
     hideItemList() {
       const existing = document.getElementById("item-list-overlay");
       if (existing) {
@@ -686,6 +718,7 @@ export async function loadKernel(require, storageBackend) {
       }
     }
 
+    /** Show the keyboard shortcuts help dialog. */
     async showHelp() {
       // Try userland library first
       try {
@@ -762,6 +795,7 @@ export async function loadKernel(require, storageBackend) {
       document.body.appendChild(overlay);
     }
 
+    /** Remove the help overlay if present. */
     hideHelp() {
       const existing = document.getElementById("help-overlay");
       if (existing) {
@@ -769,6 +803,9 @@ export async function loadKernel(require, storageBackend) {
       }
     }
 
+    /** Open an inline or full-page raw JSON editor for an item.
+     * @param {string} itemId - Item GUID to edit
+     */
     async editItemRaw(itemId) {
       const item = await this.storage.get(itemId);
       const json = JSON.stringify(item, null, 2);
@@ -847,6 +884,10 @@ export async function loadKernel(require, storageBackend) {
       }
     }
 
+    /** Download an object as a JSON file.
+     * @param {*} thing - Object to serialize
+     * @param {string} filename - Download filename
+     */
     saveJson(thing, filename) {
         const json = JSON.stringify(thing, null, 2);
         const blob = new Blob([json], { type: "application/json" });
@@ -858,7 +899,10 @@ export async function loadKernel(require, storageBackend) {
         URL.revokeObjectURL(url);
     }
 
-    // Export
+    /** Export all items as JSON download(s).
+     * @param {boolean} [singleFile=true] - Single backup file or one per item
+     * @returns {Promise<number>} Number of items exported
+     */
     async export(singleFile = true) {
         console.log("api.export:", singleFile);
         const items = await this.storage.getAllRaw();
@@ -877,12 +921,22 @@ export async function loadKernel(require, storageBackend) {
     // Unified API
     // -------------------------------------------------------------------------
 
+    /** Create the unified API object. When containerItem is provided, adds context-specific methods.
+     * @param {Object|null} [containerItem] - The item being rendered (adds context methods)
+     * @param {Object} [context] - Render context (parentId, viewId, viewConfig, etc.)
+     * @returns {Object} The API object
+     */
     createAPI(containerItem = null, context = {}) {
       const kernel = this;
       const rendering = this.rendering;
 
       const api = {
-        // --- Create DOM elements ---
+        /** Create a DOM element with JSX-like syntax.
+         * @param {string} tag - HTML tag name
+         * @param {Object} [props] - Attributes, event handlers (onXxx), class, style
+         * @param {Array} [children] - Child nodes, strings, or [tag, props, children] arrays
+         * @returns {HTMLElement}
+         */
         createElement(tag, props = {}, children = []) {
           const element = document.createElement(tag);
 
@@ -935,25 +989,53 @@ export async function loadKernel(require, storageBackend) {
         },
 
         // --- Storage operations ---
+
+        /** Retrieve an item by ID from storage.
+         * @param {string} id - Item GUID
+         * @returns {Promise<Object>} The item
+         */
         get: (id) => kernel.storage.get(id),
+
+        /** Save or insert an item. Emits item:created or item:updated events.
+         * @param {Object} item - The item to save (must have an id)
+         * @param {Object} [options] - Save options
+         * @param {boolean} [options.silent] - If true, suppress events and re-render
+         * @returns {Promise<string>} The item's id
+         */
         set: async (item, options) => {
           await kernel.saveItem(item, options);
           return item.id;
         },
+        /** Save an item and re-render the viewport.
+         * @param {Object} item - The item to save
+         * @returns {Promise<string>} The item's id
+         */
         update: async (item) => {
           await kernel.saveItem(item);
           await kernel.renderViewport();
           return item.id;
         },
-        // Deprecated: use set() instead
-        // Passes silent: true so position/layout saves don't trigger event cascades
+
+        /** Save without events or re-render (for layout/position saves).
+         * @deprecated Use set(item, {silent: true}) instead
+         * @param {Object} item - The item to save
+         * @returns {Promise<string>} The item's id
+         */
         updateSilent: async (item) => {
           await kernel.saveItem(item, { silent: true });
           return item.id;
         },
+
+        /** Delete an item, detaching from all parents. Emits item:deleted.
+         * @param {string} id - Item GUID to delete
+         */
         delete: (id) => kernel.deleteItem(id),
-        // Batch-delete all items whose ID starts with prefix (e.g., nested instance cleanup)
-        // Skips per-item events/renders — does one cache clear + render at the end
+
+        /** Batch-delete all items whose ID starts with prefix.
+         * Skips per-item events — does one cache clear + render at the end.
+         * @param {string} prefix - ID prefix to match (e.g., nested instance prefix)
+         * @returns {Promise<number>} Number of items deleted
+         */
         deleteByPrefix: async (prefix) => {
           const count = await kernel.storage.deleteByPrefix(prefix);
           if (count > 0) {
@@ -962,16 +1044,45 @@ export async function loadKernel(require, storageBackend) {
           }
           return count;
         },
+        /** Find items matching a filter object (key-value pairs matched against item fields).
+         * @param {Object} filter - Filter object, e.g. {type: "...", name: "..."}
+         * @returns {Promise<Object[]>} Matching items
+         */
         query: (filter) => kernel.storage.query(filter),
+
+        /** Get all items (excludes nested instance items).
+         * @returns {Promise<Object[]>}
+         */
         getAll: () => kernel.storage.getAll(),
+
+        /** Get all items including nested instance items.
+         * @returns {Promise<Object[]>}
+         */
         getAllRaw: () => kernel.storage.getAllRaw(),
 
         // --- Code operations ---
+
+        /** Load a library or code module by name or ID.
+         * @param {string} name - Item name (e.g. 'markdown-it') or GUID
+         * @returns {Promise<Object>} The module's exports
+         */
         require: (name) => kernel.moduleSystem.require(name),
+
+        /** Check if a type's inheritance chain includes a target type.
+         * @param {string} typeId - The type to check
+         * @param {string} targetId - The target type to look for in the chain
+         * @returns {Promise<boolean>}
+         */
         typeChainIncludes: (typeId, targetId) => kernel.moduleSystem.typeChainIncludes(typeId, targetId),
 
         // --- Rendering operations ---
-        // viewIdOrConfig can be: null, string (view GUID), or object { type, ...viewProps }
+
+        /** Render an item as a DOM element using a specific view.
+         * @param {string} itemId - Item GUID to render
+         * @param {string|Object|null} [viewIdOrConfig] - View GUID, config object {type, ...}, or null for default
+         * @param {Object} [options] - Render options (decorator, siblingContainer, navigateTo, onCycle)
+         * @returns {Promise<HTMLElement>}
+         */
         renderItem: async (itemId, viewIdOrConfig, options) => {
           // Extract view ID and config from the parameter
           let viewId = null;
@@ -1014,16 +1125,55 @@ export async function loadKernel(require, storageBackend) {
           return domNode;
         },
 
+        /** Re-render all visible instances of an item in place.
+         * @param {string} itemId - Item GUID to re-render
+         */
         rerenderItem: (itemId) => rendering.rerenderItem(itemId),
+
+        /** Re-render all items currently using a specific view.
+         * @param {string} viewId - View GUID
+         */
         rerenderByView: (viewId) => rendering.rerenderByView(viewId),
+
+        /** Re-render all items of a specific type (that don't have their own preferred view).
+         * @param {string} typeId - Type GUID
+         */
         rerenderByType: (typeId) => rendering.rerenderByType(typeId),
+
+        /** Trigger a full viewport re-render. */
         renderViewport: () => kernel.renderViewport(),
 
         // --- View discovery ---
+
+        /** Get all available views for a type (including inherited from extends chain).
+         * @param {string} typeId - Type GUID
+         * @returns {Promise<Array<{view, forType, inherited, isDefault?}>>}
+         */
         getViews: (typeId) => rendering.getViews(typeId),
+
+        /** Get the first view found for a type.
+         * @param {string} typeId - Type GUID
+         * @returns {Promise<Object|null>} The view item, or null
+         */
         getDefaultView: (typeId) => rendering.getDefaultView(typeId),
+
+        /** Find a renderable view for a type, walking the extends chain.
+         * @param {string} typeId - Type GUID
+         * @returns {Promise<Object>} The view item (falls back to default-view)
+         */
         findView: (typeId) => rendering.findView(typeId),
+
+        /** Get the view that would be used for a specific item (respects preferred view hierarchy).
+         * @param {string} itemId - Item GUID
+         * @returns {Promise<Object>} The resolved view item
+         */
         getEffectiveView: (itemId) => rendering.getEffectiveView(itemId),
+
+        /** Get the view configured by a parent's attachment spec for a child item.
+         * @param {string} itemId - Child item GUID
+         * @param {string} parentId - Parent item GUID
+         * @returns {Promise<string|null>} View GUID from parent's attachment config, or null
+         */
         getContextualView: async (itemId, parentId) => {
           if (!parentId) return null;
           try {
@@ -1039,6 +1189,10 @@ export async function loadKernel(require, storageBackend) {
           }
           return null;
         },
+        /** Get the human-readable type name for an item.
+         * @param {string} itemId - Item GUID
+         * @returns {Promise<string>} Type name or truncated GUID
+         */
         getTypeName: async (itemId) => {
           const item = await kernel.storage.get(itemId);
           const typeItem = await kernel.storage.get(item.type);
@@ -1046,6 +1200,11 @@ export async function loadKernel(require, storageBackend) {
         },
 
         // --- Preferred view management ---
+
+        /** Set an item's preferred view. Pass null to clear.
+         * @param {string} itemId - Item GUID
+         * @param {string|null} viewId - View GUID, or null to clear
+         */
         setPreferredView: async (itemId, viewId) => {
           const item = await kernel.storage.get(itemId);
           if (viewId) {
@@ -1063,10 +1222,19 @@ export async function loadKernel(require, storageBackend) {
             await rendering.rerenderItem(itemId);
           }
         },
+        /** Get an item's preferred view.
+         * @param {string} itemId - Item GUID
+         * @returns {Promise<string|null>} View GUID or null
+         */
         getPreferredView: async (itemId) => {
           const item = await kernel.storage.get(itemId);
           return item.preferredView || null;
         },
+
+        /** Set the preferred view for an item's type. Affects all items of that type.
+         * @param {string} itemId - Any item of the type to update
+         * @param {string|null} viewId - View GUID, or null to clear
+         */
         setTypePreferredView: async (itemId, viewId) => {
           const item = await kernel.storage.get(itemId);
           const typeItem = await kernel.storage.get(item.type);
@@ -1079,6 +1247,10 @@ export async function loadKernel(require, storageBackend) {
           await kernel.saveItem(typeItem);
           await rendering.rerenderByType(item.type);
         },
+        /** Get the preferred view for an item's type.
+         * @param {string} itemId - Any item of the type to query
+         * @returns {Promise<string|null>} View GUID or null
+         */
         getTypePreferredView: async (itemId) => {
           const item = await kernel.storage.get(itemId);
           const typeItem = await kernel.storage.get(item.type);
@@ -1086,6 +1258,12 @@ export async function loadKernel(require, storageBackend) {
         },
 
         // --- Parent-child operations (arity-detecting) ---
+
+        /** Attach a child item to a parent.
+         * 1-arg form (in view context): attach(itemId) — uses containerItem as parent.
+         * 2-arg form: attach(parentId, itemId).
+         * @param {...string} args - (itemId) or (parentId, itemId)
+         */
         attach: async (...args) => {
           if (args.length === 1 && containerItem) {
             // 1-param: attach(itemId) — uses containerItem
@@ -1095,6 +1273,11 @@ export async function loadKernel(require, storageBackend) {
             await kernel.attach(args[0], args[1]);
           }
         },
+        /** Detach a child from a parent.
+         * 1-arg form (in view context): detach(itemId) — uses containerItem as parent.
+         * 2-arg form: detach(parentId, itemId).
+         * @param {...string} args - (itemId) or (parentId, itemId)
+         */
         detach: async (...args) => {
           if (args.length === 1 && containerItem) {
             // 1-param: detach(itemId) — uses containerItem
@@ -1104,6 +1287,11 @@ export async function loadKernel(require, storageBackend) {
             await kernel.detach(args[0], args[1]);
           }
         },
+        /** Set the view config for an attachment.
+         * 2-arg form (in view context): setAttachmentView(itemId, viewId).
+         * 3-arg form: setAttachmentView(parentId, itemId, viewId).
+         * @param {...string} args - (itemId, viewId) or (parentId, itemId, viewId)
+         */
         setAttachmentView: async (...args) => {
           if (args.length === 2 && containerItem) {
             // 2-param: setAttachmentView(itemId, viewId) — uses containerItem
@@ -1113,27 +1301,57 @@ export async function loadKernel(require, storageBackend) {
             await kernel.setAttachmentView(args[0], args[1], args[2]);
           }
         },
+        /** Find the parent item that contains a given item in its attachments.
+         * @param {string} itemId - Child item GUID
+         * @returns {Promise<Object|null>} The parent item, or null if not attached
+         */
         findContainerOf: (itemId) => kernel.findContainerOf(itemId),
 
-        // Cycle detection (advisory - for UIs that want to warn before creating cycles)
+        /** Check if attaching an item as a child would create a cycle.
+         * @param {string} parentId - Prospective parent GUID
+         * @param {string} attachmentId - Prospective child GUID
+         * @returns {Promise<boolean>}
+         */
         wouldCreateCycle: (parentId, attachmentId) => kernel.wouldCreateCycle(parentId, attachmentId),
+
+        /** Check if an item's descendant graph contains any cycles.
+         * @param {string} itemId - Item GUID to check
+         * @returns {Promise<boolean>}
+         */
         hasCycle: (itemId) => kernel.hasCycle(itemId),
 
         // --- Navigation ---
+
+        /** Navigate to an item, updating the URL and re-rendering the viewport.
+         * @param {string} id - Item GUID to navigate to
+         * @param {Object} [params] - URL parameters to set
+         */
         navigate: async (id, params) => {
           const vpMgr = await kernel.moduleSystem.require('viewport-manager');
           return vpMgr.navigate(id, params);
         },
+        /** Get the current viewport root item ID.
+         * @returns {string|null} Root item GUID, or null
+         */
         getCurrentRoot: () => {
           const vpMgr = kernel.moduleSystem.getCached('viewport-manager');
           return vpMgr?.getRoot() || null;
         },
 
         // --- Import/Export ---
+
+        /** Export all items as JSON download(s).
+         * @param {boolean} [singleFile=true] - If true, one backup file; if false, one file per item
+         * @returns {Promise<number>} Number of items exported
+         */
         export: async (singleFile = true) => {
           console.log("api.export:", singleFile);
           return kernel.export(singleFile);
         },
+        /** Import items from JSON file(s) with smart refresh.
+         * Opens a file picker, then imports items with dependency-order sorting.
+         * @returns {Promise<{created: number, updated: number, skipped: number, action: string}>}
+         */
         import: async () => {
           return new Promise((resolve, reject) => {
             const input = document.createElement("input");
@@ -1250,50 +1468,120 @@ export async function loadKernel(require, storageBackend) {
           });
         },
 
-        // --- Events ---
+        /** Event system — subscribe, unsubscribe, emit, and list events. */
         events: {
+          /** Subscribe to an event type. Returns an unsubscribe function.
+           * @param {string} eventTypeId - Event type GUID
+           * @param {Function} handler - Called with {type, content, timestamp}
+           * @returns {Function} Unsubscribe function
+           */
           on: (eventTypeId, handler) => kernel.events.on(eventTypeId, handler),
+
+          /** Unsubscribe a handler from an event type.
+           * @param {string} eventTypeId - Event type GUID
+           * @param {Function} handler - The handler to remove
+           */
           off: (eventTypeId, handler) => kernel.events.off(eventTypeId, handler),
+
+          /** Emit an event to all matching subscribers.
+           * @param {Object} event - {type: eventTypeGUID, content: {...}}
+           */
           emit: (event) => kernel.events.emit(event),
+
+          /** List all event type GUIDs that have active listeners.
+           * @returns {string[]}
+           */
           list: () => kernel.events.getRegisteredEvents()
         },
 
-        // --- Render instances ---
+        /** Render instance registry — query what's currently rendered on screen. */
         instances: {
+          /** Get all render instances for an item.
+           * @param {string} itemId - Item GUID
+           * @returns {Array} Instance info objects
+           */
           getByItemId: (itemId) => rendering.registry.getByItemId(itemId),
+
+          /** Get all render instances using a specific view.
+           * @param {string} viewId - View GUID
+           * @returns {Array} Instance info objects
+           */
           getByViewId: (viewId) => rendering.registry.getByViewId(viewId),
+
+          /** Get a specific render instance by ID.
+           * @param {number} instanceId - Instance ID
+           * @returns {Object|null} Instance info or null
+           */
           get: (instanceId) => rendering.registry.get(instanceId),
+
+          /** Get all render instances.
+           * @returns {Array} All instance info objects
+           */
           getAll: () => rendering.registry.getAll(),
+
+          /** Get a summary of render state (counts of instances, items, views, parents).
+           * @returns {{totalInstances, uniqueItems, uniqueViews, uniqueParents}}
+           */
           getSummary: () => rendering.registry.getSummary(),
+
+          /** Clear all render instances. */
           clear: () => rendering.registry.clear()
         },
 
         // --- UI operations ---
+
+        /** Open the raw JSON editor for an item.
+         * @param {string} itemId - Item GUID to edit
+         */
         editRaw: (itemId) => kernel.editItemRaw(itemId),
+
+        /** Show the searchable item palette. */
         showItemList: () => kernel.showItemList(),
 
-        // --- Compat: createREPLContext returns a context-free API ---
+        /** Create a context-free API object (for REPL use).
+         * @returns {Object} API without containerItem context
+         */
         createREPLContext: () => kernel.createAPI(),
 
-        // --- Well-known IDs ---
+        /** Well-known item GUIDs (ITEM, TYPE_DEFINITION, CODE, VIEW, etc.). */
         IDS,
+
+        /** Well-known event type GUIDs (ITEM_CREATED, ITEM_UPDATED, SYSTEM_ERROR, etc.). */
         EVENT_IDS,
 
-        // --- Instance ID (for nested Hobson instances) ---
+        /** Get the nested instance ID (null for main instance).
+         * @returns {string|null}
+         */
         getInstanceId: () => kernel.storage.instanceId,
 
-        // --- Debug mode ---
+        /** Check if debug mode is active.
+         * @returns {boolean}
+         */
         isDebugMode: () => context.debug || kernel.debugMode,
 
-        // --- Helper functions ---
+        /** Convenience helpers for common item operations. */
         helpers: {
+          /** Find an item by name.
+           * @param {string} name - Item name to search for
+           * @returns {Promise<Object|null>} The first matching item, or null
+           */
           findByName: async (name) => {
             const items = await kernel.storage.query({ name });
             return items.length > 0 ? items[0] : null;
           },
+          /** List all items of a given type.
+           * @param {string} typeId - Type GUID
+           * @returns {Promise<Object[]>}
+           */
           listByType: async (typeId) => {
             return await kernel.storage.query({ type: typeId });
           },
+
+          /** Create a new type definition item.
+           * @param {string} name - Type name
+           * @param {string} [description] - Type description
+           * @returns {Promise<string>} The new type's GUID
+           */
           createType: async (name, description) => {
             const id = crypto.randomUUID();
             await kernel.saveItem({
@@ -1307,44 +1595,73 @@ export async function loadKernel(require, storageBackend) {
           }
         },
 
-        // --- Viewport ---
+        /** Viewport state — selection, root item, root view management. */
         viewport: {
+          /** Select an item in the viewport.
+           * @param {string} itemId - Item GUID to select
+           * @param {string} [parentId] - Parent context for the selection
+           */
           select: async (itemId, parentId) => {
             const selMgr = await kernel.moduleSystem.require('selection-manager');
             selMgr.select(itemId, parentId);
           },
+          /** Clear the current selection. */
           clearSelection: async () => {
             const selMgr = await kernel.moduleSystem.require('selection-manager');
             selMgr.clearSelection();
           },
+          /** Get the currently selected item ID.
+           * @returns {string|null}
+           */
           getSelection: () => {
             const selMgr = kernel.moduleSystem.getCached('selection-manager');
             return selMgr?.getSelection() || null;
           },
+          /** Get the parent context of the current selection.
+           * @returns {string|null}
+           */
           getSelectionParent: () => {
             const selMgr = kernel.moduleSystem.getCached('selection-manager');
             return selMgr?.getSelectionParent() || null;
           },
+          /** Get the current viewport root item ID from the URL.
+           * @returns {string|null}
+           */
           getRoot: () => {
             const params = new URLSearchParams(window.location.search);
             return params.get('root');
           },
+          /** Get the current root view GUID.
+           * @returns {Promise<string|null>}
+           */
           getRootView: async () => {
             const vpMgr = await kernel.moduleSystem.require('viewport-manager');
             return await vpMgr.getRootView();
           },
+          /** Set the root view for the current viewport root.
+           * @param {string} viewId - View GUID to set
+           */
           setRootView: async (viewId) => {
             const vpMgr = await kernel.moduleSystem.require('viewport-manager');
             await vpMgr.setRootView(viewId);
           },
+          /** Get the full view config object for the root item.
+           * @returns {Promise<Object|null>}
+           */
           getRootViewConfig: async () => {
             const vpMgr = await kernel.moduleSystem.require('viewport-manager');
             return await vpMgr.getRootViewConfig();
           },
+          /** Merge updates into the root view config.
+           * @param {Object} updates - Key-value pairs to merge
+           */
           updateRootViewConfig: async (updates) => {
             const vpMgr = await kernel.moduleSystem.require('viewport-manager');
             await vpMgr.updateRootViewConfig(updates);
           },
+          /** Restore the previous root view (undo the last setRootView).
+           * @returns {Promise<boolean>} True if a previous view was restored
+           */
           restorePreviousRootView: async () => {
             const vpMgr = await kernel.moduleSystem.require('viewport-manager');
             return await vpMgr.restorePreviousRootView();
@@ -1354,6 +1671,9 @@ export async function loadKernel(require, storageBackend) {
 
       // --- Context layer (only when containerItem provided) ---
       if (containerItem) {
+        /** Get the view config for this item (from parent's attachment spec or viewport).
+         * @returns {Promise<Object|null>} View config object or null
+         */
         api.getViewConfig = async () => {
           if (context.viewConfig) {
             return context.viewConfig;
@@ -1367,6 +1687,10 @@ export async function loadKernel(require, storageBackend) {
           return null;
         };
 
+        /** Update the view config for this item (merges into parent's attachment spec).
+         * @param {Object} updates - Key-value pairs to merge into the config
+         * @returns {Promise<boolean>} True if update succeeded
+         */
         api.updateViewConfig = async (updates) => {
           const parentId = context.parentId;
 
@@ -1401,15 +1725,35 @@ export async function loadKernel(require, storageBackend) {
           return true;
         };
 
+        /** Get the parent item ID in the current render context.
+         * @returns {string|null}
+         */
         api.getParentId = () => context.parentId || null;
+
+        /** Get the view ID used to render this item.
+         * @returns {string|null}
+         */
         api.getViewId = () => context.viewId || null;
+
+        /** Get the navigateTo target (item GUID to navigate on click, set by parent).
+         * @returns {string|null}
+         */
         api.getNavigateTo = () => context.navigateTo || null;
+
+        /** Get the item being rendered.
+         * @returns {Object} The container item
+         */
         api.getCurrentItem = () => containerItem;
 
         Object.defineProperty(api, 'siblingContainer', {
           get: () => context.siblingContainer || null
         });
 
+        /** Create a new item, optionally attaching it as a child of the current item.
+         * @param {Object} item - Item data (id auto-generated if missing)
+         * @param {boolean} [addAsChild=false] - If true, attach to current item
+         * @returns {Promise<string>} The new item's GUID
+         */
         api.create = async (item, addAsChild = false) => {
           const newItem = {
             ...item,
@@ -1426,6 +1770,11 @@ export async function loadKernel(require, storageBackend) {
           return newItem.id;
         };
 
+        /** Create a child item of a given type, attach it, and re-render.
+         * @param {string} type - Type GUID for the new item
+         * @param {Object} [content] - Initial content for the new item
+         * @returns {Promise<string>} The new item's GUID
+         */
         api.createChild = async (type, content = {}) => {
           const newItem = {
             type,
@@ -1437,6 +1786,10 @@ export async function loadKernel(require, storageBackend) {
           return id;
         };
 
+        /** Restore the previous view for an item (undo setAttachmentView or setRootView).
+         * @param {string} itemId - Item GUID to restore
+         * @returns {Promise<boolean>} True if a previous view was restored
+         */
         api.restorePreviousView = async (itemId) => {
           const vpMgr = kernel.moduleSystem.getCached('viewport-manager');
           const isViewportRoot = vpMgr && vpMgr.getRoot() === itemId;
@@ -1498,6 +1851,10 @@ export async function loadKernel(require, storageBackend) {
     // Parent-child operations
     // -------------------------------------------------------------------------
 
+    /** Attach a child item to a parent's attachments array.
+     * @param {string} parentId - Parent item GUID
+     * @param {string} itemId - Child item GUID to attach
+     */
     async attach(parentId, itemId) {
       // Note: Cycles are now allowed in the item graph.
       // Cycle detection happens at render time, not at data modification time.
@@ -1521,6 +1878,10 @@ export async function loadKernel(require, storageBackend) {
       await this.saveItem(updated, { silent: true });
     }
 
+    /** Detach a child item from a parent's attachments array.
+     * @param {string} parentId - Parent item GUID
+     * @param {string} itemId - Child item GUID to detach
+     */
     async detach(parentId, itemId) {
       const parent = await this.storage.get(parentId);
       const updated = {
@@ -1531,6 +1892,11 @@ export async function loadKernel(require, storageBackend) {
       await this.saveItem(updated, { silent: true });
     }
 
+    /** Set the view type for an attachment, preserving previous view for undo.
+     * @param {string} parentId - Parent item GUID
+     * @param {string} itemId - Child item GUID
+     * @param {string} viewId - View GUID to set
+     */
     async setAttachmentView(parentId, itemId, viewId) {
       const parent = await this.storage.get(parentId);
       const childIndex = parent.attachments.findIndex(c => c.id === itemId);
@@ -1566,6 +1932,10 @@ export async function loadKernel(require, storageBackend) {
       await this.saveItem(updated);
     }
 
+    /** Find the parent item that contains a given item in its attachments.
+     * @param {string} itemId - Child item GUID
+     * @returns {Promise<Object|null>} The parent item, or null
+     */
     async findContainerOf(itemId) {
       const allItems = await this.storage.getAll();
       for (const item of allItems) {
@@ -1576,7 +1946,11 @@ export async function loadKernel(require, storageBackend) {
       return null;
     }
 
-    // Advisory: Check if adding a child would create a cycle
+    /** Check if attaching newChildId under parentId would create a cycle.
+     * @param {string} parentId - Prospective parent
+     * @param {string} newChildId - Prospective child
+     * @returns {Promise<boolean>}
+     */
     async wouldCreateCycle(parentId, newChildId) {
       const canReach = async (fromId, toId, visited = new Set()) => {
         if (fromId === toId) return true;
@@ -1601,7 +1975,10 @@ export async function loadKernel(require, storageBackend) {
       return await canReach(newChildId, parentId);
     }
 
-    // Advisory: Check if an item's descendant graph contains any cycles
+    /** Check if an item's descendant graph contains any cycles.
+     * @param {string} itemId - Item GUID to check
+     * @returns {Promise<boolean>}
+     */
     async hasCycle(itemId) {
       const visited = new Set();
       const recursionStack = new Set();
@@ -1635,6 +2012,9 @@ export async function loadKernel(require, storageBackend) {
       return await detectCycle(itemId);
     }
 
+    /** Delete an item: detach from all parents, remove from storage, emit item:deleted.
+     * @param {string} itemId - Item GUID to delete
+     */
     async deleteItem(itemId) {
       // Protect seed items from deletion
       const seedIds = Object.values(IDS);
@@ -1677,6 +2057,10 @@ export async function loadKernel(require, storageBackend) {
       await this.renderViewport();
     }
 
+    /** Check if an item is a code item (its type chain includes CODE).
+     * @param {Object} item - The item to check
+     * @returns {Promise<boolean>}
+     */
     async isCodeItem(item) {
       return await this.moduleSystem.isCodeItem(item);
     }
@@ -1685,6 +2069,12 @@ export async function loadKernel(require, storageBackend) {
     // Item Save with Events
     // -------------------------------------------------------------------------
 
+    /** Save an item to storage, emitting created/updated events.
+     * @param {Object} item - The item to save
+     * @param {Object} [options]
+     * @param {boolean} [options.silent] - Suppress events and late-activation
+     * @returns {Promise<Object>} The saved item
+     */
     async saveItem(item, options = {}) {
       const { silent = false } = options;
 
@@ -1745,6 +2135,7 @@ export async function loadKernel(require, storageBackend) {
     // Declarative Event Watches (Phase 2: Type hierarchy based)
     // -------------------------------------------------------------------------
 
+    /** Subscribe a single root listener that dispatches all events to declarative watchers. */
     setupDeclarativeWatches() {
       // Single subscription to root event type — receives ALL events
       // (item, system, viewport, userland, etc.)
@@ -1753,6 +2144,9 @@ export async function loadKernel(require, storageBackend) {
       });
     }
 
+    /** Dispatch an event to all matching declarative watch handlers.
+     * @param {Object} event - {type, content, timestamp}
+     */
     async dispatchToWatchers(event) {
       // event = { type: eventTypeId, content: {...}, timestamp }
       try {
@@ -1798,6 +2192,11 @@ export async function loadKernel(require, storageBackend) {
       }
     }
 
+    /** Evaluate a watch's filter conditions against an item.
+     * @param {Object} watch - Watch spec {event, type?, typeExtends?, id?}
+     * @param {Object|null} item - The item affected by the event
+     * @returns {Promise<boolean>} True if all filters match
+     */
     async evaluateWatchFilter(watch, item) {
       // No filters specified — always match (works for all event types)
       if (!watch.type && !watch.typeExtends && !watch.id) return true;
@@ -1827,6 +2226,10 @@ export async function loadKernel(require, storageBackend) {
       return true;
     }
 
+    /** Load a watcher's module and call the derived handler (e.g., onItemUpdated).
+     * @param {Object} watcherItem - The item with watches array
+     * @param {Object} event - {type, content, timestamp}
+     */
     async callWatchHandler(watcherItem, event) {
       // event = { type: eventTypeId, content: {...}, timestamp }
       try {
@@ -1859,6 +2262,10 @@ export async function loadKernel(require, storageBackend) {
       }
     }
 
+    /** Convert an event name to a handler function name (e.g., "item:deleted" → "onItemDeleted").
+     * @param {string} eventName - Event name (e.g., "item:deleted", "kernel:boot-complete")
+     * @returns {string} Handler name (e.g., "onItemDeleted")
+     */
     eventToHandlerName(eventName) {
       // "item:deleted" -> "onItemDeleted"
       // "item:created" -> "onItemCreated"
@@ -1876,6 +2283,10 @@ export async function loadKernel(require, storageBackend) {
     // Error Capture System
     // -------------------------------------------------------------------------
 
+    /** Capture an error and emit it as a system error event.
+     * @param {Error} error - The error to capture
+     * @param {Object} [context] - Additional context (operation, itemId, itemName, etc.)
+     */
     async captureError(error, context = {}) {
       // Don't capture errors in safe mode
       if (this._safeMode) {
@@ -1910,6 +2321,7 @@ export async function loadKernel(require, storageBackend) {
       }
     }
 
+    /** Show a persistent error banner at the top of the page (last-resort fallback). */
     showFallbackErrorUI(error, context = {}) {
       // Remove any existing fallback banners
       const existing = document.querySelector('.kernel-error-fallback');
@@ -1949,6 +2361,7 @@ export async function loadKernel(require, storageBackend) {
       document.body.insertBefore(banner, document.body.firstChild);
     }
 
+    /** Clean up global handlers and trigger a full kernel reload via postMessage. */
     reloadKernel() {
       // Clean up global handlers before reload
       if (window._globalErrorHandler) {

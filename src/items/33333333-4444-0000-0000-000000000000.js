@@ -1,6 +1,7 @@
 // Module System - See [Core Concepts - Code as Data](item://a0a0a0a0-d0c0-4000-8000-000000000002#description?region=Code)
 
 // [BEGIN:ModuleSystem]
+/** Module system — loads code items as ES modules with caching and circular dependency detection. */
 export class ModuleSystem {
   constructor(kernel) {
     this.kernel = kernel;
@@ -10,8 +11,7 @@ export class ModuleSystem {
     this.moduleMetadata = new WeakMap(); // module object → { itemId, itemName }
   }
 
-  // Initialize event listeners for cache invalidation
-  // Called by kernel after event system is ready
+  /** Initialize event listeners for cache invalidation on item updates. */
   initEventListeners() {
     // Listen for item updates to invalidate module cache
     this.kernel.events.on(this.kernel.EVENT_IDS.ITEM_UPDATED, (event) => {
@@ -33,8 +33,11 @@ export class ModuleSystem {
   }
 
   // [BEGIN:require]
-  // Load a code item as an ES module
-  // See [Core Concepts - The Module System](item://a0a0a0a0-d0c0-4000-8000-000000000002#The-Module-System)
+  /** Load a code item as an ES module by name or ID. Caches results.
+   * @param {string} nameOrId - Item name (e.g. 'markdown-it') or GUID
+   * @param {Set} [callStack] - Internal: tracks loading chain for circular dependency detection
+   * @returns {Promise<Object>} The module's exports
+   */
   async require(nameOrId, callStack = new Set()) {
     // Resolve name to ID if necessary
     let itemId = nameOrId;
@@ -102,7 +105,10 @@ export class ModuleSystem {
   // [END:require]
 
   // [BEGIN:evaluateCodeItem]
-  // Compile and execute a code item as an ES module via blob URL
+  /** Compile and execute a code item as an ES module via blob URL.
+   * @param {Object} item - Code item with content.code
+   * @returns {Promise<Object>} The module's exports
+   */
   async evaluateCodeItem(item) {
     if (!item.content?.code) {
       throw new Error(`Item ${item.id} has no code to evaluate`);
@@ -138,15 +144,19 @@ export class ModuleSystem {
   }
   // [END:evaluateCodeItem]
 
-  // Capability check: is this item a code item?
-  // Walks the extends chain of the item's type
+  /** Check if an item is a code item (type chain includes CODE).
+   * @param {Object} item - The item to check
+   * @returns {Promise<boolean>}
+   */
   async isCodeItem(item) {
     return await this.typeChainIncludes(item.type, this.kernel.IDS.CODE);
   }
 
-  // Build the extends chain for a type (for inheritance/capability checking)
-  // Returns array of type IDs from the given type up to ITEM (root)
-  // Falls back to walking 'type' field if 'extends' is not present (backwards compat)
+  /** Build the extends chain for a type (from the given type up to ITEM root).
+   * Falls back to walking 'type' field if 'extends' is not present.
+   * @param {string} typeId - Type GUID to start from
+   * @returns {Promise<string[]>} Array of type GUIDs in chain order
+   */
   async buildExtendsChain(typeId) {
     const chain = [];
     let current = typeId;
@@ -182,16 +192,22 @@ export class ModuleSystem {
   }
 
   // [BEGIN:typeChainIncludes]
-  // Check if a type's extends chain includes the target type
-  // Used for capability detection (e.g., "is this item's type a code type?")
+  /** Check if a type's extends chain includes a target type.
+   * @param {string} typeId - The type to check
+   * @param {string} targetId - The target type to look for
+   * @returns {Promise<boolean>}
+   */
   async typeChainIncludes(typeId, targetId) {
     const chain = await this.buildExtendsChain(typeId);
     return chain.includes(targetId);
   }
   // [END:typeChainIncludes]
 
-  // Get a cached module synchronously (returns null if not cached)
-  // Use this for synchronous code paths that can't await require()
+  /** Get a cached module synchronously (returns null if not cached).
+   * Use for synchronous code paths that can't await require().
+   * @param {string} nameOrId - Item name or GUID
+   * @returns {Object|null} Cached module or null
+   */
   getCached(nameOrId) {
     // For name lookups, we can't do async storage query, so only works with IDs
     // or if we've seen this name before in the cache (stored during require)
@@ -204,11 +220,16 @@ export class ModuleSystem {
     return null;
   }
 
+  /** Get metadata (itemId, itemName) for a loaded module object.
+   * @param {Object} obj - A module object returned by require()
+   * @returns {{itemId: string, itemName: string}|null}
+   */
   getModuleInfo(obj) {
     if (!obj || typeof obj !== 'object') return null;
     return this.moduleMetadata.get(obj) || null;
   }
 
+  /** Clear all module and name caches (forces fresh evaluation on next require). */
   clearCache() {
     this.moduleCache.clear();
     this.nameCache.clear();
