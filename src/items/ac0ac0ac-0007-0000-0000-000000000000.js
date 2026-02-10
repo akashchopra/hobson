@@ -190,6 +190,54 @@ export async function render(browser, api) {
         row.appendChild(lineEl);
 
         groupEl.appendChild(row);
+
+        // JSDoc details (description + params + returns)
+        if (sym.description || sym.params || sym.returns) {
+          const detailEl = api.createElement('div', {
+            style: 'padding: 2px 14px 6px 22px; font-size: 12px; color: var(--color-text-secondary); border-bottom: 1px solid var(--color-border-light); line-height: 1.4;'
+          }, []);
+          if (sym.description) {
+            detailEl.appendChild(api.createElement('div', {}, [sym.description.split('\n')[0]]));
+          }
+          if (sym.params) {
+            for (const p of sym.params) {
+              const paramLine = api.createElement('div', {
+                style: 'padding-left: 8px; font-family: monospace; font-size: 11px;'
+              }, []);
+              const paramName = api.createElement('span', {
+                style: 'color: var(--color-text);'
+              }, [p.name]);
+              paramLine.appendChild(paramName);
+              if (p.type) {
+                paramLine.appendChild(api.createElement('span', {
+                  style: 'color: var(--color-text-secondary); opacity: 0.7;'
+                }, [' : ' + p.type]));
+              }
+              if (p.description) {
+                paramLine.appendChild(api.createElement('span', {}, [' \u2014 ' + p.description]));
+              }
+              detailEl.appendChild(paramLine);
+            }
+          }
+          if (sym.returns) {
+            const retLine = api.createElement('div', {
+              style: 'padding-left: 8px; font-family: monospace; font-size: 11px;'
+            }, []);
+            retLine.appendChild(api.createElement('span', {
+              style: 'color: var(--color-text); opacity: 0.7;'
+            }, ['\u2192 ']));
+            if (sym.returns.type) {
+              retLine.appendChild(api.createElement('span', {
+                style: 'color: var(--color-text-secondary); opacity: 0.7;'
+              }, [sym.returns.type]));
+            }
+            if (sym.returns.description) {
+              retLine.appendChild(api.createElement('span', {}, [' \u2014 ' + sym.returns.description]));
+            }
+            detailEl.appendChild(retLine);
+          }
+          groupEl.appendChild(detailEl);
+        }
       }
 
       resultsArea.appendChild(groupEl);

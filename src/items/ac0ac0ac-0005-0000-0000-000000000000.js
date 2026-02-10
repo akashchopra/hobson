@@ -112,12 +112,26 @@ function formatMethodHelp(syms, source, methodName) {
     return `No symbol "${methodName}" found in ${source.itemName}${hint}`;
   }
 
-  return [
+  const lines = [
     `${sym.name}${sym.signature || ''}`,
-    `  Kind: ${sym.kind}  |  Line: ${sym.line}`,
-    `  Source: ${source.itemName}`,
-    `  Navigate: api.navigate('${source.itemId}', { symbol: '${sym.name}' })`
-  ].join('\n');
+  ];
+  if (sym.description) lines.push(`  ${sym.description}`);
+  lines.push(`  Kind: ${sym.kind}  |  Line: ${sym.line}`);
+  if (sym.params) {
+    for (const p of sym.params) {
+      const type = p.type ? ` (${p.type})` : '';
+      const desc = p.description ? ` - ${p.description}` : '';
+      lines.push(`  Param: ${p.name}${type}${desc}`);
+    }
+  }
+  if (sym.returns) {
+    const type = sym.returns.type || '';
+    const desc = sym.returns.description ? ` - ${sym.returns.description}` : '';
+    lines.push(`  Returns: ${type}${desc}`);
+  }
+  lines.push(`  Source: ${source.itemName}`);
+  lines.push(`  Navigate: api.navigate('${source.itemId}', { symbol: '${sym.name}' })`);
+  return lines.join('\n');
 }
 
 // Format help for an entire scope (all symbols at that level)
@@ -166,6 +180,7 @@ function formatScopeHelp(syms, source) {
     for (const s of groups[label].sort((a, b) => a.name.localeCompare(b.name))) {
       const scope = s.scope && s.scope !== source.scope ? ` [${s.scope}]` : '';
       lines.push(`  ${s.name}${s.signature || ''}${scope}  (line ${s.line})`);
+      if (s.description) lines.push(`    ${s.description.split('\n')[0]}`);
     }
     delete groups[label];
   }
@@ -175,6 +190,7 @@ function formatScopeHelp(syms, source) {
     lines.push(`${label}:`);
     for (const s of arr.sort((a, b) => a.name.localeCompare(b.name))) {
       lines.push(`  ${s.name}${s.signature || ''}  (line ${s.line})`);
+      if (s.description) lines.push(`    ${s.description.split('\n')[0]}`);
     }
   }
 

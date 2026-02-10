@@ -5,6 +5,7 @@ export async function extractSymbols(code, api) {
   await api.require('acorn');
   const acorn = await api.require('acorn-wrapper');
 
+  const comments = [];
   let ast;
   try {
     ast = acorn.parse(code, {
@@ -12,6 +13,7 @@ export async function extractSymbols(code, api) {
       sourceType: 'module',
       locations: true,
       allowReturnOutsideFunction: true,
+      onComment: comments,
     });
   } catch (e) {
     console.warn('Symbol extraction parse error:', e.message);
@@ -20,6 +22,7 @@ export async function extractSymbols(code, api) {
 
   const symbols = {};
   walkNode(ast, null, symbols);
+  attachJSDoc(comments, symbols);
   return symbols;
 }
 
@@ -175,4 +178,79 @@ function addSymbol(symbols, name, loc, kind, scope, signature = null) {
   };
   if (signature) info.signature = signature;
   symbols[key] = info;
+}
+
+// Parse a JSDoc comment value (the text between /** and */)
+function parseJSDoc(value) {
+  const lines = value.split('\n').map(l => l.replace(/^\s*\*\s?/, '').trimEnd());
+  // Drop empty first/last lines (from /** and */)
+  if (lines.length && lines[0].trim() === '') lines.shift();
+  if (lines.length && lines[lines.length - 1].trim() === '') lines.pop();
+
+  let description = '';
+  const params = [];
+  let returns = null;
+
+  for (const line of lines) {
+    const paramMatch = line.match(/^@param\s+(?:\{([^}]*)\}\s+)?(\[?\w+\]?)\s*(?:-\s*)?(.*)$/);
+    if (paramMatch) {
+      const p = { name: paramMatch[2].replace(/^\[|\]$/g, '') };
+      if (paramMatch[1]) p.type = paramMatch[1];
+      if (paramMatch[3]) p.description = paramMatch[3];
+      params.push(p);
+      continue;
+    }
+
+    const returnMatch = line.match(/^@returns?\s+(?:\{([^}]*)\}\s*)?(.*)$/);
+    if (returnMatch) {
+      returns = {};
+      if (returnMatch[1]) returns.type = returnMatch[1];
+      if (returnMatch[2]) returns.description = returnMatch[2];
+      continue;
+    }
+
+    // Skip other @ tags
+    if (/^@\w/.test(line)) continue;
+
+    // Accumulate description (lines before any @tag)
+    if (params.length === 0 && !returns) {
+      description += (description ? '\n' : '') + line;
+    }
+  }
+
+  const result = {};
+  description = description.trim();
+  if (description) result.description = description;
+  if (params.length) result.params = params;
+  if (returns) result.returns = returns;
+  return result;
+}
+
+// Attach JSDoc comments to the nearest symbol that follows them
+function attachJSDoc(comments, symbols) {
+  // Filter to JSDoc block comments (start with *)
+  const jsdocs = comments.filter(c => c.type === 'Block' && c.value.startsWith('*'));
+  if (!jsdocs.length) return;
+
+  // Build array of symbols sorted by line
+  const symEntries = Object.values(symbols);
+  if (!symEntries.length) return;
+
+  for (const comment of jsdocs) {
+    const commentEndLine = comment.loc.end.line;
+    // Find the symbol whose start line is closest after the comment end (within 1-line gap)
+    let best = null;
+    for (const sym of symEntries) {
+      const gap = sym.line - commentEndLine;
+      if (gap >= 0 && gap <= 1) {
+        if (!best || sym.line < best.line) best = sym;
+      }
+    }
+    if (!best) continue;
+
+    const parsed = parseJSDoc(comment.value);
+    if (parsed.description) best.description = parsed.description;
+    if (parsed.params) best.params = parsed.params;
+    if (parsed.returns) best.returns = parsed.returns;
+  }
 }
