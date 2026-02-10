@@ -1,4 +1,4 @@
-// REPL introspection — dir(), help(), symbols()
+// REPL introspection — dir(), help(), symbols(), symbolSearch()
 
 let _api = null;
 
@@ -7,6 +7,7 @@ export async function onKernelBootComplete(payload, api) {
   window.dir = dir;
   window.help = help;
   window.symbols = symbols;
+  window.symbolSearch = symbolSearch;
 }
 
 // --- dir(obj) — synchronous ---
@@ -230,6 +231,66 @@ async function symbols(nameOrId) {
     lines.push(`${kind}:`);
     for (const s of arr.sort((a, b) => a.line - b.line)) {
       lines.push(`  ${s.name}${s.signature || ''}  (line ${s.line})${s.scope ? ` [${s.scope}]` : ''}`);
+    }
+  }
+
+  return lines.join('\n');
+}
+
+// --- symbolSearch(pattern, options?) — async ---
+// Cross-item symbol search. Scans _symbols across all code items.
+// pattern: string (case-insensitive substring) or RegExp
+// options: { kind?, scope?, limit? }
+async function symbolSearch(pattern, options = {}) {
+  if (!_api) return 'symbolSearch() not ready \u2014 wait for boot';
+  if (!pattern) return 'Usage: await symbolSearch("name") or await symbolSearch(/pattern/, { kind: "function" })';
+
+  const isRegex = pattern instanceof RegExp;
+  const test = isRegex
+    ? (name) => pattern.test(name)
+    : (name) => name.toLowerCase().includes(pattern.toLowerCase());
+
+  const { kind, scope, limit = 50 } = options;
+
+  const allItems = await _api.getAll();
+  const matches = []; // { itemName, itemId, sym }
+
+  for (const item of allItems) {
+    const syms = item.content?._symbols;
+    if (!syms) continue;
+
+    for (const sym of Object.values(syms)) {
+      if (!test(sym.name)) continue;
+      if (kind && sym.kind !== kind) continue;
+      if (scope !== undefined && sym.scope !== scope) continue;
+      matches.push({ itemName: item.name || item.id, itemId: item.id, sym });
+    }
+  }
+
+  if (matches.length === 0) {
+    return `No symbols matching "${pattern}" found.`;
+  }
+
+  // Group by item
+  const byItem = new Map();
+  for (const m of matches) {
+    (byItem.get(m.itemId) ?? (() => { const a = []; byItem.set(m.itemId, a); return a; })()).push(m);
+  }
+
+  const truncated = matches.length > limit;
+  const lines = [`Symbol search: ${isRegex ? pattern : `"${pattern}"`} (${matches.length} match${matches.length === 1 ? '' : 'es'} across ${byItem.size} item${byItem.size === 1 ? '' : 's'})${truncated ? ` \u2014 showing first ${limit}` : ''}`];
+  lines.push('');
+
+  let shown = 0;
+  for (const [itemId, itemMatches] of byItem) {
+    if (shown >= limit) break;
+    lines.push(`${itemMatches[0].itemName}:`);
+    for (const m of itemMatches.sort((a, b) => a.sym.line - b.sym.line)) {
+      if (shown >= limit) break;
+      const s = m.sym;
+      const scopeHint = s.scope ? ` [${s.scope}]` : '';
+      lines.push(`  ${s.name}${s.signature || ''}  ${s.kind}  (line ${s.line})${scopeHint}`);
+      shown++;
     }
   }
 
