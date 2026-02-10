@@ -52,6 +52,32 @@ export async function render(item, api) {
     resultsArea.appendChild(row.el);
   }
 
+  // Helper to update summary bar from totals
+  function updateSummary(totalPassed, totalFailed, timestamp) {
+    const total = totalPassed + totalFailed;
+    const ago = timestamp ? ' \u00b7 ' + formatTimeAgo(timestamp) : '';
+    if (totalFailed === 0) {
+      summaryBar.textContent = `All ${total} passed${ago}`;
+      summaryBar.style.color = '#22c55e';
+    } else {
+      summaryBar.textContent = `${totalPassed}/${total} passed, ${totalFailed} failed${ago}`;
+      summaryBar.style.color = '#ef4444';
+    }
+  }
+
+  // Restore last run results if available
+  const lastRun = item.content?.lastRun;
+  if (lastRun && lastRun.suites) {
+    const byId = new Map(lastRun.suites.map(s => [s.testItemId, s]));
+    for (const row of rows) {
+      const saved = byId.get(row.testItem.id);
+      if (saved) {
+        row.setResults(saved.results, saved.passed, saved.failed);
+      }
+    }
+    updateSummary(lastRun.totalPassed, lastRun.totalFailed, lastRun.timestamp);
+  }
+
   // Run all handler
   runAllBtn.addEventListener('click', async () => {
     runAllBtn.disabled = true;
@@ -64,6 +90,7 @@ export async function render(item, api) {
 
     let totalPassed = 0;
     let totalFailed = 0;
+    const suites = [];
 
     for (const row of rows) {
       row.setStatus('running');
@@ -74,21 +101,24 @@ export async function render(item, api) {
         totalPassed += passed;
         totalFailed += failed;
         row.setResults(results, passed, failed);
+        suites.push({ testItemId: row.testItem.id, testItemName: row.testItem.name, passed, failed, results });
       } catch (e) {
         totalFailed += 1;
-        row.setResults([{ name: row.testItem.name, passed: false, error: e.message }], 0, 1);
+        const results = [{ name: row.testItem.name, passed: false, error: e.message }];
+        row.setResults(results, 0, 1);
+        suites.push({ testItemId: row.testItem.id, testItemName: row.testItem.name, passed: 0, failed: 1, results });
       }
     }
 
     // Update summary
-    const total = totalPassed + totalFailed;
-    if (totalFailed === 0) {
-      summaryBar.textContent = `All ${total} passed`;
-      summaryBar.style.color = '#22c55e';
-    } else {
-      summaryBar.textContent = `${totalPassed}/${total} passed, ${totalFailed} failed`;
-      summaryBar.style.color = '#ef4444';
-    }
+    const now = Date.now();
+    updateSummary(totalPassed, totalFailed, now);
+
+    // Persist results to item
+    const updated = await api.get(item.id);
+    updated.content = updated.content || {};
+    updated.content.lastRun = { timestamp: now, totalPassed, totalFailed, suites };
+    await api.set(updated, { silent: true });
 
     runAllBtn.disabled = false;
     runAllBtn.style.opacity = '1';
@@ -219,6 +249,17 @@ function createTestRow(testItem, api) {
       detailsContainer.appendChild(listEl);
     }
   };
+}
+
+function formatTimeAgo(timestamp) {
+  const seconds = Math.floor((Date.now() - timestamp) / 1000);
+  if (seconds < 60) return 'just now';
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
 }
 
 async function runTestItem(testItem, api, testArea) {
