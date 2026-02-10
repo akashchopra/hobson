@@ -1,4 +1,5 @@
 let api = null;
+let cachedSearchItemId = null;
 
 const MODAL_FRAME_ID = 'b0b0b0b0-0002-0000-0000-000000000000';
 const MODAL_FRAME_VIEW_ID = 'b0b0b0b0-0001-0000-0000-000000000000';
@@ -24,26 +25,31 @@ export async function show(_api) {
   // Remove existing modal if present
   hide();
 
-  // Find the Item Search item
-  const searchItems = await api.query({ type: ITEM_SEARCH_TYPE_ID });
-  if (searchItems.length === 0) {
-    console.warn('item-palette: no item-search item found');
-    return;
+  // Find the Item Search item (cache ID to avoid full scan on repeat opens)
+  if (!cachedSearchItemId) {
+    const searchItems = await api.query({ type: ITEM_SEARCH_TYPE_ID });
+    if (searchItems.length === 0) {
+      console.warn('item-palette: no item-search item found');
+      return;
+    }
+    cachedSearchItemId = searchItems[0].id;
   }
-  const searchItem = searchItems[0];
 
-  // Reset search state so modal opens fresh and clears stale results in background
+  // Fetch search item and frame in parallel
+  const [searchItem, frame] = await Promise.all([
+    api.get(cachedSearchItemId),
+    api.get(MODAL_FRAME_ID)
+  ]);
+
+  // Reset search state and set frame attachment
   searchItem.content = { ...searchItem.content, currentQuery: '' };
   searchItem.attachments = [];
   searchItem.modified = Date.now();
-  await api.set(searchItem);
-  await api.rerenderItem(searchItem.id);
-
-  // Set the Modal Frame's attachment to the Item Search
-  const frame = await api.get(MODAL_FRAME_ID);
   frame.attachments = [{ id: searchItem.id }];
   frame.modified = Date.now();
-  await api.set(frame);
+
+  // Save both in parallel
+  await Promise.all([api.set(searchItem), api.set(frame)]);
 
   // Build a siblingContainer appropriate for the current root view.
   // Spatial canvas: attach + rerender (opens as a window).

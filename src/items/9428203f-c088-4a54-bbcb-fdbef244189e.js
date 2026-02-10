@@ -1,5 +1,8 @@
 
 
+// Cache compact-card-view ID across renders (survives module cache clear via globalThis)
+if (!globalThis.__compactCardViewId) globalThis.__compactCardViewId = null;
+
 export async function render(search, api) {
   const searchLib = await api.require('item-search-lib');
 
@@ -41,9 +44,13 @@ export async function render(search, api) {
   const resultsArea = api.createElement('div', {}, []);
   container.appendChild(resultsArea);
 
-  // Find compact_card_view for rendering results (default view)
-  const compactViews = await api.query({ name: 'compact-card-view' });
-  const compactViewId = compactViews[0]?.id || null;
+  // Find compact_card_view (cached to avoid full DB scan each time)
+  let compactViewId = globalThis.__compactCardViewId;
+  if (!compactViewId) {
+    const compactViews = await api.query({ name: 'compact-card-view' });
+    compactViewId = compactViews[0]?.id || null;
+    globalThis.__compactCardViewId = compactViewId;
+  }
 
   // Cycle handler - returns a clickable card for items in render path
   const onCycle = (cycleItem) => {
@@ -163,17 +170,15 @@ export async function render(search, api) {
 
       const resultsList = api.createElement('div', {}, []);
 
-      for (const childSpec of attachments) {
+      // Render all cards in parallel for performance
+      const cardPromises = attachments.map(async (childSpec) => {
         const childId = typeof childSpec === 'string' ? childSpec : childSpec.id;
-        // Respect per-child view override (from "Display As..."), fall back to compact view
         const childViewId = (typeof childSpec === 'object' && childSpec.view?.type) ? childSpec.view.type : compactViewId;
 
         try {
           const childNode = await api.renderItem(childId, childViewId, { onCycle });
-          // data-item-id is set automatically by api.renderItem()
           childNode.setAttribute('data-parent-id', search.id);
 
-          // Starred items navigate to root instead of opening as siblings
           if (isStarred) {
             childNode.addEventListener('click', (e) => {
               e.stopPropagation();
@@ -183,14 +188,16 @@ export async function render(search, api) {
             }, true);
           }
 
-          resultsList.appendChild(childNode);
+          return childNode;
         } catch (err) {
-          const errorNode = api.createElement('div', {
+          return api.createElement('div', {
             style: 'padding: 12px; margin-bottom: 8px; color: var(--color-danger); border: 1px solid var(--color-danger); border-radius: var(--border-radius); background: var(--color-danger-light);'
           }, ['Error loading item: ' + childId]);
-          resultsList.appendChild(errorNode);
         }
-      }
+      });
+
+      const cards = await Promise.all(cardPromises);
+      for (const card of cards) resultsList.appendChild(card);
 
       resultsArea.appendChild(resultsList);
     }
@@ -215,11 +222,12 @@ export async function render(search, api) {
     await renderResults();
   };
 
-  // Initial render — fetch starred items if no saved query, otherwise render saved results
+  // Defer initial starred items load — modal appears immediately, results fill in after.
+  // executeSearch mutates resultsArea which is already in the returned DOM tree.
   if (!search.content?.currentQuery) {
-    await executeSearch('');
+    executeSearch('');
   } else {
-    await renderResults();
+    renderResults();
   }
 
   input.oninput = (e) => {
@@ -239,10 +247,8 @@ export async function render(search, api) {
     searchTimeout = setTimeout(() => executeSearch(query), 300);
   };
 
-  // Auto-focus if no query yet
-  if (!search.content?.currentQuery) {
-    setTimeout(() => input.focus(), 0);
-  }
+  // Auto-focus
+  setTimeout(() => input.focus(), 0);
 
   return container;
 }
