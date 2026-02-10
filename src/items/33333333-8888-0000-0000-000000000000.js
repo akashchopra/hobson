@@ -432,6 +432,17 @@ body {
   white-space: pre-wrap;
 }
 
+.repl-entry-console {
+  font-family: 'SF Mono', Monaco, 'Courier New', monospace;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  white-space: pre-wrap;
+  margin-bottom: 4px;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--color-border);
+  opacity: 0.8;
+}
+
 .repl-entry-output {
   font-family: 'SF Mono', Monaco, 'Courier New', monospace;
   font-size: 12px;

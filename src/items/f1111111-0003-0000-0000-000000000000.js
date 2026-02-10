@@ -353,7 +353,7 @@ function setupVerticalSplitter(splitter, inputSection, outputSection, container)
   document.addEventListener('mouseup', _verticalSplitterUpHandler);
 }
 
-function addTranscriptEntry(code, result, error) {
+function addTranscriptEntry(code, result, error, consoleLines) {
   const container = document.getElementById('repl-transcript-entries');
   if (!container) return;
 
@@ -364,6 +364,14 @@ function addTranscriptEntry(code, result, error) {
   codeDiv.className = 'repl-entry-code';
   codeDiv.textContent = '> ' + code;
   entry.appendChild(codeDiv);
+
+  // Show captured console output
+  if (consoleLines && consoleLines.length > 0) {
+    const consoleDiv = document.createElement('div');
+    consoleDiv.className = 'repl-entry-console';
+    consoleDiv.textContent = consoleLines.join('\n');
+    entry.appendChild(consoleDiv);
+  }
 
   const outputDiv = document.createElement('div');
   outputDiv.className = error ? 'repl-entry-error' : 'repl-entry-output';
@@ -392,6 +400,16 @@ export async function run() {
     }
   }
   historyIndex = history.length;
+
+  // Intercept console methods to capture output
+  const consoleLines = [];
+  const origLog = console.log;
+  const origWarn = console.warn;
+  const origError = console.error;
+  const formatArgs = (args) => args.map(a => typeof a === 'string' ? a : JSON.stringify(a, null, 2)).join(' ');
+  console.log = (...args) => { origLog(...args); consoleLines.push(formatArgs(args)); };
+  console.warn = (...args) => { origWarn(...args); consoleLines.push(`[warn] ${formatArgs(args)}`); };
+  console.error = (...args) => { origError(...args); consoleLines.push(`[error] ${formatArgs(args)}`); };
 
   try {
     // Try to auto-return expression results (so users don't need explicit "return")
@@ -422,12 +440,16 @@ export async function run() {
       resultStr = JSON.stringify(result, null, 2);
     }
 
-    addTranscriptEntry(code, resultStr, null);
+    addTranscriptEntry(code, resultStr, null, consoleLines);
     input.value = '';
 
   } catch (error) {
     const errorStr = `Error: ${error.message}\n${error.stack}`;
-    addTranscriptEntry(code, null, errorStr);
+    addTranscriptEntry(code, null, errorStr, consoleLines);
+  } finally {
+    console.log = origLog;
+    console.warn = origWarn;
+    console.error = origError;
   }
 }
 // [END:run]
