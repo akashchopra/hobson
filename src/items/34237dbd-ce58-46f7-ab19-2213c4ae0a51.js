@@ -126,14 +126,14 @@ async function renderSection(sectionLabel, groups, related, api, context) {
         continue;
       }
     }
-    const group = await renderGroup(label, ids, api);
+    const group = await renderGroup(label, ids, api, { fullyQualified: key === 'tags' });
     section.appendChild(group);
   }
 
   return section;
 }
 
-async function renderGroup(label, ids, api) {
+async function renderGroup(label, ids, api, opts = {}) {
   const group = api.createElement('div', {
     style: 'margin-bottom: 12px;'
   }, []);
@@ -149,20 +149,24 @@ async function renderGroup(label, ids, api) {
 
   const uniqueIds = [...new Set(ids)];
 
-  // Sort alphabetically by item name
+  // Resolve display names (fully qualified for tags)
   const nameMap = new Map();
   for (const id of uniqueIds) {
-    let it;
-    try { it = await api.get(id); } catch (e) { it = null; }
-    nameMap.set(id, (it?.name || '').toLowerCase());
+    if (opts.fullyQualified) {
+      nameMap.set(id, await getFullyQualifiedName(id, api));
+    } else {
+      let it;
+      try { it = await api.get(id); } catch (e) { it = null; }
+      nameMap.set(id, it?.name || '');
+    }
   }
-  uniqueIds.sort((a, b) => nameMap.get(a).localeCompare(nameMap.get(b)));
+  uniqueIds.sort((a, b) => nameMap.get(a).toLowerCase().localeCompare(nameMap.get(b).toLowerCase()));
 
   const truncated = uniqueIds.length > TRUNCATE_LIMIT;
   const displayIds = truncated ? uniqueIds.slice(0, TRUNCATE_LIMIT) : uniqueIds;
 
   for (const id of displayIds) {
-    const link = await renderItemLink(id, api);
+    const link = await renderItemLink(id, api, opts.fullyQualified ? nameMap.get(id) : undefined);
     list.appendChild(link);
   }
 
@@ -190,6 +194,22 @@ async function buildTagPath(tagId, rootId, api) {
   return parts.join('/');
 }
 
+async function getFullyQualifiedName(itemId, api) {
+  const parts = [];
+  let currentId = itemId;
+  const seen = new Set();
+  while (currentId) {
+    if (seen.has(currentId)) break;
+    seen.add(currentId);
+    let item;
+    try { item = await api.get(currentId); } catch (e) { break; }
+    if (!item) break;
+    parts.unshift(item.name || currentId.substring(0, 8));
+    currentId = item.content?.parent;
+  }
+  return parts.join('/');
+}
+
 async function renderTaggedWithGrouped(label, tagGroups, selectedId, api) {
   const group = api.createElement('div', {
     style: 'margin-bottom: 12px;'
@@ -200,12 +220,8 @@ async function renderTaggedWithGrouped(label, tagGroups, selectedId, api) {
   }, [label]);
   group.appendChild(groupLabel);
 
-  // Get root tag name for full path display
-  let rootName;
-  try {
-    const rootItem = await api.get(selectedId);
-    rootName = rootItem?.name || selectedId.substring(0, 8);
-  } catch (e) { rootName = selectedId.substring(0, 8); }
+  // Get fully qualified root tag name for full path display
+  const rootName = await getFullyQualifiedName(selectedId, api);
 
   for (const { tagId, items } of tagGroups) {
     const path = tagId === selectedId
@@ -256,7 +272,7 @@ async function renderTaggedWithGrouped(label, tagGroups, selectedId, api) {
   return group;
 }
 
-async function renderItemLink(itemId, api) {
+async function renderItemLink(itemId, api, displayName) {
   let item;
   try { item = await api.get(itemId); } catch (e) { item = null; }
 
@@ -274,7 +290,7 @@ async function renderItemLink(itemId, api) {
 
   const name = api.createElement('span', {
     style: 'color: var(--color-link, #2563eb); font-size: 13px;'
-  }, [item.name || itemId.substring(0, 8)]);
+  }, [displayName || item.name || itemId.substring(0, 8)]);
   row.appendChild(name);
 
   // Show type name in muted text
