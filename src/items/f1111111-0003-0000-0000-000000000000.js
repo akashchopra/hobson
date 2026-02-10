@@ -381,10 +381,20 @@ export async function run() {
   historyIndex = history.length;
 
   try {
+    // Try to auto-return expression results (so users don't need explicit "return")
+    let execCode = code;
+    const trimmed = code.replace(/;\s*$/, '');
+    try {
+      new Function('api', `return (async () => { return (${trimmed}); })()`);
+      execCode = `return (${trimmed})`;
+    } catch (e) {
+      // Not a simple expression — run as statements
+    }
+
     // Wrap in async function to allow await
     const asyncFn = new Function('api', `
       return (async () => {
-        ${code}
+        ${execCode}
       })();
     `);
 
