@@ -7,6 +7,7 @@ export class ModuleSystem {
     this.moduleCache = new Map(); // itemId -> { module, timestamp, name }
     this.nameCache = new Map(); // name -> itemId (cached name resolution)
     this.loadingPromises = new Map(); // itemId -> Promise (tracks in-flight loads)
+    this.moduleMetadata = new WeakMap(); // module object → { itemId, itemName }
   }
 
   // Initialize event listeners for cache invalidation
@@ -87,6 +88,7 @@ export class ModuleSystem {
         timestamp: item.modified,
         name: originalName
       });
+      try { this.moduleMetadata.set(module, { itemId: item.id, itemName: item.name || item.id }); } catch(e) { /* non-extensible */ }
       return module;
     })().finally(() => {
       // Always clean up in-flight tracking
@@ -200,6 +202,11 @@ export class ModuleSystem {
       }
     }
     return null;
+  }
+
+  getModuleInfo(obj) {
+    if (!obj || typeof obj !== 'object') return null;
+    return this.moduleMetadata.get(obj) || null;
   }
 
   clearCache() {
