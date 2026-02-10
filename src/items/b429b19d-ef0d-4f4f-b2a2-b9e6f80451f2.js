@@ -38,36 +38,28 @@ function setNestedValue(obj, path, value) {
 // [BEGIN:returnToDefaultView]
 // Helper to return to default view for an item
 async function returnToDefaultView(itemId, api) {
-  console.log('[returnToDefaultView] itemId:', itemId);
   // Try restorePreviousView first
   const restored = await api.restorePreviousView(itemId);
-  console.log('[returnToDefaultView] restorePreviousView returned:', restored);
   if (restored) return;
 
   // Fallback: clear view override and re-render
   // Check if item is the viewport root (not just if it has a data parent)
   const isViewportRoot = api.viewport.getRoot() === itemId;
-  console.log('[returnToDefaultView] fallback, isViewportRoot:', isViewportRoot);
   if (isViewportRoot) {
     // It's the viewport root - clear root view override
-    console.log('[returnToDefaultView] clearing viewport root view');
     await api.viewport.setRootView(null);
     // Root view change needs full re-render
-    console.log('[returnToDefaultView] navigating to:', api.viewport.getRoot());
     await api.navigate(api.viewport.getRoot());
   } else {
     // It's a child - use rendering parent from context, fall back to data hierarchy
     const renderingParentId = api.getParentId ? api.getParentId() : null;
-    console.log('[returnToDefaultView] renderingParentId:', renderingParentId);
     const parent = renderingParentId
       ? await api.get(renderingParentId)
       : await api.findContainerOf(itemId);
-    console.log('[returnToDefaultView] clearing child view, parent:', parent?.id);
     if (parent) {
       await api.setAttachmentView(parent.id, itemId, null);
     }
     // Re-render just this item (preserves sibling scroll positions)
-    console.log('[returnToDefaultView] re-rendering item:', itemId);
     await api.rerenderItem(itemId);
   }
 }
@@ -99,8 +91,6 @@ export async function render(item, api) {
   // Get navigation params for scroll-to-line/region support
   // Try context first (sibling navigation), then URL params (root navigation)
   const navigateTo = (api.getNavigateTo ? api.getNavigateTo() : null) || getNavigateToFromURL();
-  console.log('[generic-view] navigateTo:', navigateTo, 'for item:', item.name || item.id);
-
   // Render each field according to ui_hints
   for (const [path, hint] of Object.entries(uiHints)) {
     if (hint.hidden) continue;
@@ -151,10 +141,6 @@ export async function render(item, api) {
       navigateTo.field === fieldName ||
       (navigateTo.symbol && !navigateTo.field && fieldName === 'code')
     );
-    if (fieldName === 'code') {
-      console.log('[generic-view] code field - isNavigationTarget:', isNavigationTarget, 'scrollToLines:', isNavigationTarget ? navigateTo.lines : null);
-    }
-
     // Render field - AWAIT in case it's async!
     let fieldElement;
     try {
@@ -223,7 +209,6 @@ export async function render(item, api) {
       try {
         await api.set(editedItem);
         await api.rerenderItem(editedItem.id);
-        console.log('Saved successfully');
       } catch (e) {
         alert('Save failed: ' + e.message);
       }

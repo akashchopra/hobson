@@ -201,7 +201,6 @@ export async function render(item, api) {
 
     // === Create window for a child ===
     const createWindowForChild = async (childId, childView = {}, navigateTo = null) => {
-      console.log('[spatial-canvas] createWindowForChild:', childId, 'navigateTo:', navigateTo);
       const containerRect = container.getBoundingClientRect();
       const containerWidth = containerRect.width || 1000;
       const containerHeight = containerRect.height || 600;

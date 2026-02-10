@@ -450,26 +450,41 @@ export async function loadKernel(require, storageBackend) {
       const mainView = this.rootElement.querySelector('#main-view');
       if (!mainView) return;
 
+      // Re-entrancy guard: if already rendering, queue a single re-render
+      if (this._renderingViewport) {
+        this._pendingViewportRender = true;
+        return;
+      }
+
+      this._renderingViewport = true;
       try {
-        // Clean up resources in existing DOM tree before removing it
-        this.rendering.cleanupDOMTree(mainView);
+        do {
+          this._pendingViewportRender = false;
 
-        // Clear stale render instances before full re-render
-        this.rendering.registry.clear();
+          try {
+            // Clean up resources in existing DOM tree before removing it
+            this.rendering.cleanupDOMTree(mainView);
 
-        // Render the viewport item itself
-        // The viewport renderer will show the root or empty state
-        const dom = await this.rendering.renderItem(IDS.VIEWPORT);
-        mainView.innerHTML = '';
-        mainView.appendChild(dom);
-      } catch (error) {
-        mainView.innerHTML = `
-          <div class="render-error">
-            <h3>Render Error</h3>
-            <pre>${error.message}</pre>
-            <pre>${error.stack}</pre>
-          </div>
-        `;
+            // Clear stale render instances before full re-render
+            this.rendering.registry.clear();
+
+            // Render the viewport item itself
+            // The viewport renderer will show the root or empty state
+            const dom = await this.rendering.renderItem(IDS.VIEWPORT);
+            mainView.innerHTML = '';
+            mainView.appendChild(dom);
+          } catch (error) {
+            mainView.innerHTML = `
+              <div class="render-error">
+                <h3>Render Error</h3>
+                <pre>${error.message}</pre>
+                <pre>${error.stack}</pre>
+              </div>
+            `;
+          }
+        } while (this._pendingViewportRender);
+      } finally {
+        this._renderingViewport = false;
       }
     }
 
@@ -890,6 +905,16 @@ export async function loadKernel(require, storageBackend) {
           return item.id;
         },
         delete: (id) => kernel.deleteItem(id),
+        // Batch-delete all items whose ID starts with prefix (e.g., nested instance cleanup)
+        // Skips per-item events/renders — does one cache clear + render at the end
+        deleteByPrefix: async (prefix) => {
+          const count = await kernel.storage.deleteByPrefix(prefix);
+          if (count > 0) {
+            kernel.moduleSystem.clearCache();
+            await kernel.renderViewport();
+          }
+          return count;
+        },
         query: (filter) => kernel.storage.query(filter),
         getAll: () => kernel.storage.getAll(),
         getAllRaw: () => kernel.storage.getAllRaw(),
@@ -1446,7 +1471,7 @@ export async function loadKernel(require, storageBackend) {
       };
 
       // Save silently without triggering re-render
-      await this.saveItem(updated);
+      await this.saveItem(updated, { silent: true });
     }
 
     async detach(parentId, itemId) {
@@ -1455,8 +1480,8 @@ export async function loadKernel(require, storageBackend) {
         ...parent,
         attachments: parent.attachments.filter(c => c.id !== itemId)
       };
-      // Save silently without triggering re-render (consistent with addChild)
-      await this.saveItem(updated);
+      // Save silently without triggering re-render (consistent with attach)
+      await this.saveItem(updated, { silent: true });
     }
 
     async setAttachmentView(parentId, itemId, viewId) {
@@ -1596,8 +1621,10 @@ export async function loadKernel(require, storageBackend) {
       // Emit deletion event
       this.events.emit({ type: EVENT_IDS.ITEM_DELETED, content: { id: itemId, item } });
 
-      // Clear module cache
-      this.moduleSystem.clearCache();
+      // Clear module cache only if this was a code item
+      if (await this.isCodeItem(item)) {
+        this.moduleSystem.clearCache();
+      }
 
       // Re-render viewport (userland will handle navigation if needed)
       await this.renderViewport();
