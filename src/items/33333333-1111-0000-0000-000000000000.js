@@ -359,12 +359,13 @@ export async function loadKernel(require, storageBackend) {
       this.watcherIndex = new Set();
 
       try {
-        // Find all items that extend event-definition
+        // Load all items once, then do sync lookups (avoids O(N×M) async calls)
         const allItems = await this.storage.getAll();
+        const itemMap = new Map(allItems.map(i => [i.id, i]));
         const eventDefs = [];
 
         for (const item of allItems) {
-          if (await this.moduleSystem.typeChainIncludes(item.type, EVENT_IDS.EVENT_DEFINITION)) {
+          if (this._typeChainIncludesSync(item.type, EVENT_IDS.EVENT_DEFINITION, itemMap)) {
             eventDefs.push(item);
           }
           // Also include the event-definition type itself
@@ -380,7 +381,7 @@ export async function loadKernel(require, storageBackend) {
 
         // For each event definition, compute its full type chain and cache name
         for (const eventDef of eventDefs) {
-          const ancestors = await this.getTypeChain(eventDef.id);
+          const ancestors = this._getTypeChainSync(eventDef.id, itemMap);
           this.eventTypeCache.set(eventDef.id, {
             ancestors: new Set(ancestors),
             name: eventDef.name  // e.g., "item:created", "error-event"
@@ -391,6 +392,52 @@ export async function loadKernel(require, storageBackend) {
         // This is fine during early boot
         console.debug('Event type cache: no event definitions found yet');
       }
+    }
+
+    // Sync version of moduleSystem.typeChainIncludes using pre-loaded itemMap
+    _typeChainIncludesSync(typeId, targetId, itemMap) {
+      const chain = [];
+      let current = typeId;
+      const visited = new Set();
+
+      while (current && !visited.has(current)) {
+        chain.push(current);
+        visited.add(current);
+        if (current === IDS.ITEM) break;
+
+        const typeItem = itemMap.get(current);
+        if (!typeItem) break;
+
+        if (typeItem.extends) {
+          current = typeItem.extends;
+        } else {
+          if (typeItem.type === IDS.TYPE_DEFINITION) break;
+          current = typeItem.type;
+        }
+      }
+
+      return chain.includes(targetId);
+    }
+
+    // Sync version of getTypeChain using pre-loaded itemMap
+    _getTypeChainSync(itemId, itemMap) {
+      const chain = [itemId];
+      let currentId = itemId;
+      const visited = new Set();
+
+      while (currentId && !visited.has(currentId)) {
+        visited.add(currentId);
+        const item = itemMap.get(currentId);
+        if (!item) break;
+        if (item.type && item.type !== currentId) {
+          chain.push(item.type);
+          currentId = item.type;
+        } else {
+          break;
+        }
+      }
+
+      return chain;
     }
 
     async getTypeChain(itemId) {

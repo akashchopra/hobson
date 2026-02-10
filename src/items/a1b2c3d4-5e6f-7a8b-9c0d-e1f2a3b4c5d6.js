@@ -87,6 +87,8 @@ const applyLineRange = (text, linesParam, baseStartLine = 1) => {
   return { text: lines.slice(start, end).join('\n'), startLine: baseStartLine + start };
 };
 
+let _perfCounter = 0;
+
 /**
  * Render markdown with Hobson extensions.
  * @param {string} markdown - The markdown text to render
@@ -95,17 +97,18 @@ const applyLineRange = (text, linesParam, baseStartLine = 1) => {
  */
 export async function render(markdown, api, options = {}) {
   const perf = window.hobsonPerf;
+  const perfId = ++_perfCounter;
   const md = markdown || '';
 
   // Load markdown-it (reuse if passed from parent render)
   let markdownit = options.markdownit;
   if (!markdownit) {
-    perf?.mark('md-require-start');
+    perf?.mark(`md-require-${perfId}-start`);
     await api.require('markdown-it');
     const markdownitModule = await api.require('markdown-it-wrapper');
     markdownit = markdownitModule.default;
-    perf?.mark('md-require-end');
-    perf?.measure('md-require', 'md-require-start', 'md-require-end');
+    perf?.mark(`md-require-${perfId}-end`);
+    perf?.measure(`md-require-${perfId}`, `md-require-${perfId}-start`, `md-require-${perfId}-end`);
   }
 
   // Configure link rendering for item:// links and external links
@@ -132,10 +135,10 @@ export async function render(markdown, api, options = {}) {
   };
 
   // Render markdown to HTML
-  perf?.mark('md-parse-start');
+  perf?.mark(`md-parse-${perfId}-start`);
   let html = markdownit.render(md);
-  perf?.mark('md-parse-end');
-  perf?.measure('md-parse', 'md-parse-start', 'md-parse-end');
+  perf?.mark(`md-parse-${perfId}-end`);
+  perf?.measure(`md-parse-${perfId}`, `md-parse-${perfId}-start`, `md-parse-${perfId}-end`);
 
   // Process region markers: emit invisible anchor spans for [BEGIN:name] markers
   // This allows scroll-to-region navigation in rendered markdown

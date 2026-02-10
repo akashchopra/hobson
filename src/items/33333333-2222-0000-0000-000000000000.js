@@ -7,6 +7,8 @@
 export class Storage {
   constructor(backend) {
     this.backend = backend;
+    this._cache = new Map();
+    this._allCached = false;
   }
 
   get instanceId() {
@@ -18,28 +20,58 @@ export class Storage {
   }
 
   async get(id) {
+    const cached = this._cache.get(id);
+    if (cached) return cached;
     const result = await this.backend.get(id);
     if (!result) {
       throw new Error(`Item not found: ${id}`);
     }
+    this._cache.set(id, result);
     return result;
   }
 
   async set(item, kernel) {
     await this._validateItem(item, kernel);
-    return this.backend.set(item);
+    await this.backend.set(item);
+    this._cache.set(item.id, item);
   }
 
   async delete(id) {
+    this._cache.delete(id);
     return this.backend.delete(id);
   }
 
   async query(filter) {
+    if (this._allCached) {
+      // Match backend behavior: exclude nested instance items (have ':' in ID)
+      const items = [];
+      for (const item of this._cache.values()) {
+        if (!item.id.includes(':')) items.push(item);
+      }
+      return items.filter(item => {
+        for (const [key, value] of Object.entries(filter)) {
+          if (item[key] !== value) return false;
+        }
+        return true;
+      });
+    }
     return this.backend.query(filter);
   }
 
   async getAll() {
-    return this.backend.getAll();
+    if (this._allCached) {
+      const items = [];
+      for (const item of this._cache.values()) {
+        if (!item.id.includes(':')) items.push(item);
+      }
+      return items;
+    }
+    const items = await this.backend.getAll();
+    for (const item of items) {
+      this._cache.set(item.id, item);
+    }
+    this._allCached = true;
+    return items;
   }
 
   async getAllRaw() {
@@ -59,6 +91,7 @@ export class Storage {
   }
 
   async exists(id) {
+    if (this._cache.has(id)) return true;
     try {
       await this.get(id);
       return true;
