@@ -71,10 +71,8 @@ export async function loadKernel(require, storageBackend) {
       }
     }
 
-    /** Emit an event and await all async handlers (including declarative watchers).
-     * Use this instead of emit() when handlers must complete before continuing
-     * (e.g., cascade delete on item:deleted).
-     * @param {Object} event - Event object with {type: eventTypeGUID, content: {...}}
+    /** Get all event type GUIDs that have active listeners.
+     * @returns {string[]} Array of event type GUIDs
      */
     async emitAsync(event) {
       const eventWithTimestamp = {
@@ -105,9 +103,6 @@ export async function loadKernel(require, storageBackend) {
       await Promise.allSettled(promises);
     }
 
-    /** Get all event type GUIDs that have active listeners.
-     * @returns {string[]} Array of event type GUIDs
-     */
     getRegisteredEvents() {
       return [...this.listeners.keys()];
     }

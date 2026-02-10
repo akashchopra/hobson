@@ -8,7 +8,7 @@ export async function showTypePicker(api) {
   const modalLib = await api.require('modal-lib');
 
   const allItems = await api.getAll();
-  allItems.sort((a,b) => a.name.localeCompare(b.name));
+  allItems.sort((a,b) => (a.name || a.id).localeCompare(b.name || b.id));
   const types = allItems.filter(i => i.type === api.IDS.TYPE_DEFINITION);
 
   return new Promise((resolve) => {

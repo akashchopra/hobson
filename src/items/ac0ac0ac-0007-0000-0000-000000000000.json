@@ -3,7 +3,7 @@
   "name": "symbol-browser-view",
   "type": "aaaaaaaa-0000-0000-0000-000000000000",
   "created": 1739145600000,
-  "modified": 1770736933619,
+  "modified": 1770736945420,
   "content": {
     "for_type": "ac0ac0ac-0006-0000-0000-000000000000",
     "displayName": "Symbol Browser",
@@ -12,7 +12,519 @@
       "write"
     ],
     "code": "// Symbol Browser view — searchable UI for browsing _symbols across all code items\n\nexport async function render(browser, api) {\n  const container = api.createElement('div', {\n    class: 'symbol-browser-view',\n    style: 'width: 100%; max-width: 800px; margin: 0 auto; padding: 20px; box-sizing: border-box;'\n  }, []);\n\n  // Header\n  const header = api.createElement('div', {\n    style: 'margin-bottom: 20px; padding-bottom: 15px; border-bottom: 2px solid var(--color-border-light);'\n  }, []);\n\n  const title = api.createElement('h2', {\n    style: 'margin: 0; font-size: 20px;'\n  }, [browser.name || 'Symbol Browser']);\n  header.appendChild(title);\n  container.appendChild(header);\n\n  // Search input\n  const searchBox = api.createElement('div', {\n    style: 'margin-bottom: 12px;'\n  }, []);\n\n  const input = api.createElement('input', {\n    type: 'text',\n    placeholder: 'Search symbols...',\n    value: browser.content?.query || '',\n    style: 'width: 100%; padding: 12px 16px; font-size: 16px; border: 2px solid var(--color-border); border-radius: 8px; outline: none; transition: border-color 0.2s; box-sizing: border-box;'\n  }, []);\n\n  input.onfocus = () => { input.style.borderColor = 'var(--color-primary)'; };\n  input.onblur = () => { input.style.borderColor = 'var(--color-border)'; };\n\n  searchBox.appendChild(input);\n  container.appendChild(searchBox);\n\n  // Kind filter chips\n  const KINDS = [\n    { label: 'All', value: null },\n    { label: 'Functions', value: 'function' },\n    { label: 'Classes', value: 'class' },\n    { label: 'Methods', value: 'method' },\n    { label: 'Properties', value: 'property' }\n  ];\n  // Merge property-function, field-function into \"Functions\"\n  const FUNCTION_KINDS = new Set(['function', 'property-function', 'field-function']);\n\n  let activeKind = browser.content?.kindFilter || null;\n\n  const chipBar = api.createElement('div', {\n    style: 'display: flex; gap: 8px; margin-bottom: 20px; flex-wrap: wrap;'\n  }, []);\n\n  const chipEls = [];\n  for (const kind of KINDS) {\n    const chip = api.createElement('button', {\n      style: chipStyle(kind.value === activeKind)\n    }, [kind.label]);\n    chip.onclick = () => {\n      activeKind = kind.value;\n      chipEls.forEach((c, i) => {\n        c.style.cssText = chipStyle(KINDS[i].value === activeKind);\n      });\n      executeSearch(input.value);\n    };\n    chipEls.push(chip);\n    chipBar.appendChild(chip);\n  }\n  container.appendChild(chipBar);\n\n  // Results area\n  const resultsArea = api.createElement('div', {}, []);\n  container.appendChild(resultsArea);\n\n  // Gather all symbols from all items\n  const allItems = await api.getAll();\n  const codeItems = allItems.filter(item => item.content?._symbols);\n\n  let totalSymbols = 0;\n  for (const item of codeItems) {\n    totalSymbols += Object.keys(item.content._symbols).length;\n  }\n\n  // Search + render\n  const renderResults = (query) => {\n    resultsArea.innerHTML = '';\n    const q = (query || '').trim().toLowerCase();\n\n    if (!q) {\n      // Empty state: show stats\n      const stats = api.createElement('div', {\n        style: 'padding: 40px; text-align: center; color: var(--color-text-secondary); font-style: italic;'\n      }, [codeItems.length + ' code items, ' + totalSymbols + ' total symbols']);\n      resultsArea.appendChild(stats);\n      return;\n    }\n\n    // Collect matches grouped by item\n    const groups = []; // { item, matches: [sym] }\n    for (const item of codeItems) {\n      const syms = item.content._symbols;\n      const matches = [];\n      for (const sym of Object.values(syms)) {\n        if (!sym.name.toLowerCase().includes(q)) continue;\n        if (activeKind) {\n          if (activeKind === 'function') {\n            if (!FUNCTION_KINDS.has(sym.kind)) continue;\n          } else if (activeKind === 'property') {\n            if (sym.kind !== 'property' && sym.kind !== 'field') continue;\n          } else {\n            if (sym.kind !== activeKind) continue;\n          }\n        }\n        matches.push(sym);\n      }\n      if (matches.length > 0) {\n        matches.sort((a, b) => a.line - b.line);\n        groups.push({ item, matches });\n      }\n    }\n\n    if (groups.length === 0) {\n      const noResults = api.createElement('div', {\n        style: 'padding: 40px; text-align: center; color: var(--color-text-secondary); font-style: italic;'\n      }, ['No symbols matching \"' + query + '\"']);\n      resultsArea.appendChild(noResults);\n      return;\n    }\n\n    // Match count header\n    const total = groups.reduce((n, g) => n + g.matches.length, 0);\n    const countHeader = api.createElement('div', {\n      style: 'margin-bottom: 15px; font-size: 14px; color: var(--color-text-secondary); font-weight: 500;'\n    }, [total + ' symbol' + (total === 1 ? '' : 's') + ' across ' + groups.length + ' item' + (groups.length === 1 ? '' : 's')]);\n    resultsArea.appendChild(countHeader);\n\n    // Render groups\n    for (const group of groups) {\n      const groupEl = api.createElement('div', {\n        style: 'margin-bottom: 16px; background: var(--color-bg-surface-alt); border-radius: var(--border-radius); overflow: hidden;'\n      }, []);\n\n      // Item header row\n      const itemHeader = api.createElement('div', {\n        style: 'display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; border-bottom: 1px solid var(--color-border-light); cursor: pointer; transition: background 0.15s;'\n      }, []);\n      itemHeader.onmouseover = () => { itemHeader.style.background = 'var(--color-border-light)'; };\n      itemHeader.onmouseout = () => { itemHeader.style.background = ''; };\n      itemHeader.onclick = () => api.siblingContainer ? api.siblingContainer.addSibling(group.item.id) : api.navigate(group.item.id);\n\n      const itemName = api.createElement('span', {\n        style: 'font-weight: 600; font-size: 14px; color: var(--color-text);'\n      }, [group.item.name || group.item.id.substring(0, 8)]);\n      itemHeader.appendChild(itemName);\n\n      const arrow = api.createElement('span', {\n        style: 'color: var(--color-text-secondary); font-size: 12px;'\n      }, ['\\u2197']);\n      itemHeader.appendChild(arrow);\n\n      groupEl.appendChild(itemHeader);\n\n      // Symbol rows\n      for (const sym of group.matches) {\n        const row = api.createElement('div', {\n          style: 'display: flex; align-items: center; gap: 8px; padding: 7px 14px; cursor: pointer; transition: all 0.15s; border-bottom: 1px solid var(--color-border-light);'\n        }, []);\n        row.onmouseover = () => { row.style.background = 'var(--color-border-light)'; row.style.transform = 'translateX(4px)'; };\n        row.onmouseout = () => { row.style.background = ''; row.style.transform = ''; };\n        row.onclick = () => api.siblingContainer ? api.siblingContainer.addSibling(group.item.id, { symbol: sym.name }) : api.navigate(group.item.id, { symbol: sym.name });\n\n        // Name + signature\n        const nameEl = api.createElement('span', {\n          style: 'font-family: monospace; font-size: 13px; color: var(--color-text); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;'\n        }, [sym.name + (sym.signature || '')]);\n        row.appendChild(nameEl);\n\n        // Kind badge\n        const kindLabel = kindShort(sym.kind);\n        const badge = api.createElement('span', {\n          style: 'font-size: 11px; padding: 1px 6px; border-radius: var(--border-radius); background: ' + kindColor(sym.kind) + '; color: white; flex-shrink: 0;'\n        }, [kindLabel]);\n        row.appendChild(badge);\n\n        // Line number\n        const lineEl = api.createElement('span', {\n          style: 'font-size: 12px; color: var(--color-text-secondary); font-family: monospace; min-width: 36px; text-align: right; flex-shrink: 0;'\n        }, [':' + sym.line]);\n        row.appendChild(lineEl);\n\n        groupEl.appendChild(row);\n\n        // JSDoc details (description + params + returns)\n        if (sym.description || sym.params || sym.returns) {\n          const detailEl = api.createElement('div', {\n            style: 'padding: 2px 14px 6px 22px; font-size: 12px; color: var(--color-text-secondary); border-bottom: 1px solid var(--color-border-light); line-height: 1.4;'\n          }, []);\n          if (sym.description) {\n            detailEl.appendChild(api.createElement('div', {}, [sym.description.split('\\n')[0]]));\n          }\n          if (sym.params) {\n            for (const p of sym.params) {\n              const paramLine = api.createElement('div', {\n                style: 'padding-left: 8px; font-family: monospace; font-size: 11px;'\n              }, []);\n              const paramName = api.createElement('span', {\n                style: 'color: var(--color-text);'\n              }, [p.name]);\n              paramLine.appendChild(paramName);\n              if (p.type) {\n                paramLine.appendChild(api.createElement('span', {\n                  style: 'color: var(--color-text-secondary); opacity: 0.7;'\n                }, [' : ' + p.type]));\n              }\n              if (p.description) {\n                paramLine.appendChild(api.createElement('span', {}, [' \\u2014 ' + p.description]));\n              }\n              detailEl.appendChild(paramLine);\n            }\n          }\n          if (sym.returns) {\n            const retLine = api.createElement('div', {\n              style: 'padding-left: 8px; font-family: monospace; font-size: 11px;'\n            }, []);\n            retLine.appendChild(api.createElement('span', {\n              style: 'color: var(--color-text); opacity: 0.7;'\n            }, ['\\u2192 ']));\n            if (sym.returns.type) {\n              retLine.appendChild(api.createElement('span', {\n                style: 'color: var(--color-text-secondary); opacity: 0.7;'\n              }, [sym.returns.type]));\n            }\n            if (sym.returns.description) {\n              retLine.appendChild(api.createElement('span', {}, [' \\u2014 ' + sym.returns.description]));\n            }\n            detailEl.appendChild(retLine);\n          }\n          groupEl.appendChild(detailEl);\n        }\n      }\n\n      resultsArea.appendChild(groupEl);\n    }\n  };\n\n  // Debounced search\n  let searchTimeout = null;\n  const executeSearch = (query) => {\n    // Persist query + kind filter\n    browser.content = { ...browser.content, query, kindFilter: activeKind };\n    browser.modified = Date.now();\n    api.set(browser);\n    renderResults(query);\n  };\n\n  input.oninput = (e) => {\n    if (searchTimeout) clearTimeout(searchTimeout);\n    searchTimeout = setTimeout(() => executeSearch(e.target.value), 300);\n  };\n\n  // Initial render\n  renderResults(browser.content?.query || '');\n\n  // Auto-focus\n  setTimeout(() => input.focus(), 0);\n\n  return container;\n}\n\nfunction chipStyle(active) {\n  const base = 'padding: 5px 14px; font-size: 13px; border-radius: 16px; cursor: pointer; transition: all 0.15s; border: 1px solid; ';\n  return active\n    ? base + 'background: var(--color-primary); color: white; border-color: var(--color-primary);'\n    : base + 'background: transparent; color: var(--color-text-secondary); border-color: var(--color-border);';\n}\n\nfunction kindShort(kind) {\n  const map = {\n    'function': 'fn', 'property-function': 'fn', 'field-function': 'fn',\n    'class': 'class', 'method': 'method',\n    'property': 'prop', 'field': 'prop', 'variable': 'var'\n  };\n  return map[kind] || kind;\n}\n\nfunction kindColor(kind) {\n  const map = {\n    'function': '#3b82f6', 'property-function': '#3b82f6', 'field-function': '#3b82f6',\n    'class': '#8b5cf6', 'method': '#06b6d4',\n    'property': '#f59e0b', 'field': '#f59e0b', 'variable': '#6b7280'\n  };\n  return map[kind] || '#6b7280';\n}\n",
-    "description": "Renders symbol-browser instances"
+    "description": "Renders symbol-browser instances",
+    "_symbols": {
+      "render": {
+        "name": "render",
+        "line": 3,
+        "col": 7,
+        "endLine": 269,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(browser, api)"
+      },
+      "render.container": {
+        "name": "container",
+        "line": 4,
+        "col": 8,
+        "endLine": 7,
+        "endCol": 8,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.header": {
+        "name": "header",
+        "line": 10,
+        "col": 8,
+        "endLine": 12,
+        "endCol": 8,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.title": {
+        "name": "title",
+        "line": 14,
+        "col": 8,
+        "endLine": 16,
+        "endCol": 40,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.searchBox": {
+        "name": "searchBox",
+        "line": 21,
+        "col": 8,
+        "endLine": 23,
+        "endCol": 8,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.input": {
+        "name": "input",
+        "line": 25,
+        "col": 8,
+        "endLine": 30,
+        "endCol": 8,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.KINDS": {
+        "name": "KINDS",
+        "line": 39,
+        "col": 8,
+        "endLine": 45,
+        "endCol": 3,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.FUNCTION_KINDS": {
+        "name": "FUNCTION_KINDS",
+        "line": 47,
+        "col": 8,
+        "endLine": 47,
+        "endCol": 85,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.activeKind": {
+        "name": "activeKind",
+        "line": 49,
+        "col": 6,
+        "endLine": 49,
+        "endCol": 54,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.chipBar": {
+        "name": "chipBar",
+        "line": 51,
+        "col": 8,
+        "endLine": 53,
+        "endCol": 8,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.chipEls": {
+        "name": "chipEls",
+        "line": 55,
+        "col": 8,
+        "endLine": 55,
+        "endCol": 20,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.kind": {
+        "name": "kind",
+        "line": 56,
+        "col": 13,
+        "endLine": 56,
+        "endCol": 17,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.chip": {
+        "name": "chip",
+        "line": 57,
+        "col": 10,
+        "endLine": 59,
+        "endCol": 20,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.resultsArea": {
+        "name": "resultsArea",
+        "line": 73,
+        "col": 8,
+        "endLine": 73,
+        "endCol": 54,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.allItems": {
+        "name": "allItems",
+        "line": 77,
+        "col": 8,
+        "endLine": 77,
+        "endCol": 37,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.codeItems": {
+        "name": "codeItems",
+        "line": 78,
+        "col": 8,
+        "endLine": 78,
+        "endCol": 67,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.totalSymbols": {
+        "name": "totalSymbols",
+        "line": 80,
+        "col": 6,
+        "endLine": 80,
+        "endCol": 22,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.item": {
+        "name": "item",
+        "line": 81,
+        "col": 13,
+        "endLine": 81,
+        "endCol": 17,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.renderResults": {
+        "name": "renderResults",
+        "line": 86,
+        "col": 8,
+        "endLine": 245,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "render",
+        "signature": "(query)"
+      },
+      "renderResults.q": {
+        "name": "q",
+        "line": 88,
+        "col": 10,
+        "endLine": 88,
+        "endCol": 48,
+        "kind": "variable",
+        "scope": "renderResults"
+      },
+      "renderResults.stats": {
+        "name": "stats",
+        "line": 92,
+        "col": 12,
+        "endLine": 94,
+        "endCol": 80,
+        "kind": "variable",
+        "scope": "renderResults"
+      },
+      "renderResults.groups": {
+        "name": "groups",
+        "line": 100,
+        "col": 10,
+        "endLine": 100,
+        "endCol": 21,
+        "kind": "variable",
+        "scope": "renderResults"
+      },
+      "renderResults.item": {
+        "name": "item",
+        "line": 119,
+        "col": 22,
+        "endLine": 119,
+        "endCol": 26,
+        "kind": "property",
+        "scope": "renderResults"
+      },
+      "renderResults.syms": {
+        "name": "syms",
+        "line": 102,
+        "col": 12,
+        "endLine": 102,
+        "endCol": 40,
+        "kind": "variable",
+        "scope": "renderResults"
+      },
+      "renderResults.matches": {
+        "name": "matches",
+        "line": 119,
+        "col": 28,
+        "endLine": 119,
+        "endCol": 35,
+        "kind": "property",
+        "scope": "renderResults"
+      },
+      "renderResults.sym": {
+        "name": "sym",
+        "line": 165,
+        "col": 17,
+        "endLine": 165,
+        "endCol": 20,
+        "kind": "variable",
+        "scope": "renderResults"
+      },
+      "renderResults.noResults": {
+        "name": "noResults",
+        "line": 124,
+        "col": 12,
+        "endLine": 126,
+        "endCol": 49,
+        "kind": "variable",
+        "scope": "renderResults"
+      },
+      "renderResults.total": {
+        "name": "total",
+        "line": 132,
+        "col": 10,
+        "endLine": 132,
+        "endCol": 66,
+        "kind": "variable",
+        "scope": "renderResults"
+      },
+      "renderResults.countHeader": {
+        "name": "countHeader",
+        "line": 133,
+        "col": 10,
+        "endLine": 135,
+        "endCol": 128,
+        "kind": "variable",
+        "scope": "renderResults"
+      },
+      "renderResults.group": {
+        "name": "group",
+        "line": 139,
+        "col": 15,
+        "endLine": 139,
+        "endCol": 20,
+        "kind": "variable",
+        "scope": "renderResults"
+      },
+      "renderResults.groupEl": {
+        "name": "groupEl",
+        "line": 140,
+        "col": 12,
+        "endLine": 142,
+        "endCol": 12,
+        "kind": "variable",
+        "scope": "renderResults"
+      },
+      "renderResults.itemHeader": {
+        "name": "itemHeader",
+        "line": 145,
+        "col": 12,
+        "endLine": 147,
+        "endCol": 12,
+        "kind": "variable",
+        "scope": "renderResults"
+      },
+      "renderResults.itemName": {
+        "name": "itemName",
+        "line": 152,
+        "col": 12,
+        "endLine": 154,
+        "endCol": 60,
+        "kind": "variable",
+        "scope": "renderResults"
+      },
+      "renderResults.arrow": {
+        "name": "arrow",
+        "line": 157,
+        "col": 12,
+        "endLine": 159,
+        "endCol": 20,
+        "kind": "variable",
+        "scope": "renderResults"
+      },
+      "renderResults.row": {
+        "name": "row",
+        "line": 166,
+        "col": 14,
+        "endLine": 168,
+        "endCol": 14,
+        "kind": "variable",
+        "scope": "renderResults"
+      },
+      "renderResults.symbol": {
+        "name": "symbol",
+        "line": 171,
+        "col": 152,
+        "endLine": 171,
+        "endCol": 168,
+        "kind": "property",
+        "scope": "renderResults"
+      },
+      "renderResults.nameEl": {
+        "name": "nameEl",
+        "line": 174,
+        "col": 14,
+        "endLine": 176,
+        "endCol": 46,
+        "kind": "variable",
+        "scope": "renderResults"
+      },
+      "renderResults.kindLabel": {
+        "name": "kindLabel",
+        "line": 180,
+        "col": 14,
+        "endLine": 180,
+        "endCol": 45,
+        "kind": "variable",
+        "scope": "renderResults"
+      },
+      "renderResults.badge": {
+        "name": "badge",
+        "line": 181,
+        "col": 14,
+        "endLine": 183,
+        "endCol": 23,
+        "kind": "variable",
+        "scope": "renderResults"
+      },
+      "renderResults.lineEl": {
+        "name": "lineEl",
+        "line": 187,
+        "col": 14,
+        "endLine": 189,
+        "endCol": 28,
+        "kind": "variable",
+        "scope": "renderResults"
+      },
+      "renderResults.detailEl": {
+        "name": "detailEl",
+        "line": 196,
+        "col": 16,
+        "endLine": 198,
+        "endCol": 16,
+        "kind": "variable",
+        "scope": "renderResults"
+      },
+      "renderResults.p": {
+        "name": "p",
+        "line": 203,
+        "col": 23,
+        "endLine": 203,
+        "endCol": 24,
+        "kind": "variable",
+        "scope": "renderResults"
+      },
+      "renderResults.paramLine": {
+        "name": "paramLine",
+        "line": 204,
+        "col": 20,
+        "endLine": 206,
+        "endCol": 20,
+        "kind": "variable",
+        "scope": "renderResults"
+      },
+      "renderResults.paramName": {
+        "name": "paramName",
+        "line": 207,
+        "col": 20,
+        "endLine": 209,
+        "endCol": 26,
+        "kind": "variable",
+        "scope": "renderResults"
+      },
+      "renderResults.style": {
+        "name": "style",
+        "line": 231,
+        "col": 16,
+        "endLine": 231,
+        "endCol": 74,
+        "kind": "property",
+        "scope": "renderResults"
+      },
+      "renderResults.retLine": {
+        "name": "retLine",
+        "line": 223,
+        "col": 18,
+        "endLine": 225,
+        "endCol": 18,
+        "kind": "variable",
+        "scope": "renderResults"
+      },
+      "render.searchTimeout": {
+        "name": "searchTimeout",
+        "line": 248,
+        "col": 6,
+        "endLine": 248,
+        "endCol": 26,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.executeSearch": {
+        "name": "executeSearch",
+        "line": 249,
+        "col": 8,
+        "endLine": 255,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "render",
+        "signature": "(query)"
+      },
+      "executeSearch.query": {
+        "name": "query",
+        "line": 251,
+        "col": 44,
+        "endLine": 251,
+        "endCol": 49,
+        "kind": "property",
+        "scope": "executeSearch"
+      },
+      "executeSearch.kindFilter": {
+        "name": "kindFilter",
+        "line": 251,
+        "col": 51,
+        "endLine": 251,
+        "endCol": 73,
+        "kind": "property",
+        "scope": "executeSearch"
+      },
+      "chipStyle": {
+        "name": "chipStyle",
+        "line": 271,
+        "col": 0,
+        "endLine": 276,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(active)"
+      },
+      "chipStyle.base": {
+        "name": "base",
+        "line": 272,
+        "col": 8,
+        "endLine": 272,
+        "endCol": 133,
+        "kind": "variable",
+        "scope": "chipStyle"
+      },
+      "kindShort": {
+        "name": "kindShort",
+        "line": 278,
+        "col": 0,
+        "endLine": 285,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(kind)"
+      },
+      "kindShort.map": {
+        "name": "map",
+        "line": 279,
+        "col": 8,
+        "endLine": 283,
+        "endCol": 3,
+        "kind": "variable",
+        "scope": "kindShort"
+      },
+      "kindColor": {
+        "name": "kindColor",
+        "line": 287,
+        "col": 0,
+        "endLine": 294,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(kind)"
+      },
+      "kindColor.map": {
+        "name": "map",
+        "line": 288,
+        "col": 8,
+        "endLine": 292,
+        "endCol": 3,
+        "kind": "variable",
+        "scope": "kindColor"
+      }
+    }
   },
   "attachments": []
 }

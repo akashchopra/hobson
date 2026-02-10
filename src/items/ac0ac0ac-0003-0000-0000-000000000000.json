@@ -3,7 +3,7 @@
   "name": "symbol-extractor-lib",
   "type": "66666666-0000-0000-0000-000000000000",
   "created": 1738540800000,
-  "modified": 1770736003281,
+  "modified": 1770736509382,
   "content": {
     "description": "Symbol indexing automatically extracts function, variable, class, and method definitions from code items and stores them as structured metadata in `content._symbols`. This enables symbol-level navigation, transclusion, and code introspection throughout the system.\n\n## Overview\n\nEvery code item in Hobson has its symbols parsed and indexed. When you save a code item, the [symbol-indexer-watch](item://ac0ac0ac-0004-0000-0000-000000000000) fires, parses the code with Acorn via [symbol-extractor-lib](item://ac0ac0ac-0003-0000-0000-000000000000), and writes the results to `content._symbols` on the item.\n\nThis happens silently (no re-render, no re-triggering watchers) and is skipped if symbols haven't changed.\n\n## The `_symbols` Map\n\nThe `_symbols` field is a flat map keyed by qualified name:\n\n```javascript\n{\n  \"myFunction\": { name: \"myFunction\", line: 5, col: 0, endLine: 12, endCol: 1, kind: \"function\", scope: null, signature: \"(x, y)\" },\n  \"myFunction.helper\": { name: \"helper\", line: 7, col: 8, endLine: 10, endCol: 3, kind: \"variable\", scope: \"myFunction\" },\n  \"MyClass\": { name: \"MyClass\", line: 14, col: 0, endLine: 30, endCol: 1, kind: \"class\", scope: null },\n  \"MyClass.render\": { name: \"render\", line: 15, col: 2, endLine: 20, endCol: 3, kind: \"method\", scope: \"MyClass\", signature: \"(el)\" }\n}\n```\n\n### Key Format\n\n- Top-level symbols: just the name (`myFunction`)\n- Nested symbols: `scope.name` (`MyClass.render`, `createAPI.get`)\n- Deeper nesting chains: `a.b.c` for symbols inside `b` inside `a`\n\n### Symbol Fields\n\n| Field | Type | Description |\n|-------|------|-------------|\n| `name` | String | Unqualified name |\n| `line` | Number | Start line (1-based) |\n| `col` | Number | Start column (0-based) |\n| `endLine` | Number | End line (1-based) |\n| `endCol` | Number | End column (0-based) |\n| `kind` | String | Symbol kind (see below) |\n| `scope` | String\\|null | Parent scope name, or null for top-level |\n| `signature` | String\\|undefined | Function signature (only present for function-like symbols) |\n| `description` | String\\|undefined | JSDoc description (first line of prose before any @tags) |\n| `params` | Array\\|undefined | JSDoc @param entries: `[{ name, type?, description? }]` |\n| `returns` | Object\\|undefined | JSDoc @returns entry: `{ type?, description? }` |\n\n### Symbol Kinds\n\n| Kind | Meaning |\n|------|---------|\n| `function` | Function declaration, arrow function, or function expression assigned to a variable |\n| `variable` | Variable or const (non-function) |\n| `class` | Class declaration |\n| `method` | Class method (MethodDefinition) |\n| `field` | Class field (non-function PropertyDefinition) |\n| `field-function` | Class field assigned a function |\n| `property` | Object literal property (non-function) |\n| `property-function` | Object literal property assigned a function, or shorthand method |\n\n## How It Works\n\n```\nCode item saved\n  --> symbol-indexer-watch (item:created / item:updated)\n    --> symbol-extractor-lib.extractSymbols(code)\n      --> Acorn parses to AST\n      --> walkNode() traverses, collecting symbols\n      --> attachJSDoc() matches /** */ comments to symbols\n    --> Diff against existing _symbols\n    --> If changed: silent save to item.content._symbols\n```\n\nThe watcher only fires for items whose type chain includes `code` (type `22222222-0000-0000-0000-000000000000`).\n\n## Consuming Symbols\n\n### Navigation (scroll to symbol)\n\nWhen navigating to an item with a `symbol` parameter, the system scrolls to and highlights the symbol's line range:\n\n```javascript\n// Programmatic navigation\nawait api.navigate(itemId, { symbol: 'myFunction' });\nawait api.navigate(itemId, { field: 'code', symbol: 'MyClass.render' });\n\n// Sibling navigation\napi.siblingContainer.addSibling(itemId, { symbol: 'myFunction' });\n```\n\nThe flow: `api.navigate()` passes `navigateTo` through the rendering context to [generic-view](item://b429b19d-ef0d-4f4f-b2a2-b9e6f80451f2), which forwards `scrollToSymbol` to the code field view ([field-view-code-editable](item://e7b73a8e-2191-4ce5-ae9c-f721b5e30731) or [field-view-code-readonly](item://8e2f3e95-cc2d-44a3-beeb-0569f400da7c)). The field view looks up the symbol in `_symbols` and scrolls to its line range.\n\nWhen `symbol` is specified without a `field`, the system defaults to the `code` field.\n\n### Transclusion (embed symbol's code)\n\nEmbed a specific function or class from another item's code:\n\n```markdown\n![](item://some-item-id?symbol=myFunction)\n![](item://some-item-id#code?symbol=MyClass.render)\n```\n\n[hobson-markdown](item://a1b2c3d4-5e6f-7a8b-9c0d-e1f2a3b4c5d6) resolves the symbol to a line range and extracts just those lines. When no `#field` is specified, it defaults to `code`.\n\n### Links (navigate to symbol)\n\nMarkdown links with symbol parameters open the item scrolled to the symbol:\n\n```markdown\n[see myFunction](item://some-item-id?symbol=myFunction)\n[MyClass.render](item://some-item-id#code?symbol=MyClass.render)\n```\n\n### Code comment links\n\nInside code editors, comment links also support symbols:\n\n```javascript\n// See [render method](item://some-view-id#code?symbol=render)\n```\n\n### Introspection (query blocks)\n\nQuery blocks can read `_symbols` to generate dynamic documentation:\n\n````markdown\n```query\nconst item = await api.get('some-item-id');\nconst symbols = item.content._symbols || {};\nconst fns = Object.entries(symbols)\n  .filter(([k, v]) => v.kind === 'function' && !v.scope)\n  .map(([k, v]) => `- [\\`${v.name}\\`](item://${item.id}?symbol=${k}) ${v.signature || '()'}`);\nreturn fns.join('\\n');\n```\n````\n\nThe [REPL doc](item://f1111111-0003-0000-0000-000000000000) uses this pattern to auto-generate the API method table from kernel:core's `_symbols`.\n\n## Symbol Lookup Resolution\n\nWhen looking up a symbol by name, consumers try two strategies:\n\n1. **Exact match** on the qualified key (e.g., `MyClass.render`)\n2. **Unqualified match** — first symbol whose `name` field matches (e.g., `render` finds `MyClass.render`)\n\nThis means you can usually use the short name unless there are ambiguous matches.\n\n## Note on URL Parameters\n\nThe `?symbol=` parameter works through `item://` link and transclusion navigation, not as a top-level URL query parameter on `bootloader.html`. For top-level URL navigation, use `?field=code&lines=N-M` instead. See [URL Parameters](item://c0c0c0c0-0031-0000-0000-000000000000) for the bootloader parameters.\n\n## Architecture\n\n| Component | Item | Role |\n|-----------|------|------|\n| [symbol-extractor-lib](item://ac0ac0ac-0003-0000-0000-000000000000) | Library | Parses code with Acorn, returns symbol map |\n| [symbol-indexer-watch](item://ac0ac0ac-0004-0000-0000-000000000000) | Library (watcher) | Listens for code item changes, runs extractor, saves results |\n| [generic-view](item://b429b19d-ef0d-4f4f-b2a2-b9e6f80451f2) | View | Passes `scrollToSymbol` to field views |\n| [field-view-code-editable](item://e7b73a8e-2191-4ce5-ae9c-f721b5e30731) | Field view | Scrolls to symbol in editable CodeMirror |\n| [field-view-code-readonly](item://8e2f3e95-cc2d-44a3-beeb-0569f400da7c) | Field view | Scrolls to symbol in readonly CodeMirror |\n| [hobson-markdown](item://a1b2c3d4-5e6f-7a8b-9c0d-e1f2a3b4c5d6) | Library | Resolves symbols for transclusion and link navigation |\n\n## See Also\n\n- [Content Field Conventions](item://c0c0c0c0-0024-0000-0000-000000000000) — Where `_symbols` fits among standard fields\n- [Transclusion](item://a1b2c3d4-5e6f-7a8b-9c0d-e1f2a3b4c5d6) — `?symbol=` syntax for partial transclusion\n- [Code Execution & Sandboxing](item://c0c0c0c0-0028-0000-0000-000000000000) — How code items are evaluated\n- [Event System](item://c0c0c0c0-0006-0000-0000-000000000000) — How the indexer watcher triggers",
     "code": "// symbol-extractor-lib\n// Extracts symbol definitions from JavaScript code using Acorn\n\nexport async function extractSymbols(code, api) {\n  await api.require('acorn');\n  const acorn = await api.require('acorn-wrapper');\n\n  const comments = [];\n  let ast;\n  try {\n    ast = acorn.parse(code, {\n      ecmaVersion: 'latest',\n      sourceType: 'module',\n      locations: true,\n      allowReturnOutsideFunction: true,\n      onComment: comments,\n    });\n  } catch (e) {\n    console.warn('Symbol extraction parse error:', e.message);\n    return {};\n  }\n\n  const symbols = {};\n  walkNode(ast, null, symbols);\n  attachJSDoc(comments, symbols);\n  return symbols;\n}\n\n// Helper: Extract function signature from params\nfunction extractSignature(params) {\n  if (!params || params.length === 0) return '()';\n  const parts = params.map(p => {\n    switch (p.type) {\n      case 'Identifier': return p.name;\n      case 'AssignmentPattern':\n        // foo = default\n        const name = p.left.type === 'Identifier' ? p.left.name : '?';\n        return name + ' = ...';\n      case 'RestElement':\n        // ...args\n        const restName = p.argument.type === 'Identifier' ? p.argument.name : 'args';\n        return '...' + restName;\n      case 'ObjectPattern': return '{ ... }';\n      case 'ArrayPattern': return '[ ... ]';\n      default: return '?';\n    }\n  });\n  return '(' + parts.join(', ') + ')';\n}\n\n// Helper: Get params from a function node (works for FunctionDeclaration, FunctionExpression, ArrowFunctionExpression)\nfunction getFunctionParams(node) {\n  if (!node) return null;\n  if (node.params) return node.params;\n  if (node.value?.params) return node.value.params;  // MethodDefinition\n  return null;\n}\n\nfunction walkNode(node, scope, symbols) {\n  if (!node || typeof node !== 'object') return;\n\n  switch (node.type) {\n    case 'FunctionDeclaration':\n      if (node.id?.name) {\n        const sig = extractSignature(node.params);\n        addSymbol(symbols, node.id.name, node.loc, 'function', scope, sig);\n        walkNode(node.body, node.id.name, symbols);\n      }\n      break;\n\n    case 'VariableDeclaration':\n      for (const decl of node.declarations) {\n        if (decl.id?.name) {\n          const isFunc = decl.init?.type === 'ArrowFunctionExpression' ||\n                         decl.init?.type === 'FunctionExpression';\n          const kind = isFunc ? 'function' : 'variable';\n          const sig = isFunc ? extractSignature(decl.init.params) : null;\n          addSymbol(symbols, decl.id.name, decl.loc, kind, scope, sig);\n\n          if (decl.init) {\n            const initScope = decl.id.name;\n            if (decl.init.body) {\n              walkNode(decl.init.body, initScope, symbols);\n            } else if (decl.init.type === 'ObjectExpression') {\n              walkNode(decl.init, initScope, symbols);\n            }\n          }\n        }\n      }\n      break;\n\n    case 'ClassDeclaration':\n      if (node.id?.name) {\n        addSymbol(symbols, node.id.name, node.loc, 'class', scope);\n        walkNode(node.body, node.id.name, symbols);\n      }\n      break;\n\n    case 'MethodDefinition':\n      if (node.key?.name) {\n        const sig = extractSignature(node.value?.params);\n        addSymbol(symbols, node.key.name, node.loc, 'method', scope, sig);\n        walkNode(node.value?.body, `${scope}.${node.key.name}`, symbols);\n      }\n      break;\n\n    case 'PropertyDefinition':\n      if (node.key?.name) {\n        const isFunc = node.value?.type === 'FunctionExpression' ||\n                       node.value?.type === 'ArrowFunctionExpression';\n        const kind = isFunc ? 'field-function' : 'field';\n        const sig = isFunc ? extractSignature(node.value.params) : null;\n        addSymbol(symbols, node.key.name, node.loc, kind, scope, sig);\n\n        if (node.value?.body) {\n          const newScope = scope ? `${scope}.${node.key.name}` : node.key.name;\n          walkNode(node.value.body, newScope, symbols);\n        }\n      }\n      break;\n\n    case 'Property':\n      if (node.key?.name) {\n        const isFunc = node.value?.type === 'FunctionExpression' ||\n                       node.value?.type === 'ArrowFunctionExpression' ||\n                       node.method;\n        const kind = isFunc ? 'property-function' : 'property';\n        const sig = isFunc ? extractSignature(node.value?.params) : null;\n        addSymbol(symbols, node.key.name, node.loc, kind, scope, sig);\n\n        const newScope = scope ? `${scope}.${node.key.name}` : node.key.name;\n\n        if (node.value?.body) {\n          walkNode(node.value.body, newScope, symbols);\n        } else if (node.value?.type === 'ObjectExpression') {\n          walkNode(node.value, newScope, symbols);\n        }\n      }\n      break;\n\n    case 'ExportNamedDeclaration':\n      if (node.declaration) {\n        walkNode(node.declaration, scope, symbols);\n      }\n      break;\n\n    case 'ExportDefaultDeclaration':\n      if (node.declaration) {\n        walkNode(node.declaration, scope, symbols);\n      }\n      break;\n\n    default:\n      for (const key of Object.keys(node)) {\n        if (key === 'loc' || key === 'range') continue;\n        const child = node[key];\n        if (Array.isArray(child)) {\n          for (const c of child) {\n            walkNode(c, scope, symbols);\n          }\n        } else if (child && typeof child === 'object' && child.type) {\n          walkNode(child, scope, symbols);\n        }\n      }\n  }\n}\n\nfunction addSymbol(symbols, name, loc, kind, scope, signature = null) {\n  const key = scope ? `${scope}.${name}` : name;\n  const info = {\n    name,\n    line: loc.start.line,\n    col: loc.start.column,\n    endLine: loc.end.line,\n    endCol: loc.end.column,\n    kind,\n    scope: scope || null\n  };\n  if (signature) info.signature = signature;\n  symbols[key] = info;\n}\n\n// Parse a JSDoc comment value (the text between /** and */)\nfunction parseJSDoc(value) {\n  const lines = value.split('\\n').map(l => l.replace(/^\\s*\\*\\s?/, '').trimEnd());\n  // Drop empty first/last lines (from /** and */)\n  if (lines.length && lines[0].trim() === '') lines.shift();\n  if (lines.length && lines[lines.length - 1].trim() === '') lines.pop();\n\n  let description = '';\n  const params = [];\n  let returns = null;\n\n  for (const line of lines) {\n    const paramMatch = line.match(/^@param\\s+(?:\\{([^}]*)\\}\\s+)?(\\[?\\w+\\]?)\\s*(?:-\\s*)?(.*)$/);\n    if (paramMatch) {\n      const p = { name: paramMatch[2].replace(/^\\[|\\]$/g, '') };\n      if (paramMatch[1]) p.type = paramMatch[1];\n      if (paramMatch[3]) p.description = paramMatch[3];\n      params.push(p);\n      continue;\n    }\n\n    const returnMatch = line.match(/^@returns?\\s+(?:\\{([^}]*)\\}\\s*)?(.*)$/);\n    if (returnMatch) {\n      returns = {};\n      if (returnMatch[1]) returns.type = returnMatch[1];\n      if (returnMatch[2]) returns.description = returnMatch[2];\n      continue;\n    }\n\n    // Skip other @ tags\n    if (/^@\\w/.test(line)) continue;\n\n    // Accumulate description (lines before any @tag)\n    if (params.length === 0 && !returns) {\n      description += (description ? '\\n' : '') + line;\n    }\n  }\n\n  const result = {};\n  description = description.trim();\n  if (description) result.description = description;\n  if (params.length) result.params = params;\n  if (returns) result.returns = returns;\n  return result;\n}\n\n// Attach JSDoc comments to the nearest symbol that follows them\nfunction attachJSDoc(comments, symbols) {\n  // Filter to JSDoc block comments (start with *)\n  const jsdocs = comments.filter(c => c.type === 'Block' && c.value.startsWith('*'));\n  if (!jsdocs.length) return;\n\n  // Build array of symbols sorted by line\n  const symEntries = Object.values(symbols);\n  if (!symEntries.length) return;\n\n  for (const comment of jsdocs) {\n    const commentEndLine = comment.loc.end.line;\n    // Find the symbol whose start line is closest after the comment end (within 1-line gap)\n    let best = null;\n    for (const sym of symEntries) {\n      const gap = sym.line - commentEndLine;\n      if (gap >= 0 && gap <= 1) {\n        if (!best || sym.line < best.line) best = sym;\n      }\n    }\n    if (!best) continue;\n\n    const parsed = parseJSDoc(comment.value);\n    if (parsed.description) best.description = parsed.description;\n    if (parsed.params) best.params = parsed.params;\n    if (parsed.returns) best.returns = parsed.returns;\n  }\n}",
@@ -12,7 +12,7 @@
         "name": "extractSymbols",
         "line": 4,
         "col": 7,
-        "endLine": 24,
+        "endLine": 27,
         "endCol": 1,
         "kind": "function",
         "scope": null,
@@ -27,65 +27,83 @@
         "kind": "variable",
         "scope": "extractSymbols"
       },
+      "extractSymbols.comments": {
+        "name": "comments",
+        "line": 8,
+        "col": 8,
+        "endLine": 8,
+        "endCol": 21,
+        "kind": "variable",
+        "scope": "extractSymbols"
+      },
       "extractSymbols.ast": {
         "name": "ast",
-        "line": 8,
+        "line": 9,
         "col": 6,
-        "endLine": 8,
+        "endLine": 9,
         "endCol": 9,
         "kind": "variable",
         "scope": "extractSymbols"
       },
       "extractSymbols.ecmaVersion": {
         "name": "ecmaVersion",
-        "line": 11,
+        "line": 12,
         "col": 6,
-        "endLine": 11,
+        "endLine": 12,
         "endCol": 27,
         "kind": "property",
         "scope": "extractSymbols"
       },
       "extractSymbols.sourceType": {
         "name": "sourceType",
-        "line": 12,
+        "line": 13,
         "col": 6,
-        "endLine": 12,
+        "endLine": 13,
         "endCol": 26,
         "kind": "property",
         "scope": "extractSymbols"
       },
       "extractSymbols.locations": {
         "name": "locations",
-        "line": 13,
+        "line": 14,
         "col": 6,
-        "endLine": 13,
+        "endLine": 14,
         "endCol": 21,
         "kind": "property",
         "scope": "extractSymbols"
       },
       "extractSymbols.allowReturnOutsideFunction": {
         "name": "allowReturnOutsideFunction",
-        "line": 14,
+        "line": 15,
         "col": 6,
-        "endLine": 14,
+        "endLine": 15,
         "endCol": 38,
+        "kind": "property",
+        "scope": "extractSymbols"
+      },
+      "extractSymbols.onComment": {
+        "name": "onComment",
+        "line": 16,
+        "col": 6,
+        "endLine": 16,
+        "endCol": 25,
         "kind": "property",
         "scope": "extractSymbols"
       },
       "extractSymbols.symbols": {
         "name": "symbols",
-        "line": 21,
+        "line": 23,
         "col": 8,
-        "endLine": 21,
+        "endLine": 23,
         "endCol": 20,
         "kind": "variable",
         "scope": "extractSymbols"
       },
       "extractSignature": {
         "name": "extractSignature",
-        "line": 27,
+        "line": 30,
         "col": 0,
-        "endLine": 46,
+        "endLine": 49,
         "endCol": 1,
         "kind": "function",
         "scope": null,
@@ -93,18 +111,18 @@
       },
       "extractSignature.parts": {
         "name": "parts",
-        "line": 29,
+        "line": 32,
         "col": 8,
-        "endLine": 44,
+        "endLine": 47,
         "endCol": 4,
         "kind": "variable",
         "scope": "extractSignature"
       },
       "getFunctionParams": {
         "name": "getFunctionParams",
-        "line": 49,
+        "line": 52,
         "col": 0,
-        "endLine": 54,
+        "endLine": 57,
         "endCol": 1,
         "kind": "function",
         "scope": null,
@@ -112,9 +130,9 @@
       },
       "walkNode": {
         "name": "walkNode",
-        "line": 56,
+        "line": 59,
         "col": 0,
-        "endLine": 163,
+        "endLine": 166,
         "endCol": 1,
         "kind": "function",
         "scope": null,
@@ -122,90 +140,90 @@
       },
       "walkNode.sig": {
         "name": "sig",
-        "line": 125,
+        "line": 128,
         "col": 14,
-        "endLine": 125,
+        "endLine": 128,
         "endCol": 72,
         "kind": "variable",
         "scope": "walkNode"
       },
       "walkNode.decl": {
         "name": "decl",
-        "line": 69,
+        "line": 72,
         "col": 17,
-        "endLine": 69,
+        "endLine": 72,
         "endCol": 21,
         "kind": "variable",
         "scope": "walkNode"
       },
       "walkNode.isFunc": {
         "name": "isFunc",
-        "line": 121,
+        "line": 124,
         "col": 14,
-        "endLine": 123,
+        "endLine": 126,
         "endCol": 34,
         "kind": "variable",
         "scope": "walkNode"
       },
       "walkNode.kind": {
         "name": "kind",
-        "line": 124,
+        "line": 127,
         "col": 14,
-        "endLine": 124,
+        "endLine": 127,
         "endCol": 62,
         "kind": "variable",
         "scope": "walkNode"
       },
       "walkNode.initScope": {
         "name": "initScope",
-        "line": 78,
+        "line": 81,
         "col": 18,
-        "endLine": 78,
+        "endLine": 81,
         "endCol": 42,
         "kind": "variable",
         "scope": "walkNode"
       },
       "walkNode.newScope": {
         "name": "newScope",
-        "line": 128,
+        "line": 131,
         "col": 14,
-        "endLine": 128,
+        "endLine": 131,
         "endCol": 76,
         "kind": "variable",
         "scope": "walkNode"
       },
       "walkNode.key": {
         "name": "key",
-        "line": 151,
+        "line": 154,
         "col": 17,
-        "endLine": 151,
+        "endLine": 154,
         "endCol": 20,
         "kind": "variable",
         "scope": "walkNode"
       },
       "walkNode.child": {
         "name": "child",
-        "line": 153,
+        "line": 156,
         "col": 14,
-        "endLine": 153,
+        "endLine": 156,
         "endCol": 31,
         "kind": "variable",
         "scope": "walkNode"
       },
       "walkNode.c": {
         "name": "c",
-        "line": 155,
+        "line": 158,
         "col": 21,
-        "endLine": 155,
+        "endLine": 158,
         "endCol": 22,
         "kind": "variable",
         "scope": "walkNode"
       },
       "addSymbol": {
         "name": "addSymbol",
-        "line": 165,
+        "line": 168,
         "col": 0,
-        "endLine": 178,
+        "endLine": 181,
         "endCol": 1,
         "kind": "function",
         "scope": null,
@@ -213,84 +231,266 @@
       },
       "addSymbol.key": {
         "name": "key",
-        "line": 166,
+        "line": 169,
         "col": 8,
-        "endLine": 166,
+        "endLine": 169,
         "endCol": 47,
         "kind": "variable",
         "scope": "addSymbol"
       },
       "addSymbol.info": {
         "name": "info",
-        "line": 167,
+        "line": 170,
         "col": 8,
-        "endLine": 175,
+        "endLine": 178,
         "endCol": 3,
         "kind": "variable",
         "scope": "addSymbol"
       },
       "info.name": {
         "name": "name",
-        "line": 168,
+        "line": 171,
         "col": 4,
-        "endLine": 168,
+        "endLine": 171,
         "endCol": 8,
         "kind": "property",
         "scope": "info"
       },
       "info.line": {
         "name": "line",
-        "line": 169,
+        "line": 172,
         "col": 4,
-        "endLine": 169,
+        "endLine": 172,
         "endCol": 24,
         "kind": "property",
         "scope": "info"
       },
       "info.col": {
         "name": "col",
-        "line": 170,
+        "line": 173,
         "col": 4,
-        "endLine": 170,
+        "endLine": 173,
         "endCol": 25,
         "kind": "property",
         "scope": "info"
       },
       "info.endLine": {
         "name": "endLine",
-        "line": 171,
+        "line": 174,
         "col": 4,
-        "endLine": 171,
+        "endLine": 174,
         "endCol": 25,
         "kind": "property",
         "scope": "info"
       },
       "info.endCol": {
         "name": "endCol",
-        "line": 172,
+        "line": 175,
         "col": 4,
-        "endLine": 172,
+        "endLine": 175,
         "endCol": 26,
         "kind": "property",
         "scope": "info"
       },
       "info.kind": {
         "name": "kind",
-        "line": 173,
+        "line": 176,
         "col": 4,
-        "endLine": 173,
+        "endLine": 176,
         "endCol": 8,
         "kind": "property",
         "scope": "info"
       },
       "info.scope": {
         "name": "scope",
-        "line": 174,
+        "line": 177,
         "col": 4,
-        "endLine": 174,
+        "endLine": 177,
         "endCol": 24,
         "kind": "property",
         "scope": "info"
+      },
+      "parseJSDoc": {
+        "name": "parseJSDoc",
+        "line": 184,
+        "col": 0,
+        "endLine": 227,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(value)"
+      },
+      "parseJSDoc.lines": {
+        "name": "lines",
+        "line": 185,
+        "col": 8,
+        "endLine": 185,
+        "endCol": 80,
+        "kind": "variable",
+        "scope": "parseJSDoc"
+      },
+      "parseJSDoc.description": {
+        "name": "description",
+        "line": 190,
+        "col": 6,
+        "endLine": 190,
+        "endCol": 22,
+        "kind": "variable",
+        "scope": "parseJSDoc"
+      },
+      "parseJSDoc.params": {
+        "name": "params",
+        "line": 191,
+        "col": 8,
+        "endLine": 191,
+        "endCol": 19,
+        "kind": "variable",
+        "scope": "parseJSDoc"
+      },
+      "parseJSDoc.returns": {
+        "name": "returns",
+        "line": 192,
+        "col": 6,
+        "endLine": 192,
+        "endCol": 20,
+        "kind": "variable",
+        "scope": "parseJSDoc"
+      },
+      "parseJSDoc.line": {
+        "name": "line",
+        "line": 194,
+        "col": 13,
+        "endLine": 194,
+        "endCol": 17,
+        "kind": "variable",
+        "scope": "parseJSDoc"
+      },
+      "parseJSDoc.paramMatch": {
+        "name": "paramMatch",
+        "line": 195,
+        "col": 10,
+        "endLine": 195,
+        "endCol": 94,
+        "kind": "variable",
+        "scope": "parseJSDoc"
+      },
+      "parseJSDoc.p": {
+        "name": "p",
+        "line": 197,
+        "col": 12,
+        "endLine": 197,
+        "endCol": 63,
+        "kind": "variable",
+        "scope": "parseJSDoc"
+      },
+      "p.name": {
+        "name": "name",
+        "line": 197,
+        "col": 18,
+        "endLine": 197,
+        "endCol": 61,
+        "kind": "property",
+        "scope": "p"
+      },
+      "parseJSDoc.returnMatch": {
+        "name": "returnMatch",
+        "line": 204,
+        "col": 10,
+        "endLine": 204,
+        "endCol": 75,
+        "kind": "variable",
+        "scope": "parseJSDoc"
+      },
+      "parseJSDoc.result": {
+        "name": "result",
+        "line": 221,
+        "col": 8,
+        "endLine": 221,
+        "endCol": 19,
+        "kind": "variable",
+        "scope": "parseJSDoc"
+      },
+      "attachJSDoc": {
+        "name": "attachJSDoc",
+        "line": 230,
+        "col": 0,
+        "endLine": 256,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(comments, symbols)"
+      },
+      "attachJSDoc.jsdocs": {
+        "name": "jsdocs",
+        "line": 232,
+        "col": 8,
+        "endLine": 232,
+        "endCol": 84,
+        "kind": "variable",
+        "scope": "attachJSDoc"
+      },
+      "attachJSDoc.symEntries": {
+        "name": "symEntries",
+        "line": 236,
+        "col": 8,
+        "endLine": 236,
+        "endCol": 43,
+        "kind": "variable",
+        "scope": "attachJSDoc"
+      },
+      "attachJSDoc.comment": {
+        "name": "comment",
+        "line": 239,
+        "col": 13,
+        "endLine": 239,
+        "endCol": 20,
+        "kind": "variable",
+        "scope": "attachJSDoc"
+      },
+      "attachJSDoc.commentEndLine": {
+        "name": "commentEndLine",
+        "line": 240,
+        "col": 10,
+        "endLine": 240,
+        "endCol": 47,
+        "kind": "variable",
+        "scope": "attachJSDoc"
+      },
+      "attachJSDoc.best": {
+        "name": "best",
+        "line": 242,
+        "col": 8,
+        "endLine": 242,
+        "endCol": 19,
+        "kind": "variable",
+        "scope": "attachJSDoc"
+      },
+      "attachJSDoc.sym": {
+        "name": "sym",
+        "line": 243,
+        "col": 15,
+        "endLine": 243,
+        "endCol": 18,
+        "kind": "variable",
+        "scope": "attachJSDoc"
+      },
+      "attachJSDoc.gap": {
+        "name": "gap",
+        "line": 244,
+        "col": 12,
+        "endLine": 244,
+        "endCol": 43,
+        "kind": "variable",
+        "scope": "attachJSDoc"
+      },
+      "attachJSDoc.parsed": {
+        "name": "parsed",
+        "line": 251,
+        "col": 10,
+        "endLine": 251,
+        "endCol": 44,
+        "kind": "variable",
+        "scope": "attachJSDoc"
       }
     },
     "tags": [
