@@ -1,4 +1,7 @@
 const TEST_TAG_ID = 'c0c0c0c0-0070-0000-0000-000000000000';
+const HOBSON_INSTANCE_TYPE = '99999999-0000-0000-0000-000000000000';
+const INSTANCE_BOOT_TIMEOUT = 30000;
+const TEST_RUN_TIMEOUT = 120000;
 
 export async function render(item, api) {
   const container = document.createElement('div');
@@ -32,12 +35,7 @@ export async function render(item, api) {
   resultsArea.style.cssText = 'flex:1; overflow-y:auto; padding:8px 0;';
   container.appendChild(resultsArea);
 
-  // Hidden test viewport area (for openViewport rendering)
-  const testArea = document.createElement('div');
-  testArea.style.cssText = 'position:absolute; left:-9999px; top:-9999px; width:800px; height:600px; overflow:hidden;';
-  container.appendChild(testArea);
-
-  // Discover test items
+  // Discover test items (in parent, for building the UI rows)
   const allItems = await api.getAll();
   const testItems = allItems.filter(i =>
     i.content?.tags?.includes(TEST_TAG_ID) && i.name && i.content?.code
@@ -78,51 +76,108 @@ export async function render(item, api) {
     updateSummary(lastRun.totalPassed, lastRun.totalFailed, lastRun.timestamp);
   }
 
-  // Run all handler
+  // Run all handler — creates a nested instance, runs tests there, cleans up
   runAllBtn.addEventListener('click', async () => {
     runAllBtn.disabled = true;
     runAllBtn.style.opacity = '0.6';
     runAllBtn.style.cursor = 'default';
 
-    // Clear previous results
-    testArea.innerHTML = '';
     for (const row of rows) row.reset();
+    summaryBar.style.color = 'var(--text-secondary, #6b7280)';
 
-    let totalPassed = 0;
-    let totalFailed = 0;
-    const suites = [];
+    const instanceItemId = crypto.randomUUID();
 
-    for (const row of rows) {
-      row.setStatus('running');
-      try {
-        const results = await runTestItem(row.testItem, api, testArea);
-        const passed = results.filter(r => r.passed).length;
-        const failed = results.filter(r => !r.passed).length;
-        totalPassed += passed;
-        totalFailed += failed;
-        row.setResults(results, passed, failed);
-        suites.push({ testItemId: row.testItem.id, testItemName: row.testItem.name, passed, failed, results });
-      } catch (e) {
-        totalFailed += 1;
-        const results = [{ name: row.testItem.name, passed: false, error: e.message }];
-        row.setResults(results, 0, 1);
-        suites.push({ testItemId: row.testItem.id, testItemName: row.testItem.name, passed: 0, failed: 1, results });
+    try {
+      // 1. Populate nested instance storage via IndexedDB
+      summaryBar.textContent = `Copying ${allItems.length} items to test instance...`;
+      await populateInstance(instanceItemId, allItems);
+
+      // 2. Create hobson-instance item and open as sibling
+      summaryBar.textContent = 'Booting test instance...';
+      await api.set({
+        id: instanceItemId,
+        name: 'Test Run',
+        type: HOBSON_INSTANCE_TYPE,
+        content: {},
+        attachments: []
+      }, { silent: true });
+
+      if (api.siblingContainer) {
+        api.siblingContainer.addSibling(instanceItemId);
       }
+
+      // 3. Wait for ready signal — service auto-runs tests on boot
+      await waitForInstanceMessage(instanceItemId, 'test-instance-ready', INSTANCE_BOOT_TIMEOUT);
+      summaryBar.textContent = 'Running tests...';
+      for (const row of rows) row.setStatus('running');
+
+      const suiteMap = new Map(rows.map(r => [r.testItem.id, r]));
+      const resultLastRun = await new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          cleanup();
+          reject(new Error('Test run timed out'));
+        }, TEST_RUN_TIMEOUT);
+
+        function onMessage(e) {
+          const msg = e.data;
+          if (msg?.instanceId !== instanceItemId) return;
+
+          if (msg.type === 'test-progress') {
+            const row = suiteMap.get(msg.suite?.testItemId);
+            if (row) {
+              row.setResults(msg.suite.results, msg.suite.passed, msg.suite.failed);
+            }
+          }
+
+          if (msg.type === 'test-complete') {
+            cleanup();
+            resolve(msg.lastRun);
+          }
+
+          if (msg.type === 'test-error') {
+            cleanup();
+            reject(new Error(msg.error));
+          }
+        }
+
+        function cleanup() {
+          clearTimeout(timeout);
+          window.removeEventListener('message', onMessage);
+        }
+
+        window.addEventListener('message', onMessage);
+      });
+
+      // 4. Update summary and persist
+      updateSummary(resultLastRun.totalPassed, resultLastRun.totalFailed, resultLastRun.timestamp);
+      const updated = await api.get(item.id);
+      updated.content = updated.content || {};
+      updated.content.lastRun = resultLastRun;
+      await api.set(updated, { silent: true });
+
+    } catch (err) {
+      summaryBar.textContent = `Error: ${err.message}`;
+      summaryBar.style.color = '#ef4444';
     }
 
-    // Update summary
-    const now = Date.now();
-    updateSummary(totalPassed, totalFailed, now);
-
-    // Persist results to item
-    const updated = await api.get(item.id);
-    updated.content = updated.content || {};
-    updated.content.lastRun = { timestamp: now, totalPassed, totalFailed, suites };
-    await api.set(updated, { silent: true });
-
-    runAllBtn.disabled = false;
-    runAllBtn.style.opacity = '1';
-    runAllBtn.style.cursor = 'pointer';
+    // 5. Show clean up button (instance stays alive for inspection)
+    runAllBtn.style.display = 'none';
+    const cleanupBtn = document.createElement('button');
+    cleanupBtn.textContent = 'Clean Up Instance';
+    cleanupBtn.style.cssText = 'padding:6px 16px; background:#6b7280; color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:14px; font-weight:500;';
+    cleanupBtn.onmouseenter = () => cleanupBtn.style.background = '#4b5563';
+    cleanupBtn.onmouseleave = () => cleanupBtn.style.background = '#6b7280';
+    cleanupBtn.addEventListener('click', async () => {
+      cleanupBtn.disabled = true;
+      cleanupBtn.textContent = 'Cleaning up...';
+      try { await api.delete(instanceItemId); } catch {}
+      cleanupBtn.remove();
+      runAllBtn.style.display = '';
+      runAllBtn.disabled = false;
+      runAllBtn.style.opacity = '1';
+      runAllBtn.style.cursor = 'pointer';
+    });
+    header.appendChild(cleanupBtn);
   });
 
   return container;
@@ -262,73 +317,47 @@ function formatTimeAgo(timestamp) {
   return `${days}d ago`;
 }
 
-async function runTestItem(testItem, api, testArea) {
-  // Build the testApi that wraps the renderer API with test helpers.
-  // Key differences from the raw renderer API:
-  //  - set() returns the full saved item (renderer api.set returns just the ID)
-  //  - get() returns null on missing items (renderer api.get throws)
-  //  - delete() uses silent deletion to avoid viewport re-render
-  const testApi = {
-    set: async (item) => {
-      const id = await api.set(item, { silent: true });
-      return api.get(id);
-    },
-    get: async (id) => {
-      try { return await api.get(id); }
-      catch { return null; }
-    },
-    query: (filter) => api.query(filter),
-    getAll: () => api.getAll(),
-    delete: async (id) => {
-      // Use silent set-then-delete pattern to avoid renderViewport
-      // api.events won't trigger viewport re-render when we use the
-      // low-level approach through set with silent option
-      try { await api.get(id); } catch { return; }
-      // We can't avoid kernel.deleteItem's renderViewport call,
-      // so we do a silent save of a tombstone then the storage-level delete
-      await api.set({ id, type: '00000000-0000-0000-0000-000000000000', content: {}, attachments: [] }, { silent: true });
-      // The item is overwritten; now we just leave it. Tests that check
-      // deletion should use get() which returns null for missing items.
-    },
-    require: (name) => api.require(name),
-    typeChainIncludes: (typeId, targetId) => api.typeChainIncludes(typeId, targetId),
-    attach: (parentId, itemId) => api.attach(parentId, itemId),
-    detach: (parentId, itemId) => api.detach(parentId, itemId),
-    findContainerOf: (itemId) => api.findContainerOf(itemId),
-    events: api.events,
+// Wait for a postMessage with a specific type and instanceId
+function waitForInstanceMessage(instanceId, messageType, timeout) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      window.removeEventListener('message', handler);
+      reject(new Error(`Timed out waiting for ${messageType}`));
+    }, timeout);
 
-    openViewport: async (itemId, viewId) => {
-      const viewport = document.createElement('div');
-      viewport.className = 'test-viewport';
-      viewport.style.cssText = 'width:800px; height:600px;';
-      testArea.appendChild(viewport);
-      const dom = await api.renderItem(itemId, viewId || null);
-      if (dom) viewport.appendChild(dom);
-      return viewport;
-    },
-
-    closeViewport: (el) => {
-      if (el && el.parentNode) el.remove();
+    function handler(e) {
+      if (e.data?.type === messageType && e.data?.instanceId === instanceId) {
+        clearTimeout(timer);
+        window.removeEventListener('message', handler);
+        resolve(e.data);
+      }
     }
-  };
 
-  const mod = await api.require(testItem.name);
-  if (!mod || typeof mod.run !== 'function') {
-    throw new Error(`Test item "${testItem.name}" does not export a run() function`);
+    window.addEventListener('message', handler);
+  });
+}
+
+// Write all items into a nested instance namespace via IndexedDB directly.
+// This bypasses the kernel to avoid side effects (module registration, events, etc).
+async function populateInstance(instanceId, items) {
+  const db = await new Promise((resolve, reject) => {
+    const req = indexedDB.open('hobson');
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+
+  const tx = db.transaction('items', 'readwrite');
+  const store = tx.objectStore('items');
+  const prefix = `${instanceId}:`;
+
+  for (const item of items) {
+    store.put({ ...item, id: prefix + item.id });
   }
 
-  // Run with a timeout so a hanging test can't block the entire runner
-  const ITEM_TIMEOUT = 30000;
-  const results = await Promise.race([
-    mod.run(testApi),
-    new Promise((_, reject) =>
-      setTimeout(() => reject(new Error(`Test item "${testItem.name}" timed out after ${ITEM_TIMEOUT / 1000}s`)), ITEM_TIMEOUT)
-    )
-  ]);
+  await new Promise((resolve, reject) => {
+    tx.oncomplete = resolve;
+    tx.onerror = () => reject(tx.error);
+  });
 
-  if (!Array.isArray(results)) {
-    throw new Error(`Test item "${testItem.name}" run() must return an array of results`);
-  }
-
-  return results;
+  db.close();
 }
