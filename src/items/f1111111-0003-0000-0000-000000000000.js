@@ -59,21 +59,28 @@ export async function onKernelBootComplete({ safeMode }, _api) {
   if (safeMode) return;  // No REPL in safe mode
 
   api = _api;
-  
+
+  // Remove previous REPL elements on re-import (late activation)
+  // Note: must query DOM by ID — module variables are fresh (null) after re-evaluation
+  const oldSplitter = document.getElementById('repl-panel-splitter');
+  const oldPanel = document.getElementById('repl-panel');
+  if (oldSplitter) oldSplitter.remove();
+  if (oldPanel) oldPanel.remove();
+
   // Load saved state from viewport
   await loadPanelState();
 
   // Create panel splitter (between main-view and panel)
   const panelSplitter = document.createElement('div');
   panelSplitter.id = 'repl-panel-splitter';
-  
+
   // Create and attach REPL panel
   panelElement = createPanel();
-  
+
   const app = document.getElementById('app');
   app.appendChild(panelSplitter);
   app.appendChild(panelElement);
-  
+
   // Setup panel height resize
   setupPanelSplitter(panelSplitter);
   
@@ -218,6 +225,12 @@ function createPanel() {
     if (e.ctrlKey && e.key === 'Enter') {
       e.preventDefault();
       run();
+    }
+
+    // Escape to dismiss
+    if (e.key === 'Escape' && panelState.expanded) {
+      e.preventDefault();
+      toggle();
     }
 
     // Tab for indentation
