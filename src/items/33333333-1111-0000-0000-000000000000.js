@@ -71,6 +71,40 @@ export async function loadKernel(require, storageBackend) {
       }
     }
 
+    /** Emit an event and await all async handlers (including declarative watchers).
+     * Use this instead of emit() when handlers must complete before continuing
+     * (e.g., cascade delete on item:deleted).
+     * @param {Object} event - Event object with {type: eventTypeGUID, content: {...}}
+     */
+    async emitAsync(event) {
+      const eventWithTimestamp = {
+        ...event,
+        timestamp: event.timestamp || Date.now()
+      };
+
+      const emittedType = event.type;
+      const cacheEntry = this.kernel?.eventTypeCache?.get(emittedType);
+      const typeChain = cacheEntry?.ancestors || new Set([emittedType]);
+
+      const promises = [];
+      for (const [subscribedType, handlers] of this.listeners) {
+        if (typeChain.has(subscribedType)) {
+          for (const handler of handlers) {
+            try {
+              const result = handler(eventWithTimestamp);
+              if (result && typeof result.then === 'function') {
+                promises.push(result);
+              }
+            } catch (e) {
+              console.error(`Event handler error for ${subscribedType}:`, e);
+            }
+          }
+        }
+      }
+
+      await Promise.allSettled(promises);
+    }
+
     /** Get all event type GUIDs that have active listeners.
      * @returns {string[]} Array of event type GUIDs
      */
@@ -2045,8 +2079,8 @@ export async function loadKernel(require, storageBackend) {
       // Remove from watcher index
       this.watcherIndex.delete(itemId);
 
-      // Emit deletion event
-      this.events.emit({ type: EVENT_IDS.ITEM_DELETED, content: { id: itemId, item } });
+      // Emit deletion event — await so cascade-delete watchers complete before re-render
+      await this.events.emitAsync({ type: EVENT_IDS.ITEM_DELETED, content: { id: itemId, item } });
 
       // Clear module cache only if this was a code item
       if (await this.isCodeItem(item)) {

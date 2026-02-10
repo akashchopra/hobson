@@ -66,8 +66,7 @@ async function runTestItem(testItem, api, testArea) {
     query: (filter) => api.query(filter),
     getAll: () => api.getAll(),
     delete: async (id) => {
-      try { await api.get(id); } catch { return; }
-      await api.set({ id, type: '00000000-0000-0000-0000-000000000000', content: {}, attachments: [] }, { silent: true });
+      try { await api.delete(id); } catch { /* item may not exist */ }
     },
     require: (name) => api.require(name),
     typeChainIncludes: (typeId, targetId) => api.typeChainIncludes(typeId, targetId),
