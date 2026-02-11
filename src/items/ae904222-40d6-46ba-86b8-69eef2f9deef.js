@@ -23,8 +23,9 @@ export async function render(item, api) {
     api.pageContext.setState(stateKey, defaultValue);
   }
 
+  const horizontal = item.content?.layout === 'horizontal';
   const listEl = api.createElement('div', {
-    style: 'display: flex; flex-direction: column; gap: 2px;'
+    style: `display: flex; flex-direction: ${horizontal ? 'row' : 'column'}; gap: ${horizontal ? '12px' : '2px'}; ${horizontal ? 'flex-wrap: wrap;' : ''}`
   });
 
   for (const opt of options) {
