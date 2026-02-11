@@ -13,7 +13,7 @@ export async function render(item, api) {
   header.style.cssText = 'display:flex; align-items:center; justify-content:space-between; padding:12px 16px; border-bottom:1px solid var(--border-color, #e5e7eb);';
 
   const title = document.createElement('h2');
-  title.textContent = 'Test Runner';
+  title.textContent = 'Test Suite';
   title.style.cssText = 'margin:0; font-size:18px; font-weight:600;';
   header.appendChild(title);
 

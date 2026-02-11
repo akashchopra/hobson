@@ -184,7 +184,7 @@ export async function render(search, api) {
               e.stopPropagation();
               e.preventDefault();
               document.getElementById('item-palette-overlay')?.remove();
-              api.openItem(childId);
+              api.navigate(childId);
             }, true);
           }
 
