@@ -10,10 +10,11 @@ function parseSourceLocation(stack) {
                   line.match(/@(.+?):(\d+):\d+/);        // Firefox/Safari
     if (match) {
       const [, itemName, lineNum] = match;
-      // Strip .js suffix and skip kernel-rendering itself
+      // Strip .js suffix and skip kernel frames (createElement wrapper + rendering internals)
       const cleanName = itemName.replace(/\.js$/, '');
-      if (cleanName !== 'kernel:rendering') {
-        return { itemName: cleanName, line: parseInt(lineNum, 10) };
+      if (cleanName !== 'kernel:rendering' && cleanName !== 'kernel:core') {
+        // Subtract 1 to compensate for the "use strict"; preamble the module system prepends
+        return { itemName: cleanName, line: parseInt(lineNum, 10) - 1 };
       }
     }
   }
