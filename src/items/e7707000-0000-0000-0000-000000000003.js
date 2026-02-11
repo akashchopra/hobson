@@ -77,7 +77,7 @@ export function render(item, api) {
     contextBox.querySelectorAll('.context-item-link').forEach(link => {
       link.onclick = (e) => {
         e.preventDefault();
-        api.navigate(link.dataset.itemId);
+        api.openItem(link.dataset.itemId);
       };
     });
     
@@ -108,7 +108,7 @@ export function render(item, api) {
     const viewSourceBtn = document.createElement('button');
     viewSourceBtn.textContent = 'View ' + (context.rendererName || 'Source Code');
     viewSourceBtn.style.cssText = 'padding: 8px 16px; cursor: pointer; background: var(--color-primary); color: white; border: none; border-radius: var(--border-radius); font-weight: 500;';
-    viewSourceBtn.onclick = () => api.navigate(sourceId);
+    viewSourceBtn.onclick = () => api.openItem(sourceId);
     sourceSection.appendChild(viewSourceBtn);
     container.appendChild(sourceSection);
   }
@@ -141,7 +141,7 @@ export function render(item, api) {
       if (frame.navigable && frame.itemId) {
         frameLine.style.cssText += 'cursor: pointer; color: var(--color-primary);';
         frameLine.innerHTML = `&#8594; ${escapeHtml(frame.raw)}`;
-        frameLine.onclick = () => api.navigate(frame.itemId, {
+        frameLine.onclick = () => api.openItem(frame.itemId, {
           field: frame.field,
           line: frame.line,
           col: frame.column

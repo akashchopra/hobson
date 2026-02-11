@@ -67,7 +67,7 @@ export function render(value, options, api) {
         // Click to open tag item
         if (mode !== 'editable') {
           pill.style.cursor = 'pointer';
-          pill.onclick = () => api.siblingContainer?.addSibling(tagId);
+          pill.onclick = () => api.openItem(tagId);
         }
 
         // Remove button in editable mode

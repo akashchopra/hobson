@@ -306,13 +306,7 @@ export async function buildSimpleActions(api, itemId, context) {
         content: newContent
       };
       await api.set(duplicate);
-      const instances = api.instances.getByItemId(itemId);
-      const siblingContainer = instances?.[0]?.siblingContainer;
-      if (siblingContainer) {
-        siblingContainer.addSibling(duplicate.id);
-      } else {
-        await api.navigate(duplicate.id);
-      }
+      await api.openItem(duplicate.id);
     };
   }
   frag.appendChild(duplicateEl);

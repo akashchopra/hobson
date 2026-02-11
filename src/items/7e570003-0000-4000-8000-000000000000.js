@@ -102,9 +102,7 @@ export async function render(item, api) {
         attachments: []
       }, { silent: true });
 
-      if (api.siblingContainer) {
-        api.siblingContainer.addSibling(instanceItemId);
-      }
+      await api.openItem(instanceItemId);
 
       // 3. Wait for ready signal — service auto-runs tests on boot
       await waitForInstanceMessage(instanceItemId, 'test-instance-ready', INSTANCE_BOOT_TIMEOUT);
@@ -282,11 +280,7 @@ function createTestRow(testItem, api) {
           e.preventDefault();
           const params = { field: 'code' };
           if (r.symbol) params.symbol = r.symbol;
-          if (api.siblingContainer) {
-            api.siblingContainer.addSibling(testItem.id, params);
-          } else {
-            api.navigate(testItem.id, params);
-          }
+          api.openItem(testItem.id, params);
         };
 
         line.appendChild(nameEl);

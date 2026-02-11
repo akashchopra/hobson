@@ -111,11 +111,7 @@ export async function render(value, options, api) {
               if (params.has('symbol')) navigateTo.symbol = params.get('symbol');
             }
           }
-          if (api.siblingContainer) {
-            api.siblingContainer.addSibling(itemId, navigateTo);
-          } else {
-            api.navigate(itemId, navigateTo);
-          }
+          api.openItem(itemId, navigateTo);
         };
         parts.push(link);
         

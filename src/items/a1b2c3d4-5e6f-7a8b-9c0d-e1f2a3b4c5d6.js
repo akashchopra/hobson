@@ -170,11 +170,7 @@ export async function render(markdown, api, options = {}) {
         };
         const hasNavigation = navigateTo.field || navigateTo.line || navigateTo.region || navigateTo.symbol;
 
-        if (api.siblingContainer) {
-          api.siblingContainer.addSibling(parsed.itemId, hasNavigation ? navigateTo : null);
-        } else {
-          api.navigate(parsed.itemId, hasNavigation ? navigateTo : null);
-        }
+        api.openItem(parsed.itemId, hasNavigation ? navigateTo : null);
       };
       link.style.cssText = 'color: var(--color-primary); text-decoration: none; border-bottom: 1px solid var(--color-primary); cursor: pointer;';
     }
@@ -222,7 +218,7 @@ export async function render(markdown, api, options = {}) {
         navLink.textContent = '↗';
         navLink.title = 'Open ' + (transcludedItem.name || transcludedItem.id);
         navLink.style.cssText = 'color: var(--color-primary); cursor: pointer;';
-        navLink.onclick = (e) => { e.preventDefault(); e.stopPropagation(); api.siblingContainer ? api.siblingContainer.addSibling(parsed.itemId) : api.navigate(parsed.itemId); };
+        navLink.onclick = (e) => { e.preventDefault(); e.stopPropagation(); api.openItem(parsed.itemId); };
         header.appendChild(navLink);
         wrapperDiv.appendChild(header);
 
@@ -292,7 +288,7 @@ export async function render(markdown, api, options = {}) {
         navLink.textContent = '↗';
         navLink.title = 'Open ' + (transcludedItem.name || transcludedItem.id);
         navLink.style.cssText = 'color: var(--color-primary); cursor: pointer;';
-        navLink.onclick = (e) => { e.preventDefault(); e.stopPropagation(); api.siblingContainer.addSibling(parsed.itemId); };
+        navLink.onclick = (e) => { e.preventDefault(); e.stopPropagation(); api.openItem(parsed.itemId); };
         header.appendChild(navLink);
         wrapperDiv.appendChild(header);
 
@@ -419,11 +415,7 @@ export async function render(markdown, api, options = {}) {
               };
               const hasNavigation = navigateTo.field || navigateTo.line || navigateTo.region || navigateTo.symbol;
 
-              if (api.siblingContainer) {
-                api.siblingContainer.addSibling(parsed.itemId, hasNavigation ? navigateTo : null);
-              } else {
-                api.navigate(parsed.itemId, hasNavigation ? navigateTo : null);
-              }
+              api.openItem(parsed.itemId, hasNavigation ? navigateTo : null);
             };
             link.style.cssText = 'color: var(--color-primary); text-decoration: none; border-bottom: 1px solid var(--color-primary); cursor: pointer;';
           }
@@ -443,11 +435,7 @@ export async function render(markdown, api, options = {}) {
             link.title = 'From: ' + itemName;
             link.onclick = (e) => {
               e.preventDefault();
-              if (api.siblingContainer) {
-                api.siblingContainer.addSibling(itemId);
-              } else {
-                api.navigate(itemId);
-              }
+              api.openItem(itemId);
             };
           }
         }
@@ -470,7 +458,7 @@ export async function render(markdown, api, options = {}) {
           navLink.textContent = '↗';
           navLink.title = 'Open ' + itemName;
           navLink.style.cssText = 'color: var(--color-primary); cursor: pointer;';
-          navLink.onclick = (e) => { e.preventDefault(); e.stopPropagation(); api.siblingContainer?.addSibling(itemId); };
+          navLink.onclick = (e) => { e.preventDefault(); e.stopPropagation(); api.openItem(itemId); };
           header.appendChild(navLink);
           wrapperDiv.appendChild(header);
 

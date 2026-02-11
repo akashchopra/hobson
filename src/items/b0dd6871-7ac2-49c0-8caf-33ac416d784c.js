@@ -20,11 +20,7 @@ export async function render(value, options, api) {
   // Helper to navigate to item
   const navigateToItem = async (id) => {
     try {
-      if (api.siblingContainer) {
-        await api.siblingContainer.addSibling(id);
-      } else {
-        await api.navigate(id);
-      }
+      await api.openItem(id);
     } catch (err) {
       console.error('item_ref navigation error:', err);
     }

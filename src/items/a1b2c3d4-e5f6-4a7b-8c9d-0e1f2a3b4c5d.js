@@ -13,7 +13,7 @@ export async function render(item, api) {
   pill.onmouseover = () => { pill.style.background = 'var(--color-bg-surface-alt)'; };
   pill.onmouseout = () => { pill.style.background = 'var(--color-bg-surface)'; };
 
-  pill.onclick = (e) => { e.stopPropagation(); api.siblingContainer?.addSibling(item.id); };
+  pill.onclick = (e) => { e.stopPropagation(); api.openItem(item.id); };
 
   return pill;
 }

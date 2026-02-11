@@ -147,7 +147,7 @@ export async function render(browser, api) {
       }, []);
       itemHeader.onmouseover = () => { itemHeader.style.background = 'var(--color-border-light)'; };
       itemHeader.onmouseout = () => { itemHeader.style.background = ''; };
-      itemHeader.onclick = () => api.siblingContainer ? api.siblingContainer.addSibling(group.item.id) : api.navigate(group.item.id);
+      itemHeader.onclick = () => api.openItem(group.item.id);
 
       const itemName = api.createElement('span', {
         style: 'font-weight: 600; font-size: 14px; color: var(--color-text);'
@@ -168,7 +168,7 @@ export async function render(browser, api) {
         }, []);
         row.onmouseover = () => { row.style.background = 'var(--color-border-light)'; row.style.transform = 'translateX(4px)'; };
         row.onmouseout = () => { row.style.background = ''; row.style.transform = ''; };
-        row.onclick = () => api.siblingContainer ? api.siblingContainer.addSibling(group.item.id, { symbol: sym.name }) : api.navigate(group.item.id, { symbol: sym.name });
+        row.onclick = () => api.openItem(group.item.id, { symbol: sym.name });
 
         // Name + signature
         const nameEl = api.createElement('span', {

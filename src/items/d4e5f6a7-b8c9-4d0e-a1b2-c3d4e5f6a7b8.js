@@ -42,7 +42,7 @@ export async function render(item, api) {
       }, []));
       pill.appendChild(api.createElement('span', {}, [tagName]));
       pill.style.cursor = 'pointer';
-      pill.onclick = (e) => { e.stopPropagation(); api.siblingContainer?.addSibling(tag.id); };
+      pill.onclick = (e) => { e.stopPropagation(); api.openItem(tag.id); };
       meta.appendChild(pill);
     }
   }
@@ -63,7 +63,7 @@ export async function render(item, api) {
   // Click to open as sibling window
   card.onclick = (e) => {
     e.stopPropagation();
-    api.siblingContainer?.addSibling(item.id);
+    api.openItem(item.id);
   };
 
   return card;

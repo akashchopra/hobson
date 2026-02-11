@@ -98,7 +98,7 @@ export async function render(search, api) {
 
     card.onclick = (e) => {
       e.stopPropagation();
-      api.siblingContainer?.addSibling(cycleItem.id);
+      api.openItem(cycleItem.id);
     };
 
     return card;
@@ -184,7 +184,7 @@ export async function render(search, api) {
               e.stopPropagation();
               e.preventDefault();
               document.getElementById('item-palette-overlay')?.remove();
-              api.navigate(childId);
+              api.openItem(childId);
             }, true);
           }
 

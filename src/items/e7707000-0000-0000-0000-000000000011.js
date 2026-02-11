@@ -75,7 +75,7 @@ export async function render(errorList, api) {
     }, ['in current view']));
 
     card.appendChild(titleRow);
-    card.onclick = (e) => { e.stopPropagation(); api.siblingContainer?.addSibling(cycleItem.id); };
+    card.onclick = (e) => { e.stopPropagation(); api.openItem(cycleItem.id); };
     return card;
   };
 

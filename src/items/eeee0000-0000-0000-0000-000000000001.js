@@ -264,45 +264,37 @@ async function showInspectorOverlay(info, x, y, api) {
       // Inspector links point to code, so field is 'code'
       const navigateTo = line ? { field: 'code', lines: line } : null;
 
-      // Follow same pattern as hobson-markdown: sibling if in container, else root
-      if (api.siblingContainer) {
-        api.siblingContainer.addSibling(targetId, navigateTo);
-      } else {
-        // Check if we're viewing a container - if so, add as sibling with navigateTo in view config
-        const currentRoot = api.viewport.getRoot();
-        if (currentRoot && currentRoot !== targetId) {
-          try {
-            const rootItem = await api.get(currentRoot);
-            // Check if target is already a child
-            const existingChild = rootItem.attachments?.find(c => c.id === targetId);
+      // Inspector runs outside the render tree (kernel.createAPI() with no context),
+      // so api.openItem would always navigate. Manually check for a spatial canvas.
+      const currentRoot = api.viewport.getRoot();
+      if (currentRoot && currentRoot !== targetId) {
+        try {
+          const rootItem = await api.get(currentRoot);
+          const existingChild = rootItem.attachments?.find(c => c.id === targetId);
 
-            if (existingChild) {
-              // Already a child - update its view.navigateTo and re-render
-              const updatedChildren = rootItem.attachments.map(c => {
-                if (c.id === targetId) {
-                  return { ...c, view: { ...(c.view || {}), navigateTo, minimized: false } };
-                }
-                return c;
-              });
-              await api.set({ ...rootItem, attachments: updatedChildren, modified: Date.now() });
-            } else {
-              // Add as new child with navigateTo in view config
-              const newChild = { id: targetId, view: { navigateTo } };
-              await api.set({
-                ...rootItem,
-                attachments: [...(rootItem.attachments || []), newChild],
-                modified: Date.now()
-              });
-            }
-            // Re-render to show the sibling with scroll
-            await api.navigate(currentRoot);
-          } catch (err) {
-            console.error('Error opening as sibling:', err);
-            await api.navigate(targetId, navigateTo);
+          if (existingChild) {
+            const updatedChildren = rootItem.attachments.map(c => {
+              if (c.id === targetId) {
+                return { ...c, view: { ...(c.view || {}), navigateTo, minimized: false } };
+              }
+              return c;
+            });
+            await api.set({ ...rootItem, attachments: updatedChildren, modified: Date.now() });
+          } else {
+            const newChild = { id: targetId, view: { navigateTo } };
+            await api.set({
+              ...rootItem,
+              attachments: [...(rootItem.attachments || []), newChild],
+              modified: Date.now()
+            });
           }
-        } else {
+          await api.navigate(currentRoot);
+        } catch (err) {
+          console.error('Error opening as sibling:', err);
           await api.navigate(targetId, navigateTo);
         }
+      } else {
+        await api.navigate(targetId, navigateTo);
       }
 
       overlay.remove();

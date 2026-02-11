@@ -1359,6 +1359,18 @@ export async function loadKernel(require, storageBackend) {
           const vpMgr = await kernel.moduleSystem.require('viewport-manager');
           return vpMgr.navigate(id, params);
         },
+        /** Open an item contextually: as a sibling if inside a container, otherwise navigate.
+         * @param {string} id - Item GUID to open
+         * @param {Object} [navigateTo] - Scroll target hint (field, symbol, line, region)
+         */
+        openItem: async (id, navigateTo) => {
+          if (context.siblingContainer) {
+            await context.siblingContainer.addSibling(id, navigateTo);
+          } else {
+            const vpMgr = await kernel.moduleSystem.require('viewport-manager');
+            await vpMgr.navigate(id, navigateTo);
+          }
+        },
         /** Get the current viewport root item ID.
          * @returns {string|null} Root item GUID, or null
          */

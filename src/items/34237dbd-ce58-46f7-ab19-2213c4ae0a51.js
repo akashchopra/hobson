@@ -309,7 +309,7 @@ async function renderItemLink(itemId, api, displayName) {
   row.onmouseout = () => { row.style.background = ''; };
   row.onclick = (e) => {
     e.stopPropagation();
-    api.siblingContainer?.addSibling(itemId);
+    api.openItem(itemId);
   };
 
   return row;
