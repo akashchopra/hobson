@@ -295,7 +295,9 @@ export async function loadKernel(require, storageBackend) {
         window._safeModeShortcut = (e) => {
           if (e.ctrlKey && e.shiftKey && e.key === 'S') {
             e.preventDefault();
-            window.location.href = window.location.pathname + '?safe=1';
+            const params = new URLSearchParams(window.location.search);
+            params.set('safe', '1');
+            window.location.href = window.location.pathname + '?' + params.toString();
           }
         };
         document.addEventListener('keydown', window._safeModeShortcut);

@@ -22,7 +22,7 @@ export class SafeMode {
           <button onclick="kernel.safeMode.exportData(false)">Export All Data</button>
           <button onclick="kernel.safeMode.importData()">Import Data</button>
           <button onclick="kernel.safeMode.resetSystem()">Reset System (Dangerous!)</button>
-          <button onclick="window.location.href = window.location.pathname">Exit Safe Mode</button>
+          <button onclick="(function() { var p = new URLSearchParams(window.location.search); p.delete('safe'); var qs = p.toString(); window.location.href = window.location.pathname + (qs ? '?' + qs : ''); })()">Exit Safe Mode</button>
         </div>
         
         <div id="item-list" class="item-list"></div>
