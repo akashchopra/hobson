@@ -1,9 +1,10 @@
 const TEST_TAG_ID = 'c0c0c0c0-0070-0000-0000-000000000000';
-const HOBSON_INSTANCE_TYPE = '99999999-0000-0000-0000-000000000000';
 const INSTANCE_BOOT_TIMEOUT = 30000;
 const TEST_RUN_TIMEOUT = 120000;
 
 export async function render(item, api) {
+  const instanceLib = await api.require('hobson-instance-lib');
+
   const container = document.createElement('div');
   container.style.cssText = 'display:flex; flex-direction:column; height:100%; font-family:var(--font-sans, system-ui, sans-serif); font-size:14px;';
 
@@ -76,7 +77,8 @@ export async function render(item, api) {
     updateSummary(lastRun.totalPassed, lastRun.totalFailed, lastRun.timestamp);
   }
 
-  // Run all handler — creates a nested instance, runs tests there, cleans up
+  // Run all handler — creates a nested instance, runs tests there
+  let instance = null;
   runAllBtn.addEventListener('click', async () => {
     runAllBtn.disabled = true;
     runAllBtn.style.opacity = '0.6';
@@ -85,68 +87,48 @@ export async function render(item, api) {
     for (const row of rows) row.reset();
     summaryBar.style.color = 'var(--text-secondary, #6b7280)';
 
-    const instanceItemId = crypto.randomUUID();
-
     try {
-      // 1. Populate nested instance storage via IndexedDB
-      summaryBar.textContent = `Copying ${allItems.length} items to test instance...`;
-      await populateInstance(instanceItemId, allItems);
-
-      // 2. Create hobson-instance item and open as sibling
       summaryBar.textContent = 'Booting test instance...';
-      await api.set({
-        id: instanceItemId,
-        name: 'Test Run',
-        type: HOBSON_INSTANCE_TYPE,
-        content: {},
-        attachments: []
-      }, { silent: true });
+      instance = await instanceLib.create(api, { name: 'Test Run' });
 
-      await api.openItem(instanceItemId);
-
-      // 3. Wait for ready signal — service auto-runs tests on boot
-      await waitForInstanceMessage(instanceItemId, 'test-instance-ready', INSTANCE_BOOT_TIMEOUT);
+      await instance.waitForMessage('test-instance-ready', INSTANCE_BOOT_TIMEOUT);
       summaryBar.textContent = 'Running tests...';
       for (const row of rows) row.setStatus('running');
 
       const suiteMap = new Map(rows.map(r => [r.testItem.id, r]));
+
+      const removeProgress = instance.onMessage('test-progress', msg => {
+        const row = suiteMap.get(msg.suite?.testItemId);
+        if (row) {
+          row.setResults(msg.suite.results, msg.suite.passed, msg.suite.failed);
+        }
+      });
+
       const resultLastRun = await new Promise((resolve, reject) => {
-        const timeout = setTimeout(() => {
-          cleanup();
+        const timer = setTimeout(() => {
+          removeComplete();
+          removeError();
           reject(new Error('Test run timed out'));
         }, TEST_RUN_TIMEOUT);
 
-        function onMessage(e) {
-          const msg = e.data;
-          if (msg?.instanceId !== instanceItemId) return;
+        const removeComplete = instance.onMessage('test-complete', msg => {
+          clearTimeout(timer);
+          removeComplete();
+          removeError();
+          resolve(msg.lastRun);
+        });
 
-          if (msg.type === 'test-progress') {
-            const row = suiteMap.get(msg.suite?.testItemId);
-            if (row) {
-              row.setResults(msg.suite.results, msg.suite.passed, msg.suite.failed);
-            }
-          }
-
-          if (msg.type === 'test-complete') {
-            cleanup();
-            resolve(msg.lastRun);
-          }
-
-          if (msg.type === 'test-error') {
-            cleanup();
-            reject(new Error(msg.error));
-          }
-        }
-
-        function cleanup() {
-          clearTimeout(timeout);
-          window.removeEventListener('message', onMessage);
-        }
-
-        window.addEventListener('message', onMessage);
+        const removeError = instance.onMessage('test-error', msg => {
+          clearTimeout(timer);
+          removeComplete();
+          removeError();
+          reject(new Error(msg.error));
+        });
       });
 
-      // 4. Update summary and persist
+      removeProgress();
+
+      // Update summary and persist
       updateSummary(resultLastRun.totalPassed, resultLastRun.totalFailed, resultLastRun.timestamp);
       const updated = await api.get(item.id);
       updated.content = updated.content || {};
@@ -158,7 +140,7 @@ export async function render(item, api) {
       summaryBar.style.color = '#ef4444';
     }
 
-    // 5. Show clean up button (instance stays alive for inspection)
+    // Show clean up button (instance stays alive for inspection)
     runAllBtn.style.display = 'none';
     const cleanupBtn = document.createElement('button');
     cleanupBtn.textContent = 'Clean Up Instance';
@@ -168,7 +150,8 @@ export async function render(item, api) {
     cleanupBtn.addEventListener('click', async () => {
       cleanupBtn.disabled = true;
       cleanupBtn.textContent = 'Cleaning up...';
-      try { await api.delete(instanceItemId); } catch {}
+      try { if (instance) await instance.destroy(); } catch {}
+      instance = null;
       cleanupBtn.remove();
       runAllBtn.style.display = '';
       runAllBtn.disabled = false;
@@ -309,49 +292,4 @@ function formatTimeAgo(timestamp) {
   if (hours < 24) return `${hours}h ago`;
   const days = Math.floor(hours / 24);
   return `${days}d ago`;
-}
-
-// Wait for a postMessage with a specific type and instanceId
-function waitForInstanceMessage(instanceId, messageType, timeout) {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      window.removeEventListener('message', handler);
-      reject(new Error(`Timed out waiting for ${messageType}`));
-    }, timeout);
-
-    function handler(e) {
-      if (e.data?.type === messageType && e.data?.instanceId === instanceId) {
-        clearTimeout(timer);
-        window.removeEventListener('message', handler);
-        resolve(e.data);
-      }
-    }
-
-    window.addEventListener('message', handler);
-  });
-}
-
-// Write all items into a nested instance namespace via IndexedDB directly.
-// This bypasses the kernel to avoid side effects (module registration, events, etc).
-async function populateInstance(instanceId, items) {
-  const db = await new Promise((resolve, reject) => {
-    const req = indexedDB.open('hobson');
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-  });
-
-  const tx = db.transaction('items', 'readwrite');
-  const store = tx.objectStore('items');
-  const prefix = `${instanceId}:`;
-
-  for (const item of items) {
-    store.put({ ...item, id: prefix + item.id });
-  }
-
-  await new Promise((resolve, reject) => {
-    tx.oncomplete = resolve;
-    tx.onerror = () => reject(tx.error);
-  });
-
-  db.close();
 }
