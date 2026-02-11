@@ -218,6 +218,19 @@ export async function render(item, api) {
     updateSelectionVisual();
   };
 
+  // Listen for programmatic selection changes (e.g. openItem → addSibling)
+  const SELECTION_CHANGED = 'e0e00000-0003-0001-0000-000000000000';
+  const unsubSelection = api.events.on(SELECTION_CHANGED, (event) => {
+    const { itemId, parentId } = event.content?.current || {};
+    if (itemId === selectedItemId) return; // Already in sync
+    selectedItemId = itemId || null;
+    selectedParentId = parentId || null;
+    selectedElement = itemId
+      ? container.querySelector(`[data-item-id="${itemId}"]`)
+      : null;
+    updateSelectionVisual();
+  });
+
   const showContextMenu = async (x, y, itemId) => {
     const menuItem = await api.get(itemId);
     contextMenu.innerHTML = '';
@@ -344,6 +357,7 @@ export async function render(item, api) {
   container.setAttribute('data-hobson-cleanup', '');
   container.__hobsonCleanup = () => {
     document.removeEventListener('keydown', globalKeyHandler);
+    unsubSelection();
     contextMenu.remove();
   };
 

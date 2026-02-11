@@ -1366,6 +1366,8 @@ export async function loadKernel(require, storageBackend) {
         openItem: async (id, navigateTo) => {
           if (context.siblingContainer) {
             await context.siblingContainer.addSibling(id, navigateTo);
+            const selMgr = await kernel.moduleSystem.require('selection-manager');
+            selMgr.select(id, context.siblingContainer.id);
           } else {
             const vpMgr = await kernel.moduleSystem.require('viewport-manager');
             await vpMgr.navigate(id, navigateTo);
