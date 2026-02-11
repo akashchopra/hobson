@@ -73,11 +73,11 @@ export async function render(item, api) {
 
   // Outer container - full height flex column
   const container = api.createElement('div', { className: 'generic-view' });
-  container.style.cssText = 'display: flex; flex-direction: column; height: 100%; min-height: 0;';
+  container.style.cssText = 'display: flex; flex-direction: column; min-height: 100%;';
 
-  // Scrollable content area
+  // Content area (scrolling delegated to parent .window-content for scroll preservation)
   const scrollArea = api.createElement('div', { className: 'generic-view-content' });
-  scrollArea.style.cssText = 'flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 16px; min-height: 0;';
+  scrollArea.style.cssText = 'padding: 16px; display: flex; flex-direction: column; gap: 16px;';
 
   // Clone item for editing
   let editedItem = JSON.parse(JSON.stringify(item));
@@ -190,7 +190,7 @@ export async function render(item, api) {
   // Add save/cancel buttons if any field is editable (sticky at bottom)
   if (hasEditableFields) {
     const actions = api.createElement('div', { className: 'view-actions' });
-    actions.style.cssText = 'display: flex; gap: 10px; justify-content: flex-end; padding: 16px; border-top: 1px solid var(--color-border-light); background: var(--color-bg-surface-alt); flex-shrink: 0;';
+    actions.style.cssText = 'display: flex; gap: 10px; justify-content: flex-end; padding: 16px; border-top: 1px solid var(--color-border-light); background: var(--color-bg-surface-alt); position: sticky; bottom: 0;';
 
     const cancelBtn = api.createElement('button', {
       style: 'padding: 8px 16px; cursor: pointer;'
@@ -222,7 +222,6 @@ export async function render(item, api) {
     saveAndViewBtn.onclick = async () => {
       try {
         await api.set(editedItem);
-        await api.rerenderItem(editedItem.id);
         await returnToDefaultView(item.id, api);
       } catch (e) {
         alert('Save failed: ' + e.message);
