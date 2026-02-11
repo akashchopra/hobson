@@ -150,7 +150,7 @@ export async function render(markdown, api, options = {}) {
   );
 
   const content = api.createElement('div', { className: 'markdown-content' });
-  content.style.cssText = 'line-height: 1.8; font-size: 16px;';
+  content.style.cssText = 'line-height: 1.6; font-size: 13px;';
   content.innerHTML = html;
 
   // Handle item:// link clicks - open as sibling in current container, or navigate if root
