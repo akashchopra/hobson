@@ -31,19 +31,23 @@ export async function render(browser, api) {
     (item.content?.tags || []).forEach(tagId => usedAsTag.add(tagId));
   });
 
-  // Walk up parent chains to include ancestors
+  // Walk up parent chains to include ancestors (skip missing tag items)
   const toInclude = new Set(usedAsTag);
   for (const tagId of usedAsTag) {
-    let current = await api.get(tagId);
-    while (current?.content?.parent) {
-      toInclude.add(current.content.parent);
-      current = await api.get(current.content.parent);
+    try {
+      let current = await api.get(tagId);
+      while (current?.content?.parent) {
+        toInclude.add(current.content.parent);
+        current = await api.get(current.content.parent);
+      }
+    } catch (e) {
+      // Tag item doesn't exist — skip it
     }
   }
 
-  // Fetch all tag items and build tree
+  // Fetch all tag items and build tree (skip missing)
   const tagItems = (await Promise.all(
-    [...toInclude].map(id => api.get(id))
+    [...toInclude].map(id => api.get(id).catch(() => null))
   )).filter(Boolean);
   const tree = treeBuilder.buildTagTree(tagItems);
 
@@ -137,14 +141,8 @@ export async function render(browser, api) {
       return;
     }
 
-    // Get tag name for title
-    let tagName = selectedTag;
-    try {
-      const tagItem = await api.get(selectedTag);
-      tagName = treeBuilder.getTagName(tagItem);
-    } catch (e) {
-      // Use ID if tag not found
-    }
+    // Get fully-qualified tag name for title
+    const tagName = await treeBuilder.getFullyQualifiedName(selectedTag, api) || selectedTag;
 
     resultsTitle.textContent = 'Items tagged with "' + tagName + '" (' + attachments.length + ')';
     resultsContainer.style.display = 'block';

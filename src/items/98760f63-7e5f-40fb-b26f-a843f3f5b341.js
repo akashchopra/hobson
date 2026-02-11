@@ -53,6 +53,28 @@ export function getTagName(tagNode) {
 }
 
 /**
+ * Gets fully-qualified tag name by walking up the parent chain
+ * @param {string} tagId - Tag item ID
+ * @param {Object} api - Hobson API (needs api.get)
+ * @returns {Promise<string>} Fully-qualified name like "Root / Child / Grandchild"
+ */
+export async function getFullyQualifiedName(tagId, api) {
+  const parts = [];
+  let currentId = tagId;
+  const seen = new Set();
+  while (currentId) {
+    if (seen.has(currentId)) break;
+    seen.add(currentId);
+    let item;
+    try { item = await api.get(currentId); } catch (e) { break; }
+    if (!item) break;
+    parts.unshift(item.content?.name || item.name || currentId.substring(0, 8));
+    currentId = item.content?.parent;
+  }
+  return parts.join(' / ');
+}
+
+/**
  * Gets color for a tag node
  * @param {Object} tagNode - Tag node from tree
  * @returns {string} Hex color code
