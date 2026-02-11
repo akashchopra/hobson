@@ -150,78 +150,55 @@ export async function render(value, options, api) {
   insertBtn.style.cssText = 'padding: 8px 16px; background: var(--color-success); color: var(--color-bg-surface); border: none; border-radius: var(--border-radius); cursor: pointer; align-self: flex-start; flex-shrink: 0;';
   wrapper.appendChild(insertBtn);
 
-  // Picker container (hidden initially)
-  const pickerContainer = api.createElement('div');
-  pickerContainer.style.cssText = 'display: none; padding: 15px; border: 1px solid var(--color-border-light); border-radius: var(--border-radius); background: var(--color-bg-surface-alt); flex-shrink: 0;';
-  wrapper.appendChild(pickerContainer);
-
   insertBtn.onclick = async () => {
-    pickerContainer.innerHTML = '';
-    pickerContainer.style.display = 'block';
-
-    const header = api.createElement('div');
-    header.style.cssText = 'display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;';
-
-    const title = api.createElement('h4');
-    title.style.cssText = 'margin: 0;';
-    title.textContent = 'Insert Link or Transclusion';
-    header.appendChild(title);
-
-    const closeBtn = api.createElement('button');
-    closeBtn.textContent = 'Close';
-    closeBtn.style.cssText = 'padding: 6px 12px; cursor: pointer; background: var(--color-bg-hover); border: 1px solid var(--color-border); border-radius: var(--border-radius);';
-    closeBtn.onclick = () => {
-      pickerContainer.style.display = 'none';
-      pickerContainer.innerHTML = '';
-    };
-    header.appendChild(closeBtn);
-    pickerContainer.appendChild(header);
-
-    const searchContainer = api.createElement('div');
-    pickerContainer.appendChild(searchContainer);
-
+    const modalLib = await api.require('modal-lib');
     const searchLib = await api.require('item-search-lib');
+
+    const searchContainer = api.createElement('div', {}, []);
+
+    const { close } = modalLib.showModal({
+      title: 'Insert Link or Transclusion',
+      width: '600px',
+      maxHeight: '80vh',
+      api,
+      content: searchContainer
+    });
 
     const insertReference = (targetItem, asTransclusion) => {
       const targetName = targetItem.name || targetItem.id;
       const prefix = asTransclusion ? '!' : '';
       const refText = prefix + '[' + targetName + '](item://' + targetItem.id + ')';
       cm.replaceSelection(refText);
-      pickerContainer.style.display = 'none';
-      pickerContainer.innerHTML = '';
+      close();
       cm.focus();
     };
 
-    const onSelectCallback = (targetItem) => {
-      const existing = searchContainer.querySelector('.item-action-buttons');
-      if (existing) existing.remove();
-
-      const actionButtons = api.createElement('div', { className: 'item-action-buttons' });
-      actionButtons.style.cssText = 'margin-top: 15px; padding: 15px; background: var(--color-bg-surface); border: 1px solid var(--color-border-light); border-radius: var(--border-radius); display: flex; gap: 10px; align-items: center;';
-
-      const selectedLabel = api.createElement('div');
-      selectedLabel.style.cssText = 'flex: 1; font-weight: 500;';
-      selectedLabel.textContent = 'Selected: ' + (targetItem.name || targetItem.id);
-      actionButtons.appendChild(selectedLabel);
-
-      const linkBtn = api.createElement('button');
-      linkBtn.textContent = 'Insert Link';
-      linkBtn.style.cssText = 'padding: 8px 16px; cursor: pointer; background: var(--color-primary); color: var(--color-bg-surface); border: none; border-radius: var(--border-radius);';
-      linkBtn.onclick = () => insertReference(targetItem, false);
-      actionButtons.appendChild(linkBtn);
-
-      const transcludeBtn = api.createElement('button');
-      transcludeBtn.textContent = 'Insert Transclusion';
-      transcludeBtn.style.cssText = 'padding: 8px 16px; cursor: pointer; background: var(--color-success); color: var(--color-bg-surface); border: none; border-radius: var(--border-radius);';
-      transcludeBtn.onclick = () => insertReference(targetItem, true);
-      actionButtons.appendChild(transcludeBtn);
-
-      searchContainer.appendChild(actionButtons);
-    };
-
-    searchLib.createSearchUI(searchContainer, onSelectCallback, api, {
+    searchLib.createSearchUI(searchContainer, null, api, {
       placeholder: 'Search items...',
-      autoFocus: true
+      autoFocus: true,
+      renderActions: (item) => {
+        const actions = api.createElement('div', {
+          style: 'display: flex; gap: 6px; margin-top: 8px;'
+        }, []);
+
+        const linkBtn = api.createElement('button', {}, ['Link']);
+        linkBtn.style.cssText = 'padding: 4px 12px; cursor: pointer; background: var(--color-primary); color: var(--color-bg-surface); border: none; border-radius: var(--border-radius); font-size: 12px;';
+        linkBtn.onclick = (e) => {
+          e.stopPropagation();
+          insertReference(item, false);
+        };
+        actions.appendChild(linkBtn);
+
+        const transcludeBtn = api.createElement('button', {}, ['Transclusion']);
+        transcludeBtn.style.cssText = 'padding: 4px 12px; cursor: pointer; background: var(--color-success); color: var(--color-bg-surface); border: none; border-radius: var(--border-radius); font-size: 12px;';
+        transcludeBtn.onclick = (e) => {
+          e.stopPropagation();
+          insertReference(item, true);
+        };
+        actions.appendChild(transcludeBtn);
+
+        return actions;
+      }
     });
   };
 

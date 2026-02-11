@@ -425,7 +425,8 @@ export function createSearchUI(containerEl, onSelect, api, options = {}) {
     placeholder = 'Search for items...',
     savedQuery = '',
     targetContainer = null,
-    autoFocus = false
+    autoFocus = false,
+    renderActions = null
   } = options;
 
   containerEl.innerHTML = '';
@@ -488,7 +489,13 @@ export function createSearchUI(containerEl, onSelect, api, options = {}) {
     ]);
     resultDiv.appendChild(meta);
 
-    resultDiv.onclick = () => { onSelect(item); };
+    if (renderActions) {
+      resultDiv.style.cursor = 'default';
+      const actionsEl = renderActions(item);
+      if (actionsEl) resultDiv.appendChild(actionsEl);
+    } else {
+      resultDiv.onclick = () => { onSelect(item); };
+    }
 
     resultDiv.onmouseover = () => {
       resultDiv.style.background = 'var(--color-bg-surface-alt)';
