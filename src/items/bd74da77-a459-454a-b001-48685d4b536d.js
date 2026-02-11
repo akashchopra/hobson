@@ -322,13 +322,6 @@ export async function render(item, api) {
 
   // Keyboard shortcuts
   const handleKeydown = (e) => {
-    // Cmd+K or Ctrl+K: Open item list
-    if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
-      e.preventDefault();
-      api.showItemList();
-      return;
-    }
-    
     // Escape: Hide context menu or clear selection
     if (e.key === 'Escape') {
       if (contextMenu.style.display !== 'none') hideContextMenu();

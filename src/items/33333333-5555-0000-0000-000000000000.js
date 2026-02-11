@@ -265,6 +265,15 @@ export class RenderingSystem {
     let updated = 0;
     for (const instance of instances) {
       try {
+        // Skip orphaned instances — their DOM was removed by a concurrent re-render
+        // (e.g. renderViewport or another rerenderItem). Rendering here would be wasted
+        // work and can leak document-level event handlers that never get cleaned up.
+        const oldDom = instance.domNode;
+        if (!oldDom || !oldDom.parentNode) {
+          this.registry.unregister(instance.instanceId);
+          continue;
+        }
+
         // Look up current view config from parent's attachments array (may have changed via setAttachmentView)
         // We need the FULL view config object (not just type) so views can access innerView, etc.
         let currentViewId = instance.viewId;
@@ -293,9 +302,8 @@ export class RenderingSystem {
           viewConfig: viewConfig
         });
 
-        // Replace content in existing container
-        const oldDom = instance.domNode;
-        if (oldDom && oldDom.parentNode) {
+        // Replace content in existing container (re-check parentNode — async work above may have changed it)
+        if (oldDom.parentNode) {
           // Clean up resources (CodeMirror instances, observers, etc.) before removal
           cleanupDOMTree(oldDom);
 
@@ -310,7 +318,14 @@ export class RenderingSystem {
           oldDom.parentNode.replaceChild(newDom, oldDom);
           updated++;
         } else {
-          // DOM not in document, just unregister
+          // DOM was detached during async rendering — clean up the new render's side effects
+          cleanupDOMTree(newDom);
+          const newInstances = newDom.querySelectorAll?.('[data-render-instance]');
+          if (newInstances) {
+            for (const el of newInstances) {
+              this.registry.unregister(parseInt(el.dataset.renderInstance, 10));
+            }
+          }
           this.registry.unregister(instance.instanceId);
         }
       } catch (error) {
