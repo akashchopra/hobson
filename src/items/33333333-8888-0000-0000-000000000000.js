@@ -1,8 +1,8 @@
 /* === THEME CONFIGURATION === */
 /* Change these two values to theme the entire UI */
 :root {
-  --base-hue: 220;        /* 0-360: Blue=220, Green=145, Purple=280, Orange=30, Teal=180, Red=0 */
-  --tint-strength: 0.005;  /* 0=pure gray, 0.02=subtle tint, 0.05=noticeable, 0.1=strong */
+  --base-hue: {{content.hue}};        /* 0-360: Blue=220, Green=145, Purple=280, Orange=30, Teal=180, Red=0 */
+  --tint-strength: {{content.tintStrength}};  /* 0=pure gray, 0.02=subtle tint, 0.05=noticeable, 0.1=strong */
 
   /* === DERIVED COLORS (auto-generated from base-hue) === */
   
@@ -56,6 +56,7 @@ html, body {
 }
 
 body {
+  font-size: {{content.baseFontSize}}px;
   font-family: system-ui, -apple-system, sans-serif;
   background: var(--color-bg-body);
   color: var(--color-text);

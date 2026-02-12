@@ -12,7 +12,10 @@ async function applyStyles(api) {
     const stylesItem = await api.get(KERNEL_STYLES_ID);
     const style = document.createElement('style');
     style.setAttribute('data-kernel-styles', 'true');
-    style.textContent = stylesItem.content.code;
+    style.textContent = stylesItem.content.code.replace(
+      /\{\{content\.(\w+)\}\}/g,
+      (_, key) => stylesItem.content[key] ?? ''
+    );
     document.head.appendChild(style);
   } catch (e) {
     console.error('Failed to apply kernel styles:', e);

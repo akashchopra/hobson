@@ -535,7 +535,10 @@ export async function loadKernel(require, storageBackend) {
 
       try {
         const stylesItem = await this.storage.get(IDS.KERNEL_STYLES);
-        style.textContent = stylesItem.content.code;
+        style.textContent = stylesItem.content.code.replace(
+          /\{\{content\.(\w+)\}\}/g,
+          (_, key) => stylesItem.content[key] ?? ''
+        );
       } catch (e) {
         // Fallback to minimal styles
         style.textContent = `
