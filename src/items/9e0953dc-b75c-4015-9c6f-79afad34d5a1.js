@@ -214,69 +214,133 @@ export function renderColumnOverlay(gridEl, columns) {
 }
 
 /**
- * Shows a modal picker for widget types.
+ * Shows a two-tab modal picker: "Attach Existing" (item search) or "Create New" (tag-filtered types).
  * @param {Object} api - Hobson API
- * @returns {Promise<string|null>} - Type GUID or null if cancelled
+ * @returns {Promise<{mode:'create',typeId:string}|{mode:'attach',item:Object}|null>}
  */
 export async function showWidgetPicker(api) {
+  const PAGE_WIDGET_TAG = 'c0c0c0c0-0071-0000-0000-000000000000';
   const modalLib = await api.require('modal-lib');
-
-  // Query all type-defs whose name starts with "widget-"
-  const TYPE_DEF = '11111111-0000-0000-0000-000000000000';
-  const allItems = await api.query({ type: TYPE_DEF });
-  const widgetTypes = allItems.filter(item => item.name && item.name.startsWith('widget-'));
 
   return new Promise((resolve) => {
     let resolved = false;
-    const { close } = modalLib.showModal({
+    modalLib.showModal({
       title: 'Add Widget',
-      width: '400px',
+      width: '480px',
       onClose: () => { if (!resolved) resolve(null); },
       content: ({ close: closeModal }) => {
         const container = document.createElement('div');
 
-        if (widgetTypes.length === 0) {
-          const empty = document.createElement('p');
-          empty.textContent = 'No widget types found. Create a type-def with a name starting with "widget-".';
-          empty.style.cssText = 'color: var(--color-text-secondary); font-size: 13px;';
-          container.appendChild(empty);
-          return container;
+        // --- Tab bar ---
+        const tabBar = document.createElement('div');
+        tabBar.style.cssText = 'display: flex; gap: 0; margin-bottom: 12px; border-bottom: 1px solid var(--color-border, #444);';
+
+        const tabs = ['Attach Existing', 'Create New'];
+        const tabBtns = [];
+        const panels = [];
+        let activeTab = 0;
+
+        const tabBtnStyle = (active) => `
+          padding: 8px 16px; cursor: pointer; border: none; border-bottom: 2px solid ${active ? 'var(--color-primary, #7c3aed)' : 'transparent'};
+          background: transparent; color: ${active ? 'var(--color-text, #ccc)' : 'var(--color-text-secondary, #888)'};
+          font-size: 13px; font-weight: ${active ? '600' : '400'};
+        `;
+
+        function switchTab(idx) {
+          activeTab = idx;
+          tabBtns.forEach((btn, i) => btn.style.cssText = tabBtnStyle(i === idx));
+          panels.forEach((p, i) => p.style.display = i === idx ? 'block' : 'none');
         }
 
-        const list = document.createElement('div');
-        list.style.cssText = 'display: flex; flex-direction: column; gap: 4px;';
-
-        for (const wt of widgetTypes.sort((a, b) => a.name.localeCompare(b.name))) {
+        for (let i = 0; i < tabs.length; i++) {
           const btn = document.createElement('button');
-          btn.style.cssText = `
-            display: block; width: 100%; text-align: left; padding: 10px 14px;
-            border: 1px solid var(--color-border, #444); background: var(--color-bg-surface, #2a2a3e);
-            color: var(--color-text, #ccc); border-radius: var(--border-radius, 4px);
-            cursor: pointer; font-size: 13px;
-          `;
-          btn.onmouseenter = () => { btn.style.background = 'var(--color-bg-hover, #333)'; };
-          btn.onmouseleave = () => { btn.style.background = 'var(--color-bg-surface, #2a2a3e)'; };
+          btn.textContent = tabs[i];
+          btn.style.cssText = tabBtnStyle(i === 0);
+          btn.onclick = () => switchTab(i);
+          tabBtns.push(btn);
+          tabBar.appendChild(btn);
+        }
+        container.appendChild(tabBar);
 
-          const nameSpan = document.createElement('strong');
-          nameSpan.textContent = wt.name;
-          btn.appendChild(nameSpan);
+        // --- Attach Existing panel ---
+        const attachPanel = document.createElement('div');
+        attachPanel.style.cssText = 'min-height: 200px;';
+        panels.push(attachPanel);
 
-          if (wt.content?.description) {
-            const desc = document.createElement('div');
-            desc.textContent = wt.content.description.split('\n')[0].slice(0, 80);
-            desc.style.cssText = 'font-size: 11px; color: var(--color-text-secondary, #888); margin-top: 2px;';
-            btn.appendChild(desc);
+        // Load item-search-lib asynchronously
+        (async () => {
+          try {
+            const searchLib = await api.require('item-search-lib');
+            searchLib.createSearchUI(attachPanel, (item) => {
+              resolved = true;
+              closeModal();
+              resolve({ mode: 'attach', item });
+            }, api, { placeholder: 'Search items...', autoFocus: true });
+          } catch (e) {
+            attachPanel.textContent = 'Failed to load search: ' + e.message;
+          }
+        })();
+
+        container.appendChild(attachPanel);
+
+        // --- Create New panel ---
+        const createPanel = document.createElement('div');
+        createPanel.style.display = 'none';
+        createPanel.style.minHeight = '200px';
+        panels.push(createPanel);
+
+        // Load tagged type-defs asynchronously
+        (async () => {
+          const TYPE_DEF = '11111111-0000-0000-0000-000000000000';
+          const allTypeDefs = await api.query({ type: TYPE_DEF });
+          const widgetTypes = allTypeDefs.filter(td => (td.content?.tags || []).includes(PAGE_WIDGET_TAG));
+
+          if (widgetTypes.length === 0) {
+            const empty = document.createElement('p');
+            empty.textContent = 'No widget types found. Tag a type-def with "page-widget" to make it available here.';
+            empty.style.cssText = 'color: var(--color-text-secondary); font-size: 13px;';
+            createPanel.appendChild(empty);
+            return;
           }
 
-          btn.onclick = () => {
-            resolved = true;
-            closeModal();
-            resolve(wt.id);
-          };
-          list.appendChild(btn);
-        }
+          const list = document.createElement('div');
+          list.style.cssText = 'display: flex; flex-direction: column; gap: 4px;';
 
-        container.appendChild(list);
+          for (const wt of widgetTypes.sort((a, b) => (a.name || '').localeCompare(b.name || ''))) {
+            const btn = document.createElement('button');
+            btn.style.cssText = `
+              display: block; width: 100%; text-align: left; padding: 10px 14px;
+              border: 1px solid var(--color-border, #444); background: var(--color-bg-surface, #2a2a3e);
+              color: var(--color-text, #ccc); border-radius: var(--border-radius, 4px);
+              cursor: pointer; font-size: 13px;
+            `;
+            btn.onmouseenter = () => { btn.style.background = 'var(--color-bg-hover, #333)'; };
+            btn.onmouseleave = () => { btn.style.background = 'var(--color-bg-surface, #2a2a3e)'; };
+
+            const nameSpan = document.createElement('strong');
+            nameSpan.textContent = wt.name;
+            btn.appendChild(nameSpan);
+
+            if (wt.content?.description) {
+              const desc = document.createElement('div');
+              desc.textContent = wt.content.description.split('\n')[0].slice(0, 80);
+              desc.style.cssText = 'font-size: 11px; color: var(--color-text-secondary, #888); margin-top: 2px;';
+              btn.appendChild(desc);
+            }
+
+            btn.onclick = () => {
+              resolved = true;
+              closeModal();
+              resolve({ mode: 'create', typeId: wt.id });
+            };
+            list.appendChild(btn);
+          }
+
+          createPanel.appendChild(list);
+        })();
+
+        container.appendChild(createPanel);
+
         return container;
       }
     });

@@ -70,22 +70,36 @@ export async function render(pageItem, api) {
           renderPage();
         },
         onAddWidget: async () => {
-          const typeId = await designLib.showWidgetPicker(api);
-          if (!typeId) return;
+          const NOTE_TYPE = '871ae771-b9b1-4f40-8c7f-d9038bfb69c3';
+          const NOTE_WIDGET_VIEW = 'b7f3a1d2-8e5c-4f6a-9d0b-1c2e3f4a5b6c';
 
-          // Create new widget item
-          const newId = crypto.randomUUID();
-          const typeDef = await api.get(typeId);
-          const newItem = {
-            id: newId,
-            name: (typeDef.name || 'widget') + '-' + newId.slice(0, 4),
-            type: typeId,
-            created: Date.now(),
-            modified: Date.now(),
-            content: {},
-            attachments: []
-          };
-          await api.set(newItem);
+          const result = await designLib.showWidgetPicker(api);
+          if (!result) return;
+
+          let childId, typeName;
+
+          if (result.mode === 'create') {
+            // Create new widget item
+            const newId = crypto.randomUUID();
+            const typeDef = await api.get(result.typeId);
+            const newItem = {
+              id: newId,
+              name: (typeDef.name || 'widget') + '-' + newId.slice(0, 4),
+              type: result.typeId,
+              created: Date.now(),
+              modified: Date.now(),
+              content: {},
+              attachments: []
+            };
+            await api.set(newItem);
+            childId = newId;
+            typeName = (typeDef.name || '').toLowerCase();
+          } else {
+            // Attach existing — no item creation
+            childId = result.item.id;
+            const typeDef = await api.get(result.item.type).catch(() => null);
+            typeName = (typeDef?.name || '').toLowerCase();
+          }
 
           // Add to page attachments
           const freshPage = await api.get(pageItem.id);
@@ -100,16 +114,23 @@ export async function render(pageItem, api) {
           }
           const nextRow = maxRow > 0 ? maxRow : children.length + 1;
 
-          // Default rowSpan based on widget type name
-          const typeName = (typeDef.name || '').toLowerCase();
+          // Default rowSpan heuristic
           let defaultRowSpan = 2;
           if (typeName.includes('button')) defaultRowSpan = 1;
-          else if (typeName.includes('markdown')) defaultRowSpan = 4;
+          else if (typeName.includes('markdown') || typeName === 'note') defaultRowSpan = 4;
 
-          children.push({
-            id: newId,
+          // Build attachment spec
+          const spec = {
+            id: childId,
             view: { col: 1, row: nextRow, colSpan: columns, rowSpan: defaultRowSpan }
-          });
+          };
+
+          // For notes, use note-widget-view via viewId override
+          if (result.mode === 'attach' && result.item.type === NOTE_TYPE) {
+            spec.view.viewId = NOTE_WIDGET_VIEW;
+          }
+
+          children.push(spec);
           await api.updateSilent({ ...freshPage, attachments: children, modified: Date.now() });
           renderPage();
         }
@@ -180,8 +201,16 @@ export async function render(pageItem, api) {
         // Load child item
         const childItem = await api.get(childId);
 
-        // Resolve view through preference hierarchy
-        const viewItem = await api.getEffectiveView(childId);
+        // Resolve view — use per-attachment override if specified, else preference hierarchy
+        let viewItem;
+        if (viewConfig.viewId) {
+          try {
+            viewItem = await api.get(viewConfig.viewId);
+          } catch (_) { /* fall through to default resolution */ }
+        }
+        if (!viewItem) {
+          viewItem = await api.getEffectiveView(childId);
+        }
         if (!viewItem) {
           console.warn('App page: no view for child', childId);
           continue;
@@ -190,9 +219,10 @@ export async function render(pageItem, api) {
         // Load view module
         const viewModule = await api.require(viewItem.id);
 
-        // Create augmented API with page context
+        // Create augmented API with page context and correct view ID
         const widgetApi = Object.create(api);
         widgetApi.pageContext = pageContext;
+        widgetApi.getViewId = () => viewItem.id;
 
         // Render the widget
         let widgetElement;
