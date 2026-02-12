@@ -113,6 +113,11 @@ body {
   font-size: 0.75rem;
 }
 
+/* CodeMirror: restore monospace default that explicit html font-size overrides */
+.CodeMirror {
+  font-size: 0.8125rem;
+}
+
 /* Selection indicator */
 [data-item-id] {
   cursor: pointer;
