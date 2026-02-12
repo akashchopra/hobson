@@ -35,6 +35,48 @@ export async function render(browser, api) {
   searchBox.appendChild(input);
   container.appendChild(searchBox);
 
+  // Gather all symbols from all items (moved up so module dropdown can use codeItems)
+  const allItems = await api.getAll();
+  const codeItems = allItems.filter(item => item.content?._symbols);
+
+  let totalSymbols = 0;
+  for (const item of codeItems) {
+    totalSymbols += Object.keys(item.content._symbols).length;
+  }
+
+  // Module filter dropdown
+  const sortedModules = codeItems
+    .map(item => ({ id: item.id, name: item.name || item.id.substring(0, 8) }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  let activeModule = browser.content?.moduleFilter || null;
+
+  const moduleRow = api.createElement('div', {
+    style: 'margin-bottom: 12px;'
+  }, []);
+
+  const moduleSelect = api.createElement('select', {
+    style: 'width: 100%; padding: 8px 12px; font-size: 0.875rem; border: 1px solid var(--color-border); border-radius: 8px; background: var(--color-bg-surface); color: var(--color-text); outline: none; cursor: pointer;'
+  }, []);
+
+  const allOpt = api.createElement('option', { value: '' }, ['All modules (' + codeItems.length + ')']);
+  moduleSelect.appendChild(allOpt);
+
+  for (const mod of sortedModules) {
+    const symCount = Object.keys(codeItems.find(i => i.id === mod.id).content._symbols).length;
+    const opt = api.createElement('option', { value: mod.id }, [mod.name + ' (' + symCount + ')']);
+    if (mod.id === activeModule) opt.selected = true;
+    moduleSelect.appendChild(opt);
+  }
+
+  moduleSelect.onchange = () => {
+    activeModule = moduleSelect.value || null;
+    executeSearch(input.value);
+  };
+
+  moduleRow.appendChild(moduleSelect);
+  container.appendChild(moduleRow);
+
   // Kind filter chips
   const KINDS = [
     { label: 'All', value: null },
@@ -46,7 +88,16 @@ export async function render(browser, api) {
   // Merge property-function, field-function into "Functions"
   const FUNCTION_KINDS = new Set(['function', 'property-function', 'field-function']);
 
-  let activeKind = browser.content?.kindFilter || null;
+  const saved = browser.content?.kindFilter;
+  let activeKinds = new Set(Array.isArray(saved) ? saved : []);
+
+  const updateChipStyles = () => {
+    const allActive = activeKinds.size === 0;
+    chipEls.forEach((c, i) => {
+      const isAll = KINDS[i].value === null;
+      c.style.cssText = chipStyle(isAll ? allActive : activeKinds.has(KINDS[i].value));
+    });
+  };
 
   const chipBar = api.createElement('div', {
     style: 'display: flex; gap: 8px; margin-bottom: 20px; flex-wrap: wrap;'
@@ -55,13 +106,17 @@ export async function render(browser, api) {
   const chipEls = [];
   for (const kind of KINDS) {
     const chip = api.createElement('button', {
-      style: chipStyle(kind.value === activeKind)
+      style: chipStyle(kind.value === null ? activeKinds.size === 0 : activeKinds.has(kind.value))
     }, [kind.label]);
     chip.onclick = () => {
-      activeKind = kind.value;
-      chipEls.forEach((c, i) => {
-        c.style.cssText = chipStyle(KINDS[i].value === activeKind);
-      });
+      if (kind.value === null) {
+        activeKinds.clear();
+      } else if (activeKinds.has(kind.value)) {
+        activeKinds.delete(kind.value);
+      } else {
+        activeKinds.add(kind.value);
+      }
+      updateChipStyles();
       executeSearch(input.value);
     };
     chipEls.push(chip);
@@ -73,21 +128,17 @@ export async function render(browser, api) {
   const resultsArea = api.createElement('div', {}, []);
   container.appendChild(resultsArea);
 
-  // Gather all symbols from all items
-  const allItems = await api.getAll();
-  const codeItems = allItems.filter(item => item.content?._symbols);
-
-  let totalSymbols = 0;
-  for (const item of codeItems) {
-    totalSymbols += Object.keys(item.content._symbols).length;
-  }
-
   // Search + render
   const renderResults = (query) => {
     resultsArea.innerHTML = '';
     const q = (query || '').trim().toLowerCase();
 
-    if (!q) {
+    // Apply module filter
+    const filteredItems = activeModule
+      ? codeItems.filter(i => i.id === activeModule)
+      : codeItems;
+
+    if (!q && !activeModule) {
       // Empty state: show stats
       const stats = api.createElement('div', {
         style: 'padding: 40px; text-align: center; color: var(--color-text-secondary); font-style: italic;'
@@ -98,19 +149,18 @@ export async function render(browser, api) {
 
     // Collect matches grouped by item
     const groups = []; // { item, matches: [sym] }
-    for (const item of codeItems) {
+    for (const item of filteredItems) {
       const syms = item.content._symbols;
       const matches = [];
       for (const sym of Object.values(syms)) {
-        if (!sym.name.toLowerCase().includes(q)) continue;
-        if (activeKind) {
-          if (activeKind === 'function') {
-            if (!FUNCTION_KINDS.has(sym.kind)) continue;
-          } else if (activeKind === 'property') {
-            if (sym.kind !== 'property' && sym.kind !== 'field') continue;
-          } else {
-            if (sym.kind !== activeKind) continue;
-          }
+        if (q && !sym.name.toLowerCase().includes(q)) continue;
+        if (activeKinds.size > 0) {
+          let matched = false;
+          if (activeKinds.has('function') && FUNCTION_KINDS.has(sym.kind)) matched = true;
+          if (activeKinds.has('property') && (sym.kind === 'property' || sym.kind === 'field')) matched = true;
+          if (activeKinds.has('class') && sym.kind === 'class') matched = true;
+          if (activeKinds.has('method') && sym.kind === 'method') matched = true;
+          if (!matched) continue;
         }
         matches.push(sym);
       }
@@ -248,7 +298,7 @@ export async function render(browser, api) {
   let searchTimeout = null;
   const executeSearch = (query) => {
     // Persist query + kind filter
-    browser.content = { ...browser.content, query, kindFilter: activeKind };
+    browser.content = { ...browser.content, query, kindFilter: [...activeKinds], moduleFilter: activeModule };
     browser.modified = Date.now();
     api.set(browser);
     renderResults(query);
