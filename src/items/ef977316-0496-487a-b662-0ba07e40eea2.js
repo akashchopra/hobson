@@ -324,10 +324,7 @@ export async function render(pageItem, api) {
               renderPage();
             },
             onEdit: async (id) => {
-              const designLib = await api.require('app-page-design-lib');
-              const freshChild = await api.get(id);
-              const saved = await designLib.showPropertyEditor(freshChild, api);
-              if (saved) renderPage();
+              api.openItem(id);
             }
           });
           grid.appendChild(designCell);
