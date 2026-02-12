@@ -205,8 +205,10 @@ export async function render(search, api) {
 
   // Search execution with debouncing
   let searchTimeout = null;
+  let searchGeneration = 0;
 
   const executeSearch = async (query) => {
+    const gen = ++searchGeneration;
     const targetContainer = search.content?.target_container || null;
     let matches;
     if (!query || query.trim().length === 0) {
@@ -214,6 +216,9 @@ export async function render(search, api) {
     } else {
       matches = await searchLib.searchItems(query, api, { targetContainer });
     }
+
+    // Discard stale results — a newer search has started
+    if (gen !== searchGeneration) return;
 
     search.attachments = matches.map(m => ({ id: m.id }));
     search.content = { ...search.content, currentQuery: query };
