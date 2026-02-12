@@ -49,6 +49,16 @@ export async function render(pageItem, api) {
     const gap = currentPageItem.content?.gap || 8;
     const rowHeight = currentPageItem.content?.rowHeight || 40;
 
+    // --- Run onInit script (seeds pageContext before widgets render) ---
+    if (currentPageItem.content?.onInit) {
+      try {
+        const fn = new Function('api', 'pageContext', `return (async () => { ${currentPageItem.content.onInit} })()`);
+        await fn(api, pageContext);
+      } catch (err) {
+        window.kernel?.captureError(err, { operation: 'app-page-onInit', itemId: pageItem.id });
+      }
+    }
+
     // --- Design toolbar ---
     if (designMode) {
       let designLib;
