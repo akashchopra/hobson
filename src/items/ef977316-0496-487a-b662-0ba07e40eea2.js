@@ -47,6 +47,7 @@ export async function render(pageItem, api) {
 
     const columns = currentPageItem.content?.columns || 12;
     const gap = currentPageItem.content?.gap || 8;
+    const rowHeight = currentPageItem.content?.rowHeight || 40;
 
     // --- Design toolbar ---
     if (designMode) {
@@ -99,9 +100,15 @@ export async function render(pageItem, api) {
           }
           const nextRow = maxRow > 0 ? maxRow : children.length + 1;
 
+          // Default rowSpan based on widget type name
+          const typeName = (typeDef.name || '').toLowerCase();
+          let defaultRowSpan = 2;
+          if (typeName.includes('button')) defaultRowSpan = 1;
+          else if (typeName.includes('markdown')) defaultRowSpan = 4;
+
           children.push({
             id: newId,
-            view: { col: 1, row: nextRow, colSpan: columns, rowSpan: 1 }
+            view: { col: 1, row: nextRow, colSpan: columns, rowSpan: defaultRowSpan }
           });
           await api.updateSilent({ ...freshPage, attachments: children, modified: Date.now() });
           renderPage();
@@ -142,7 +149,9 @@ export async function render(pageItem, api) {
       style: `
         display: grid;
         grid-template-columns: repeat(${columns}, 1fr);
-        gap: ${gap}px;
+        grid-auto-rows: ${rowHeight}px;
+        column-gap: ${gap}px;
+        row-gap: 0;
         padding: 16px;
         max-width: 960px;
         width: 100%;
@@ -214,12 +223,12 @@ export async function render(pageItem, api) {
               await api.updateSilent({ ...freshPage, attachments: updated, modified: Date.now() });
               renderPage();
             },
-            onResize: async (id, { colSpan }) => {
+            onResize: async (id, { colSpan, rowSpan }) => {
               const freshPage = await api.get(pageItem.id);
               const freshChildren = freshPage.attachments || [];
               const updated = freshChildren.map(c => {
                 if ((typeof c === 'string' ? c : c.id) === id) {
-                  return { ...(typeof c === 'object' ? c : { id: c }), view: { ...(c.view || {}), colSpan } };
+                  return { ...(typeof c === 'object' ? c : { id: c }), view: { ...(c.view || {}), colSpan, rowSpan } };
                 }
                 return c;
               });
@@ -304,6 +313,8 @@ export async function render(pageItem, api) {
               grid-column: ${col} / span ${colSpan};
               ${row !== 'auto' ? `grid-row: ${row} / span ${rowSpan};` : ''}
               min-width: 0;
+              overflow: auto;
+              padding: 4px 0;
             `,
             'data-item-id': childId
           });

@@ -47,8 +47,9 @@ export function renderToolbar(pageItem, api, callbacks) {
   // Grid settings display
   const columns = pageItem.content?.columns || 12;
   const gap = pageItem.content?.gap || 8;
+  const rowHeight = pageItem.content?.rowHeight || 40;
   const info = document.createElement('span');
-  info.textContent = `${columns} cols \u00b7 ${gap}px gap`;
+  info.textContent = `${columns} cols \u00b7 ${gap}px gap \u00b7 ${rowHeight}px rows`;
   info.style.cssText = 'font-size: 11px; color: var(--color-text-secondary, #888);';
   toolbar.appendChild(info);
 
@@ -80,7 +81,8 @@ export function wrapWidgetForDesign(widgetElement, childSpec, childItem, pageIte
   cell.style.cssText = `
     grid-column: ${col} / span ${colSpan};
     ${row !== 'auto' ? `grid-row: ${row} / span ${rowSpan};` : ''}
-    min-width: 0; position: relative;
+    min-width: 0; position: relative; overflow: hidden;
+    display: flex; flex-direction: column;
     border: 2px solid transparent; border-radius: var(--border-radius, 4px);
     transition: border-color 0.15s;
   `;
@@ -133,7 +135,7 @@ export function wrapWidgetForDesign(widgetElement, childSpec, childItem, pageIte
 
   // Position label
   const posLabel = document.createElement('span');
-  posLabel.textContent = `c${col} r${row === 'auto' ? '?' : row} \u00d7${colSpan}`;
+  posLabel.textContent = `c${col} r${row === 'auto' ? '?' : row} ${colSpan}\u00d7${rowSpan}`;
   posLabel.style.cssText = 'font-size: 10px; color: var(--color-text-tertiary, #666); margin-right: 4px;';
   header.appendChild(posLabel);
 
@@ -163,7 +165,7 @@ export function wrapWidgetForDesign(widgetElement, childSpec, childItem, pageIte
 
   // Widget content (non-interactive in design mode)
   const contentWrap = document.createElement('div');
-  contentWrap.style.cssText = 'pointer-events: none; opacity: 0.85;';
+  contentWrap.style.cssText = 'pointer-events: none; opacity: 0.85; flex: 1; overflow: hidden;';
   contentWrap.appendChild(widgetElement);
   cell.appendChild(contentWrap);
 
@@ -459,6 +461,7 @@ export async function showPropertyEditor(widgetItem, api) {
 function attachDragToReposition(handle, cell, pageItem, childId, callbacks) {
   const columns = pageItem.content?.columns || 12;
   const gap = pageItem.content?.gap || 8;
+  const rowHeight = pageItem.content?.rowHeight || 40;
 
   handle.addEventListener('mousedown', (e) => {
     e.preventDefault();
@@ -467,28 +470,9 @@ function attachDragToReposition(handle, cell, pageItem, childId, callbacks) {
     const grid = cell.parentElement;
     if (!grid) return;
     const gridRect = grid.getBoundingClientRect();
+    const gridPaddingTop = parseFloat(getComputedStyle(grid).paddingTop) || 0;
     const colWidth = (gridRect.width - gap * (columns - 1)) / columns + gap;
     const currentColSpan = parseInt(cell.style.gridColumn?.match(/span (\d+)/)?.[1]) || columns;
-
-    // Snapshot row boundaries from existing cells (before any layout changes)
-    const rowMap = new Map(); // row number -> { top, bottom }
-    grid.querySelectorAll('[data-design-cell]').forEach(c => {
-      const rowMatch = c.style.gridRow?.match(/^(\d+)/);
-      if (rowMatch) {
-        const r = parseInt(rowMatch[1]);
-        const rect = c.getBoundingClientRect();
-        const existing = rowMap.get(r);
-        if (existing) {
-          existing.top = Math.min(existing.top, rect.top);
-          existing.bottom = Math.max(existing.bottom, rect.bottom);
-        } else {
-          rowMap.set(r, { top: rect.top, bottom: rect.bottom });
-        }
-      }
-    });
-    const rowBounds = [...rowMap.entries()]
-      .sort((a, b) => a[0] - b[0])
-      .map(([row, bounds]) => ({ row, midY: (bounds.top + bounds.bottom) / 2 }));
 
     // Fade source cell (no in-grid preview — avoids layout reflow)
     cell.style.opacity = '0.3';
@@ -511,24 +495,9 @@ function attachDragToReposition(handle, cell, pageItem, childId, callbacks) {
       const relX = me.clientX - gridRect.left;
       targetCol = Math.min(columns - currentColSpan + 1, Math.max(1, Math.floor(relX / colWidth) + 1));
 
-      // Row from Y — find nearest row based on snapshotted cell midpoints
-      if (rowBounds.length > 0) {
-        let best = rowBounds[0];
-        let bestDist = Infinity;
-        for (const rb of rowBounds) {
-          const d = Math.abs(me.clientY - rb.midY);
-          if (d < bestDist) { bestDist = d; best = rb; }
-        }
-        targetRow = best.row;
-        // If cursor is well below the lowest row, place after it
-        const last = rowBounds[rowBounds.length - 1];
-        if (me.clientY > last.midY + 40) {
-          targetRow = last.row + 1;
-        }
-      } else {
-        targetRow = 1;
-      }
-      targetRow = Math.max(1, targetRow);
+      // Row from Y — calculate directly from fixed row height
+      const relY = me.clientY - gridRect.top - gridPaddingTop;
+      targetRow = Math.max(1, Math.floor(relY / rowHeight) + 1);
 
       // Update label
       label.style.left = (me.clientX + 14) + 'px';
@@ -554,6 +523,7 @@ function attachDragToReposition(handle, cell, pageItem, childId, callbacks) {
 function attachResizeHandle(handle, cell, pageItem, childId, callbacks, posLabel) {
   const columns = pageItem.content?.columns || 12;
   const gap = pageItem.content?.gap || 8;
+  const rowHeight = pageItem.content?.rowHeight || 40;
 
   handle.addEventListener('mousedown', (e) => {
     e.preventDefault();
@@ -565,27 +535,33 @@ function attachResizeHandle(handle, cell, pageItem, childId, callbacks, posLabel
     const colWidth = (gridRect.width - gap * (columns - 1)) / columns + gap;
 
     const startX = e.clientX;
+    const startY = e.clientY;
     const cellRect = cell.getBoundingClientRect();
     const startColSpan = parseInt(cell.style.gridColumn?.match(/span (\d+)/)?.[1]) || columns;
+    const startRowSpan = parseInt(cell.style.gridRow?.match(/span (\d+)/)?.[1]) || 1;
 
     let newColSpan = startColSpan;
+    let newRowSpan = startRowSpan;
 
     const onMouseMove = (me) => {
       const deltaX = me.clientX - startX;
+      const deltaY = me.clientY - startY;
       newColSpan = Math.max(1, Math.min(columns, Math.round((cellRect.width + deltaX) / colWidth)));
+      newRowSpan = Math.max(1, Math.round((cellRect.height + deltaY) / rowHeight));
 
-      // Live preview
+      // Live preview — columns
       const currentCol = cell.style.gridColumn?.match(/^(\d+)/)?.[1] || '1';
-      // Don't exceed grid boundary
       const maxSpan = columns - parseInt(currentCol) + 1;
       newColSpan = Math.min(newColSpan, maxSpan);
       cell.style.gridColumn = `${currentCol} / span ${newColSpan}`;
 
+      // Live preview — rows
+      const currentRow = cell.style.gridRow?.match(/^(\d+)/)?.[1] || '1';
+      cell.style.gridRow = `${currentRow} / span ${newRowSpan}`;
+
       // Update position label live
       if (posLabel) {
-        const rowMatch = cell.style.gridRow?.match(/^(\d+)/);
-        const row = rowMatch ? rowMatch[1] : '?';
-        posLabel.textContent = `c${currentCol} r${row} \u00d7${newColSpan}`;
+        posLabel.textContent = `c${currentCol} r${currentRow} ${newColSpan}\u00d7${newRowSpan}`;
       }
     };
 
@@ -593,7 +569,7 @@ function attachResizeHandle(handle, cell, pageItem, childId, callbacks, posLabel
       document.removeEventListener('mousemove', onMouseMove);
       document.removeEventListener('mouseup', onMouseUp);
 
-      callbacks.onResize(childId, { colSpan: newColSpan });
+      callbacks.onResize(childId, { colSpan: newColSpan, rowSpan: newRowSpan });
     };
 
     document.addEventListener('mousemove', onMouseMove);
