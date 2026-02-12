@@ -812,6 +812,31 @@ export function buildViewSettingsItem(api, itemId, context) {
   return el;
 }
 
+const CODE_TYPE = '22222222-0000-0000-0000-000000000000';
+
+/**
+ * Build "Edit View" menu item — opens the active view's code in an editable view.
+ * viewState: { currentViewId, effectiveViewId } from buildViewAsSubmenu.
+ */
+export function buildEditViewItem(api, itemId, context, viewState) {
+  const activeViewId = viewState?.currentViewId || viewState?.effectiveViewId;
+  const el = api.createElement('div', { class: 'context-menu-item' + (!activeViewId ? ' disabled' : '') }, ['Edit View']);
+
+  if (context && activeViewId) {
+    el.onclick = async () => {
+      context.onDismiss();
+      const editView = await findEditableView(api, CODE_TYPE);
+      await api.openItem(activeViewId);
+      if (editView && context.parentId) {
+        await api.setAttachmentView(context.parentId, activeViewId, editView.id);
+      } else if (editView) {
+        await api.viewport.setRootView(editView.id);
+      }
+    };
+  }
+  return el;
+}
+
 /**
  * Build the view settings panel as a standalone DOM node.
  * Used for functional transclusion: item://2cc0a1c5-5c09-49bd-834a-eaa2d0183b6c?call=buildViewSettingsPanel&itemId=...
@@ -994,6 +1019,7 @@ export async function buildItemMenu(api, paramsOrItemId, context) {
   const { fragment, viewState } = await buildViewAsSubmenu(api, itemId, context);
   container.appendChild(fragment);
   container.appendChild(buildViewSettingsItem(api, itemId, context));
+  container.appendChild(buildEditViewItem(api, itemId, context, viewState));
   container.appendChild(sep());
   container.appendChild(await buildSimpleActions(api, itemId, context));
   container.appendChild(sep());

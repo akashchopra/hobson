@@ -236,6 +236,20 @@ export async function render(item, api) {
     contextMenu.innerHTML = '';
     lastContextMenuCoords = { x, y };
 
+    // Build an api with the right siblingContainer so openItem works correctly
+    let menuApi = api;
+    if (selectedParentId) {
+      const childInst = api.instances.getAll().find(i => i.parentId === selectedParentId && i.siblingContainer);
+      if (childInst?.siblingContainer) {
+        const sc = childInst.siblingContainer;
+        menuApi = Object.create(api);
+        menuApi.openItem = async (id, opts) => {
+          await sc.addSibling(id, opts);
+          api.viewport.select(id, sc.id);
+        };
+      }
+    }
+
     const menuLib = await api.require('context-menu-lib');
 
     const getClickCoords = () => {
@@ -254,31 +268,35 @@ export async function render(item, api) {
     };
 
     // Add Child submenu
-    contextMenu.appendChild(menuLib.buildAddChildSubmenu(api, itemId, {
+    contextMenu.appendChild(menuLib.buildAddChildSubmenu(menuApi, itemId, {
       onDismiss: hideContextMenu, getClickCoords
     }));
-    contextMenu.appendChild(api.createElement('div', { class: 'context-menu-separator' }, []));
+    contextMenu.appendChild(menuApi.createElement('div', { class: 'context-menu-separator' }, []));
 
     // View As submenu
-    const { fragment: viewAsFragment, viewState } = await menuLib.buildViewAsSubmenu(api, itemId, {
+    const { fragment: viewAsFragment, viewState } = await menuLib.buildViewAsSubmenu(menuApi, itemId, {
       onDismiss: hideContextMenu, parentId: selectedParentId
     });
     contextMenu.appendChild(viewAsFragment);
 
     // View Settings
-    contextMenu.appendChild(menuLib.buildViewSettingsItem(api, itemId, {
+    contextMenu.appendChild(menuLib.buildViewSettingsItem(menuApi, itemId, {
       onDismiss: hideContextMenu, parentId: selectedParentId
     }));
-    contextMenu.appendChild(api.createElement('div', { class: 'context-menu-separator' }, []));
+    // Edit View
+    contextMenu.appendChild(menuLib.buildEditViewItem(menuApi, itemId, {
+      onDismiss: hideContextMenu, parentId: selectedParentId
+    }, viewState));
+    contextMenu.appendChild(menuApi.createElement('div', { class: 'context-menu-separator' }, []));
 
     // Simple actions
-    contextMenu.appendChild(await menuLib.buildSimpleActions(api, itemId, {
+    contextMenu.appendChild(await menuLib.buildSimpleActions(menuApi, itemId, {
       onDismiss: hideContextMenu, parentId: selectedParentId, rootId
     }));
-    contextMenu.appendChild(api.createElement('div', { class: 'context-menu-separator' }, []));
+    contextMenu.appendChild(menuApi.createElement('div', { class: 'context-menu-separator' }, []));
 
     // Debug submenu
-    contextMenu.appendChild(await menuLib.buildDebugSubmenu(api, itemId, {
+    contextMenu.appendChild(await menuLib.buildDebugSubmenu(menuApi, itemId, {
       onDismiss: hideContextMenu, parentId: selectedParentId, ...viewState
     }));
 
