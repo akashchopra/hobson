@@ -12,7 +12,7 @@ export async function render(browser, api) {
   }, []);
 
   const title = api.createElement('h2', {
-    style: 'margin: 0; font-size: 20px;'
+    style: 'margin: 0; font-size: 1.25rem;'
   }, [browser.name || 'Symbol Browser']);
   header.appendChild(title);
   container.appendChild(header);
@@ -26,7 +26,7 @@ export async function render(browser, api) {
     type: 'text',
     placeholder: 'Search symbols...',
     value: browser.content?.query || '',
-    style: 'width: 100%; padding: 12px 16px; font-size: 16px; border: 2px solid var(--color-border); border-radius: 8px; outline: none; transition: border-color 0.2s; box-sizing: border-box;'
+    style: 'width: 100%; padding: 12px 16px; font-size: 1rem; border: 2px solid var(--color-border); border-radius: 8px; outline: none; transition: border-color 0.2s; box-sizing: border-box;'
   }, []);
 
   input.onfocus = () => { input.style.borderColor = 'var(--color-primary)'; };
@@ -131,7 +131,7 @@ export async function render(browser, api) {
     // Match count header
     const total = groups.reduce((n, g) => n + g.matches.length, 0);
     const countHeader = api.createElement('div', {
-      style: 'margin-bottom: 15px; font-size: 14px; color: var(--color-text-secondary); font-weight: 500;'
+      style: 'margin-bottom: 15px; font-size: 0.875rem; color: var(--color-text-secondary); font-weight: 500;'
     }, [total + ' symbol' + (total === 1 ? '' : 's') + ' across ' + groups.length + ' item' + (groups.length === 1 ? '' : 's')]);
     resultsArea.appendChild(countHeader);
 
@@ -150,12 +150,12 @@ export async function render(browser, api) {
       itemHeader.onclick = () => api.openItem(group.item.id);
 
       const itemName = api.createElement('span', {
-        style: 'font-weight: 600; font-size: 14px; color: var(--color-text);'
+        style: 'font-weight: 600; font-size: 0.875rem; color: var(--color-text);'
       }, [group.item.name || group.item.id.substring(0, 8)]);
       itemHeader.appendChild(itemName);
 
       const arrow = api.createElement('span', {
-        style: 'color: var(--color-text-secondary); font-size: 12px;'
+        style: 'color: var(--color-text-secondary); font-size: 0.75rem;'
       }, ['\u2197']);
       itemHeader.appendChild(arrow);
 
@@ -172,20 +172,20 @@ export async function render(browser, api) {
 
         // Name + signature
         const nameEl = api.createElement('span', {
-          style: 'font-family: monospace; font-size: 13px; color: var(--color-text); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;'
+          style: 'font-family: monospace; font-size: 0.8125rem; color: var(--color-text); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;'
         }, [sym.name + (sym.signature || '')]);
         row.appendChild(nameEl);
 
         // Kind badge
         const kindLabel = kindShort(sym.kind);
         const badge = api.createElement('span', {
-          style: 'font-size: 11px; padding: 1px 6px; border-radius: var(--border-radius); background: ' + kindColor(sym.kind) + '; color: white; flex-shrink: 0;'
+          style: 'font-size: 0.6875rem; padding: 1px 6px; border-radius: var(--border-radius); background: ' + kindColor(sym.kind) + '; color: white; flex-shrink: 0;'
         }, [kindLabel]);
         row.appendChild(badge);
 
         // Line number
         const lineEl = api.createElement('span', {
-          style: 'font-size: 12px; color: var(--color-text-secondary); font-family: monospace; min-width: 36px; text-align: right; flex-shrink: 0;'
+          style: 'font-size: 0.75rem; color: var(--color-text-secondary); font-family: monospace; min-width: 36px; text-align: right; flex-shrink: 0;'
         }, [':' + sym.line]);
         row.appendChild(lineEl);
 
@@ -194,7 +194,7 @@ export async function render(browser, api) {
         // JSDoc details (description + params + returns)
         if (sym.description || sym.params || sym.returns) {
           const detailEl = api.createElement('div', {
-            style: 'padding: 2px 14px 6px 22px; font-size: 12px; color: var(--color-text-secondary); border-bottom: 1px solid var(--color-border-light); line-height: 1.4;'
+            style: 'padding: 2px 14px 6px 22px; font-size: 0.75rem; color: var(--color-text-secondary); border-bottom: 1px solid var(--color-border-light); line-height: 1.4;'
           }, []);
           if (sym.description) {
             detailEl.appendChild(api.createElement('div', {}, [sym.description.split('\n')[0]]));
@@ -202,7 +202,7 @@ export async function render(browser, api) {
           if (sym.params) {
             for (const p of sym.params) {
               const paramLine = api.createElement('div', {
-                style: 'padding-left: 8px; font-family: monospace; font-size: 11px;'
+                style: 'padding-left: 8px; font-family: monospace; font-size: 0.6875rem;'
               }, []);
               const paramName = api.createElement('span', {
                 style: 'color: var(--color-text);'
@@ -221,7 +221,7 @@ export async function render(browser, api) {
           }
           if (sym.returns) {
             const retLine = api.createElement('div', {
-              style: 'padding-left: 8px; font-family: monospace; font-size: 11px;'
+              style: 'padding-left: 8px; font-family: monospace; font-size: 0.6875rem;'
             }, []);
             retLine.appendChild(api.createElement('span', {
               style: 'color: var(--color-text); opacity: 0.7;'
@@ -269,7 +269,7 @@ export async function render(browser, api) {
 }
 
 function chipStyle(active) {
-  const base = 'padding: 5px 14px; font-size: 13px; border-radius: 16px; cursor: pointer; transition: all 0.15s; border: 1px solid; ';
+  const base = 'padding: 5px 14px; font-size: 0.8125rem; border-radius: 16px; cursor: pointer; transition: all 0.15s; border: 1px solid; ';
   return active
     ? base + 'background: var(--color-primary); color: white; border-color: var(--color-primary);'
     : base + 'background: transparent; color: var(--color-text-secondary); border-color: var(--color-border);';

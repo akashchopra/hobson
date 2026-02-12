@@ -10,7 +10,7 @@ export function render(value, options, api) {
   if (label) {
     const labelEl = api.createElement('label');
     labelEl.textContent = label;
-    labelEl.style.cssText = 'font-weight: 500; font-size: 14px; color: var(--color-text);';
+    labelEl.style.cssText = 'font-weight: 500; font-size: 0.875rem; color: var(--color-text);';
     wrapper.appendChild(labelEl);
   }
 
@@ -58,7 +58,7 @@ export function render(value, options, api) {
         pill.style.cssText = 'display: inline-flex; align-items: center; gap: 6px; padding: 4px ' +
           (mode === 'editable' ? '8px 4px 12px' : '12px') +
           '; background: ' + tagColor + '20; border: 1px solid ' + tagColor +
-          '; border-radius: 12px; font-size: 12px; font-weight: 500; color: ' + tagColor + ';';
+          '; border-radius: 12px; font-size: 0.75rem; font-weight: 500; color: ' + tagColor + ';';
 
         const pillText = api.createElement('span');
         pillText.textContent = tagPath;
@@ -75,7 +75,7 @@ export function render(value, options, api) {
           const removeBtn = api.createElement('button');
           removeBtn.textContent = '×';
           removeBtn.style.cssText = 'background: none; border: none; color: ' + tagColor +
-            '; cursor: pointer; padding: 0; margin: 0; font-size: 14px; line-height: 1; font-weight: bold;';
+            '; cursor: pointer; padding: 0; margin: 0; font-size: 0.875rem; line-height: 1; font-weight: bold;';
           removeBtn.onclick = async () => {
             pendingTags = pendingTags.filter(id => id !== tagId);
             onChange(pendingTags);
@@ -88,7 +88,7 @@ export function render(value, options, api) {
       } catch (err) {
         // Tag not found
         const pill = api.createElement('span');
-        pill.style.cssText = 'display: inline-block; padding: 4px 12px; background: var(--color-danger-light); border: 1px solid var(--color-danger); border-radius: 12px; font-size: 12px; color: var(--color-danger); font-family: monospace;';
+        pill.style.cssText = 'display: inline-block; padding: 4px 12px; background: var(--color-danger-light); border: 1px solid var(--color-danger); border-radius: 12px; font-size: 0.75rem; color: var(--color-danger); font-family: monospace;';
         pill.title = 'Tag not found: ' + tagId;
         pill.textContent = tagId.substring(0, 8) + '...';
         pillsContainer.appendChild(pill);
@@ -99,7 +99,7 @@ export function render(value, options, api) {
     if (mode === 'editable' && onChange) {
       const addBtn = api.createElement('button');
       addBtn.textContent = '+ Add Tag';
-      addBtn.style.cssText = 'padding: 4px 12px; background: var(--color-primary); color: var(--color-bg-surface); border: none; border-radius: 12px; font-size: 12px; font-weight: 500; cursor: pointer;';
+      addBtn.style.cssText = 'padding: 4px 12px; background: var(--color-primary); color: var(--color-bg-surface); border: none; border-radius: 12px; font-size: 0.75rem; font-weight: 500; cursor: pointer;';
       addBtn.onclick = () => togglePicker();
       pillsContainer.appendChild(addBtn);
     }
@@ -131,7 +131,7 @@ export function render(value, options, api) {
 
     const closeBtn = api.createElement('button');
     closeBtn.textContent = '×';
-    closeBtn.style.cssText = 'background: none; border: none; font-size: 18px; cursor: pointer; color: var(--color-text-secondary);';
+    closeBtn.style.cssText = 'background: none; border: none; font-size: 1.125rem; cursor: pointer; color: var(--color-text-secondary);';
     closeBtn.onclick = () => { isPickerOpen = false; hidePicker(); };
     header.appendChild(closeBtn);
 
@@ -220,7 +220,7 @@ export function render(value, options, api) {
     if (tagItems.length > 0) {
       const treeLabel = api.createElement('div');
       treeLabel.textContent = 'Previously used tags:';
-      treeLabel.style.cssText = 'font-size: 12px; color: var(--color-text-secondary); margin-bottom: 8px;';
+      treeLabel.style.cssText = 'font-size: 0.75rem; color: var(--color-text-secondary); margin-bottom: 8px;';
       pickerPanel.appendChild(treeLabel);
     }
 
@@ -234,7 +234,7 @@ export function render(value, options, api) {
       if (tagItems.length === 0) {
         const emptyMsg = api.createElement('div');
         emptyMsg.textContent = 'No tags in use yet. Search above to tag with any item.';
-        emptyMsg.style.cssText = 'color: var(--color-text-secondary); font-style: italic; font-size: 13px;';
+        emptyMsg.style.cssText = 'color: var(--color-text-secondary); font-style: italic; font-size: 0.8125rem;';
         treeContainer.appendChild(emptyMsg);
         return;
       }

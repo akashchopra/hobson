@@ -283,12 +283,12 @@ export async function render(item, api) {
       // Titlebar
       const titlebar = api.createElement('div', {
         class: 'titlebar',
-        style: `height: 24px; background: var(--color-bg-hover); border-bottom: 1px solid var(--color-border); padding: 0 8px; display: flex; align-items: center; justify-content: space-between; font-size: 12px; font-weight: 500; cursor: ${canDrag ? 'move' : 'default'}; user-select: none;`
+        style: `height: 24px; background: var(--color-bg-hover); border-bottom: 1px solid var(--color-border); padding: 0 8px; display: flex; align-items: center; justify-content: space-between; font-size: 0.75rem; font-weight: 500; cursor: ${canDrag ? 'move' : 'default'}; user-select: none;`
       }, []);
 
       // Menu button
       const menuBtn = api.createElement('button', {
-        style: 'width: 20px; height: 18px; padding: 0; margin-right: 6px; border: none; background: transparent; cursor: pointer; font-size: 12px; color: var(--color-text-secondary); display: flex; align-items: center; justify-content: center;',
+        style: 'width: 20px; height: 18px; padding: 0; margin-right: 6px; border: none; background: transparent; cursor: pointer; font-size: 0.75rem; color: var(--color-text-secondary); display: flex; align-items: center; justify-content: center;',
         title: 'Window menu'
       }, ['\u2261']);
 
@@ -357,7 +357,7 @@ export async function render(item, api) {
       // Anchor indicator
       if (windowIsAnchored || effectiveView.anchor) {
         const anchorIndicator = api.createElement('button', {
-          style: 'width: 18px; height: 18px; padding: 0; border: none; background: transparent; cursor: pointer; font-size: 12px; color: var(--color-text-secondary); display: flex; align-items: center; justify-content: center;',
+          style: 'width: 18px; height: 18px; padding: 0; border: none; background: transparent; cursor: pointer; font-size: 0.75rem; color: var(--color-text-secondary); display: flex; align-items: center; justify-content: center;',
           title: windowIsEdgeAnchored || isEdgeAnchor(effectiveView.anchor) ? 'Undock' : 'Unpin',
           onclick: async (clickE) => {
             clickE.stopPropagation();
@@ -379,7 +379,7 @@ export async function render(item, api) {
       // Minimize button (not for anchored)
       if (!windowIsAnchored && !effectiveView.anchor) {
         const minimizeBtn = api.createElement('button', {
-          style: 'width: 18px; height: 18px; padding: 0; border: none; background: transparent; cursor: pointer; font-size: 14px; font-weight: bold; color: var(--color-text-secondary); display: flex; align-items: center; justify-content: center;',
+          style: 'width: 18px; height: 18px; padding: 0; border: none; background: transparent; cursor: pointer; font-size: 0.875rem; font-weight: bold; color: var(--color-text-secondary); display: flex; align-items: center; justify-content: center;',
           title: 'Minimize',
           onclick: async (clickE) => {
             clickE.stopPropagation();
@@ -398,7 +398,7 @@ export async function render(item, api) {
       // Maximize/Restore button (not for anchored)
       if (!windowIsAnchored && !effectiveView.anchor) {
         const maxBtn = api.createElement('button', {
-          style: 'width: 18px; height: 18px; padding: 0; border: none; background: transparent; cursor: pointer; font-size: 12px; color: var(--color-text-secondary); display: flex; align-items: center; justify-content: center;',
+          style: 'width: 18px; height: 18px; padding: 0; border: none; background: transparent; cursor: pointer; font-size: 0.75rem; color: var(--color-text-secondary); display: flex; align-items: center; justify-content: center;',
           title: isMaximized ? 'Restore' : 'Maximize',
           onclick: async (clickE) => {
             clickE.stopPropagation();
@@ -436,7 +436,7 @@ export async function render(item, api) {
       // Close button (floating only)
       if (!windowIsAnchored && !effectiveView.anchor) {
         buttonContainer.appendChild(api.createElement('button', {
-          style: 'width: 18px; height: 18px; padding: 0; border: none; background: transparent; cursor: pointer; font-size: 14px; font-weight: bold; color: var(--color-text-secondary); display: flex; align-items: center; justify-content: center;',
+          style: 'width: 18px; height: 18px; padding: 0; border: none; background: transparent; cursor: pointer; font-size: 0.875rem; font-weight: bold; color: var(--color-text-secondary); display: flex; align-items: center; justify-content: center;',
           title: 'Close',
           onclick: async (clickE) => {
             clickE.stopPropagation();

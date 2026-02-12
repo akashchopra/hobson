@@ -31,7 +31,7 @@ export async function render(value, options, api) {
   if (label) {
     const labelEl = api.createElement('label');
     labelEl.textContent = label;
-    labelEl.style.cssText = 'font-weight: 500; font-size: 14px; color: var(--color-text); flex-shrink: 0;';
+    labelEl.style.cssText = 'font-weight: 500; font-size: 0.875rem; color: var(--color-text); flex-shrink: 0;';
     wrapper.appendChild(labelEl);
   }
 
@@ -182,7 +182,7 @@ export async function render(value, options, api) {
         }, []);
 
         const linkBtn = api.createElement('button', {}, ['Link']);
-        linkBtn.style.cssText = 'padding: 4px 12px; cursor: pointer; background: var(--color-primary); color: var(--color-bg-surface); border: none; border-radius: var(--border-radius); font-size: 12px;';
+        linkBtn.style.cssText = 'padding: 4px 12px; cursor: pointer; background: var(--color-primary); color: var(--color-bg-surface); border: none; border-radius: var(--border-radius); font-size: 0.75rem;';
         linkBtn.onclick = (e) => {
           e.stopPropagation();
           insertReference(item, false);
@@ -190,7 +190,7 @@ export async function render(value, options, api) {
         actions.appendChild(linkBtn);
 
         const transcludeBtn = api.createElement('button', {}, ['Transclusion']);
-        transcludeBtn.style.cssText = 'padding: 4px 12px; cursor: pointer; background: var(--color-success); color: var(--color-bg-surface); border: none; border-radius: var(--border-radius); font-size: 12px;';
+        transcludeBtn.style.cssText = 'padding: 4px 12px; cursor: pointer; background: var(--color-success); color: var(--color-bg-surface); border: none; border-radius: var(--border-radius); font-size: 0.75rem;';
         transcludeBtn.onclick = (e) => {
           e.stopPropagation();
           insertReference(item, true);

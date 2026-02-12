@@ -10,7 +10,7 @@ export async function render(value, options, api) {
   if (label) {
     const labelEl = api.createElement('div');
     labelEl.textContent = label;
-    labelEl.style.cssText = 'font-weight: 600; font-size: 14px; color: var(--color-text); margin-bottom: 4px;';
+    labelEl.style.cssText = 'font-weight: 600; font-size: 0.875rem; color: var(--color-text); margin-bottom: 4px;';
     wrapper.appendChild(labelEl);
   }
 
@@ -56,19 +56,19 @@ export async function render(value, options, api) {
     // Collapsible header for large internal fields
     if (isLarge) {
       const summary = api.createElement('div');
-      summary.style.cssText = 'font-size: 12px; color: var(--color-text-tertiary); cursor: pointer; user-select: none;';
+      summary.style.cssText = 'font-size: 0.75rem; color: var(--color-text-tertiary); cursor: pointer; user-select: none;';
       const keyCount = typeof val === 'object' && val !== null ? Object.keys(val).length : 0;
       summary.textContent = '(internal, ' + keyCount + ' entries, click to expand)';
       container.appendChild(summary);
       
       const textarea = api.createElement('textarea');
       textarea.value = jsonStr;
-      textarea.style.cssText = 'display: none; width: 100%; min-height: 150px; max-height: 400px; font-family: monospace; font-size: 12px; padding: 8px; border: 1px solid var(--color-border); border-radius: var(--border-radius); resize: vertical; background: var(--color-bg-surface-alt);';
+      textarea.style.cssText = 'display: none; width: 100%; min-height: 150px; max-height: 400px; font-family: monospace; font-size: 0.75rem; padding: 8px; border: 1px solid var(--color-border); border-radius: var(--border-radius); resize: vertical; background: var(--color-bg-surface-alt);';
       if (!isEditable) textarea.readOnly = true;
       
       if (isEditable) {
         const errorEl = api.createElement('div');
-        errorEl.style.cssText = 'display: none; color: var(--color-danger); font-size: 12px;';
+        errorEl.style.cssText = 'display: none; color: var(--color-danger); font-size: 0.75rem;';
         textarea.oninput = () => {
           try {
             const parsed = JSON.parse(textarea.value);
@@ -97,12 +97,12 @@ export async function render(value, options, api) {
       // Small internal field - show directly as textarea
       const textarea = api.createElement('textarea');
       textarea.value = jsonStr;
-      textarea.style.cssText = 'width: 100%; min-height: 60px; font-family: monospace; font-size: 12px; padding: 8px; border: 1px solid var(--color-border); border-radius: var(--border-radius); resize: vertical; background: var(--color-bg-surface-alt);';
+      textarea.style.cssText = 'width: 100%; min-height: 60px; font-family: monospace; font-size: 0.75rem; padding: 8px; border: 1px solid var(--color-border); border-radius: var(--border-radius); resize: vertical; background: var(--color-bg-surface-alt);';
       if (!isEditable) textarea.readOnly = true;
       
       if (isEditable) {
         const errorEl = api.createElement('div');
-        errorEl.style.cssText = 'color: var(--color-danger); font-size: 12px; min-height: 16px;';
+        errorEl.style.cssText = 'color: var(--color-danger); font-size: 0.75rem; min-height: 16px;';
         textarea.oninput = () => {
           try {
             const parsed = JSON.parse(textarea.value);
@@ -139,7 +139,7 @@ export async function render(value, options, api) {
       // Editable key name
       const keyInput = api.createElement('input', { type: 'text' });
       keyInput.value = key;
-      keyInput.style.cssText = 'font-weight: 500; font-size: 13px; color: var(--color-text-secondary); background: transparent; border: 1px solid transparent; border-radius: 3px; padding: 2px 4px; width: auto; min-width: 80px;';
+      keyInput.style.cssText = 'font-weight: 500; font-size: 0.8125rem; color: var(--color-text-secondary); background: transparent; border: 1px solid transparent; border-radius: 3px; padding: 2px 4px; width: auto; min-width: 80px;';
       keyInput.onblur = () => renameProp(key, keyInput.value.trim());
       keyInput.onkeydown = (e) => { if (e.key === 'Enter') keyInput.blur(); };
       propHeader.appendChild(keyInput);
@@ -147,7 +147,7 @@ export async function render(value, options, api) {
       // Delete button
       const deleteBtn = api.createElement('button');
       deleteBtn.textContent = '\u00d7';
-      deleteBtn.style.cssText = 'background: none; border: none; color: var(--color-text-tertiary); cursor: pointer; font-size: 16px; padding: 0 4px; line-height: 1;';
+      deleteBtn.style.cssText = 'background: none; border: none; color: var(--color-text-tertiary); cursor: pointer; font-size: 1rem; padding: 0 4px; line-height: 1;';
       deleteBtn.onclick = () => {
         if (confirm('Delete property "' + key + '"?')) {
           deleteProp(key);
@@ -159,7 +159,7 @@ export async function render(value, options, api) {
     } else {
       const keyLabel = api.createElement('span');
       keyLabel.textContent = key;
-      keyLabel.style.cssText = 'font-weight: 500; font-size: 13px; color: var(--color-text-secondary);';
+      keyLabel.style.cssText = 'font-weight: 500; font-size: 0.8125rem; color: var(--color-text-secondary);';
       propHeader.appendChild(keyLabel);
     }
 
@@ -232,7 +232,7 @@ export async function render(value, options, api) {
       // Fallback if field view not found
       fieldEl = api.createElement('span');
       fieldEl.textContent = JSON.stringify(val);
-      fieldEl.style.cssText = 'font-family: monospace; font-size: 13px;';
+      fieldEl.style.cssText = 'font-family: monospace; font-size: 0.8125rem;';
     }
 
     propRow.appendChild(fieldEl);
@@ -248,7 +248,7 @@ export async function render(value, options, api) {
 
     const addBtn = api.createElement('button');
     addBtn.textContent = '+ Add Property';
-    addBtn.style.cssText = 'padding: 4px 12px; font-size: 12px; cursor: pointer; background: var(--color-bg-surface-alt); border: 1px solid var(--color-border-light); border-radius: var(--border-radius); color: var(--color-text-secondary);';
+    addBtn.style.cssText = 'padding: 4px 12px; font-size: 0.75rem; cursor: pointer; background: var(--color-bg-surface-alt); border: 1px solid var(--color-border-light); border-radius: var(--border-radius); color: var(--color-text-secondary);';
     addBtn.onclick = () => {
       // Generate unique key name
       let newKey = 'newProperty';
@@ -266,7 +266,7 @@ export async function render(value, options, api) {
   if (keys.length === 0 && !isEditable) {
     const emptyEl = api.createElement('div');
     emptyEl.textContent = '(empty object)';
-    emptyEl.style.cssText = 'color: var(--color-text-tertiary); font-style: italic; font-size: 13px;';
+    emptyEl.style.cssText = 'color: var(--color-text-tertiary); font-style: italic; font-size: 0.8125rem;';
     propsContainer.appendChild(emptyEl);
   }
 

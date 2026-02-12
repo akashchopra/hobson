@@ -61,13 +61,13 @@ export async function show(itemId, _api) {
   header.style.cssText = 'padding: 16px 20px; border-bottom: 1px solid var(--color-border-light); display: flex; justify-content: space-between; align-items: center;';
   
   const title = document.createElement('h3');
-  title.style.cssText = 'margin: 0; font-size: 16px;';
+  title.style.cssText = 'margin: 0; font-size: 1rem;';
   title.textContent = 'Edit: ' + (item.name || item.id.slice(0, 8));
   header.appendChild(title);
 
   const closeBtn = document.createElement('button');
   closeBtn.textContent = '\u00d7';
-  closeBtn.style.cssText = 'background: none; border: none; font-size: 24px; cursor: pointer; color: var(--color-text-secondary); padding: 0 4px;';
+  closeBtn.style.cssText = 'background: none; border: none; font-size: 1.5rem; cursor: pointer; color: var(--color-text-secondary); padding: 0 4px;';
   closeBtn.onclick = () => hide();
   header.appendChild(closeBtn);
 
@@ -84,7 +84,7 @@ export async function show(itemId, _api) {
     width: 100%;
     height: 400px;
     font-family: monospace;
-    font-size: 13px;
+    font-size: 0.8125rem;
     padding: 12px;
     border: 1px solid var(--color-border);
     border-radius: var(--border-radius);
@@ -97,7 +97,7 @@ export async function show(itemId, _api) {
   // Error display
   const errorDisplay = document.createElement('div');
   errorDisplay.id = 'json-editor-error';
-  errorDisplay.style.cssText = 'color: var(--color-danger); font-size: 13px; margin-top: 8px; display: none;';
+  errorDisplay.style.cssText = 'color: var(--color-danger); font-size: 0.8125rem; margin-top: 8px; display: none;';
   editorArea.appendChild(errorDisplay);
 
   modal.appendChild(editorArea);

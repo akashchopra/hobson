@@ -40,7 +40,7 @@ export async function showTypePicker(api) {
           typeBtn.appendChild(typeName);
 
           if (type.content?.description) {
-            const typeDesc = api.createElement('div', { style: 'font-size: 12px; color: var(--color-text-secondary); margin-top: 4px;' }, [type.content.description.slice(0, 300)]);
+            const typeDesc = api.createElement('div', { style: 'font-size: 0.75rem; color: var(--color-text-secondary); margin-top: 4px;' }, [type.content.description.slice(0, 300)]);
             typeBtn.appendChild(typeDesc);
           }
 

@@ -34,7 +34,7 @@ export async function render(widget, api) {
   const relatedLib = await api.require('related-items-lib');
 
   const container = api.createElement('div', {
-    style: 'max-width: 600px; margin: 0 auto; font-size: 14px;'
+    style: 'max-width: 600px; margin: 0 auto; font-size: 0.875rem;'
   }, []);
 
   // Ensure indexes are built (rebuilds if module cache was cleared)
@@ -52,7 +52,7 @@ export async function render(widget, api) {
 
   if (!selectedId) {
     const title = api.createElement('h2', {
-      style: 'margin: 0; font-size: 14px; color: var(--color-border-dark); font-style: italic;'
+      style: 'margin: 0; font-size: 0.875rem; color: var(--color-border-dark); font-style: italic;'
     }, ['Select an item to see relationships']);
     header.appendChild(title);
     return container;
@@ -66,14 +66,14 @@ export async function render(widget, api) {
   try { selectedItem = await api.get(selectedId); } catch (e) { selectedItem = null; }
   if (!selectedItem) {
     const title = api.createElement('h2', {
-      style: 'margin: 0; font-size: 18px; color: var(--color-border-dark); font-style: italic;'
+      style: 'margin: 0; font-size: 1.125rem; color: var(--color-border-dark); font-style: italic;'
     }, ['Item not found']);
     header.appendChild(title);
     return container;
   }
 
   const title = api.createElement('h2', {
-    style: 'margin: 0; font-size: 16px;'
+    style: 'margin: 0; font-size: 1rem;'
   }, ['Related to: ' + (selectedItem.name || selectedId.substring(0, 8))]);
   header.appendChild(title);
 
@@ -112,7 +112,7 @@ async function renderSection(sectionLabel, groups, related, api, context) {
   }, []);
 
   const heading = api.createElement('h3', {
-    style: 'margin: 0 0 8px 0; font-size: 13px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--color-border-dark);'
+    style: 'margin: 0 0 8px 0; font-size: 0.8125rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--color-border-dark);'
   }, [sectionLabel]);
   section.appendChild(heading);
 
@@ -139,7 +139,7 @@ async function renderGroup(label, ids, api, opts = {}) {
   }, []);
 
   const groupLabel = api.createElement('div', {
-    style: 'font-weight: 600; margin-bottom: 4px; font-size: 13px;'
+    style: 'font-weight: 600; margin-bottom: 4px; font-size: 0.8125rem;'
   }, [label]);
   group.appendChild(groupLabel);
 
@@ -172,7 +172,7 @@ async function renderGroup(label, ids, api, opts = {}) {
 
   if (truncated) {
     const more = api.createElement('div', {
-      style: 'font-size: 12px; color: var(--color-border-dark); font-style: italic; padding: 2px 0;'
+      style: 'font-size: 0.75rem; color: var(--color-border-dark); font-style: italic; padding: 2px 0;'
     }, ['\u2026 and ' + (uniqueIds.length - TRUNCATE_LIMIT) + ' more']);
     list.appendChild(more);
   }
@@ -216,7 +216,7 @@ async function renderTaggedWithGrouped(label, tagGroups, selectedId, api) {
   }, []);
 
   const groupLabel = api.createElement('div', {
-    style: 'font-weight: 600; margin-bottom: 4px; font-size: 13px;'
+    style: 'font-weight: 600; margin-bottom: 4px; font-size: 0.8125rem;'
   }, [label]);
   group.appendChild(groupLabel);
 
@@ -233,7 +233,7 @@ async function renderTaggedWithGrouped(label, tagGroups, selectedId, api) {
     }, []);
 
     const subLabel = api.createElement('div', {
-      style: 'font-weight: 500; font-size: 12px; color: var(--color-border-dark); margin-bottom: 2px;'
+      style: 'font-weight: 500; font-size: 0.75rem; color: var(--color-border-dark); margin-bottom: 2px;'
     }, [path + ' (' + items.length + ')']);
     subSection.appendChild(subLabel);
 
@@ -260,7 +260,7 @@ async function renderTaggedWithGrouped(label, tagGroups, selectedId, api) {
 
     if (truncated) {
       const more = api.createElement('div', {
-        style: 'font-size: 12px; color: var(--color-border-dark); font-style: italic; padding: 2px 0;'
+        style: 'font-size: 0.75rem; color: var(--color-border-dark); font-style: italic; padding: 2px 0;'
       }, ['\u2026 and ' + (uniqueIds.length - TRUNCATE_LIMIT) + ' more']);
       list.appendChild(more);
     }
@@ -282,14 +282,14 @@ async function renderItemLink(itemId, api, displayName) {
 
   if (!item) {
     const deleted = api.createElement('span', {
-      style: 'color: var(--color-border-dark); font-style: italic; font-size: 13px;'
+      style: 'color: var(--color-border-dark); font-style: italic; font-size: 0.8125rem;'
     }, ['[deleted: ' + itemId.substring(0, 13) + ']']);
     row.appendChild(deleted);
     return row;
   }
 
   const name = api.createElement('span', {
-    style: 'color: var(--color-link, #2563eb); font-size: 13px;'
+    style: 'color: var(--color-link, #2563eb); font-size: 0.8125rem;'
   }, [displayName || item.name || itemId.substring(0, 8)]);
   row.appendChild(name);
 
@@ -299,7 +299,7 @@ async function renderItemLink(itemId, api, displayName) {
     try { typeItem = await api.get(item.type); } catch (e) { typeItem = null; }
     if (typeItem) {
       const typeName = api.createElement('span', {
-        style: 'color: var(--color-border-dark); font-size: 11px;'
+        style: 'color: var(--color-border-dark); font-size: 0.6875rem;'
       }, [typeItem.name || '']);
       row.appendChild(typeName);
     }

@@ -57,7 +57,7 @@ export async function render(pageItem, api) {
       } catch (err) {
         window.kernel?.captureError(err, { operation: 'app-page-load-design-lib' });
         const errEl = api.createElement('div', {
-          style: 'color: var(--color-danger); padding: 8px; font-size: 13px;'
+          style: 'color: var(--color-danger); padding: 8px; font-size: 0.8125rem;'
         });
         errEl.textContent = 'Failed to load design library: ' + err.message;
         wrapper.appendChild(errEl);
@@ -150,7 +150,7 @@ export async function render(pageItem, api) {
         style: `
           padding: 2px 8px; cursor: pointer; border: 1px solid var(--color-border, #444);
           background: transparent; color: var(--color-text-secondary, #888);
-          border-radius: var(--border-radius, 4px); font-size: 11px; opacity: 0.6;
+          border-radius: var(--border-radius, 4px); font-size: 0.6875rem; opacity: 0.6;
         `,
         title: 'Enter design mode'
       });
@@ -231,7 +231,7 @@ export async function render(pageItem, api) {
         } catch (err) {
           window.kernel?.captureError(err, { operation: 'app-page-widget-render', itemId: childId, itemName: childItem.name });
           widgetElement = api.createElement('div', {
-            style: 'color: var(--color-danger, #e74c3c); padding: 8px; border: 1px solid var(--color-danger, #e74c3c); border-radius: var(--border-radius, 4px); font-size: 13px;'
+            style: 'color: var(--color-danger, #e74c3c); padding: 8px; border: 1px solid var(--color-danger, #e74c3c); border-radius: var(--border-radius, 4px); font-size: 0.8125rem;'
           });
           widgetElement.textContent = `Error rendering ${childItem.name || childId}: ${err.message}`;
         }
@@ -280,7 +280,7 @@ export async function render(pageItem, api) {
 
                     const msg = document.createElement('p');
                     msg.textContent = `What would you like to do with "${widgetName}"?`;
-                    msg.style.cssText = 'margin: 0 0 16px 0; font-size: 14px; color: var(--color-text); line-height: 1.5;';
+                    msg.style.cssText = 'margin: 0 0 16px 0; font-size: 0.875rem; color: var(--color-text); line-height: 1.5;';
                     el.appendChild(msg);
 
                     const btnRow = document.createElement('div');
@@ -352,7 +352,7 @@ export async function render(pageItem, api) {
       } catch (err) {
         window.kernel?.captureError(err, { operation: 'app-page-load-child', itemId: childId });
         const errorCell = api.createElement('div', {
-          style: 'color: var(--color-danger, #e74c3c); padding: 8px; font-size: 13px;'
+          style: 'color: var(--color-danger, #e74c3c); padding: 8px; font-size: 0.8125rem;'
         });
         errorCell.textContent = `Failed to load widget ${childId}: ${err.message}`;
         grid.appendChild(errorCell);

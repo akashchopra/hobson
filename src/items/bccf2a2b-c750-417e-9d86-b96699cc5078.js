@@ -5,7 +5,7 @@ export function render(value, onChange, api, options = {}) {
 
   // Display area for current selection
   const displayArea = document.createElement('div');
-  displayArea.style.cssText = 'flex: 1; padding: 8px; border: 1px solid var(--color-border); border-radius: var(--border-radius); font-size: 14px; background: var(--color-bg-surface-alt); min-height: 36px; display: flex; align-items: center;';
+  displayArea.style.cssText = 'flex: 1; padding: 8px; border: 1px solid var(--color-border); border-radius: var(--border-radius); font-size: 0.875rem; background: var(--color-bg-surface-alt); min-height: 36px; display: flex; align-items: center;';
 
   const updateDisplay = async () => {
     if (!value || value === '') {
@@ -37,7 +37,7 @@ export function render(value, onChange, api, options = {}) {
     // Select button
     const selectBtn = document.createElement('button');
     selectBtn.textContent = 'Select...';
-    selectBtn.style.cssText = 'padding: 8px 16px; cursor: pointer; background: var(--color-primary); color: white; border: none; border-radius: var(--border-radius); font-size: 14px;';
+    selectBtn.style.cssText = 'padding: 8px 16px; cursor: pointer; background: var(--color-primary); color: white; border: none; border-radius: var(--border-radius); font-size: 0.875rem;';
     selectBtn.onclick = () => openModal();
     container.appendChild(selectBtn);
 
@@ -45,7 +45,7 @@ export function render(value, onChange, api, options = {}) {
     const clearBtn = document.createElement('button');
     clearBtn.textContent = '\u00d7';
     clearBtn.title = 'Clear selection';
-    clearBtn.style.cssText = 'padding: 8px 12px; cursor: pointer; background: var(--color-danger); color: white; border: none; border-radius: var(--border-radius); font-size: 16px; font-weight: bold;';
+    clearBtn.style.cssText = 'padding: 8px 12px; cursor: pointer; background: var(--color-danger); color: white; border: none; border-radius: var(--border-radius); font-size: 1rem; font-weight: bold;';
     clearBtn.onclick = () => {
       onChange('');
       value = '';

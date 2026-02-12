@@ -22,7 +22,7 @@ export async function render(item, api) {
 
   // Label
   const labelEl = api.createElement('label', {
-    style: 'font-size: 13px; color: var(--color-text-secondary); min-width: 100px;'
+    style: 'font-size: 0.8125rem; color: var(--color-text-secondary); min-width: 100px;'
   });
   labelEl.textContent = label;
 
@@ -38,7 +38,7 @@ export async function render(item, api) {
 
   // Numeric display
   const display = api.createElement('span', {
-    style: 'font-size: 13px; color: var(--color-text); min-width: 50px; text-align: right; font-variant-numeric: tabular-nums;'
+    style: 'font-size: 0.8125rem; color: var(--color-text); min-width: 50px; text-align: right; font-variant-numeric: tabular-nums;'
   });
   display.textContent = input.value;
 

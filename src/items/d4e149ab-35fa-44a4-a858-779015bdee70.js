@@ -18,7 +18,7 @@
 .context-menu-item {
   padding: 8px 16px;
   cursor: pointer;
-  font-size: 13px;
+  font-size: 0.8125rem;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -54,7 +54,7 @@
 
 .context-menu-submenu::after {
   content: '\25b6';
-  font-size: 10px;
+  font-size: 0.625rem;
   margin-left: auto;
   color: #666;
 }

@@ -659,7 +659,7 @@ export async function loadKernel(require, storageBackend) {
       const searchInput = document.createElement("input");
       searchInput.type = "text";
       searchInput.placeholder = "Search items...";
-      searchInput.style.cssText = "width: 100%; padding: 8px 12px; font-size: 16px; border: 1px solid #ddd; border-radius: 4px; outline: none;";
+      searchInput.style.cssText = "width: 100%; padding: 8px 12px; font-size: 1rem; border: 1px solid #ddd; border-radius: 4px; outline: none;";
       searchContainer.appendChild(searchInput);
       modal.appendChild(searchContainer);
 
@@ -690,7 +690,7 @@ export async function loadKernel(require, storageBackend) {
           info.appendChild(name);
 
           const typeLine = document.createElement("div");
-          typeLine.style.cssText = "font-size: 12px; color: #666;";
+          typeLine.style.cssText = "font-size: 0.75rem; color: #666;";
           typeLine.textContent = item.type.slice(0, 8);
           info.appendChild(typeLine);
 
@@ -857,13 +857,13 @@ export async function loadKernel(require, storageBackend) {
 
       const heading = document.createElement("h2");
       heading.textContent = `Editing: ${item.name || item.id}`;
-      heading.style.cssText = "margin: 0 0 10px 0; font-size: 16px;";
+      heading.style.cssText = "margin: 0 0 10px 0; font-size: 1rem;";
       container.appendChild(heading);
 
       const textarea = document.createElement("textarea");
       textarea.id = "raw-json";
       textarea.value = json;
-      textarea.style.cssText = "flex: 1; min-height: 300px; font-family: monospace; font-size: 13px; padding: 10px; border: 1px solid #ccc; border-radius: 4px; resize: vertical;";
+      textarea.style.cssText = "flex: 1; min-height: 300px; font-family: monospace; font-size: 0.8125rem; padding: 10px; border: 1px solid #ccc; border-radius: 4px; resize: vertical;";
       container.appendChild(textarea);
 
       const actions = document.createElement("div");
@@ -2395,7 +2395,7 @@ export async function loadKernel(require, storageBackend) {
 
       banner.innerHTML = `
         <div style="display: flex; align-items: center; gap: 12px;">
-          <span style="font-size: 20px;">⚠️</span>
+          <span style="font-size: 1.25rem;">⚠️</span>
           <div style="flex: 1;">
             <strong>System Error</strong>${contextInfo}: ${errorMessage}
           </div>

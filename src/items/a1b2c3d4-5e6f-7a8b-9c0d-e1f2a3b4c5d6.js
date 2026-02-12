@@ -150,7 +150,7 @@ export async function render(markdown, api, options = {}) {
   );
 
   const content = api.createElement('div', { className: 'markdown-content' });
-  content.style.cssText = 'line-height: 1.6; font-size: 13px;';
+  content.style.cssText = 'line-height: 1.6; font-size: 0.8125rem;';
   content.innerHTML = html;
 
   // Handle item:// link clicks - open as sibling in current container, or navigate if root
@@ -212,7 +212,7 @@ export async function render(markdown, api, options = {}) {
         wrapperDiv.style.cssText = 'background: var(--color-bg-surface-alt); border: 1px solid var(--color-border-light); border-radius: var(--border-radius); padding: 15px; margin: 15px 0;';
 
         const header = api.createElement('summary');
-        header.style.cssText = 'font-size: 12px; color: var(--color-text-secondary); padding-bottom: 8px; cursor: pointer;';
+        header.style.cssText = 'font-size: 0.75rem; color: var(--color-text-secondary); padding-bottom: 8px; cursor: pointer;';
         header.textContent = 'From: ' + (transcludedItem.name || transcludedItem.id.slice(0, 8)) + '.' + fnName + '() ';
         const navLink = api.createElement('span');
         navLink.textContent = '↗';
@@ -282,7 +282,7 @@ export async function render(markdown, api, options = {}) {
         }
 
         const header = api.createElement('summary');
-        header.style.cssText = 'font-size: 12px; color: var(--color-text-secondary); padding-bottom: 8px; cursor: pointer;';
+        header.style.cssText = 'font-size: 0.75rem; color: var(--color-text-secondary); padding-bottom: 8px; cursor: pointer;';
         header.textContent = 'Transcluded from: ' + headerDesc + ' ';
         const navLink = api.createElement('span');
         navLink.textContent = '↗';
@@ -304,7 +304,7 @@ export async function render(markdown, api, options = {}) {
         } else {
           // Render as code block
           const pre = api.createElement('pre');
-          pre.style.cssText = 'margin: 0; padding: 10px; background: var(--color-bg-surface); border-radius: var(--border-radius); overflow-x: auto; font-family: monospace; font-size: 13px; line-height: 1.5;';
+          pre.style.cssText = 'margin: 0; padding: 10px; background: var(--color-bg-surface); border-radius: var(--border-radius); overflow-x: auto; font-family: monospace; font-size: 0.8125rem; line-height: 1.5;';
 
           const code = api.createElement('code');
           const lines = text.split('\n');
@@ -324,7 +324,7 @@ export async function render(markdown, api, options = {}) {
       } else {
         // Full transclusion
         const header = api.createElement('summary');
-        header.style.cssText = 'font-size: 12px; color: var(--color-text-secondary); padding-bottom: 8px; cursor: pointer;';
+        header.style.cssText = 'font-size: 0.75rem; color: var(--color-text-secondary); padding-bottom: 8px; cursor: pointer;';
         header.textContent = 'Transcluded from: ' + (transcludedItem.name || transcludedItem.id) + ' ';
         const navLink = api.createElement('span');
         navLink.textContent = '↗';
@@ -452,7 +452,7 @@ export async function render(markdown, api, options = {}) {
           wrapperDiv.style.cssText = 'background: var(--color-bg-surface-alt); border: 1px solid var(--color-border-light); border-radius: var(--border-radius); padding: 15px; margin: 15px 0;';
 
           const header = api.createElement('summary');
-          header.style.cssText = 'font-size: 12px; color: var(--color-text-secondary); padding-bottom: 8px; cursor: pointer;';
+          header.style.cssText = 'font-size: 0.75rem; color: var(--color-text-secondary); padding-bottom: 8px; cursor: pointer;';
           header.textContent = 'From: ' + itemName + ' ';
           const navLink = api.createElement('span');
           navLink.textContent = '↗';

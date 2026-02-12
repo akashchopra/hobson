@@ -92,7 +92,7 @@ export async function render(item, editor, api) {
     // Label
     const label = document.createElement('label');
     label.textContent = hint.label || path[path.length - 1];
-    label.style.cssText = 'font-weight: 500; font-size: 14px; color: var(--color-text);';
+    label.style.cssText = 'font-weight: 500; font-size: 0.875rem; color: var(--color-text);';
     fieldContainer.appendChild(label);
 
     // Get current value
@@ -138,7 +138,7 @@ export async function render(item, editor, api) {
 
     const otherLabel = document.createElement('div');
     otherLabel.textContent = 'Other Fields';
-    otherLabel.style.cssText = 'font-size: 12px; color: var(--color-text-secondary); text-transform: uppercase; letter-spacing: 0.5px;';
+    otherLabel.style.cssText = 'font-size: 0.75rem; color: var(--color-text-secondary); text-transform: uppercase; letter-spacing: 0.5px;';
     container.appendChild(otherLabel);
 
     for (const { path } of unhintedFields) {
@@ -147,7 +147,7 @@ export async function render(item, editor, api) {
 
       const label = document.createElement('label');
       label.textContent = path.join('.');
-      label.style.cssText = 'font-weight: 500; font-size: 14px; color: var(--color-text);';
+      label.style.cssText = 'font-weight: 500; font-size: 0.875rem; color: var(--color-text);';
       fieldContainer.appendChild(label);
 
       const currentValue = getNestedValue(workingCopy, path);
@@ -166,7 +166,7 @@ export async function render(item, editor, api) {
 
   // Error area
   const errorArea = document.createElement('div');
-  errorArea.style.cssText = 'color: var(--color-danger); font-size: 13px; min-height: 20px;';
+  errorArea.style.cssText = 'color: var(--color-danger); font-size: 0.8125rem; min-height: 20px;';
   container.appendChild(errorArea);
 
   // Button row

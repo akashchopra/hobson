@@ -7,7 +7,7 @@ export async function render(value, options, api) {
   if (label) {
     const labelEl = api.createElement('label');
     labelEl.textContent = label;
-    labelEl.style.cssText = 'font-weight: 500; font-size: 14px; color: var(--color-text);';
+    labelEl.style.cssText = 'font-weight: 500; font-size: 0.875rem; color: var(--color-text);';
     wrapper.appendChild(labelEl);
   }
 
@@ -79,7 +79,7 @@ export async function render(value, options, api) {
     row.style.cssText = 'display: flex; gap: 8px; align-items: center;';
 
     const pickerBtn = api.createElement('button');
-    pickerBtn.style.cssText = 'flex: 1; padding: 8px 12px; text-align: left; background: var(--color-bg-surface-alt); border: 1px solid var(--color-border-light); border-radius: var(--border-radius); cursor: pointer; font-size: 14px; display: flex; align-items: center; gap: 8px;';
+    pickerBtn.style.cssText = 'flex: 1; padding: 8px 12px; text-align: left; background: var(--color-bg-surface-alt); border: 1px solid var(--color-border-light); border-radius: var(--border-radius); cursor: pointer; font-size: 0.875rem; display: flex; align-items: center; gap: 8px;';
     
     nameSpan = api.createElement('span');
     nameSpan.style.cssText = 'flex: 1;';
@@ -88,7 +88,7 @@ export async function render(value, options, api) {
 
     const chevron = api.createElement('span');
     chevron.textContent = '\u25BC';
-    chevron.style.cssText = 'font-size: 10px; color: var(--color-text-secondary);';
+    chevron.style.cssText = 'font-size: 0.625rem; color: var(--color-text-secondary);';
     pickerBtn.appendChild(chevron);
 
     pickerBtn.onclick = showItemPicker;
@@ -99,7 +99,7 @@ export async function render(value, options, api) {
       const navBtn = api.createElement('button');
       navBtn.textContent = '\u2192';
       navBtn.title = 'Go to item';
-      navBtn.style.cssText = 'padding: 8px 12px; background: var(--color-bg-hover); border: 1px solid var(--color-border-light); border-radius: var(--border-radius); cursor: pointer; font-size: 14px;';
+      navBtn.style.cssText = 'padding: 8px 12px; background: var(--color-bg-hover); border: 1px solid var(--color-border-light); border-radius: var(--border-radius); cursor: pointer; font-size: 0.875rem;';
       navBtn.onclick = async (e) => {
         e.preventDefault();
         e.stopPropagation();
@@ -113,7 +113,7 @@ export async function render(value, options, api) {
       const clearBtn = api.createElement('button');
       clearBtn.textContent = '\u00d7';
       clearBtn.title = 'Clear';
-      clearBtn.style.cssText = 'padding: 8px 12px; background: var(--color-bg-hover); border: 1px solid var(--color-border-light); border-radius: var(--border-radius); cursor: pointer; font-size: 14px; color: var(--color-text-secondary);';
+      clearBtn.style.cssText = 'padding: 8px 12px; background: var(--color-bg-hover); border: 1px solid var(--color-border-light); border-radius: var(--border-radius); cursor: pointer; font-size: 0.875rem; color: var(--color-text-secondary);';
       clearBtn.onclick = () => onChange('');
       row.appendChild(clearBtn);
     }
@@ -135,12 +135,12 @@ export async function render(value, options, api) {
     } else if (itemId) {
       const span = api.createElement('span');
       span.textContent = currentName;
-      span.style.cssText = 'padding: 8px; background: var(--color-warning-light); border-radius: var(--border-radius); font-size: 14px; color: var(--color-text);';
+      span.style.cssText = 'padding: 8px; background: var(--color-warning-light); border-radius: var(--border-radius); font-size: 0.875rem; color: var(--color-text);';
       wrapper.appendChild(span);
     } else {
       const span = api.createElement('span');
       span.textContent = '(none)';
-      span.style.cssText = 'padding: 8px; background: var(--color-bg-body); border-radius: var(--border-radius); font-size: 14px; color: var(--color-border-dark);';
+      span.style.cssText = 'padding: 8px; background: var(--color-bg-body); border-radius: var(--border-radius); font-size: 0.875rem; color: var(--color-border-dark);';
       wrapper.appendChild(span);
     }
   }

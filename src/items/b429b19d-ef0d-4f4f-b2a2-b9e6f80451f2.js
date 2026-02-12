@@ -159,7 +159,7 @@ export async function render(item, api) {
     } catch (renderError) {
       console.error('Error rendering field:', path, 'with view:', fieldViewName, renderError);
       fieldElement = api.createElement('div');
-      fieldElement.style.cssText = 'color: var(--color-danger); font-size: 12px;';
+      fieldElement.style.cssText = 'color: var(--color-danger); font-size: 0.75rem;';
       fieldElement.textContent = 'Error: ' + renderError.message;
     }
 
@@ -169,7 +169,7 @@ export async function render(item, api) {
       if (!hint.startCollapsed) details.setAttribute('open', '');
       const summary = api.createElement('summary');
       summary.textContent = hint.label || fieldName;
-      summary.style.cssText = 'cursor: pointer; font-size: 13px; font-weight: 500; color: var(--color-text-secondary); user-select: none; padding: 2px 0;';
+      summary.style.cssText = 'cursor: pointer; font-size: 0.8125rem; font-weight: 500; color: var(--color-text-secondary); user-select: none; padding: 2px 0;';
       details.appendChild(summary);
       details.appendChild(fieldElement);
       scrollArea.appendChild(details);

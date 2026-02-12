@@ -48,7 +48,7 @@ export async function render(value, options, api) {
   if (label) {
     const labelEl = api.createElement('label');
     labelEl.textContent = label;
-    labelEl.style.cssText = 'font-weight: 500; font-size: 14px; color: var(--color-text);';
+    labelEl.style.cssText = 'font-weight: 500; font-size: 0.875rem; color: var(--color-text);';
     wrapper.appendChild(labelEl);
   }
 
@@ -195,7 +195,7 @@ export async function render(value, options, api) {
 
   // Keyboard shortcut hint
   const hint = api.createElement('div');
-  hint.style.cssText = 'font-size: 12px; color: var(--color-text-tertiary);';
+  hint.style.cssText = 'font-size: 0.75rem; color: var(--color-text-tertiary);';
   hint.textContent = 'Tip: Tab for indent, Shift+Tab to dedent';
   wrapper.appendChild(hint);
 

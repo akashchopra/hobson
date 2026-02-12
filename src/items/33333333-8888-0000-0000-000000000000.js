@@ -50,13 +50,16 @@
   box-sizing: border-box;
 }
 
+html {
+  font-size: {{content.baseFontSize}}px;
+}
+
 html, body {
   height: 100%;
   margin: 0;
 }
 
 body {
-  font-size: {{content.baseFontSize}}px;
   font-family: system-ui, -apple-system, sans-serif;
   background: var(--color-bg-body);
   color: var(--color-text);
@@ -99,7 +102,7 @@ body {
   background: var(--color-bg-surface);
   padding: 10px;
   overflow-x: auto;
-  font-size: 12px;
+  font-size: 0.75rem;
 }
 
 .json-view {
@@ -107,7 +110,7 @@ body {
   padding: 10px;
   border-radius: var(--border-radius);
   overflow-x: auto;
-  font-size: 12px;
+  font-size: 0.75rem;
 }
 
 /* Selection indicator */
@@ -144,7 +147,7 @@ body {
 
 #safe-mode button {
   padding: 10px 20px;
-  font-size: 14px;
+  font-size: 0.875rem;
   cursor: pointer;
   border: 1px solid var(--color-border);
   background: var(--color-bg-surface);
@@ -179,7 +182,7 @@ body {
 }
 
 .item-preview .item-type {
-  font-size: 12px;
+  font-size: 0.75rem;
   color: var(--color-text-secondary);
 }
 
@@ -192,7 +195,7 @@ body {
 .raw-editor textarea {
   width: 100%;
   font-family: 'SF Mono', Monaco, 'Courier New', monospace;
-  font-size: 13px;
+  font-size: 0.8125rem;
   padding: 15px;
   border: 1px solid var(--color-border);
   border-radius: var(--border-radius);
@@ -261,18 +264,18 @@ body {
 
 .repl-collapse-bar .repl-title {
   font-weight: 600;
-  font-size: 13px;
+  font-size: 0.8125rem;
   color: var(--color-text);
 }
 
 .repl-collapse-bar .repl-hint {
-  font-size: 12px;
+  font-size: 0.75rem;
   color: var(--color-text-tertiary);
 }
 
 .repl-collapse-bar .repl-expand-icon {
   margin-left: auto;
-  font-size: 12px;
+  font-size: 0.75rem;
   color: var(--color-text-secondary);
 }
 
@@ -309,7 +312,7 @@ body {
   height: 100%;
   min-height: 80px;
   font-family: 'SF Mono', Monaco, Menlo, 'Courier New', monospace;
-  font-size: 13px;
+  font-size: 0.8125rem;
   line-height: 1.5;
   padding: 12px;
   border: 1px solid var(--color-border);
@@ -332,7 +335,7 @@ body {
 
 .repl-actions button {
   padding: 6px 14px;
-  font-size: 13px;
+  font-size: 0.8125rem;
   cursor: pointer;
   border: 1px solid var(--color-border);
   background: var(--color-bg-surface);
@@ -385,13 +388,13 @@ body {
 
 .repl-transcript-header h4 {
   margin: 0;
-  font-size: 13px;
+  font-size: 0.8125rem;
   color: var(--color-text-secondary);
 }
 
 .repl-transcript-header button {
   padding: 4px 10px;
-  font-size: 12px;
+  font-size: 0.75rem;
   cursor: pointer;
   border: 1px solid var(--color-border);
   background: var(--color-bg-surface);
@@ -427,7 +430,7 @@ body {
 
 .repl-entry-code {
   font-family: 'SF Mono', Monaco, 'Courier New', monospace;
-  font-size: 12px;
+  font-size: 0.75rem;
   color: var(--color-text);
   margin-bottom: 8px;
   white-space: pre-wrap;
@@ -435,7 +438,7 @@ body {
 
 .repl-entry-console {
   font-family: 'SF Mono', Monaco, 'Courier New', monospace;
-  font-size: 12px;
+  font-size: 0.75rem;
   color: var(--color-text-secondary);
   white-space: pre-wrap;
   margin-bottom: 4px;
@@ -446,7 +449,7 @@ body {
 
 .repl-entry-output {
   font-family: 'SF Mono', Monaco, 'Courier New', monospace;
-  font-size: 12px;
+  font-size: 0.75rem;
   color: var(--color-text-secondary);
   white-space: pre-wrap;
   max-height: 200px;
@@ -455,7 +458,7 @@ body {
 
 .repl-entry-error {
   font-family: 'SF Mono', Monaco, 'Courier New', monospace;
-  font-size: 12px;
+  font-size: 0.75rem;
   color: var(--color-danger);
   white-space: pre-wrap;
 }

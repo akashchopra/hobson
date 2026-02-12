@@ -16,7 +16,7 @@ export async function render(item, api) {
   const previewText = item.content?.description || '';
   if (previewText) {
     const preview = api.createElement('div', {
-      style: 'font-size: 13px; color: var(--color-text-secondary); margin-bottom: 6px; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;'
+      style: 'font-size: 0.8125rem; color: var(--color-text-secondary); margin-bottom: 6px; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;'
     }, [previewText.substring(0, 200)]);
     card.appendChild(preview);
   }
@@ -24,7 +24,7 @@ export async function render(item, api) {
   // Metadata + tags
   const typeItem = await api.get(item.type);
   const meta = api.createElement('div', {
-    style: 'display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 12px; color: var(--color-border-dark);'
+    style: 'display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 0.75rem; color: var(--color-border-dark);'
   }, []);
   meta.appendChild(api.createElement('span', {}, ['Type: ' + typeItem.name]));
 
@@ -35,7 +35,7 @@ export async function render(item, api) {
       const color = tag.content?.color || 'var(--color-primary)';
       const tagName = tag.content?.name || tag.name || tag.id.substring(0, 8);
       const pill = api.createElement('span', {
-        style: 'display: inline-flex; align-items: center; gap: 3px; padding: 1px 6px; border-radius: 8px; font-size: 10px; color: ' + color + '; background: ' + color + '20; border: 1px solid ' + color + '40;'
+        style: 'display: inline-flex; align-items: center; gap: 3px; padding: 1px 6px; border-radius: 8px; font-size: 0.625rem; color: ' + color + '; background: ' + color + '20; border: 1px solid ' + color + '40;'
       }, []);
       pill.appendChild(api.createElement('span', {
         style: 'width: 5px; height: 5px; border-radius: 50%; background: ' + color + '; flex-shrink: 0;'

@@ -35,7 +35,7 @@ function createHeader(item, api, listContainer) {
   }, []);
 
   const title = api.createElement('h2', {
-    style: 'margin: 0; font-size: 20px;'
+    style: 'margin: 0; font-size: 1.25rem;'
   }, [item.name || 'Untitled List']);
 
   titleRow.appendChild(title);
@@ -111,7 +111,7 @@ async function createListItem(childId, index, viewId, parentItem, api, listConta
   }, []);
 
   const removeButton = api.createElement('button', {
-    style: 'background: none; border: none; color: var(--color-border-dark); cursor: pointer; font-size: 18px; padding: 4px;',
+    style: 'background: none; border: none; color: var(--color-border-dark); cursor: pointer; font-size: 1.125rem; padding: 4px;',
     onclick: async (e) => {
       e.stopPropagation();
       await removeItemFromList(parentItem, childId, api, listContainer);
@@ -146,7 +146,7 @@ async function showItemPicker(parentItem, api, listContainer) {
   const modalTitle = api.createElement('h3', { style: 'margin: 0;' }, ['Add Item to List']);
 
   const closeBtn = api.createElement('button', {
-    style: 'padding: 4px 10px; cursor: pointer; background: transparent; border: none; font-size: 24px; color: var(--color-text-secondary);',
+    style: 'padding: 4px 10px; cursor: pointer; background: transparent; border: none; font-size: 1.5rem; color: var(--color-text-secondary);',
     onclick: () => document.body.removeChild(overlay)
   }, ['\u00d7']);
 

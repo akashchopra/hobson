@@ -6,7 +6,7 @@ export async function render(item, api) {
   const instanceLib = await api.require('hobson-instance-lib');
 
   const container = document.createElement('div');
-  container.style.cssText = 'display:flex; flex-direction:column; height:100%; font-family:var(--font-sans, system-ui, sans-serif); font-size:14px;';
+  container.style.cssText = 'display:flex; flex-direction:column; height:100%; font-family:var(--font-sans, system-ui, sans-serif); font-size: 0.875rem;';
 
   // Header
   const header = document.createElement('div');
@@ -14,12 +14,12 @@ export async function render(item, api) {
 
   const title = document.createElement('h2');
   title.textContent = 'Test Suite';
-  title.style.cssText = 'margin:0; font-size:18px; font-weight:600;';
+  title.style.cssText = 'margin:0; font-size: 1.125rem; font-weight:600;';
   header.appendChild(title);
 
   const runAllBtn = document.createElement('button');
   runAllBtn.textContent = 'Run All';
-  runAllBtn.style.cssText = 'padding:6px 16px; background:#22c55e; color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:14px; font-weight:500;';
+  runAllBtn.style.cssText = 'padding:6px 16px; background:#22c55e; color:#fff; border:none; border-radius:6px; cursor:pointer; font-size: 0.875rem; font-weight:500;';
   runAllBtn.onmouseenter = () => runAllBtn.style.background = '#16a34a';
   runAllBtn.onmouseleave = () => runAllBtn.style.background = '#22c55e';
   header.appendChild(runAllBtn);
@@ -27,7 +27,7 @@ export async function render(item, api) {
 
   // Summary bar
   const summaryBar = document.createElement('div');
-  summaryBar.style.cssText = 'padding:8px 16px; font-size:13px; color:var(--text-secondary, #6b7280); border-bottom:1px solid var(--border-color, #e5e7eb);';
+  summaryBar.style.cssText = 'padding:8px 16px; font-size: 0.8125rem; color:var(--text-secondary, #6b7280); border-bottom:1px solid var(--border-color, #e5e7eb);';
   summaryBar.textContent = 'Discovering tests...';
   container.appendChild(summaryBar);
 
@@ -144,7 +144,7 @@ export async function render(item, api) {
     runAllBtn.style.display = 'none';
     const cleanupBtn = document.createElement('button');
     cleanupBtn.textContent = 'Clean Up Instance';
-    cleanupBtn.style.cssText = 'padding:6px 16px; background:#6b7280; color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:14px; font-weight:500;';
+    cleanupBtn.style.cssText = 'padding:6px 16px; background:#6b7280; color:#fff; border:none; border-radius:6px; cursor:pointer; font-size: 0.875rem; font-weight:500;';
     cleanupBtn.onmouseenter = () => cleanupBtn.style.background = '#4b5563';
     cleanupBtn.onmouseleave = () => cleanupBtn.style.background = '#6b7280';
     cleanupBtn.addEventListener('click', async () => {
@@ -181,7 +181,7 @@ function createTestRow(testItem, api) {
   nameSpan.style.cssText = 'font-weight:500;';
 
   const countSpan = document.createElement('span');
-  countSpan.style.cssText = 'margin-left:auto; font-size:12px; color:var(--text-secondary, #6b7280);';
+  countSpan.style.cssText = 'margin-left:auto; font-size: 0.75rem; color:var(--text-secondary, #6b7280);';
 
   headerRow.appendChild(indicator);
   headerRow.appendChild(nameSpan);
@@ -230,7 +230,7 @@ function createTestRow(testItem, api) {
       let expanded = failed > 0;
 
       const toggle = document.createElement('div');
-      toggle.style.cssText = 'font-size:11px; color:var(--text-secondary, #6b7280); cursor:pointer; user-select:none; padding:2px 0;';
+      toggle.style.cssText = 'font-size: 0.6875rem; color:var(--text-secondary, #6b7280); cursor:pointer; user-select:none; padding:2px 0;';
       const updateToggle = () => {
         toggle.textContent = expanded ? '\u25BE hide details' : '\u25B8 show details';
       };
@@ -247,7 +247,7 @@ function createTestRow(testItem, api) {
 
       for (const r of results) {
         const line = document.createElement('div');
-        line.style.cssText = 'padding:2px 0; font-size:12px;';
+        line.style.cssText = 'padding:2px 0; font-size: 0.75rem;';
 
         const icon = r.passed ? '\u2713 ' : '\u2717 ';
         const color = r.passed ? '#22c55e' : '#ef4444';
@@ -270,7 +270,7 @@ function createTestRow(testItem, api) {
 
         if (!r.passed && r.error) {
           const errMsg = document.createElement('div');
-          errMsg.style.cssText = 'color:#9ca3af; padding-left:16px; font-family:var(--font-mono, monospace); font-size:11px; white-space:pre-wrap; word-break:break-all;';
+          errMsg.style.cssText = 'color:#9ca3af; padding-left:16px; font-family:var(--font-mono, monospace); font-size: 0.6875rem; white-space:pre-wrap; word-break:break-all;';
           errMsg.textContent = r.error;
           line.appendChild(errMsg);
         }

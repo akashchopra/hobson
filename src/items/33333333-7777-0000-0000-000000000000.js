@@ -14,7 +14,7 @@ export class SafeMode {
         <h1>⚠️ Safe Mode</h1>
         <p>Booted with minimal kernel only. No user code items loaded.</p>
         <p>Use this mode to fix broken code items.</p>
-        <p style="color: #666; font-size: 12px;">Access safe mode anytime by adding <code>?safe=1</code> to the URL.</p>
+        <p style="color: #666; font-size: 0.75rem;">Access safe mode anytime by adding <code>?safe=1</code> to the URL.</p>
         
         <div class="actions">
           <button onclick="kernel.safeMode.listAllItems()">View All Items</button>

@@ -18,7 +18,7 @@ export async function render(browser, api) {
   }, []);
 
   const title = api.createElement('h2', {
-    style: 'margin: 0; font-size: 20px;'
+    style: 'margin: 0; font-size: 1.25rem;'
   }, [browser.name || 'Tag Browser']);
   header.appendChild(title);
 
@@ -65,7 +65,7 @@ export async function render(browser, api) {
   }, []);
 
   const resultsTitle = api.createElement('h3', {
-    style: 'margin: 0 0 15px 0; font-size: 16px; color: var(--color-text);'
+    style: 'margin: 0 0 15px 0; font-size: 1rem; color: var(--color-text);'
   }, []);
   resultsContainer.appendChild(resultsTitle);
 
@@ -99,14 +99,14 @@ export async function render(browser, api) {
     titleRow.appendChild(name);
 
     const badge = api.createElement('span', {
-      style: 'font-size: 11px; color: #92400e; background: #fef3c7; padding: 2px 6px; border-radius: var(--border-radius);'
+      style: 'font-size: 0.6875rem; color: #92400e; background: #fef3c7; padding: 2px 6px; border-radius: var(--border-radius);'
     }, ['in current view']);
     titleRow.appendChild(badge);
 
     card.appendChild(titleRow);
 
     const meta = api.createElement('div', {
-      style: 'font-size: 12px; color: var(--color-border-dark);'
+      style: 'font-size: 0.75rem; color: var(--color-border-dark);'
     }, ['Click to open']);
     card.appendChild(meta);
 

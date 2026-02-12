@@ -22,15 +22,15 @@ export function render(item, api) {
   
   header.innerHTML = `
     <div style="display: flex; align-items: start; gap: 12px;">
-      <span style="font-size: 32px;">${content.resolved ? '&#10004;' : '&#9888;'}</span>
+      <span style="font-size: 2rem;">${content.resolved ? '&#10004;' : '&#9888;'}</span>
       <div style="flex: 1;">
-        <div style="font-size: 12px; color: var(--color-text-secondary); margin-bottom: 4px;">
+        <div style="font-size: 0.75rem; color: var(--color-text-secondary); margin-bottom: 4px;">
           ${content.errorType || 'Error'}${content.resolved ? ' (Resolved)' : ''}
         </div>
-        <div style="font-size: 18px; font-weight: 600; margin-bottom: 8px;">
+        <div style="font-size: 1.125rem; font-weight: 600; margin-bottom: 8px;">
           ${escapeHtml(content.message || 'Unknown error')}
         </div>
-        <div style="font-size: 12px; color: var(--color-text-secondary);">
+        <div style="font-size: 0.75rem; color: var(--color-text-secondary);">
           ${new Date(content.timestamp).toLocaleString()}
         </div>
       </div>
@@ -51,7 +51,7 @@ export function render(item, api) {
     const contextBox = document.createElement('div');
     contextBox.style.cssText = `
       font-family: monospace;
-      font-size: 12px;
+      font-size: 0.75rem;
       background: var(--color-bg-body);
       padding: 12px;
       border-radius: var(--border-radius);
@@ -126,7 +126,7 @@ export function render(item, api) {
     const stackBox = document.createElement('div');
     stackBox.style.cssText = `
       font-family: monospace;
-      font-size: 12px;
+      font-size: 0.75rem;
       background: var(--color-bg-body);
       padding: 12px;
       border-radius: var(--border-radius);

@@ -23,7 +23,7 @@ export function renderToolbar(pageItem, api, callbacks) {
   toggleBtn.style.cssText = `
     padding: 4px 12px; cursor: pointer; border: 1px solid var(--color-primary, #7c3aed);
     background: var(--color-primary, #7c3aed); color: white;
-    border-radius: var(--border-radius, 4px); font-size: 12px; font-weight: 500;
+    border-radius: var(--border-radius, 4px); font-size: 0.75rem; font-weight: 500;
   `;
   toggleBtn.onclick = () => callbacks.onToggle();
   toolbar.appendChild(toggleBtn);
@@ -35,7 +35,7 @@ export function renderToolbar(pageItem, api, callbacks) {
     padding: 4px 12px; cursor: pointer;
     border: 1px solid var(--color-border, #444);
     background: var(--color-bg-surface, #2a2a3e); color: var(--color-text, #ccc);
-    border-radius: var(--border-radius, 4px); font-size: 12px;
+    border-radius: var(--border-radius, 4px); font-size: 0.75rem;
   `;
   addBtn.onclick = () => callbacks.onAddWidget();
   toolbar.appendChild(addBtn);
@@ -50,7 +50,7 @@ export function renderToolbar(pageItem, api, callbacks) {
   const rowHeight = pageItem.content?.rowHeight || 40;
   const info = document.createElement('span');
   info.textContent = `${columns} cols \u00b7 ${gap}px gap \u00b7 ${rowHeight}px rows`;
-  info.style.cssText = 'font-size: 11px; color: var(--color-text-secondary, #888);';
+  info.style.cssText = 'font-size: 0.6875rem; color: var(--color-text-secondary, #888);';
   toolbar.appendChild(info);
 
   return toolbar;
@@ -117,14 +117,14 @@ export function wrapWidgetForDesign(widgetElement, childSpec, childItem, pageIte
   header.style.cssText = `
     display: flex; align-items: center; gap: 4px; padding: 2px 6px;
     background: var(--color-bg-hover, #333); border-radius: var(--border-radius, 4px) var(--border-radius, 4px) 0 0;
-    font-size: 11px; color: var(--color-text-secondary, #aaa); user-select: none;
+    font-size: 0.6875rem; color: var(--color-text-secondary, #aaa); user-select: none;
   `;
 
   // Drag handle
   const dragHandle = document.createElement('span');
   dragHandle.textContent = '\u2630';
   dragHandle.title = 'Drag to reposition';
-  dragHandle.style.cssText = 'cursor: grab; padding: 0 4px; font-size: 12px;';
+  dragHandle.style.cssText = 'cursor: grab; padding: 0 4px; font-size: 0.75rem;';
   header.appendChild(dragHandle);
 
   // Widget name
@@ -136,7 +136,7 @@ export function wrapWidgetForDesign(widgetElement, childSpec, childItem, pageIte
   // Position label
   const posLabel = document.createElement('span');
   posLabel.textContent = `c${col} r${row === 'auto' ? '?' : row} ${colSpan}\u00d7${rowSpan}`;
-  posLabel.style.cssText = 'font-size: 10px; color: var(--color-text-tertiary, #666); margin-right: 4px;';
+  posLabel.style.cssText = 'font-size: 0.625rem; color: var(--color-text-tertiary, #666); margin-right: 4px;';
   header.appendChild(posLabel);
 
   // Edit button
@@ -145,7 +145,7 @@ export function wrapWidgetForDesign(widgetElement, childSpec, childItem, pageIte
   editBtn.title = 'Edit widget properties';
   editBtn.style.cssText = `
     border: none; background: transparent; cursor: pointer;
-    font-size: 13px; padding: 0 3px; color: var(--color-text-secondary, #aaa);
+    font-size: 0.8125rem; padding: 0 3px; color: var(--color-text-secondary, #aaa);
   `;
   editBtn.onclick = (e) => { e.stopPropagation(); callbacks.onEdit(childId); };
   header.appendChild(editBtn);
@@ -156,7 +156,7 @@ export function wrapWidgetForDesign(widgetElement, childSpec, childItem, pageIte
   deleteBtn.title = 'Remove widget';
   deleteBtn.style.cssText = `
     border: none; background: transparent; cursor: pointer;
-    font-size: 15px; font-weight: bold; padding: 0 3px; color: var(--color-danger, #e74c3c);
+    font-size: 0.9375rem; font-weight: bold; padding: 0 3px; color: var(--color-danger, #e74c3c);
   `;
   deleteBtn.onclick = (e) => { e.stopPropagation(); callbacks.onDelete(childId); };
   header.appendChild(deleteBtn);
@@ -243,7 +243,7 @@ export async function showWidgetPicker(api) {
         const tabBtnStyle = (active) => `
           padding: 8px 16px; cursor: pointer; border: none; border-bottom: 2px solid ${active ? 'var(--color-primary, #7c3aed)' : 'transparent'};
           background: transparent; color: ${active ? 'var(--color-text, #ccc)' : 'var(--color-text-secondary, #888)'};
-          font-size: 13px; font-weight: ${active ? '600' : '400'};
+          font-size: 0.8125rem; font-weight: ${active ? '600' : '400'};
         `;
 
         function switchTab(idx) {
@@ -298,7 +298,7 @@ export async function showWidgetPicker(api) {
           if (widgetTypes.length === 0) {
             const empty = document.createElement('p');
             empty.textContent = 'No widget types found. Tag a type-def with "page-widget" to make it available here.';
-            empty.style.cssText = 'color: var(--color-text-secondary); font-size: 13px;';
+            empty.style.cssText = 'color: var(--color-text-secondary); font-size: 0.8125rem;';
             createPanel.appendChild(empty);
             return;
           }
@@ -312,7 +312,7 @@ export async function showWidgetPicker(api) {
               display: block; width: 100%; text-align: left; padding: 10px 14px;
               border: 1px solid var(--color-border, #444); background: var(--color-bg-surface, #2a2a3e);
               color: var(--color-text, #ccc); border-radius: var(--border-radius, 4px);
-              cursor: pointer; font-size: 13px;
+              cursor: pointer; font-size: 0.8125rem;
             `;
             btn.onmouseenter = () => { btn.style.background = 'var(--color-bg-hover, #333)'; };
             btn.onmouseleave = () => { btn.style.background = 'var(--color-bg-surface, #2a2a3e)'; };
@@ -324,7 +324,7 @@ export async function showWidgetPicker(api) {
             if (wt.content?.description) {
               const desc = document.createElement('div');
               desc.textContent = wt.content.description.split('\n')[0].slice(0, 80);
-              desc.style.cssText = 'font-size: 11px; color: var(--color-text-secondary, #888); margin-top: 2px;';
+              desc.style.cssText = 'font-size: 0.6875rem; color: var(--color-text-secondary, #888); margin-top: 2px;';
               btn.appendChild(desc);
             }
 
@@ -372,7 +372,7 @@ function attachDragToReposition(handle, cell, pageItem, childId, callbacks) {
     label.style.cssText = `
       position: fixed; pointer-events: none; z-index: 999999;
       padding: 3px 8px; background: var(--color-primary, #7c3aed); color: white;
-      border-radius: var(--border-radius, 4px); font-size: 11px; font-weight: 500;
+      border-radius: var(--border-radius, 4px); font-size: 0.6875rem; font-weight: 500;
       white-space: nowrap;
     `;
     document.body.appendChild(label);

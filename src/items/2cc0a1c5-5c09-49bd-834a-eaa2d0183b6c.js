@@ -640,7 +640,7 @@ async function buildViewSettingsPanelContent(api, itemId, parentId, onRefresh) {
     const labelEl = api.createElement('div', { style: 'font-weight: 600; margin-bottom: 4px;' }, [label]);
     section.appendChild(labelEl);
 
-    const descEl = api.createElement('div', { style: 'font-size: 13px; color: var(--text-secondary, #666); margin-bottom: 8px;' }, [description]);
+    const descEl = api.createElement('div', { style: 'font-size: 0.8125rem; color: var(--text-secondary, #666); margin-bottom: 8px;' }, [description]);
     section.appendChild(descEl);
 
     const controlRow = api.createElement('div', { style: 'display: flex; gap: 8px; align-items: center;' }, []);
@@ -687,7 +687,7 @@ async function buildViewSettingsPanelContent(api, itemId, parentId, onRefresh) {
     const labelEl = api.createElement('div', { style: 'font-weight: 600; margin-bottom: 4px;' }, [label]);
     section.appendChild(labelEl);
 
-    const descEl = api.createElement('div', { style: 'font-size: 13px; color: var(--text-secondary, #666); margin-bottom: 8px;' }, [description]);
+    const descEl = api.createElement('div', { style: 'font-size: 0.8125rem; color: var(--text-secondary, #666); margin-bottom: 8px;' }, [description]);
     section.appendChild(descEl);
 
     const controlRow = api.createElement('div', { style: 'display: flex; gap: 8px; align-items: center;' }, []);
@@ -767,7 +767,7 @@ async function buildViewSettingsPanelContent(api, itemId, parentId, onRefresh) {
 
   // Resolution note
   const noteEl = api.createElement('div', {
-    style: 'margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border-color, #ddd); font-size: 12px; color: var(--text-secondary, #888); text-align: center;'
+    style: 'margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border-color, #ddd); font-size: 0.75rem; color: var(--text-secondary, #888); text-align: center;'
   }, ['Resolution order: context \u2192 item \u2192 type \u2192 system']);
   body.appendChild(noteEl);
 

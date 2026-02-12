@@ -171,11 +171,11 @@ function showErrorToast(message, errorId, context, api) {
 
   toast.innerHTML = `
     <div style="display: flex; gap: 12px; align-items: start;">
-      <span style="font-size: 24px;">&#9888;</span>
+      <span style="font-size: 1.5rem;">&#9888;</span>
       <div style="flex: 1;">
         <strong>Error Occurred</strong>
-        <p style="margin: 4px 0 0 0; font-size: 14px;">${truncatedMessage}</p>
-        <p style="margin: 4px 0 0 0; font-size: 12px; opacity: 0.8;">Click to view details</p>
+        <p style="margin: 4px 0 0 0; font-size: 0.875rem;">${truncatedMessage}</p>
+        <p style="margin: 4px 0 0 0; font-size: 0.75rem; opacity: 0.8;">Click to view details</p>
       </div>
     </div>
   `;

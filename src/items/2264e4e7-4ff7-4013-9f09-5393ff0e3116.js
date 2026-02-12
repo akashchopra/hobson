@@ -127,7 +127,7 @@ export function showModal(options = {}) {
 
     if (title) {
       const titleEl = createElement('h3', {
-        style: 'margin: 0; font-size: 18px; font-weight: 600; color: var(--color-text);'
+        style: 'margin: 0; font-size: 1.125rem; font-weight: 600; color: var(--color-text);'
       }, [title]);
       header.appendChild(titleEl);
     } else {
@@ -141,7 +141,7 @@ export function showModal(options = {}) {
           cursor: pointer;
           background: transparent;
           border: none;
-          font-size: 20px;
+          font-size: 1.25rem;
           color: var(--color-text-secondary);
           line-height: 1;
           border-radius: var(--border-radius);
@@ -244,7 +244,7 @@ export function confirm(options = {}) {
         // Message
         const messageEl = document.createElement('p');
         messageEl.textContent = message;
-        messageEl.style.cssText = 'margin: 0 0 20px 0; font-size: 14px; color: var(--color-text); line-height: 1.5;';
+        messageEl.style.cssText = 'margin: 0 0 20px 0; font-size: 0.875rem; color: var(--color-text); line-height: 1.5;';
         container.appendChild(messageEl);
 
         // Buttons
@@ -305,7 +305,7 @@ export function alert(options = {}) {
         // Message
         const messageEl = document.createElement('p');
         messageEl.textContent = message;
-        messageEl.style.cssText = 'margin: 0 0 20px 0; font-size: 14px; color: var(--color-text); line-height: 1.5;';
+        messageEl.style.cssText = 'margin: 0 0 20px 0; font-size: 0.875rem; color: var(--color-text); line-height: 1.5;';
         container.appendChild(messageEl);
 
         // Button

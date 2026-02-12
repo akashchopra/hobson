@@ -31,7 +31,7 @@ export async function render(item, api) {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    font-size: 12px;
+    font-size: 0.75rem;
     font-weight: 500;
     flex-shrink: 0;
     user-select: none;
@@ -46,7 +46,7 @@ export async function render(item, api) {
   const controls = document.createElement('div');
   controls.style.cssText = 'display: flex; gap: 4px; align-items: center;';
 
-  const btnStyle = 'padding: 0 6px; height: 18px; background: transparent; color: var(--color-text-secondary); border: none; cursor: pointer; font-size: 11px; border-radius: var(--border-radius);';
+  const btnStyle = 'padding: 0 6px; height: 18px; background: transparent; color: var(--color-text-secondary); border: none; cursor: pointer; font-size: 0.6875rem; border-radius: var(--border-radius);';
 
   // Track iframe navigation depth to prevent Back from escaping into parent
   let iframeNavDepth = 0;
@@ -92,7 +92,7 @@ export async function render(item, api) {
     left: 50%;
     transform: translate(-50%, -50%);
     color: var(--color-text-secondary);
-    font-size: 14px;
+    font-size: 0.875rem;
   `;
   loading.textContent = 'Loading nested instance...';
 

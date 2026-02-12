@@ -59,7 +59,7 @@ export function renderTagPicker(config, api) {
     // Expand/collapse icon (if has children)
     if (hasChildren) {
       const expandIcon = api.createElement('span', {
-        style: 'font-size: 10px; color: var(--color-text-secondary); width: 10px;'
+        style: 'font-size: 0.625rem; color: var(--color-text-secondary); width: 10px;'
       }, [isExpanded ? '▼' : '▶']);
       tagRow.appendChild(expandIcon);
     } else {
@@ -84,7 +84,7 @@ export function renderTagPicker(config, api) {
 
     // Tag name
     const nameText = api.createElement('span', {
-      style: 'font-size: 13px; color: var(--color-text); flex-grow: 1;'
+      style: 'font-size: 0.8125rem; color: var(--color-text); flex-grow: 1;'
     }, [tagName]);
     tagRow.appendChild(nameText);
 
@@ -185,7 +185,7 @@ export function renderTagBrowser(config, api) {
     // Expand/collapse icon (if has children)
     if (hasChildren) {
       const expandIcon = api.createElement('span', {
-        style: 'font-size: 12px; color: var(--color-text-secondary); user-select: none; width: 12px;'
+        style: 'font-size: 0.75rem; color: var(--color-text-secondary); user-select: none; width: 12px;'
       }, [isExpanded ? '▼' : '▶']);
       tagRow.appendChild(expandIcon);
     } else {
@@ -216,7 +216,7 @@ export function renderTagBrowser(config, api) {
 
     // Tag ID (shortened)
     const tagId = api.createElement('span', {
-      style: 'font-family: monospace; font-size: 11px; color: var(--color-border-dark);'
+      style: 'font-family: monospace; font-size: 0.6875rem; color: var(--color-border-dark);'
     }, [tagNode.id.substring(0, 8) + '...']);
     tagRow.appendChild(tagId);
 

@@ -29,7 +29,7 @@ export async function render(item, api) {
     border: 1px solid;
     border-radius: var(--border-radius, 4px);
     cursor: pointer;
-    font-size: 13px;
+    font-size: 0.8125rem;
     font-family: inherit;
     transition: filter 0.15s;
     ${variantStyles[variant] || variantStyles.secondary}
@@ -44,7 +44,7 @@ export async function render(item, api) {
 
   // Error display element (hidden by default)
   const errorEl = api.createElement('div', {
-    style: 'color: var(--color-danger, #e74c3c); font-size: 12px; margin-top: 4px; display: none;'
+    style: 'color: var(--color-danger, #e74c3c); font-size: 0.75rem; margin-top: 4px; display: none;'
   });
 
   button.addEventListener('click', async () => {

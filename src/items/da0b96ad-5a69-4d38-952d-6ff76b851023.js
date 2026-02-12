@@ -7,12 +7,12 @@ export function render(value, options, api) {
   if (label) {
     const labelEl = api.createElement('label');
     labelEl.textContent = label;
-    labelEl.style.cssText = 'font-weight: 500; font-size: 14px; color: var(--color-text);';
+    labelEl.style.cssText = 'font-weight: 500; font-size: 0.875rem; color: var(--color-text);';
     wrapper.appendChild(labelEl);
   }
 
   if (mode === 'editable' && onChange) {
-    const input = api.createElement('input', { type: 'number', style: 'padding: 8px; border: 1px solid var(--color-border); border-radius: var(--border-radius); font-size: 14px; width: 150px;' });
+    const input = api.createElement('input', { type: 'number', style: 'padding: 8px; border: 1px solid var(--color-border); border-radius: var(--border-radius); font-size: 0.875rem; width: 150px;' });
     input.value = value ?? '';
     input.placeholder = placeholder || '';
     if (min !== undefined) input.min = min;
@@ -23,7 +23,7 @@ export function render(value, options, api) {
   } else {
     const span = api.createElement('span');
     span.textContent = value ?? '';
-    span.style.cssText = 'padding: 8px; background: var(--color-bg-body); border-radius: var(--border-radius); font-size: 14px;';
+    span.style.cssText = 'padding: 8px; background: var(--color-bg-body); border-radius: var(--border-radius); font-size: 0.875rem;';
     wrapper.appendChild(span);
   }
   return wrapper;

@@ -17,7 +17,7 @@ export async function render(search, api) {
   }, []);
 
   const title = api.createElement('h2', {
-    style: 'margin: 0; font-size: 20px;'
+    style: 'margin: 0; font-size: 1.25rem;'
   }, [search.name || 'Search']);
   header.appendChild(title);
   container.appendChild(header);
@@ -31,7 +31,7 @@ export async function render(search, api) {
     type: 'text',
     placeholder: 'Search for items...',
     value: search.content?.currentQuery || '',
-    style: 'width: 100%; padding: 12px 16px; font-size: 16px; border: 2px solid var(--color-border); border-radius: 8px; outline: none; transition: border-color 0.2s;'
+    style: 'width: 100%; padding: 12px 16px; font-size: 1rem; border: 2px solid var(--color-border); border-radius: 8px; outline: none; transition: border-color 0.2s;'
   }, []);
 
   input.onfocus = () => { input.style.borderColor = 'var(--color-primary)'; };
@@ -74,14 +74,14 @@ export async function render(search, api) {
     titleRow.appendChild(name);
 
     const badge = api.createElement('span', {
-      style: 'font-size: 11px; color: #92400e; background: #fef3c7; padding: 2px 6px; border-radius: var(--border-radius);'
+      style: 'font-size: 0.6875rem; color: #92400e; background: #fef3c7; padding: 2px 6px; border-radius: var(--border-radius);'
     }, ['in current view']);
     titleRow.appendChild(badge);
 
     card.appendChild(titleRow);
 
     const meta = api.createElement('div', {
-      style: 'font-size: 12px; color: var(--color-border-dark);'
+      style: 'font-size: 0.75rem; color: var(--color-border-dark);'
     }, ['Click to open']);
     card.appendChild(meta);
 
@@ -129,7 +129,7 @@ export async function render(search, api) {
 
       /*
       const createBtn = api.createElement('button', {
-        style: 'padding: 10px 20px; background: var(--color-primary); color: white; border: none; border-radius: var(--border-radius); cursor: pointer; font-size: 14px;',
+        style: 'padding: 10px 20px; background: var(--color-primary); color: white; border: none; border-radius: var(--border-radius); cursor: pointer; font-size: 0.875rem;',
         onclick: async () => {
           const noteTypes = await api.query({ name: 'note' });
           const noteTypeId = noteTypes[0]?.id || api.IDS.ATOM;
@@ -164,7 +164,7 @@ export async function render(search, api) {
         ? '\u2605 Starred'
         : 'Found ' + attachments.length + ' item' + (attachments.length === 1 ? '' : 's');
       const countHeader = api.createElement('div', {
-        style: 'margin-bottom: 15px; font-size: 14px; color: var(--color-text-secondary); font-weight: 500;'
+        style: 'margin-bottom: 15px; font-size: 0.875rem; color: var(--color-text-secondary); font-weight: 500;'
       }, [headerText]);
       resultsArea.appendChild(countHeader);
 

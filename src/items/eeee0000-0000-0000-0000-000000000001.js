@@ -165,7 +165,7 @@ async function showInspectorOverlay(info, x, y, api) {
     box-shadow: 0 4px 12px rgba(0,0,0,0.15);
     padding: 12px;
     z-index: 100000;
-    font-size: 13px;
+    font-size: 0.8125rem;
     font-family: system-ui, sans-serif;
   `;
 
@@ -215,14 +215,14 @@ async function showInspectorOverlay(info, x, y, api) {
       }
 
       if (entry.itemId && entry.itemId !== entry.forItem) {
-        html += `<div style="color: var(--color-text-tertiary); font-size: 12px;">via <a href="#" class="inspector-link" data-id="${entry.itemId}">${nameCache[entry.itemId]}</a></div>`;
+        html += `<div style="color: var(--color-text-tertiary); font-size: 0.75rem;">via <a href="#" class="inspector-link" data-id="${entry.itemId}">${nameCache[entry.itemId]}</a></div>`;
       }
 
       html += '</div>';
     }
   }
 
-  html += '<div style="margin-top: 8px; font-size: 11px; color: var(--color-border-dark);">Click to navigate (with line) | Ctrl+Shift+. to exit</div>';
+  html += '<div style="margin-top: 8px; font-size: 0.6875rem; color: var(--color-border-dark);">Click to navigate (with line) | Ctrl+Shift+. to exit</div>';
 
   overlay.innerHTML = html;
 

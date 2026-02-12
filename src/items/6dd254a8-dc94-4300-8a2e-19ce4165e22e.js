@@ -40,7 +40,7 @@ export function createMinimizedPill(childId, childName, dockOverlay, index, api,
   }, []);
 
   const text = api.createElement('span', {
-    style: 'flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px;'
+    style: 'flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.75rem;'
   }, [childName]);
   pill.appendChild(text);
 

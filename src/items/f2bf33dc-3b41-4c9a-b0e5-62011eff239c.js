@@ -49,7 +49,7 @@ export function showWindowMenu(menuBtn, api, options) {
       box-shadow: var(--shadow-md);
       z-index: 100000;
       min-width: 120px;
-      font-size: 13px;
+      font-size: 0.8125rem;
     `
   }, []);
 
@@ -118,7 +118,7 @@ export function createDropdownMenu(anchorEl, items, api) {
       box-shadow: var(--shadow-md);
       z-index: 100000;
       min-width: 120px;
-      font-size: 13px;
+      font-size: 0.8125rem;
     `
   }, []);
 

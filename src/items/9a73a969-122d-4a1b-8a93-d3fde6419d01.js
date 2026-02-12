@@ -28,7 +28,7 @@ export async function render(item, api) {
       border: 1px solid var(--color-border-light);
       overflow-x: auto;
       font-family: 'SF Mono', Monaco, monospace;
-      font-size: 13px;
+      font-size: 0.8125rem;
       line-height: 1.5;
     `
   }, [item.content.code || '// No code']);

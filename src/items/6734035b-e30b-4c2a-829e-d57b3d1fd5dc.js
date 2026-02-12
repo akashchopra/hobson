@@ -439,7 +439,7 @@ export function createSearchUI(containerEl, onSelect, api, options = {}) {
     type: 'text',
     placeholder,
     value: savedQuery,
-    style: 'width: 100%; padding: 12px 16px; font-size: 16px; border: 2px solid var(--color-border); border-radius: var(--border-radius); outline: none; transition: border-color 0.2s;'
+    style: 'width: 100%; padding: 12px 16px; font-size: 1rem; border: 2px solid var(--color-border); border-radius: var(--border-radius); outline: none; transition: border-color 0.2s;'
   }, []);
 
   input.onfocus = () => { input.style.borderColor = 'var(--color-primary)'; };
@@ -470,19 +470,19 @@ export function createSearchUI(containerEl, onSelect, api, options = {}) {
     }, []);
 
     const itemTitle = api.createElement('div', {
-      style: 'font-weight: 500; color: var(--color-text); margin-bottom: 6px; font-size: 15px;'
+      style: 'font-weight: 500; color: var(--color-text); margin-bottom: 6px; font-size: 0.9375rem;'
     }, [item.name || item.content?.title || item.id]);
     resultDiv.appendChild(itemTitle);
 
     const previewText = item.content?.body || item.content?.description ||
                        JSON.stringify(item.content).substring(0, 150);
     const preview = api.createElement('div', {
-      style: 'font-size: 13px; color: var(--color-text-secondary); margin-bottom: 6px; line-height: 1.4; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;'
+      style: 'font-size: 0.8125rem; color: var(--color-text-secondary); margin-bottom: 6px; line-height: 1.4; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;'
     }, [previewText.substring(0, 200)]);
     resultDiv.appendChild(preview);
 
     const meta = api.createElement('div', {
-      style: 'font-size: 12px; color: var(--color-border-dark);'
+      style: 'font-size: 0.75rem; color: var(--color-border-dark);'
     }, [
       'Type: ' + item.type.substring(0, 8) + '... | Modified: ' +
       new Date(item.modified).toLocaleDateString()
@@ -528,7 +528,7 @@ export function createSearchUI(containerEl, onSelect, api, options = {}) {
       resultsList.innerHTML = '';
 
       const header = api.createElement('div', {
-        style: 'margin-bottom: 15px; font-size: 14px; color: var(--color-text-secondary); font-weight: 500;'
+        style: 'margin-bottom: 15px; font-size: 0.875rem; color: var(--color-text-secondary); font-weight: 500;'
       }, ['\u2605 Starred']);
       resultsList.appendChild(header);
 
@@ -555,7 +555,7 @@ export function createSearchUI(containerEl, onSelect, api, options = {}) {
 
       // Create New button
       const createBtn = api.createElement('button', {
-        style: 'padding: 10px 20px; background: var(--color-primary); color: white; border: none; border-radius: var(--border-radius); cursor: pointer; font-size: 14px; font-weight: 500; transition: background 0.2s;',
+        style: 'padding: 10px 20px; background: var(--color-primary); color: white; border: none; border-radius: var(--border-radius); cursor: pointer; font-size: 0.875rem; font-weight: 500; transition: background 0.2s;',
         onclick: async () => {
           try {
             // Look up note type
@@ -604,7 +604,7 @@ export function createSearchUI(containerEl, onSelect, api, options = {}) {
       resultsList.innerHTML = '';
 
       const countHeader = api.createElement('div', {
-        style: 'margin-bottom: 15px; font-size: 14px; color: var(--color-text-secondary); font-weight: 500;'
+        style: 'margin-bottom: 15px; font-size: 0.875rem; color: var(--color-text-secondary); font-weight: 500;'
       }, ['Found ' + matches.length + ' item' + (matches.length === 1 ? '' : 's')]);
       resultsList.appendChild(countHeader);
 

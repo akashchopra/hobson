@@ -7,7 +7,7 @@ export async function render(item, api) {
   }, []);
 
   pill.appendChild(api.createElement('span', {
-    style: 'overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; color: var(--color-text);'
+    style: 'overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.8125rem; color: var(--color-text);'
   }, [name]));
 
   pill.onmouseover = () => { pill.style.background = 'var(--color-bg-surface-alt)'; };

@@ -31,13 +31,13 @@ export async function render(item, api) {
   }, []);
 
   const nameEl = api.createElement('h2', {
-    style: 'margin: 0; font-family: var(--font-mono, monospace); font-size: 20px; color: var(--color-text);'
+    style: 'margin: 0; font-family: var(--font-mono, monospace); font-size: 1.25rem; color: var(--color-text);'
   }, [item.name || 'Unnamed Event']);
   header.appendChild(nameEl);
 
   if (categoryName) {
     const badge = api.createElement('span', {
-      style: `font-size: 12px; padding: 2px 10px; border-radius: 10px; background: ${badgeBg}; color: ${badgeColor}; white-space: nowrap;`
+      style: `font-size: 0.75rem; padding: 2px 10px; border-radius: 10px; background: ${badgeBg}; color: ${badgeColor}; white-space: nowrap;`
     }, [categoryName]);
     header.appendChild(badge);
   }
@@ -62,7 +62,7 @@ export async function render(item, api) {
     }, []);
 
     const payloadLabel = api.createElement('h3', {
-      style: 'margin: 0; font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--color-text-secondary);'
+      style: 'margin: 0; font-size: 0.8125rem; text-transform: uppercase; letter-spacing: 0.5px; color: var(--color-text-secondary);'
     }, ['Payload']);
     payloadSection.appendChild(payloadLabel);
 
@@ -77,19 +77,19 @@ export async function render(item, api) {
   }, []);
 
   const snippetLabel = api.createElement('h3', {
-    style: 'margin: 0; font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--color-text-secondary);'
+    style: 'margin: 0; font-size: 0.8125rem; text-transform: uppercase; letter-spacing: 0.5px; color: var(--color-text-secondary);'
   }, ['Usage']);
   snippetSection.appendChild(snippetLabel);
 
   const snippet = buildUsageSnippet(item);
   const pre = api.createElement('pre', {
-    style: 'margin: 0; padding: 12px; background: var(--color-bg-body); border: 1px solid var(--color-border-light); border-radius: var(--border-radius); overflow-x: auto; font-size: 13px; line-height: 1.4; position: relative;'
+    style: 'margin: 0; padding: 12px; background: var(--color-bg-body); border: 1px solid var(--color-border-light); border-radius: var(--border-radius); overflow-x: auto; font-size: 0.8125rem; line-height: 1.4; position: relative;'
   }, []);
   const code = api.createElement('code', {}, [snippet]);
   pre.appendChild(code);
 
   const copyBtn = api.createElement('button', {
-    style: 'position: absolute; top: 6px; right: 6px; padding: 2px 8px; font-size: 11px; background: var(--color-bg-surface); border: 1px solid var(--color-border-light); border-radius: var(--border-radius); cursor: pointer; color: var(--color-text-secondary);',
+    style: 'position: absolute; top: 6px; right: 6px; padding: 2px 8px; font-size: 0.6875rem; background: var(--color-bg-surface); border: 1px solid var(--color-border-light); border-radius: var(--border-radius); cursor: pointer; color: var(--color-text-secondary);',
     onclick: () => {
       navigator.clipboard.writeText(snippet);
       copyBtn.textContent = 'Copied!';
@@ -123,13 +123,13 @@ function renderPayloadSchema(payload, api, depth = 0) {
     }, []);
 
     const keyEl = api.createElement('code', {
-      style: 'font-size: 13px; color: var(--color-primary); flex-shrink: 0; min-width: 100px;'
+      style: 'font-size: 0.8125rem; color: var(--color-primary); flex-shrink: 0; min-width: 100px;'
     }, [key]);
     row.appendChild(keyEl);
 
     if (isNested) {
       const hint = api.createElement('span', {
-        style: 'font-size: 12px; color: var(--color-text-tertiary); margin-left: 8px;'
+        style: 'font-size: 0.75rem; color: var(--color-text-tertiary); margin-left: 8px;'
       }, ['{...}']);
       row.appendChild(hint);
       wrapper.appendChild(row);
@@ -147,12 +147,12 @@ function renderPayloadSchema(payload, api, depth = 0) {
         }, []);
 
         const nKeyEl = api.createElement('code', {
-          style: 'font-size: 13px; color: var(--color-primary); flex-shrink: 0; min-width: 100px;'
+          style: 'font-size: 0.8125rem; color: var(--color-primary); flex-shrink: 0; min-width: 100px;'
         }, [nKey]);
         nRow.appendChild(nKeyEl);
 
         const nValEl = api.createElement('span', {
-          style: 'font-size: 13px; color: var(--color-text-secondary); margin-left: 12px;'
+          style: 'font-size: 0.8125rem; color: var(--color-text-secondary); margin-left: 12px;'
         }, [String(nValue)]);
         nRow.appendChild(nValEl);
 
@@ -160,7 +160,7 @@ function renderPayloadSchema(payload, api, depth = 0) {
       });
     } else {
       const valEl = api.createElement('span', {
-        style: 'font-size: 13px; color: var(--color-text-secondary); margin-left: 12px;'
+        style: 'font-size: 0.8125rem; color: var(--color-text-secondary); margin-left: 12px;'
       }, [String(value)]);
       row.appendChild(valEl);
       wrapper.appendChild(row);

@@ -9,13 +9,13 @@ export async function render(item, api) {
   const title = api.createElement('h3', { style: 'margin: 0 0 5px 0;' });
   title.textContent = item.name || item.id.slice(0, 8) + '...';
   header.appendChild(title);
-  const meta = api.createElement('div', { style: 'font-size: 12px; color: var(--color-text-secondary);' });
+  const meta = api.createElement('div', { style: 'font-size: 0.75rem; color: var(--color-text-secondary);' });
   meta.textContent = 'Type: ' + item.type.slice(0, 8) + '...';
   header.appendChild(meta);
   container.appendChild(header);
 
   const textarea = api.createElement('textarea', {
-    style: 'width: 100%; min-height: 300px; font-family: monospace; font-size: 13px; padding: 10px; border: 1px solid var(--color-border); border-radius: var(--border-radius);'
+    style: 'width: 100%; min-height: 300px; font-family: monospace; font-size: 0.8125rem; padding: 10px; border: 1px solid var(--color-border); border-radius: var(--border-radius);'
   });
   textarea.value = JSON.stringify(item, null, 2);
   container.appendChild(textarea);
