@@ -138,16 +138,27 @@ export async function render(pageItem, api) {
       wrapper.appendChild(toolbar);
     }
 
-    // --- Live mode toggle button (small, unobtrusive) ---
+    // --- Grid Container ---
+    const grid = api.createElement('div', {
+      style: `
+        display: grid;
+        grid-template-columns: repeat(${columns}, 1fr);
+        grid-auto-rows: ${rowHeight}px;
+        column-gap: ${gap}px;
+        row-gap: 0;
+        padding: 4px 16px 16px;
+        max-width: 960px;
+        width: 100%;
+        align-content: start;
+        position: relative;
+      `
+    });
+
+    // --- Live mode: overlay Design button on grid ---
     if (!designMode) {
-      const liveToolbar = api.createElement('div', {
-        style: `
-          display: flex; justify-content: flex-end; padding: 4px 16px;
-          max-width: 960px; width: 100%; box-sizing: border-box;
-        `
-      });
       const designBtn = api.createElement('button', {
         style: `
+          position: absolute; top: 4px; right: 4px; z-index: 1;
           padding: 2px 8px; cursor: pointer; border: 1px solid var(--color-border, #444);
           background: transparent; color: var(--color-text-secondary, #888);
           border-radius: var(--border-radius, 4px); font-size: 0.6875rem; opacity: 0.6;
@@ -161,25 +172,8 @@ export async function render(pageItem, api) {
         designMode = true;
         renderPage();
       };
-      liveToolbar.appendChild(designBtn);
-      wrapper.appendChild(liveToolbar);
+      grid.appendChild(designBtn);
     }
-
-    // --- Grid Container ---
-    const grid = api.createElement('div', {
-      style: `
-        display: grid;
-        grid-template-columns: repeat(${columns}, 1fr);
-        grid-auto-rows: ${rowHeight}px;
-        column-gap: ${gap}px;
-        row-gap: 0;
-        padding: 16px;
-        max-width: 960px;
-        width: 100%;
-        align-content: start;
-        ${designMode ? 'position: relative;' : ''}
-      `
-    });
 
     // --- Column overlay in design mode ---
     if (designMode) {
