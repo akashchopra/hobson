@@ -8,6 +8,36 @@ export async function onKernelBootComplete({ safeMode }, _api) {
   api = _api;
 }
 
+const kbdStyle = 'background: var(--color-bg-hover); padding: 2px 8px; border-radius: var(--border-radius); border: 1px solid var(--color-border);';
+const tdStyle = 'padding: 8px 16px 8px 0;';
+
+function buildContent() {
+  const el = document.createElement("div");
+  el.innerHTML = `
+    <h2 style="margin-top: 0; margin-bottom: 16px;">Keyboard Shortcuts</h2>
+    <table style="width: 100%; border-collapse: collapse;">
+      <tr><td style="${tdStyle}"><kbd style="${kbdStyle}">Ctrl+\\</kbd></td><td>Toggle REPL</td></tr>
+      <tr><td style="${tdStyle}"><kbd style="${kbdStyle}">Cmd+K</kbd></td><td>Search items</td></tr>
+      <tr><td style="${tdStyle}"><kbd style="${kbdStyle}">Ctrl+E</kbd></td><td>Edit selected item</td></tr>
+      <tr><td style="${tdStyle}"><kbd style="${kbdStyle}">Cmd+?</kbd></td><td>Show this help</td></tr>
+    </table>
+    <h3 style="margin-top: 20px; margin-bottom: 12px;">Mouse</h3>
+    <table style="width: 100%; border-collapse: collapse;">
+      <tr><td style="${tdStyle}">Right-click</td><td>Context menu</td></tr>
+      <tr><td style="${tdStyle}">Shift+Right-click</td><td>Browser menu</td></tr>
+    </table>
+    <h3 style="margin-top: 20px; margin-bottom: 12px;">Recovery</h3>
+    <table style="width: 100%; border-collapse: collapse;">
+      <tr><td style="${tdStyle}"><kbd style="${kbdStyle}">Ctrl+Shift+S</kbd></td><td>Safe mode</td></tr>
+    </table>
+  `;
+  return el;
+}
+
+export function buildHelpPanel(api, params) {
+  return buildContent();
+}
+
 export function show() {
   hide();
 
@@ -35,27 +65,12 @@ export function show() {
     box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
   `;
 
-  modal.innerHTML = `
-    <h2 style="margin-top: 0; margin-bottom: 16px;">Keyboard Shortcuts</h2>
-    <table style="width: 100%; border-collapse: collapse;">
-      <tr><td style="padding: 8px 16px 8px 0;"><kbd style="background: var(--color-bg-hover); padding: 2px 8px; border-radius: var(--border-radius); border: 1px solid var(--color-border);">Ctrl+\\</kbd></td><td>Toggle REPL</td></tr>
-      <tr><td style="padding: 8px 16px 8px 0;"><kbd style="background: var(--color-bg-hover); padding: 2px 8px; border-radius: var(--border-radius); border: 1px solid var(--color-border);">Cmd+K</kbd></td><td>Search items</td></tr>
-      <tr><td style="padding: 8px 16px 8px 0;"><kbd style="background: var(--color-bg-hover); padding: 2px 8px; border-radius: var(--border-radius); border: 1px solid var(--color-border);">Ctrl+E</kbd></td><td>Edit selected item</td></tr>
-      <tr><td style="padding: 8px 16px 8px 0;"><kbd style="background: var(--color-bg-hover); padding: 2px 8px; border-radius: var(--border-radius); border: 1px solid var(--color-border);">Cmd+?</kbd></td><td>Show this help</td></tr>
-    </table>
-    <h3 style="margin-top: 20px; margin-bottom: 12px;">Mouse</h3>
-    <table style="width: 100%; border-collapse: collapse;">
-      <tr><td style="padding: 8px 16px 8px 0;">Right-click</td><td>Context menu</td></tr>
-      <tr><td style="padding: 8px 16px 8px 0;">Shift+Right-click</td><td>Browser menu</td></tr>
-    </table>
-    <h3 style="margin-top: 20px; margin-bottom: 12px;">Recovery</h3>
-    <table style="width: 100%; border-collapse: collapse;">
-      <tr><td style="padding: 8px 16px 8px 0;"><kbd style="background: var(--color-bg-hover); padding: 2px 8px; border-radius: var(--border-radius); border: 1px solid var(--color-border);">Ctrl+Shift+S</kbd></td><td>Safe mode</td></tr>
-    </table>
-    <div style="margin-top: 20px; text-align: right;">
-      <button id="help-close-btn" style="padding: 8px 16px; cursor: pointer;">Close</button>
-    </div>
-  `;
+  modal.appendChild(buildContent());
+
+  const closeDiv = document.createElement("div");
+  closeDiv.style.cssText = "margin-top: 20px; text-align: right;";
+  closeDiv.innerHTML = '<button id="help-close-btn" style="padding: 8px 16px; cursor: pointer;">Close</button>';
+  modal.appendChild(closeDiv);
 
   overlay.appendChild(modal);
 

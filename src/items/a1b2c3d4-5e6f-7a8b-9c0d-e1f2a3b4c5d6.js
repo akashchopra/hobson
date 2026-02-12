@@ -218,7 +218,7 @@ export async function render(markdown, api, options = {}) {
         navLink.textContent = '↗';
         navLink.title = 'Open ' + (transcludedItem.name || transcludedItem.id);
         navLink.style.cssText = 'color: var(--color-primary); cursor: pointer;';
-        navLink.onclick = (e) => { e.preventDefault(); e.stopPropagation(); api.openItem(parsed.itemId); };
+        navLink.onclick = (e) => { e.preventDefault(); e.stopPropagation(); api.openItem(parsed.itemId, { symbol: fnName }); };
         header.appendChild(navLink);
         wrapperDiv.appendChild(header);
 
