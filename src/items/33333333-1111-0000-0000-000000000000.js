@@ -373,17 +373,6 @@ export async function loadKernel(require, storageBackend) {
         await this.renderViewport();
         perf?.mark('render-viewport-end');
         perf?.measure('render-viewport', 'render-viewport-start', 'render-viewport-end');
-
-        // Auto-activate element inspector in debug mode
-        if (this.debugMode) {
-          try {
-            const inspectorModule = await this.moduleSystem.require('element-inspector');
-            const api = this.createAPI();
-            this._elementInspector = inspectorModule.activate(api);
-          } catch (e) {
-            console.warn('Could not load element-inspector:', e.message);
-          }
-        }
       }
     }
 

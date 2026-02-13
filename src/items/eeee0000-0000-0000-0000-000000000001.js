@@ -15,9 +15,6 @@ export function activate(api) {
     active = !active;
     document.body.classList.toggle('hobson-inspect-mode', active);
     if (!active) {
-      // Remove overlay if present
-      const overlay = document.getElementById('hobson-inspector-overlay');
-      if (overlay) overlay.remove();
       // Remove all highlight classes
       document.querySelectorAll('.hobson-inspect-highlight').forEach(el => {
         el.classList.remove('hobson-inspect-highlight');
@@ -25,39 +22,21 @@ export function activate(api) {
     }
   }
 
-  // Keyboard shortcut: Ctrl+Shift+. (key is '>' when shift is held)
-  const keyHandler = (e) => {
-    if (e.ctrlKey && e.shiftKey && (e.key === '>' || e.key === '.')) {
-      e.preventDefault();
-      toggleInspectMode();
-    }
-  };
-  document.addEventListener('keydown', keyHandler);
-
-  // Click handler when active
+  // Click handler when active — logs info to console for REPL use
   const clickHandler = async (e) => {
     if (!active) return;
-
-    // Don't intercept clicks on the inspector overlay itself
-    const overlay = document.getElementById('hobson-inspector-overlay');
-    if (overlay && overlay.contains(e.target)) {
-      return;  // Let the overlay handle its own clicks
-    }
 
     e.preventDefault();
     e.stopPropagation();
 
     const info = collectElementInfo(e.target);
-    showInspectorOverlay(info, e.clientX, e.clientY, api);
+    console.log('Element inspection:', info);
   };
   document.addEventListener('click', clickHandler, true);
 
   // Hover highlight when active
   const mouseoverHandler = (e) => {
     if (!active) return;
-    // Don't highlight the inspector overlay
-    const overlay = document.getElementById('hobson-inspector-overlay');
-    if (overlay && overlay.contains(e.target)) return;
     e.target.classList.add('hobson-inspect-highlight');
   };
   document.addEventListener('mouseover', mouseoverHandler, true);
@@ -72,7 +51,7 @@ export function activate(api) {
     toggle: toggleInspectMode,
     isActive: () => active,
     // Store handlers for proper cleanup
-    _handlers: { keyHandler, clickHandler, mouseoverHandler, mouseoutHandler }
+    _handlers: { clickHandler, mouseoverHandler, mouseoutHandler }
   };
 
   return inspectorState;
@@ -82,28 +61,27 @@ export function deactivate() {
   if (inspectorState) {
     // Remove all event listeners
     if (inspectorState._handlers) {
-      document.removeEventListener('keydown', inspectorState._handlers.keyHandler);
       document.removeEventListener('click', inspectorState._handlers.clickHandler, true);
       document.removeEventListener('mouseover', inspectorState._handlers.mouseoverHandler, true);
       document.removeEventListener('mouseout', inspectorState._handlers.mouseoutHandler, true);
     }
-    
+
     // Exit inspect mode if active
     if (inspectorState.isActive()) {
       inspectorState.toggle();
     }
-    
+
     // Remove any lingering highlights
     document.querySelectorAll('.hobson-inspect-highlight').forEach(el => {
       el.classList.remove('hobson-inspect-highlight');
     });
     document.body.classList.remove('hobson-inspect-mode');
-    
+
     inspectorState = null;
   }
 }
 
-function collectElementInfo(element) {
+export function collectElementInfo(element) {
   const info = {
     element,
     chain: []
@@ -147,179 +125,111 @@ function collectElementInfo(element) {
   return info;
 }
 
-async function showInspectorOverlay(info, x, y, api) {
-  // Remove existing overlay
-  const existing = document.getElementById('hobson-inspector-overlay');
-  if (existing) existing.remove();
+/**
+ * Enter inspect mode, wait for one click, return collected info.
+ * Resolves with element info on click, or null if cancelled (Escape).
+ */
+export function inspectOnce(api) {
+  return new Promise((resolve) => {
+    document.body.classList.add('hobson-inspect-mode');
 
-  const overlay = document.createElement('div');
-  overlay.id = 'hobson-inspector-overlay';
-  overlay.style.cssText = `
-    position: fixed;
-    left: ${x + 10}px;
-    top: ${y + 10}px;
-    max-width: 400px;
-    background: var(--color-bg-surface);
-    border: 1px solid var(--color-border);
-    border-radius: var(--border-radius);
-    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-    padding: 12px;
-    z-index: 100000;
-    font-size: 0.8125rem;
-    font-family: system-ui, sans-serif;
-  `;
-
-  // Build content
-  let html = '<div style="font-weight: 600; margin-bottom: 8px;">Element Inspector</div>';
-
-  if (info.chain.length === 0) {
-    html += '<div style="color: var(--color-text-secondary);">No attribution found. Try reloading with ?debug=1</div>';
-  } else {
-    // Look up item names for better display
-    const nameCache = {};
-    const getName = async (id) => {
-      if (!id) return null;
-      if (nameCache[id]) return nameCache[id];
-      try {
-        const item = await api.get(id);
-        nameCache[id] = item.name || id.slice(0, 8) + '...';
-      } catch (e) {
-        nameCache[id] = id.slice(0, 8) + '...';
-      }
-      return nameCache[id];
-    };
-
-    // Fetch all names first
-    for (const entry of info.chain) {
-      if (entry.viewId) await getName(entry.viewId);
-      if (entry.forItem) await getName(entry.forItem);
-      if (entry.itemId) await getName(entry.itemId);
+    function cleanup() {
+      document.removeEventListener('click', clickHandler, true);
+      document.removeEventListener('mouseover', mouseoverHandler, true);
+      document.removeEventListener('mouseout', mouseoutHandler, true);
+      document.removeEventListener('keydown', escHandler);
+      document.body.classList.remove('hobson-inspect-mode');
+      document.querySelectorAll('.hobson-inspect-highlight').forEach(el => {
+        el.classList.remove('hobson-inspect-highlight');
+      });
     }
 
-    for (const entry of info.chain) {
-      html += '<div style="margin-bottom: 8px; padding: 8px; background: var(--color-bg-body); border-radius: var(--border-radius);">';
-
-      // Element tag at top - this is what we're inspecting
-      html += `<div style="font-family: monospace; color: var(--color-text-secondary); margin-bottom: 4px;">&lt;${entry.tagName}&gt;${entry.className ? '.' + entry.className.split(' ')[0] : ''}</div>`;
-
-      if (entry.forItem) {
-        html += `<div><strong>Item:</strong> <a href="#" class="inspector-link" data-id="${entry.forItem}">${nameCache[entry.forItem]}</a></div>`;
+    const mouseoverHandler = (e) => {
+      e.target.classList.add('hobson-inspect-highlight');
+    };
+    const mouseoutHandler = (e) => {
+      e.target.classList.remove('hobson-inspect-highlight');
+    };
+    const clickHandler = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      cleanup();
+      resolve(collectElementInfo(e.target));
+    };
+    const escHandler = (e) => {
+      if (e.key === 'Escape') {
+        cleanup();
+        resolve(null);
       }
+    };
 
-      if (entry.source) {
-        html += `<div><strong>Source:</strong> <a href="#" class="inspector-link" data-name="${entry.source}" data-line="${entry.sourceLine || ''}">${entry.source}${entry.sourceLine ? ':' + entry.sourceLine : ''}</a></div>`;
-      }
+    document.addEventListener('click', clickHandler, true);
+    document.addEventListener('mouseover', mouseoverHandler, true);
+    document.addEventListener('mouseout', mouseoutHandler, true);
+    document.addEventListener('keydown', escHandler);
+  });
+}
 
-      if (entry.viewId && nameCache[entry.viewId] !== entry.source) {
-        html += `<div><strong>View:</strong> <a href="#" class="inspector-link" data-id="${entry.viewId}">${nameCache[entry.viewId]}</a></div>`;
-      }
-
-      if (entry.itemId && entry.itemId !== entry.forItem) {
-        html += `<div style="color: var(--color-text-tertiary); font-size: 0.75rem;">via <a href="#" class="inspector-link" data-id="${entry.itemId}">${nameCache[entry.itemId]}</a></div>`;
-      }
-
-      html += '</div>';
+/**
+ * Resolve an inspector link target and navigate to it.
+ * Opens as sibling on spatial canvas if available.
+ */
+export async function resolveAndNavigate(api, { id, name, line }) {
+  // Resolve target item ID
+  let targetId = id;
+  if (!targetId && name) {
+    // Look up by name, stripping .js suffix if present
+    const baseName = name.replace(/\.js$/, '');
+    let items = await api.query({ name: baseName });
+    // Fallback: try with original name if no match
+    if (items.length === 0 && baseName !== name) {
+      items = await api.query({ name });
+    }
+    if (items.length > 0) {
+      targetId = items[0].id;
+    } else {
+      console.warn('Element inspector: could not find item with name:', name);
+      return;
     }
   }
 
-  html += '<div style="margin-top: 8px; font-size: 0.6875rem; color: var(--color-border-dark);">Click to navigate (with line) | Ctrl+Shift+. to exit</div>';
+  if (!targetId) return;
 
-  overlay.innerHTML = html;
+  // Build navigation params for scroll-to-line support
+  // Inspector links point to code, so field is 'code'
+  const navigateTo = line ? { field: 'code', lines: line } : null;
 
-  // Add click handlers for links
-  overlay.querySelectorAll('.inspector-link').forEach(link => {
-    link.style.cssText = 'color: var(--color-primary); cursor: pointer; text-decoration: none;';
-    link.onclick = async (e) => {
-      e.preventDefault();
+  // Open as sibling on spatial canvas if possible
+  const currentRoot = api.viewport.getRoot();
+  if (currentRoot && currentRoot !== targetId) {
+    try {
+      const rootItem = await api.get(currentRoot);
+      const existingChild = rootItem.attachments?.find(c => c.id === targetId);
 
-      const id = link.dataset.id;
-      const name = link.dataset.name;
-      const line = link.dataset.line;
-
-      // Resolve target item ID
-      let targetId = id;
-      if (!targetId && name) {
-        // Look up by name, stripping .js suffix if present
-        const baseName = name.replace(/\.js$/, '');
-        let items = await api.query({ name: baseName });
-        // Fallback: try with original name if no match
-        if (items.length === 0 && baseName !== name) {
-          items = await api.query({ name });
-        }
-        if (items.length > 0) {
-          targetId = items[0].id;
-        } else {
-          console.warn('Element inspector: could not find item with name:', name);
-          overlay.remove();
-          return;
-        }
-      }
-
-      if (!targetId) {
-        overlay.remove();
-        return;
-      }
-
-      // Build navigation params for scroll-to-line support
-      // Inspector links point to code, so field is 'code'
-      const navigateTo = line ? { field: 'code', lines: line } : null;
-
-      // Inspector runs outside the render tree (kernel.createAPI() with no context),
-      // so api.openItem would always navigate. Manually check for a spatial canvas.
-      const currentRoot = api.viewport.getRoot();
-      if (currentRoot && currentRoot !== targetId) {
-        try {
-          const rootItem = await api.get(currentRoot);
-          const existingChild = rootItem.attachments?.find(c => c.id === targetId);
-
-          if (existingChild) {
-            const updatedChildren = rootItem.attachments.map(c => {
-              if (c.id === targetId) {
-                return { ...c, view: { ...(c.view || {}), navigateTo, minimized: false } };
-              }
-              return c;
-            });
-            await api.set({ ...rootItem, attachments: updatedChildren, modified: Date.now() });
-          } else {
-            const newChild = { id: targetId, view: { navigateTo } };
-            await api.set({
-              ...rootItem,
-              attachments: [...(rootItem.attachments || []), newChild],
-              modified: Date.now()
-            });
+      if (existingChild) {
+        const updatedChildren = rootItem.attachments.map(c => {
+          if (c.id === targetId) {
+            return { ...c, view: { ...(c.view || {}), navigateTo, minimized: false } };
           }
-          await api.navigate(currentRoot);
-        } catch (err) {
-          console.error('Error opening as sibling:', err);
-          await api.navigate(targetId, navigateTo);
-        }
+          return c;
+        });
+        await api.set({ ...rootItem, attachments: updatedChildren, modified: Date.now() });
       } else {
-        await api.navigate(targetId, navigateTo);
+        const newChild = { id: targetId, view: { navigateTo } };
+        await api.set({
+          ...rootItem,
+          attachments: [...(rootItem.attachments || []), newChild],
+          modified: Date.now()
+        });
       }
-
-      overlay.remove();
-    };
-  });
-
-  // Close on click outside
-  const closeHandler = (e) => {
-    if (!overlay.contains(e.target)) {
-      overlay.remove();
-      document.removeEventListener('click', closeHandler);
+      await api.navigate(currentRoot);
+    } catch (err) {
+      console.error('Error opening as sibling:', err);
+      await api.navigate(targetId, navigateTo);
     }
-  };
-  setTimeout(() => document.addEventListener('click', closeHandler), 0);
-
-  // Close on Escape
-  const escHandler = (e) => {
-    if (e.key === 'Escape') {
-      overlay.remove();
-      document.removeEventListener('keydown', escHandler);
-    }
-  };
-  document.addEventListener('keydown', escHandler);
-
-  document.body.appendChild(overlay);
+  } else {
+    await api.navigate(targetId, navigateTo);
+  }
 }
 
 // Export for manual activation via REPL

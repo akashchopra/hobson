@@ -899,60 +899,23 @@ export async function buildDebugSubmenu(api, itemId, context) {
     debugSubmenu.appendChild(api.createElement('div', { class: 'context-menu-separator' }, []));
   }
 
-  // Enable Debug Mode option
-  const isDebugMode = window.kernel?.debugMode || false;
-  const debugModeOption = api.createElement('div', {
-    class: 'context-menu-item' + (isDebugMode ? ' selected' : '')
-  }, [isDebugMode ? 'Debug Mode \u2713' : 'Enable Debug Mode']);
+  // Open Inspector option
+  const INSPECTOR_ITEM_ID = 'eeee0000-0000-0000-0000-000000000002';
+  const openInspectorOption = api.createElement('div', { class: 'context-menu-item' }, ['Open Inspector']);
   if (context?.onDismiss) {
-    debugModeOption.onclick = async () => {
+    openInspectorOption.onclick = async () => {
       context.onDismiss();
-      const kernel = window.kernel;
-      if (!kernel) return;
-
-      kernel.debugMode = !kernel.debugMode;
-
-      if (kernel.debugMode) {
-        if (!kernel._elementInspector) {
-          try {
-            const inspectorModule = await kernel.moduleSystem.require('element-inspector');
-            const replApi = kernel.createAPI();
-            kernel._elementInspector = inspectorModule.activate(replApi);
-          } catch (e) {
-            console.warn('Could not load element-inspector:', e.message);
-          }
-        }
-        await api.navigate(api.viewport.getRoot());
+      const rootId = api.viewport.getRoot();
+      const hasSpatialCanvas = !!document.querySelector(`[data-container-id="${rootId}"]`);
+      if (hasSpatialCanvas) {
+        await api.attach(rootId, INSPECTOR_ITEM_ID);
+        await api.rerenderItem(rootId);
       } else {
-        if (kernel._elementInspector) {
-          try {
-            const inspectorModule = await kernel.moduleSystem.require('element-inspector');
-            inspectorModule.deactivate();
-            kernel._elementInspector = null;
-          } catch (e) {
-            console.warn('Could not deactivate element-inspector:', e.message);
-          }
-        }
-        await api.navigate(api.viewport.getRoot());
+        await api.navigate(INSPECTOR_ITEM_ID);
       }
     };
   }
-  debugSubmenu.appendChild(debugModeOption);
-
-  // Toggle Inspector option (only when debug mode is active)
-  if (isDebugMode && window.kernel?._elementInspector) {
-    const inspectorActive = window.kernel._elementInspector.isActive();
-    const inspectorOption = api.createElement('div', {
-      class: 'context-menu-item' + (inspectorActive ? ' selected' : '')
-    }, [inspectorActive ? 'Inspector Mode \u2713' : 'Toggle Inspector (Ctrl+Shift+.)']);
-    if (context?.onDismiss) {
-      inspectorOption.onclick = () => {
-        context.onDismiss();
-        window.kernel._elementInspector.toggle();
-      };
-    }
-    debugSubmenu.appendChild(inspectorOption);
-  }
+  debugSubmenu.appendChild(openInspectorOption);
 
   debugItem.appendChild(debugSubmenu);
   frag.appendChild(debugItem);
