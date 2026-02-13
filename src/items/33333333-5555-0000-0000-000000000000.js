@@ -451,7 +451,31 @@ export class RenderingSystem {
       debug: context.debug || this.kernel.debugMode
     };
 
-    // Load and execute view
+    // Check for Hob view
+    if (view.content?.hob) {
+      try {
+        const api = this.kernel.createAPI(item, newContext);
+        const domNode = await this.renderHobView(view, item, api, newContext);
+        if (domNode) {
+          const parentId = context.parentId || null;
+          const siblingContainer = context.siblingContainer || null;
+          this.registry.register(domNode, itemId, view.id, parentId, siblingContainer);
+        }
+        return domNode;
+      } catch (error) {
+        console.error('[Hob Render Error]', error);
+        await this.kernel.captureError(error, {
+          operation: 'render-hob',
+          itemId,
+          itemName: item?.name,
+          viewId: view?.id,
+          viewName: view?.name
+        });
+        return this.createErrorView(error, itemId);
+      }
+    }
+
+    // Load and execute JS view
     try {
       if (isRoot) perf?.mark(`${perfPrefix}-view-load-start`);
       const viewModule = await this.kernel.moduleSystem.require(view.id);
@@ -680,6 +704,61 @@ export class RenderingSystem {
       // Fall through
     }
     return await this.findView(typeId);
+  }
+
+  /** Render a Hob-language view.
+   * @param {Object} view - The view item (has content.hob)
+   * @param {Object} item - The item being rendered
+   * @param {Object} api - The kernel API for this render context
+   * @param {Object} context - Render context
+   * @returns {Promise<HTMLElement|null>}
+   */
+  async renderHobView(view, item, api, context) {
+    // Lazy-load interpreter (cached on this instance)
+    if (!this._hobInterp) {
+      const hob = await this.kernel.moduleSystem.require('40b00001-0000-4000-8000-000000000000');
+      this._hobInterp = hob.createInterpreter({
+        get: id => this.kernel.storage.get(id),
+        set: item => this.kernel.storage.set(item),
+        delete: id => this.kernel.storage.delete(id),
+        getAll: () => this.kernel.storage.getAll(),
+        query: filter => this.kernel.storage.query(filter),
+      });
+      this._hobModule = hob;
+      await this._hobInterp.macrosReady;
+    }
+
+    // Create child env for this render with view ops
+    const childEnv = this._hobInterp.createEnvironment();
+    this._hobModule.registerViewOps(childEnv, api);
+
+    // Bind `item` in the child env so the view code can access it
+    childEnv.define('item', item);
+
+    // Parse Hob view code (cached by view.id + modified)
+    const cacheKey = `${view.id}:${view.modified}`;
+    if (!this._hobAstCache) this._hobAstCache = new Map();
+    let asts = this._hobAstCache.get(cacheKey);
+    if (!asts) {
+      asts = this._hobModule.readAll(view.content.hob);
+      this._hobAstCache.set(cacheKey, asts);
+    }
+
+    // Evaluate all expressions in the child env
+    let result = null;
+    for (const ast of asts) {
+      result = await this._hobModule.evaluate(ast, childEnv, []);
+    }
+
+    // Result should be a hiccup vector — convert to DOM
+    if (result && Array.isArray(result)) {
+      return this._hobModule.hiccupToDOM(result);
+    }
+
+    // If it's already a DOM node (from hiccup->dom call in code), return it
+    if (result && result.nodeType) return result;
+
+    return null;
   }
 
   /** Create a DOM element showing a render error with an edit button.

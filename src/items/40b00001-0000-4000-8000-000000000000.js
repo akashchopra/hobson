@@ -1,7 +1,8 @@
-// Hob Language Interpreter — Phase 2
+// Hob Language Interpreter — Phase 3
 // A Lisp interpreter for the Hobson item system
 // Phase 1: Reader, evaluator, printer, environment, stdlib, item ops
 // Phase 2: Macros, quasiquote, destructuring, multi-arity, atoms, concurrency, error handling
+// Phase 3: DOM runtime (hiccupToDOM, parseTag), view ops, def-view macro
 
 // ============================================================
 // Error types
@@ -521,6 +522,10 @@ function prStr(value, readably = true) {
   }
 
   if (value && typeof value === 'object') {
+    // Check for DOM nodes
+    if (value.nodeType) {
+      return `#<dom ${value.nodeName.toLowerCase()}>`;
+    }
     // Check for item-ref marker
     if (value._hobType === 'item-ref') {
       return '@' + value.value;
@@ -541,6 +546,98 @@ function prStr(value, readably = true) {
   }
 
   return String(value);
+}
+
+// ============================================================
+// DOM: parseTag and hiccupToDOM
+// ============================================================
+
+function parseTag(tagStr) {
+  const parts = tagStr.split(/(?=[.#])/);
+  let tag = null, id = null;
+  const classes = [];
+  for (const part of parts) {
+    if (part.startsWith('#')) id = part.slice(1);
+    else if (part.startsWith('.')) classes.push(part.slice(1));
+    else if (part) tag = part;
+  }
+  return { tag: tag || 'div', id, classes };
+}
+
+function hiccupToDOM(hiccup) {
+  if (hiccup === null || hiccup === undefined) return null;
+  if (typeof hiccup === 'string' || typeof hiccup === 'number') {
+    return document.createTextNode(String(hiccup));
+  }
+  // DOM node passthrough
+  if (hiccup.nodeType) return hiccup;
+
+  if (Array.isArray(hiccup)) {
+    if (hiccup.length === 0) return null;
+    const first = hiccup[0];
+    if (!isKeyword(first)) {
+      // Not a hiccup element — treat as fragment of children
+      const frag = document.createDocumentFragment();
+      for (const child of hiccup) {
+        const node = hiccupToDOM(child);
+        if (node) frag.appendChild(node);
+      }
+      return frag;
+    }
+    const tagName = keywordName(first);
+    const parsed = parseTag(tagName);
+    const el = document.createElement(parsed.tag);
+    if (parsed.id) el.id = parsed.id;
+    if (parsed.classes.length) el.classList.add(...parsed.classes);
+
+    let childStart = 1;
+    // Check for attribute map
+    if (hiccup.length > 1 && hiccup[1] && typeof hiccup[1] === 'object'
+        && !Array.isArray(hiccup[1]) && !hiccup[1].nodeType && !isKeyword(hiccup[1])) {
+      const attrs = hiccup[1];
+      childStart = 2;
+      for (const [k, v] of Object.entries(attrs)) {
+        const attrName = isKeyword(k) ? keywordName(k) : k;
+        if (attrName.startsWith('on-')) {
+          el.addEventListener(attrName.slice(3), v);
+        } else if (attrName === 'style' && typeof v === 'object' && v !== null) {
+          for (const [sp, sv] of Object.entries(v)) {
+            const cssProp = isKeyword(sp) ? keywordName(sp) : sp;
+            el.style[cssProp] = sv;
+          }
+        } else if (attrName === 'class' && typeof v === 'string') {
+          for (const c of v.split(/\s+/)) {
+            if (c) el.classList.add(c);
+          }
+        } else if (v === true) {
+          el.setAttribute(attrName, '');
+        } else if (v === false || v === null || v === undefined) {
+          // skip
+        } else {
+          el.setAttribute(attrName, String(v));
+        }
+      }
+    }
+
+    // Process children (flatten nested arrays from map/for)
+    for (let i = childStart; i < hiccup.length; i++) {
+      appendHiccupChild(el, hiccup[i]);
+    }
+    return el;
+  }
+
+  return document.createTextNode(String(hiccup));
+}
+
+function appendHiccupChild(parent, child) {
+  if (child === null || child === undefined) return;
+  if (Array.isArray(child) && child.length > 0 && !isKeyword(child[0])) {
+    // Flatten non-hiccup arrays (e.g. from map)
+    for (const c of child) appendHiccupChild(parent, c);
+  } else {
+    const node = hiccupToDOM(child);
+    if (node) parent.appendChild(node);
+  }
 }
 
 // ============================================================
@@ -2176,10 +2273,32 @@ function registerItemOps(env, api) {
 }
 
 // ============================================================
+// View Operations (wired by createInterpreter or renderHobView)
+// ============================================================
+
+function registerViewOps(env, api) {
+  env.define('render-item', Object.assign(async (itemId, viewId) => {
+    const dom = await api.renderItem(itemId, viewId || null);
+    return dom;
+  }, { _hobName: 'render-item' }));
+
+  env.define('navigate!', Object.assign((itemId) => {
+    api.navigate(itemId);
+    return null;
+  }, { _hobName: 'navigate!' }));
+
+  env.define('rerender!', Object.assign(() => {
+    api.rerenderItem();
+    return null;
+  }, { _hobName: 'rerender!' }));
+}
+
+// ============================================================
 // Public API
 // ============================================================
 
-export { read, readAll, evaluate, prStr, Environment, HobError, tokenize, parse, keyword, isKeyword, valueToAst, astToValue };
+export { read, readAll, evaluate, prStr, Environment, HobError, tokenize, parse,
+         keyword, isKeyword, valueToAst, astToValue, hiccupToDOM, parseTag, registerViewOps, registerItemOps };
 
 // ============================================================
 // Standard Macros (loaded at interpreter creation time)
@@ -2268,11 +2387,22 @@ const STANDARD_MACROS = `
       (let [g (gensym "or__")]
         \`(let [~g ~(first args)]
            (if ~g ~g (or ~@(rest args))))))))
+
+;; def-view — (def-view name for-type [item api] body...)
+;; Defines a view render function
+(defmacro def-view [name for-type params & body]
+  \`(def ~name {:for-type ~for-type
+               :render (fn ~params ~@body)}))
 `;
 
-export function createInterpreter(api) {
+export function createInterpreter(api, viewApi) {
   const stdlib = createStdlib();
+  // hiccup->dom is always available (pure function, no API dependency)
+  stdlib.define('hiccup->dom', Object.assign((hiccup) => {
+    return hiccupToDOM(hiccup);
+  }, { _hobName: 'hiccup->dom' }));
   if (api) registerItemOps(stdlib, api);
+  if (viewApi) registerViewOps(stdlib, viewApi);
 
   // Load standard macros
   let macrosReady = null;
