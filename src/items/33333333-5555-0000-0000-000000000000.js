@@ -32,16 +32,23 @@ class RenderInstanceRegistry {
     this.nextId = 1;
   }
 
+  /** Allocate an instance ID without registering. Used for pre-allocation before rendering.
+   * @returns {number} The allocated instance ID
+   */
+  allocateId() { return this.nextId++; }
+
   /** Register a new render instance and index it.
    * @param {HTMLElement} domNode - The rendered DOM element
    * @param {string} itemId - Item GUID
    * @param {string} viewId - View GUID used to render
    * @param {string|null} parentId - Parent item GUID (null for root)
    * @param {HTMLElement|null} [siblingContainer] - Sibling container element
+   * @param {number|null} [forceId] - Pre-allocated instance ID (from allocateId)
    * @returns {number} The new instance ID
    */
-  register(domNode, itemId, viewId, parentId, siblingContainer = null) {
-    const instanceId = this.nextId++;
+  register(domNode, itemId, viewId, parentId, siblingContainer = null, forceId = null) {
+    const instanceId = forceId !== null ? forceId : this.nextId++;
+    if (forceId !== null && forceId >= this.nextId) this.nextId = forceId + 1;
 
     const info = {
       instanceId,
@@ -226,6 +233,11 @@ export class RenderingSystem {
   constructor(kernel) {
     this.kernel = kernel;
     this.registry = new RenderInstanceRegistry();
+    this._depTracker = null;
+    this._pendingReRenders = new Set();
+    this._reRenderScheduled = false;
+    this._reRenderDepth = new Map();
+    this._MAX_RERENDER_DEPTH = 3;
   }
 
   /** Parse a stack trace to extract source item name and line number.
@@ -311,10 +323,13 @@ export class RenderingSystem {
           // Unregister all instances in the old DOM subtree (including nested children)
           const nestedInstances = oldDom.querySelectorAll('[data-render-instance]');
           for (const el of nestedInstances) {
-            this.registry.unregister(parseInt(el.dataset.renderInstance, 10));
+            const nestedId = parseInt(el.dataset.renderInstance, 10);
+            this.registry.unregister(nestedId);
+            if (this._depTracker) this._depTracker.clearDeps(nestedId);
           }
           // Unregister the root instance itself
           this.registry.unregister(instance.instanceId);
+          if (this._depTracker) this._depTracker.clearDeps(instance.instanceId);
 
           oldDom.parentNode.replaceChild(newDom, oldDom);
           updated++;
@@ -324,10 +339,13 @@ export class RenderingSystem {
           const newInstances = newDom.querySelectorAll?.('[data-render-instance]');
           if (newInstances) {
             for (const el of newInstances) {
-              this.registry.unregister(parseInt(el.dataset.renderInstance, 10));
+              const nestedId = parseInt(el.dataset.renderInstance, 10);
+              this.registry.unregister(nestedId);
+              if (this._depTracker) this._depTracker.clearDeps(nestedId);
             }
           }
           this.registry.unregister(instance.instanceId);
+          if (this._depTracker) this._depTracker.clearDeps(instance.instanceId);
         }
       } catch (error) {
         console.error(`[Partial Re-render Error] Item ${itemId}:`, error);
@@ -455,13 +473,13 @@ export class RenderingSystem {
     if (view.content?.hob) {
       try {
         const api = this.kernel.createAPI(item, newContext);
-        const domNode = await this.renderHobView(view, item, api, newContext);
-        if (domNode) {
+        const hobResult = await this.renderHobView(view, item, api, newContext);
+        if (hobResult.domNode) {
           const parentId = context.parentId || null;
           const siblingContainer = context.siblingContainer || null;
-          this.registry.register(domNode, itemId, view.id, parentId, siblingContainer);
+          this.registry.register(hobResult.domNode, itemId, view.id, parentId, siblingContainer, hobResult.trackingId);
         }
-        return domNode;
+        return hobResult.domNode;
       } catch (error) {
         console.error('[Hob Render Error]', error);
         await this.kernel.captureError(error, {
@@ -711,7 +729,7 @@ export class RenderingSystem {
    * @param {Object} item - The item being rendered
    * @param {Object} api - The kernel API for this render context
    * @param {Object} context - Render context
-   * @returns {Promise<HTMLElement|null>}
+   * @returns {Promise<{domNode: HTMLElement|null, trackingId: number|null}>}
    */
   async renderHobView(view, item, api, context) {
     // Lazy-load interpreter (cached on this instance)
@@ -727,6 +745,15 @@ export class RenderingSystem {
       this._hobModule = hob;
       await this._hobInterp.macrosReady;
     }
+
+    // Initialize reactivity once after first Hob module load
+    if (!this._depTracker && this._hobModule.DependencyTracker) {
+      this._depTracker = new this._hobModule.DependencyTracker();
+      this._initReactiveSubscriptions(this._hobModule);
+    }
+
+    // Allocate tracking ID now that tracker is guaranteed initialized
+    const trackingId = this._depTracker ? this.registry.allocateId() : null;
 
     // Create child env for this render with view ops
     const childEnv = this._hobInterp.createEnvironment();
@@ -744,21 +771,97 @@ export class RenderingSystem {
       this._hobAstCache.set(cacheKey, asts);
     }
 
-    // Evaluate all expressions in the child env
+    // Wrap evaluation in tracking context
+    if (trackingId != null) this._depTracker.startTracking(trackingId);
+
     let result = null;
-    for (const ast of asts) {
-      result = await this._hobModule.evaluate(ast, childEnv, []);
+    try {
+      for (const ast of asts) {
+        result = await this._hobModule.evaluate(ast, childEnv, []);
+      }
+    } finally {
+      if (trackingId != null) this._depTracker.stopTracking();
     }
 
     // Result should be a hiccup vector — convert to DOM
+    let domNode = null;
     if (result && Array.isArray(result)) {
-      return this._hobModule.hiccupToDOM(result);
+      domNode = this._hobModule.hiccupToDOM(result);
+    } else if (result && result.nodeType) {
+      domNode = result;
     }
 
-    // If it's already a DOM node (from hiccup->dom call in code), return it
-    if (result && result.nodeType) return result;
+    return { domNode, trackingId };
+  }
 
-    return null;
+  // ============================================================
+  // Reactive infrastructure
+  // ============================================================
+
+  /** Initialize reactive event subscriptions. Called once after first Hob module load.
+   * @param {Object} hob - The Hob interpreter module
+   */
+  _initReactiveSubscriptions(hob) {
+    const EVENT_IDS = this.kernel.EVENT_IDS;
+    // item:updated → check deps → schedule re-render
+    this.kernel.events.on(EVENT_IDS.ITEM_UPDATED, (event) => {
+      const itemId = event.content?.id;
+      if (!itemId || !this._depTracker) return;
+      const dependents = this._depTracker.getDependents(itemId);
+      if (dependents.size > 0) this._scheduleReRenders(dependents);
+    });
+    // item:deleted → same
+    this.kernel.events.on(EVENT_IDS.ITEM_DELETED, (event) => {
+      const itemId = event.content?.id;
+      if (!itemId || !this._depTracker) return;
+      const dependents = this._depTracker.getDependents(itemId);
+      if (dependents.size > 0) this._scheduleReRenders(dependents);
+    });
+    // Atom mutation callback
+    hob.setAtomMutationCallback((atom) => {
+      if (!this._depTracker) return;
+      const dependents = this._depTracker.getAtomDependents(atom);
+      if (dependents.size > 0) this._scheduleReRenders(dependents);
+    });
+  }
+
+  /** Schedule re-renders for contexts whose dependencies changed (microtask batched).
+   * @param {Set<number>} contextIds - Set of tracking context IDs
+   */
+  _scheduleReRenders(contextIds) {
+    for (const ctxId of contextIds) {
+      const instance = this.registry.get(ctxId);
+      if (instance) this._pendingReRenders.add(instance.itemId);
+    }
+    if (!this._reRenderScheduled) {
+      this._reRenderScheduled = true;
+      queueMicrotask(() => this._flushReRenders());
+    }
+  }
+
+  /** Flush all pending re-renders with cycle detection. */
+  async _flushReRenders() {
+    this._reRenderScheduled = false;
+    const itemIds = [...this._pendingReRenders];
+    this._pendingReRenders.clear();
+    for (const itemId of itemIds) {
+      const instances = this.registry.getByItemId(itemId);
+      let blocked = false;
+      for (const inst of instances) {
+        const depth = this._reRenderDepth.get(inst.instanceId) || 0;
+        if (depth >= this._MAX_RERENDER_DEPTH) {
+          console.warn(`[Reactivity] Cycle detected for item ${itemId}, breaking.`);
+          blocked = true;
+          break;
+        }
+        this._reRenderDepth.set(inst.instanceId, depth + 1);
+      }
+      if (!blocked) {
+        try { await this.rerenderItem(itemId); }
+        catch (e) { console.error(`[Reactivity] Re-render error for ${itemId}:`, e); }
+      }
+    }
+    this._reRenderDepth.clear();
   }
 
   /** Create a DOM element showing a render error with an edit button.

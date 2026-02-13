@@ -1,9 +1,10 @@
-// Hob Language Interpreter — Phase 4
+// Hob Language Interpreter — Phase 5
 // A Lisp interpreter for the Hobson item system
 // Phase 1: Reader, evaluator, printer, environment, stdlib, item ops
 // Phase 2: Macros, quasiquote, destructuring, multi-arity, atoms, concurrency, error handling
 // Phase 3: DOM runtime (hiccupToDOM, parseTag), view ops, def-view macro
 // Phase 4: Watches and events (def-watch, emit!, hobToJs, JS interop fix)
+// Phase 5: Reactivity (DependencyTracker, instrumented get-item/deref/swap!/reset!)
 
 // ============================================================
 // Error types
@@ -657,6 +658,88 @@ function hobToJs(value) {
   }
   return result;
 }
+
+// ============================================================
+// Dependency Tracking (reactive re-rendering)
+// ============================================================
+
+let _currentTrackingContext = null;
+let _atomMutationCallback = null;
+
+class DependencyTracker {
+  constructor() {
+    this.contextDeps = new Map();      // contextId -> Set<itemId>
+    this.contextAtomDeps = new Map();  // contextId -> Set<atom>
+    this.itemDependents = new Map();   // itemId -> Set<contextId>  (reverse index)
+    this.atomDependents = new Map();   // atom -> Set<contextId>    (reverse index)
+  }
+
+  startTracking(contextId) {
+    this.clearDeps(contextId);
+    this.contextDeps.set(contextId, new Set());
+    this.contextAtomDeps.set(contextId, new Set());
+    _currentTrackingContext = { trackerId: contextId, tracker: this };
+  }
+
+  stopTracking() {
+    const ctx = _currentTrackingContext;
+    _currentTrackingContext = null;
+    if (!ctx) return { items: new Set(), atoms: new Set() };
+    return {
+      items: this.contextDeps.get(ctx.trackerId) || new Set(),
+      atoms: this.contextAtomDeps.get(ctx.trackerId) || new Set()
+    };
+  }
+
+  recordAccess(itemId) {
+    if (!_currentTrackingContext) return;
+    const ctxId = _currentTrackingContext.trackerId;
+    const deps = this.contextDeps.get(ctxId);
+    if (deps) deps.add(itemId);
+    if (!this.itemDependents.has(itemId)) this.itemDependents.set(itemId, new Set());
+    this.itemDependents.get(itemId).add(ctxId);
+  }
+
+  recordAtomAccess(atom) {
+    if (!_currentTrackingContext) return;
+    const ctxId = _currentTrackingContext.trackerId;
+    const deps = this.contextAtomDeps.get(ctxId);
+    if (deps) deps.add(atom);
+    if (!this.atomDependents.has(atom)) this.atomDependents.set(atom, new Set());
+    this.atomDependents.get(atom).add(ctxId);
+  }
+
+  getDependents(itemId) {
+    return this.itemDependents.get(itemId) || new Set();
+  }
+
+  getAtomDependents(atom) {
+    return this.atomDependents.get(atom) || new Set();
+  }
+
+  clearDeps(contextId) {
+    const itemDeps = this.contextDeps.get(contextId);
+    if (itemDeps) {
+      for (const itemId of itemDeps) {
+        const s = this.itemDependents.get(itemId);
+        if (s) { s.delete(contextId); if (s.size === 0) this.itemDependents.delete(itemId); }
+      }
+      this.contextDeps.delete(contextId);
+    }
+    const atomDeps = this.contextAtomDeps.get(contextId);
+    if (atomDeps) {
+      for (const atom of atomDeps) {
+        const s = this.atomDependents.get(atom);
+        if (s) { s.delete(contextId); if (s.size === 0) this.atomDependents.delete(atom); }
+      }
+      this.contextAtomDeps.delete(contextId);
+    }
+  }
+
+  static isTracking() { return _currentTrackingContext !== null; }
+}
+
+function setAtomMutationCallback(cb) { _atomMutationCallback = cb; }
 
 // ============================================================
 // Keyword helpers
@@ -2157,6 +2240,7 @@ function createStdlib() {
   env.define('atom', Object.assign((value) => ({ _hobType: 'atom', value }), { _hobName: 'atom' }));
   env.define('deref', Object.assign((atom) => {
     if (!atom || atom._hobType !== 'atom') throw new Error('deref requires an atom');
+    if (_currentTrackingContext) _currentTrackingContext.tracker.recordAtomAccess(atom);
     return atom.value;
   }, { _hobName: 'deref' }));
   env.define('swap!', Object.assign(async (atom, fn, ...args) => {
@@ -2164,11 +2248,13 @@ function createStdlib() {
     let newVal = fn(atom.value, ...args);
     if (newVal && typeof newVal.then === 'function') newVal = await newVal;
     atom.value = newVal;
+    if (_atomMutationCallback) _atomMutationCallback(atom);
     return newVal;
   }, { _hobName: 'swap!' }));
   env.define('reset!', Object.assign((atom, value) => {
     if (!atom || atom._hobType !== 'atom') throw new Error('reset! requires an atom');
     atom.value = value;
+    if (_atomMutationCallback) _atomMutationCallback(atom);
     return value;
   }, { _hobName: 'reset!' }));
 
@@ -2274,6 +2360,7 @@ function registerItemOps(env, api) {
   const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
   env.define('get-item', Object.assign(async (id) => {
+    if (_currentTrackingContext) _currentTrackingContext.tracker.recordAccess(id);
     return await api.get(id);
   }, { _hobName: 'get-item' }));
 
@@ -2346,7 +2433,8 @@ function registerEventOps(env, eventApi) {
 
 export { read, readAll, evaluate, prStr, Environment, HobError, tokenize, parse,
          keyword, isKeyword, valueToAst, astToValue, hiccupToDOM, parseTag,
-         registerViewOps, registerItemOps, registerEventOps, hobToJs };
+         registerViewOps, registerItemOps, registerEventOps, hobToJs,
+         DependencyTracker, setAtomMutationCallback };
 
 // ============================================================
 // Standard Macros (loaded at interpreter creation time)
