@@ -412,6 +412,18 @@ export async function run() {
   console.error = (...args) => { origError(...args); consoleLines.push(`[error] ${formatArgs(args)}`); };
 
   try {
+    // Detect Hob language code
+    if (code.startsWith(':hob ') || code.startsWith(':h ')) {
+      const hobSource = code.startsWith(':h ') ? code.slice(3) : code.slice(5);
+      const hob = await api.require('hob-interpreter');
+      const interp = hob.createInterpreter(api);
+      const result = await interp.eval(hobSource);
+      const resultStr = hob.prStr(result);
+      addTranscriptEntry(code, resultStr, null, consoleLines);
+      input.value = '';
+      return;
+    }
+
     // Try to auto-return expression results (so users don't need explicit "return")
     let execCode = code;
     const trimmed = code.replace(/;\s*$/, '');
