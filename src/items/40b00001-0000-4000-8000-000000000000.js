@@ -1,8 +1,9 @@
-// Hob Language Interpreter — Phase 3
+// Hob Language Interpreter — Phase 4
 // A Lisp interpreter for the Hobson item system
 // Phase 1: Reader, evaluator, printer, environment, stdlib, item ops
 // Phase 2: Macros, quasiquote, destructuring, multi-arity, atoms, concurrency, error handling
 // Phase 3: DOM runtime (hiccupToDOM, parseTag), view ops, def-view macro
+// Phase 4: Watches and events (def-watch, emit!, hobToJs, JS interop fix)
 
 // ============================================================
 // Error types
@@ -638,6 +639,23 @@ function appendHiccupChild(parent, child) {
     const node = hiccupToDOM(child);
     if (node) parent.appendChild(node);
   }
+}
+
+// ============================================================
+// hobToJs — convert Hob keyword-keyed maps to plain JS objects
+// ============================================================
+
+function hobToJs(value) {
+  if (value === null || value === undefined) return value;
+  if (typeof value !== 'object') return value;
+  if (Array.isArray(value)) return value.map(hobToJs);
+  if (value.nodeType) return value; // DOM passthrough
+  const result = {};
+  for (const [k, v] of Object.entries(value)) {
+    const key = isKeyword(k) ? keywordName(k) : k;
+    result[key] = hobToJs(v);
+  }
+  return result;
 }
 
 // ============================================================
@@ -1698,7 +1716,11 @@ async function evalApply(ast, env, callStack) {
     const target = await evaluate(ast.elements[1], env, callStack);
     const defaultVal = ast.elements[2] ? await evaluate(ast.elements[2], env, callStack) : null;
     if (target && typeof target === 'object' && !Array.isArray(target)) {
-      return headVal in target ? target[headVal] : defaultVal;
+      if (headVal in target) return target[headVal];
+      // Fallback: try plain string key (JS interop)
+      const plainKey = keywordName(headVal);
+      if (plainKey in target) return target[plainKey];
+      return defaultVal;
     }
     return defaultVal;
   }
@@ -1855,7 +1877,13 @@ function createStdlib() {
       return defaultVal;
     }
     if (typeof coll === 'object') {
-      return key in coll ? coll[key] : defaultVal;
+      if (key in coll) return coll[key];
+      // Keyword fallback for JS interop
+      if (isKeyword(key)) {
+        const plain = keywordName(key);
+        if (plain in coll) return coll[plain];
+      }
+      return defaultVal;
     }
     return defaultVal;
   }, { _hobName: 'get' }));
@@ -1903,7 +1931,15 @@ function createStdlib() {
       if (Array.isArray(current)) {
         current = typeof key === 'number' && key < current.length ? current[key] : null;
       } else if (typeof current === 'object') {
-        current = key in current ? current[key] : null;
+        if (key in current) {
+          current = current[key];
+        } else if (isKeyword(key)) {
+          // Keyword fallback for JS interop
+          const plain = keywordName(key);
+          current = plain in current ? current[plain] : null;
+        } else {
+          current = null;
+        }
       } else {
         return null;
       }
@@ -2294,11 +2330,23 @@ function registerViewOps(env, api) {
 }
 
 // ============================================================
+// Event Operations (wired by createInterpreter or callHobWatchHandler)
+// ============================================================
+
+function registerEventOps(env, eventApi) {
+  env.define('emit!', Object.assign((event) => {
+    eventApi.emit(hobToJs(event));
+    return null;
+  }, { _hobName: 'emit!' }));
+}
+
+// ============================================================
 // Public API
 // ============================================================
 
 export { read, readAll, evaluate, prStr, Environment, HobError, tokenize, parse,
-         keyword, isKeyword, valueToAst, astToValue, hiccupToDOM, parseTag, registerViewOps, registerItemOps };
+         keyword, isKeyword, valueToAst, astToValue, hiccupToDOM, parseTag,
+         registerViewOps, registerItemOps, registerEventOps, hobToJs };
 
 // ============================================================
 // Standard Macros (loaded at interpreter creation time)
@@ -2393,9 +2441,15 @@ const STANDARD_MACROS = `
 (defmacro def-view [name for-type params & body]
   \`(def ~name {:for-type ~for-type
                :render (fn ~params ~@body)}))
+
+;; def-watch — (def-watch name watch-spec [event] body...)
+;; Defines a watch handler
+(defmacro def-watch [name watch-spec params & body]
+  \`(def ~name {:watches [~watch-spec]
+               :handler (fn ~params ~@body)}))
 `;
 
-export function createInterpreter(api, viewApi) {
+export function createInterpreter(api, viewApi, eventApi) {
   const stdlib = createStdlib();
   // hiccup->dom is always available (pure function, no API dependency)
   stdlib.define('hiccup->dom', Object.assign((hiccup) => {
@@ -2403,6 +2457,7 @@ export function createInterpreter(api, viewApi) {
   }, { _hobName: 'hiccup->dom' }));
   if (api) registerItemOps(stdlib, api);
   if (viewApi) registerViewOps(stdlib, viewApi);
+  if (eventApi) registerEventOps(stdlib, eventApi);
 
   // Load standard macros
   let macrosReady = null;

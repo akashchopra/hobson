@@ -416,7 +416,7 @@ export async function run() {
     if (code.startsWith(':hob ') || code.startsWith(':h ')) {
       const hobSource = code.startsWith(':h ') ? code.slice(3) : code.slice(5);
       const hob = await api.require('hob-interpreter');
-      const interp = hob.createInterpreter(api);
+      const interp = hob.createInterpreter(api, null, { emit: e => api.events.emit(e) });
       const result = await interp.eval(hobSource);
       const resultStr = hob.prStr(result);
       addTranscriptEntry(code, resultStr, null, consoleLines);

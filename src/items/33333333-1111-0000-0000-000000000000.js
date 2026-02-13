@@ -2277,6 +2277,13 @@ export async function loadKernel(require, storageBackend) {
           return;
         }
 
+        // Hob handler branch: items with content.hob use the Hob interpreter
+        if (watcherItem.content?.hob) {
+          await this.callHobWatchHandler(watcherItem, event, eventName);
+          return;
+        }
+
+        // JS handler (existing code)
         // Convert event name to handler name: "item:deleted" -> "onItemDeleted"
         const handlerName = this.eventToHandlerName(eventName);
 
@@ -2299,6 +2306,65 @@ export async function loadKernel(require, storageBackend) {
       }
     }
 
+    /** Call a Hob-authored watch handler.
+     * Lazy-loads the interpreter, caches ASTs, creates child env per invocation.
+     * @param {Object} watcherItem - Item with content.hob code
+     * @param {Object} event - {type, content, timestamp}
+     * @param {string} eventName - The event name (e.g., "item:updated")
+     */
+    async callHobWatchHandler(watcherItem, event, eventName) {
+      // Lazy-load interpreter (cached on kernel instance)
+      if (!this._hobInterp) {
+        const hob = await this.moduleSystem.require('40b00001-0000-4000-8000-000000000000');
+        this._hobInterp = hob.createInterpreter({
+          get: id => this.storage.get(id),
+          set: item => this.storage.set(item),
+          delete: id => this.storage.delete(id),
+          getAll: () => this.storage.getAll(),
+          query: filter => this.storage.query(filter),
+        });
+        this._hobModule = hob;
+        await this._hobInterp.macrosReady;
+      }
+
+      // Create child env with event ops
+      const childEnv = this._hobInterp.createEnvironment();
+      this._hobModule.registerEventOps(childEnv, { emit: e => this.events.emit(e) });
+
+      // Parse Hob code (cached by id + modified)
+      const cacheKey = `${watcherItem.id}:${watcherItem.modified}`;
+      if (!this._hobWatchAstCache) this._hobWatchAstCache = new Map();
+      let asts = this._hobWatchAstCache.get(cacheKey);
+      if (!asts) {
+        asts = this._hobModule.readAll(watcherItem.content.hob);
+        this._hobWatchAstCache.set(cacheKey, asts);
+      }
+
+      // Evaluate all expressions to define handlers
+      for (const ast of asts) {
+        await this._hobModule.evaluate(ast, childEnv, []);
+      }
+
+      // Look up handler by kebab-case name
+      const hobHandlerName = this.eventToHobHandlerName(eventName);
+      let handler;
+      try {
+        handler = childEnv.lookup(hobHandlerName);
+      } catch {
+        console.warn(`Hob watcher ${watcherItem.name || watcherItem.id} has no ${hobHandlerName} handler`);
+        return;
+      }
+
+      if (typeof handler !== 'function') {
+        console.warn(`Hob watcher: ${hobHandlerName} is not a function`);
+        return;
+      }
+
+      // Call with event content and full API
+      const api = this.createAPI();
+      await handler(event.content, api);
+    }
+
     /** Convert an event name to a handler function name (e.g., "item:deleted" → "onItemDeleted").
      * @param {string} eventName - Event name (e.g., "item:deleted", "kernel:boot-complete")
      * @returns {string} Handler name (e.g., "onItemDeleted")
@@ -2314,6 +2380,17 @@ export async function loadKernel(require, storageBackend) {
         part.charAt(0).toUpperCase() + part.slice(1).toLowerCase()
       );
       return 'on' + camelParts.join('');
+    }
+
+    /** Convert an event name to a Hob handler name (kebab-case).
+     * @param {string} eventName - Event name (e.g., "item:updated", "kernel:boot-complete")
+     * @returns {string} Hob handler name (e.g., "on-item-updated", "on-kernel-boot-complete")
+     */
+    eventToHobHandlerName(eventName) {
+      // "item:updated" -> "on-item-updated"
+      // "kernel:boot-complete" -> "on-kernel-boot-complete"
+      // "error-event" -> "on-error-event"
+      return 'on-' + eventName.replace(/:/g, '-');
     }
 
     // -------------------------------------------------------------------------
