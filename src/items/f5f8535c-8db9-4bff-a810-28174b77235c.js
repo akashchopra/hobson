@@ -243,6 +243,9 @@ export function getItemsTaggedWithGrouped(tagId) {
   return groups;
 }
 
+export function getAllTags()  { return [...S.tagIndex.keys()]; }
+export function getAllTypes() { return [...S.typeIndex.keys()]; }
+
 export function isBuilt() { return S.built; }
 
 export async function ensureBuilt(api) {
