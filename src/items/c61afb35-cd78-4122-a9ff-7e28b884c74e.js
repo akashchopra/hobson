@@ -183,6 +183,7 @@ const STYLES = {
 
 export async function render(item, api) {
   const lib = await api.require('related-items-lib');
+  const tagTreeBuilder = await api.require('tag-tree-builder');
   await lib.ensureBuilt(api);
 
   const state = {
@@ -283,7 +284,7 @@ export async function render(item, api) {
     } else if (state.axis === 'Tags') {
       const tagIds = lib.getAllTags();
       for (const id of tagIds) {
-        const fqName = await getFullyQualifiedName(id, api);
+        const fqName = await tagTreeBuilder.getFullyQualifiedName(id, api);
         const taggedCount = lib.getItemsTaggedWith(id).length;
         entries.push({ id, name: fqName || id.substring(0, 8), count: taggedCount });
       }
@@ -512,7 +513,7 @@ export async function render(item, api) {
     if (Array.isArray(it.content?.tags) && it.content.tags.length > 0) {
       const tagNames = [];
       for (const tagId of it.content.tags) {
-        tagNames.push(await getFullyQualifiedName(tagId, api) || tagId.substring(0, 8));
+        tagNames.push(await tagTreeBuilder.getFullyQualifiedName(tagId, api) || tagId.substring(0, 8));
       }
       const tagsLine = api.createElement('div', { style: STYLES.detailMeta }, [
         'Tags: ' + tagNames.join(', ')
@@ -572,17 +573,3 @@ async function safeGet(id, api) {
   try { return await api.get(id); } catch (e) { return null; }
 }
 
-async function getFullyQualifiedName(itemId, api) {
-  const parts = [];
-  let currentId = itemId;
-  const seen = new Set();
-  while (currentId) {
-    if (seen.has(currentId)) break;
-    seen.add(currentId);
-    const item = await safeGet(currentId, api);
-    if (!item) break;
-    parts.unshift(item.name || currentId.substring(0, 8));
-    currentId = item.content?.parent;
-  }
-  return parts.join('/');
-}

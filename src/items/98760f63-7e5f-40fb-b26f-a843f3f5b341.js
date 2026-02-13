@@ -56,13 +56,15 @@ export function getTagName(tagNode) {
  * Gets fully-qualified tag name by walking up the parent chain
  * @param {string} tagId - Tag item ID
  * @param {Object} api - Hobson API (needs api.get)
+ * @param {string} [stopAtId] - Optional ancestor ID to stop before (for relative paths)
  * @returns {Promise<string>} Fully-qualified name like "Root / Child / Grandchild"
  */
-export async function getFullyQualifiedName(tagId, api) {
+export async function getFullyQualifiedName(tagId, api, stopAtId) {
   const parts = [];
   let currentId = tagId;
   const seen = new Set();
   while (currentId) {
+    if (currentId === stopAtId) break;
     if (seen.has(currentId)) break;
     seen.add(currentId);
     let item;

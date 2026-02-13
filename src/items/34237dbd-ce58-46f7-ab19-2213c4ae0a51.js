@@ -32,6 +32,7 @@ const TRUNCATE_LIMIT = 30;
 export async function render(widget, api) {
   const selectionMgr = await api.require('selection-manager');
   const relatedLib = await api.require('related-items-lib');
+  const tagTreeBuilder = await api.require('tag-tree-builder');
 
   const container = api.createElement('div', {
     style: 'max-width: 600px; margin: 0 auto; font-size: 0.875rem;'
@@ -83,11 +84,11 @@ export async function render(widget, api) {
   }
 
   // Render forward groups
-  const forwardSection = await renderSection('Forward', FORWARD_GROUPS, related, api);
+  const forwardSection = await renderSection('Forward', FORWARD_GROUPS, related, api, { tagTreeBuilder });
   if (forwardSection) body.appendChild(forwardSection);
 
   // Render inverse groups
-  const inverseSection = await renderSection('Inverse', INVERSE_GROUPS, related, api, { relatedLib, selectedId });
+  const inverseSection = await renderSection('Inverse', INVERSE_GROUPS, related, api, { relatedLib, selectedId, tagTreeBuilder });
   if (inverseSection) body.appendChild(inverseSection);
 
   return container;
@@ -121,12 +122,12 @@ async function renderSection(sectionLabel, groups, related, api, context) {
     if (key === 'taggedWith' && context?.relatedLib) {
       const tagGroups = context.relatedLib.getItemsTaggedWithGrouped(context.selectedId);
       if (tagGroups.length > 1) {
-        const group = await renderTaggedWithGrouped(label, tagGroups, context.selectedId, api);
+        const group = await renderTaggedWithGrouped(label, tagGroups, context.selectedId, api, context.tagTreeBuilder);
         section.appendChild(group);
         continue;
       }
     }
-    const group = await renderGroup(label, ids, api, { fullyQualified: key === 'tags' });
+    const group = await renderGroup(label, ids, api, { fullyQualified: key === 'tags', tagTreeBuilder: context?.tagTreeBuilder });
     section.appendChild(group);
   }
 
@@ -152,8 +153,8 @@ async function renderGroup(label, ids, api, opts = {}) {
   // Resolve display names (fully qualified for tags)
   const nameMap = new Map();
   for (const id of uniqueIds) {
-    if (opts.fullyQualified) {
-      nameMap.set(id, await getFullyQualifiedName(id, api));
+    if (opts.fullyQualified && opts.tagTreeBuilder) {
+      nameMap.set(id, await opts.tagTreeBuilder.getFullyQualifiedName(id, api));
     } else {
       let it;
       try { it = await api.get(id); } catch (e) { it = null; }
@@ -181,36 +182,7 @@ async function renderGroup(label, ids, api, opts = {}) {
   return group;
 }
 
-async function buildTagPath(tagId, rootId, api) {
-  const parts = [];
-  let currentId = tagId;
-  while (currentId && currentId !== rootId) {
-    let item;
-    try { item = await api.get(currentId); } catch (e) { break; }
-    if (!item) break;
-    parts.unshift(item.name || currentId.substring(0, 8));
-    currentId = item.content?.parent;
-  }
-  return parts.join('/');
-}
-
-async function getFullyQualifiedName(itemId, api) {
-  const parts = [];
-  let currentId = itemId;
-  const seen = new Set();
-  while (currentId) {
-    if (seen.has(currentId)) break;
-    seen.add(currentId);
-    let item;
-    try { item = await api.get(currentId); } catch (e) { break; }
-    if (!item) break;
-    parts.unshift(item.name || currentId.substring(0, 8));
-    currentId = item.content?.parent;
-  }
-  return parts.join('/');
-}
-
-async function renderTaggedWithGrouped(label, tagGroups, selectedId, api) {
+async function renderTaggedWithGrouped(label, tagGroups, selectedId, api, tagTreeBuilder) {
   const group = api.createElement('div', {
     style: 'margin-bottom: 12px;'
   }, []);
@@ -221,12 +193,12 @@ async function renderTaggedWithGrouped(label, tagGroups, selectedId, api) {
   group.appendChild(groupLabel);
 
   // Get fully qualified root tag name for full path display
-  const rootName = await getFullyQualifiedName(selectedId, api);
+  const rootName = await tagTreeBuilder.getFullyQualifiedName(selectedId, api);
 
   for (const { tagId, items } of tagGroups) {
     const path = tagId === selectedId
       ? rootName
-      : rootName + '/' + await buildTagPath(tagId, selectedId, api);
+      : rootName + ' / ' + await tagTreeBuilder.getFullyQualifiedName(tagId, api, selectedId);
 
     const subSection = api.createElement('div', {
       style: 'margin-left: 8px; margin-bottom: 8px;'
