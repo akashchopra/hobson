@@ -737,8 +737,8 @@ export class RenderingSystem {
       const hob = await this.kernel.moduleSystem.require('40b00001-0000-4000-8000-000000000000');
       this._hobInterp = hob.createInterpreter({
         get: id => this.kernel.storage.get(id),
-        set: item => this.kernel.storage.set(item),
-        delete: id => this.kernel.storage.delete(id),
+        set: item => this.kernel.saveItem(item),
+        delete: id => this.kernel.deleteItem(id),
         getAll: () => this.kernel.storage.getAll(),
         query: filter => this.kernel.storage.query(filter),
       });
