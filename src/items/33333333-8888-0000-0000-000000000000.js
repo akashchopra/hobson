@@ -14,7 +14,7 @@
   /* Backgrounds */
   --color-bg-body: oklch(96% var(--tint-strength) var(--base-hue));
   --color-bg-surface: oklch(100% 0 0);  /* white */
-  --color-bg-surface-alt: oklch(97% var(--tint-strength) var(--base-hue));
+  --color-bg-surface-alt: oklch(99% var(--tint-strength) var(--base-hue));
   --color-bg-hover: oklch(94% var(--tint-strength) var(--base-hue));
   
   /* Borders */
@@ -78,7 +78,7 @@ body {
   flex: 1;
   display: flex;
   flex-direction: column;
-  background: var(--color-bg-surface);
+  background: var(--color-bg-surface-alt);
   border-radius: var(--border-radius-lg);
   padding: 2px;
   box-shadow: var(--shadow-sm);
