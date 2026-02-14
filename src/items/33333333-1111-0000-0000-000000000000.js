@@ -731,6 +731,7 @@ export async function loadKernel(require, storageBackend) {
 
       document.body.appendChild(overlay);
       searchInput.focus();
+      searchInput.select();
     }
 
     /** Remove the item list overlay if present. */
