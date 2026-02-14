@@ -2262,6 +2262,12 @@ function createStdlib() {
   env.define('log', Object.assign((...args) => { console.log(...args.map(a => prStr(a, false))); return null; }, { _hobName: 'log' }));
   env.define('log/warn', Object.assign((...args) => { console.warn(...args.map(a => prStr(a, false))); return null; }, { _hobName: 'log/warn' }));
   env.define('log/error', Object.assign((...args) => { console.error(...args.map(a => prStr(a, false))); return null; }, { _hobName: 'log/error' }));
+  env.define('confirm', Object.assign((msg) => confirm(prStr(msg, false)), { _hobName: 'confirm' }));
+  env.define('alert', Object.assign((msg) => { alert(prStr(msg, false)); return null; }, { _hobName: 'alert' }));
+
+  // --- Date/Time ---
+  env.define('now', Object.assign(() => Date.now(), { _hobName: 'now' }));
+  env.define('format-date', Object.assign((ts) => new Date(ts).toLocaleString(), { _hobName: 'format-date' }));
 
   // --- Utility ---
   env.define('type-of', Object.assign((x) => {
