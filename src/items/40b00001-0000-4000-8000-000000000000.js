@@ -616,7 +616,7 @@ function hiccupToDOM(hiccup) {
           }
         } else if (attrName === 'autofocus' && v) {
           el.setAttribute('autofocus', '');
-          setTimeout(() => el.focus(), 0);
+          setTimeout(() => { el.focus(); if (el.select) el.select(); }, 0);
         } else if (attrName === 'sortable') {
           const config = {};
           if (v && typeof v === 'object') {
