@@ -322,6 +322,12 @@ export class RenderingSystem {
             const morphdom = await this._loadMorphdom();
 
             morphdom(oldDom, newDom, {
+              // Key children by data-sort-key for correct reorder matching.
+              // Uses a dedicated attribute to avoid collisions with data-item-id
+              // on elements deep inside rendered items (indexTree walks recursively).
+              getNodeKey(el) {
+                return el.getAttribute?.('data-sort-key') || el.id;
+              },
               // Transfer Hob event handlers from new element to old
               onBeforeElUpdated(fromEl, toEl) {
                 // Skip nested render instances — they have their own lifecycle
@@ -341,6 +347,12 @@ export class RenderingSystem {
                   fromEl.__hobEvents = toEl.__hobEvents;
                 } else {
                   delete fromEl.__hobEvents;
+                }
+                // Transfer sortable config (handler stays, config updates)
+                if (toEl.__hobSortable) {
+                  fromEl.__hobSortable = toEl.__hobSortable;
+                } else if (fromEl.__hobSortable) {
+                  delete fromEl.__hobSortable;
                 }
                 return true;
               },
@@ -855,6 +867,17 @@ export class RenderingSystem {
 
     // Flag Hob view DOM nodes so rerenderItem can use morphdom instead of replaceChild
     if (domNode) domNode.__hobView = true;
+
+    // Setup sortable containers
+    if (domNode) {
+      const sortables = domNode.querySelectorAll('[data-hob-sortable]');
+      for (const el of sortables) {
+        if (!el.__hobSortableSetup) this._hobModule.setupSortable(el);
+      }
+      if (domNode.hasAttribute?.('data-hob-sortable') && !domNode.__hobSortableSetup) {
+        this._hobModule.setupSortable(domNode);
+      }
+    }
 
     return { domNode, trackingId };
   }
