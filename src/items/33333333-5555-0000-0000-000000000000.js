@@ -317,22 +317,82 @@ export class RenderingSystem {
 
         // Replace content in existing container (re-check parentNode — async work above may have changed it)
         if (oldDom.parentNode) {
-          // Clean up resources (CodeMirror instances, observers, etc.) before removal
-          cleanupDOMTree(oldDom);
+          if (oldDom.__hobView && newDom.__hobView) {
+            // === Morphdom path: patch existing DOM in-place ===
+            const morphdom = await this._loadMorphdom();
 
-          // Unregister all instances in the old DOM subtree (including nested children)
-          const nestedInstances = oldDom.querySelectorAll('[data-render-instance]');
-          for (const el of nestedInstances) {
-            const nestedId = parseInt(el.dataset.renderInstance, 10);
-            this.registry.unregister(nestedId);
-            if (this._depTracker) this._depTracker.clearDeps(nestedId);
+            morphdom(oldDom, newDom, {
+              // Transfer Hob event handlers from new element to old
+              onBeforeElUpdated(fromEl, toEl) {
+                // Skip nested render instances — they have their own lifecycle
+                if (fromEl.hasAttribute('data-render-instance') && fromEl !== oldDom) {
+                  return false;
+                }
+                // Remove old event listeners, add new ones
+                if (fromEl.__hobEvents) {
+                  for (const [evt, fn] of Object.entries(fromEl.__hobEvents)) {
+                    fromEl.removeEventListener(evt, fn);
+                  }
+                }
+                if (toEl.__hobEvents) {
+                  for (const [evt, fn] of Object.entries(toEl.__hobEvents)) {
+                    fromEl.addEventListener(evt, fn);
+                  }
+                  fromEl.__hobEvents = toEl.__hobEvents;
+                } else {
+                  delete fromEl.__hobEvents;
+                }
+                return true;
+              },
+
+              onNodeDiscarded(node) {
+                if (node.nodeType === 1) {
+                  cleanupDOMTree(node);
+                }
+              }
+            });
+
+            // After morphdom: oldDom is still in the DOM (patched in place).
+            // Clean up the NEW render's registry entries since those DOM nodes
+            // were consumed by morphdom (not in document as standalone nodes).
+            const newNested = newDom.querySelectorAll('[data-render-instance]');
+            for (const el of newNested) {
+              const nestedId = parseInt(el.getAttribute('data-render-instance'), 10);
+              this.registry.unregister(nestedId);
+              if (this._depTracker) this._depTracker.clearDeps(nestedId);
+            }
+
+            // renderItem registered a new instance pointing to newDom.
+            // Find it and update it to point to oldDom (which is still in the document).
+            const newInstance = this.registry.getByItemId(itemId)
+              .find(i => i.domNode === newDom);
+            if (newInstance) {
+              // Unregister old instance, transfer new instance to oldDom
+              this.registry.unregister(instance.instanceId);
+              if (this._depTracker) this._depTracker.clearDeps(instance.instanceId);
+              newInstance.domNode = oldDom;
+              oldDom.setAttribute('data-render-instance', newInstance.instanceId);
+            }
+
+            // Preserve the __hobView flag on the patched node
+            oldDom.__hobView = true;
+            updated++;
+          } else {
+            // === Original replaceChild path (JS views, or mixed) ===
+            cleanupDOMTree(oldDom);
+
+            const nestedInstances = oldDom.querySelectorAll('[data-render-instance]');
+            for (const el of nestedInstances) {
+              const nestedId = parseInt(el.dataset.renderInstance, 10);
+              this.registry.unregister(nestedId);
+              if (this._depTracker) this._depTracker.clearDeps(nestedId);
+            }
+            this.registry.unregister(instance.instanceId);
+            if (this._depTracker) this._depTracker.clearDeps(instance.instanceId);
+
+            oldDom.parentNode.replaceChild(newDom, oldDom);
+            updated++;
           }
-          // Unregister the root instance itself
-          this.registry.unregister(instance.instanceId);
-          if (this._depTracker) this._depTracker.clearDeps(instance.instanceId);
-
-          oldDom.parentNode.replaceChild(newDom, oldDom);
-          updated++;
         } else {
           // DOM was detached during async rendering — clean up the new render's side effects
           cleanupDOMTree(newDom);
@@ -791,7 +851,21 @@ export class RenderingSystem {
       domNode = result;
     }
 
+    // Flag Hob view DOM nodes so rerenderItem can use morphdom instead of replaceChild
+    if (domNode) domNode.__hobView = true;
+
     return { domNode, trackingId };
+  }
+
+  /** Lazy-load morphdom library (cached on this instance).
+   * @returns {Promise<Function>} The morphdom function
+   */
+  async _loadMorphdom() {
+    if (!this._morphdom) {
+      const mod = await this.kernel.moduleSystem.require('m0rphd0m0-0000-0000-0000-000000000000');
+      this._morphdom = mod.default || mod;
+    }
+    return this._morphdom;
   }
 
   // ============================================================
