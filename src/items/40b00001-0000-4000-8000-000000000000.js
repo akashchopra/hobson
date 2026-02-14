@@ -2450,6 +2450,16 @@ function registerViewOps(env, api) {
     const searchLib = await api.require('item-search-lib');
     return await searchLib.getStarredItems(api, options ? hobToJs(options) : {});
   }, { _hobName: 'get-starred-items!' }));
+
+  env.define('render-markdown', Object.assign(async (text) => {
+    const hobsonMarkdown = await api.require('hobson-markdown');
+    return await hobsonMarkdown.render(text, api);
+  }, { _hobName: 'render-markdown' }));
+
+  env.define('copy-to-clipboard!', Object.assign(async (text) => {
+    await navigator.clipboard.writeText(text);
+    return null;
+  }, { _hobName: 'copy-to-clipboard!' }));
 }
 
 // ============================================================
