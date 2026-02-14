@@ -2410,6 +2410,11 @@ function registerViewOps(env, api) {
     return null;
   }, { _hobName: 'navigate!' }));
 
+  env.define('open-item!', Object.assign((itemId) => {
+    api.openItem(itemId);
+    return null;
+  }, { _hobName: 'open-item!' }));
+
   env.define('rerender!', Object.assign(() => {
     api.rerenderItem();
     return null;
