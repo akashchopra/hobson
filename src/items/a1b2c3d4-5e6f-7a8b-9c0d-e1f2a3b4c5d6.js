@@ -124,7 +124,18 @@ export async function render(markdown, api, options = {}) {
       const href = token.attrs[hrefIndex][1];
       if (href.startsWith('item://')) {
         token.attrSet('data-item-link', href);
-        token.attrSet('href', '#');
+        const parsed = parseItemUrl(href);
+        if (parsed) {
+          const url = new URL(window.location);
+          url.searchParams.set('root', parsed.itemId);
+          url.searchParams.delete('field'); url.searchParams.delete('line');
+          url.searchParams.delete('symbol'); url.searchParams.delete('region');
+          if (parsed.fragment) url.searchParams.set('field', parsed.fragment);
+          if (parsed.queryParams.lines) url.searchParams.set('line', parsed.queryParams.lines);
+          if (parsed.queryParams.symbol) url.searchParams.set('symbol', parsed.queryParams.symbol);
+          if (parsed.queryParams.region) url.searchParams.set('region', parsed.queryParams.region);
+          token.attrSet('href', url.pathname + url.search);
+        }
       } else if (href.startsWith('http://') || href.startsWith('https://')) {
         // External links open in new tab
         token.attrSet('target', '_blank');
@@ -160,6 +171,8 @@ export async function render(markdown, api, options = {}) {
     const parsed = parseItemUrl(href);
     if (parsed) {
       link.onclick = (e) => {
+        // Let browser handle Ctrl/Cmd+Click natively (opens href in new tab)
+        if (e.ctrlKey || e.metaKey) return;
         e.preventDefault();
         // Build navigateTo params from URL fragment and query params
         const navigateTo = {
@@ -170,8 +183,16 @@ export async function render(markdown, api, options = {}) {
         };
         const hasNavigation = navigateTo.field || navigateTo.line || navigateTo.region || navigateTo.symbol;
 
-        api.openItem(parsed.itemId, hasNavigation ? navigateTo : null);
+        if (e.altKey) {
+          // Alt+Click: open as root (navigate viewport)
+          api.navigate(parsed.itemId, hasNavigation ? navigateTo : undefined);
+        } else {
+          // Plain click: open as sibling (or navigate if no container)
+          api.openItem(parsed.itemId, hasNavigation ? navigateTo : null);
+        }
       };
+      // Let browser show native context menu (with "Copy link") instead of Hobson's
+      link.addEventListener('contextmenu', (e) => { e.stopPropagation(); });
       link.style.cssText = 'color: var(--color-primary); text-decoration: none; border-bottom: 1px solid var(--color-primary); cursor: pointer;';
     }
   });
@@ -406,6 +427,7 @@ export async function render(markdown, api, options = {}) {
           const parsed = parseItemUrl(href);
           if (parsed) {
             link.onclick = (e) => {
+              if (e.ctrlKey || e.metaKey) return;
               e.preventDefault();
               const navigateTo = {
                 field: parsed.fragment,
@@ -415,8 +437,13 @@ export async function render(markdown, api, options = {}) {
               };
               const hasNavigation = navigateTo.field || navigateTo.line || navigateTo.region || navigateTo.symbol;
 
-              api.openItem(parsed.itemId, hasNavigation ? navigateTo : null);
+              if (e.altKey) {
+                api.navigate(parsed.itemId, hasNavigation ? navigateTo : undefined);
+              } else {
+                api.openItem(parsed.itemId, hasNavigation ? navigateTo : null);
+              }
             };
+            link.addEventListener('contextmenu', (e) => { e.stopPropagation(); });
             link.style.cssText = 'color: var(--color-primary); text-decoration: none; border-bottom: 1px solid var(--color-primary); cursor: pointer;';
           }
         });
