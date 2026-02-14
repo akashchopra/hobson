@@ -74,7 +74,7 @@ export async function render(item, api) {
   // Main container
   const container = api.createElement('div', {
     'data-container-id': item.id,
-    style: 'position: relative; width: 100%; height: 100%; overflow: hidden;'
+    style: 'position: relative; width: 100%; height: 100%; overflow: hidden; background: var(--color-bg-body);'
   }, []);
 
   // Non-scrolling overlay for anchored/docked windows (z-index on children, not layer)
