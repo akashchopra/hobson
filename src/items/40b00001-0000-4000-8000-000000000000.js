@@ -614,6 +614,9 @@ function hiccupToDOM(hiccup) {
           for (const c of v.split(/\s+/)) {
             if (c) el.classList.add(c);
           }
+        } else if (attrName === 'autofocus' && v) {
+          el.setAttribute('autofocus', '');
+          setTimeout(() => el.focus(), 0);
         } else if (v === true) {
           el.setAttribute(attrName, '');
         } else if (v === false || v === null || v === undefined) {
@@ -2437,6 +2440,16 @@ function registerViewOps(env, api) {
   env.define('require', Object.assign(async (name) => {
     return await api.require(name);
   }, { _hobName: 'require' }));
+
+  env.define('search-items!', Object.assign(async (query, options) => {
+    const searchLib = await api.require('item-search-lib');
+    return await searchLib.searchItems(query, api, options ? hobToJs(options) : {});
+  }, { _hobName: 'search-items!' }));
+
+  env.define('get-starred-items!', Object.assign(async (options) => {
+    const searchLib = await api.require('item-search-lib');
+    return await searchLib.getStarredItems(api, options ? hobToJs(options) : {});
+  }, { _hobName: 'get-starred-items!' }));
 }
 
 // ============================================================
