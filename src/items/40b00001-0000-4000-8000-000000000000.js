@@ -617,6 +617,15 @@ function hiccupToDOM(hiccup) {
         } else if (attrName === 'autofocus' && v) {
           el.setAttribute('autofocus', '');
           setTimeout(() => el.focus(), 0);
+        } else if (attrName === 'sortable') {
+          const config = {};
+          if (v && typeof v === 'object') {
+            for (const [ck, cv] of Object.entries(v)) {
+              config[isKeyword(ck) ? keywordName(ck) : ck] = cv;
+            }
+          }
+          el.__hobSortable = config;
+          el.setAttribute('data-hob-sortable', '');
         } else if (v === true) {
           el.setAttribute(attrName, '');
         } else if (v === false || v === null || v === undefined) {
@@ -646,6 +655,79 @@ function appendHiccupChild(parent, child) {
     const node = hiccupToDOM(child);
     if (node) parent.appendChild(node);
   }
+}
+
+// ============================================================
+// setupSortable — declarative drag-and-drop for :sortable attr
+// ============================================================
+
+function setupSortable(el) {
+  el.addEventListener('mousedown', (e) => {
+    const config = el.__hobSortable;
+    if (!config) return;
+    const handleSelector = config.handle || '.drag-handle';
+    const handle = e.target.closest(handleSelector);
+    if (!handle || !el.contains(handle)) return;
+
+    e.preventDefault();
+    const items = Array.from(el.querySelectorAll(':scope > [data-item-id]'));
+    const draggedItem = handle.closest('[data-item-id]');
+    const draggedIndex = items.indexOf(draggedItem);
+    if (draggedIndex === -1) return;
+
+    draggedItem.style.opacity = '0.5';
+    handle.style.cursor = 'grabbing';
+
+    const indicator = document.createElement('div');
+    indicator.style.cssText = 'height: 3px; background: var(--color-primary); margin: 4px 0; border-radius: 2px;';
+
+    const onMouseMove = (moveE) => {
+      const mouseY = moveE.clientY;
+      let targetIndex = items.length;
+      for (let i = 0; i < items.length; i++) {
+        if (items[i] === draggedItem) continue;
+        const rect = items[i].getBoundingClientRect();
+        if (mouseY < rect.top + rect.height / 2) {
+          targetIndex = i;
+          break;
+        }
+      }
+      if (targetIndex < items.length) {
+        el.insertBefore(indicator, items[targetIndex]);
+      } else {
+        el.appendChild(indicator);
+      }
+    };
+
+    const onMouseUp = (upE) => {
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+
+      draggedItem.style.opacity = '';
+      handle.style.cursor = '';
+      if (indicator.parentNode) indicator.remove();
+
+      const mouseY = upE.clientY;
+      let newIndex = items.length;
+      for (let i = 0; i < items.length; i++) {
+        if (items[i] === draggedItem) continue;
+        const rect = items[i].getBoundingClientRect();
+        if (mouseY < rect.top + rect.height / 2) {
+          newIndex = i;
+          break;
+        }
+      }
+      if (newIndex > draggedIndex) newIndex--;
+
+      if (newIndex !== draggedIndex && config['on-reorder']) {
+        config['on-reorder'](draggedIndex, newIndex);
+      }
+    };
+
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+  });
+  el.__hobSortableSetup = true;
 }
 
 // ============================================================
@@ -2460,6 +2542,21 @@ function registerViewOps(env, api) {
     await navigator.clipboard.writeText(text);
     return null;
   }, { _hobName: 'copy-to-clipboard!' }));
+
+  env.define('detach!', Object.assign(async (childId) => {
+    await api.detach(childId);
+    return null;
+  }, { _hobName: 'detach!' }));
+
+  env.define('reorder-attachments!', Object.assign(async (fromIndex, toIndex) => {
+    const itemId = api.getCurrentItem().id;
+    const fresh = await api.get(itemId);
+    const attachments = [...(fresh.attachments || [])];
+    const [moved] = attachments.splice(fromIndex, 1);
+    attachments.splice(toIndex, 0, moved);
+    await api.set({ ...fresh, attachments, modified: Date.now() });
+    return null;
+  }, { _hobName: 'reorder-attachments!' }));
 }
 
 // ============================================================
@@ -2480,7 +2577,7 @@ function registerEventOps(env, eventApi) {
 export { read, readAll, evaluate, prStr, Environment, HobError, tokenize, parse,
          keyword, isKeyword, valueToAst, astToValue, hiccupToDOM, parseTag,
          registerViewOps, registerItemOps, registerEventOps, hobToJs,
-         DependencyTracker, setAtomMutationCallback };
+         DependencyTracker, setAtomMutationCallback, setupSortable };
 
 // ============================================================
 // Standard Macros (loaded at interpreter creation time)
