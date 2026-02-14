@@ -833,6 +833,8 @@ export class RenderingSystem {
 
     // Wrap evaluation in tracking context
     if (trackingId != null) this._depTracker.startTracking(trackingId);
+    // Register the item itself as a dependency so Hob views don't need (get-item (:id item))
+    if (trackingId != null) this._depTracker.recordAccess(item.id);
 
     let result = null;
     try {
