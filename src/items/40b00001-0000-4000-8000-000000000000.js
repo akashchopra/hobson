@@ -2421,6 +2421,11 @@ function registerViewOps(env, api) {
     return null;
   }, { _hobName: 'open-item!' }));
 
+  env.define('clear-selection!', Object.assign(async () => {
+    if (api.viewport?.clearSelection) await api.viewport.clearSelection();
+    return null;
+  }, { _hobName: 'clear-selection!' }));
+
   env.define('rerender!', Object.assign(() => {
     api.rerenderItem();
     return null;
