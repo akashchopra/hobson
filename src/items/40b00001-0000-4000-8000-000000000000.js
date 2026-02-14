@@ -2308,6 +2308,22 @@ function createStdlib() {
     return [...coll].reverse();
   }, { _hobName: 'reverse' }));
 
+  env.define('distinct', Object.assign((coll) => {
+    if (coll === null) return [];
+    const seen = new Set();
+    const result = [];
+    for (const item of coll) {
+      const key = typeof item === 'object' ? JSON.stringify(item) : item;
+      if (!seen.has(key)) { seen.add(key); result.push(item); }
+    }
+    return result;
+  }, { _hobName: 'distinct' }));
+
+  env.define('take', Object.assign((n, coll) => {
+    if (coll === null) return [];
+    return [...coll].slice(0, n);
+  }, { _hobName: 'take' }));
+
   // --- Predicates ---
   env.define('nil?', Object.assign((x) => x === null, { _hobName: 'nil?' }));
   env.define('number?', Object.assign((x) => typeof x === 'number', { _hobName: 'number?' }));
@@ -2557,6 +2573,28 @@ function registerViewOps(env, api) {
     await api.set({ ...fresh, attachments, modified: Date.now() });
     return null;
   }, { _hobName: 'reorder-attachments!' }));
+
+  env.define('get-selection!', Object.assign(async () => {
+    const selectionMgr = await api.require('selection-manager');
+    return selectionMgr.getSelection() || null;
+  }, { _hobName: 'get-selection!' }));
+
+  env.define('get-related!', Object.assign(async (itemId) => {
+    const relatedLib = await api.require('related-items-lib');
+    await relatedLib.ensureBuilt(api);
+    return await relatedLib.getRelated(itemId, api);
+  }, { _hobName: 'get-related!' }));
+
+  env.define('get-fqn!', Object.assign(async (itemId, rootId) => {
+    const tagTreeBuilder = await api.require('tag-tree-builder');
+    return await tagTreeBuilder.getFullyQualifiedName(itemId, api, rootId || undefined);
+  }, { _hobName: 'get-fqn!' }));
+
+  env.define('get-tagged-with-grouped!', Object.assign(async (itemId) => {
+    const relatedLib = await api.require('related-items-lib');
+    await relatedLib.ensureBuilt(api);
+    return relatedLib.getItemsTaggedWithGrouped(itemId);
+  }, { _hobName: 'get-tagged-with-grouped!' }));
 }
 
 // ============================================================
