@@ -2430,6 +2430,10 @@ function registerViewOps(env, api) {
     api.rerenderItem();
     return null;
   }, { _hobName: 'rerender!' }));
+
+  env.define('require', Object.assign(async (name) => {
+    return await api.require(name);
+  }, { _hobName: 'require' }));
 }
 
 // ============================================================
