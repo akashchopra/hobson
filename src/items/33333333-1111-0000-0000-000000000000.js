@@ -2277,8 +2277,10 @@ export async function loadKernel(require, storageBackend) {
           return;
         }
 
-        // Hob handler branch: items with content.hob use the Hob interpreter
-        if (watcherItem.content?.hob) {
+        // Hob handler branch: items with content.hob (but no JS code) use the Hob interpreter.
+        // Dual-content items (content.hob + content.code) use JS for watch handlers
+        // since Hob cannot express event handlers.
+        if (watcherItem.content?.hob && !watcherItem.content?.code) {
           await this.callHobWatchHandler(watcherItem, event, eventName);
           return;
         }
