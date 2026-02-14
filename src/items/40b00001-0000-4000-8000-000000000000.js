@@ -601,7 +601,10 @@ function hiccupToDOM(hiccup) {
       for (const [k, v] of Object.entries(attrs)) {
         const attrName = isKeyword(k) ? keywordName(k) : k;
         if (attrName.startsWith('on-')) {
-          el.addEventListener(attrName.slice(3), v);
+          const eventName = attrName.slice(3);
+          el.addEventListener(eventName, v);
+          if (!el.__hobEvents) el.__hobEvents = {};
+          el.__hobEvents[eventName] = v;
         } else if (attrName === 'style' && typeof v === 'object' && v !== null) {
           for (const [sp, sv] of Object.entries(v)) {
             const cssProp = isKeyword(sp) ? keywordName(sp) : sp;
