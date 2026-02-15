@@ -2608,6 +2608,29 @@ function registerViewOps(env, api) {
     await relatedLib.ensureBuilt(api);
     return relatedLib.getItemsTaggedWithGrouped(itemId);
   }, { _hobName: 'get-tagged-with-grouped!' }));
+
+  env.define('inspect-once!', Object.assign(async () => {
+    const lib = await api.require('element-inspector-lib');
+    return await lib.inspectOnce(api);
+  }, { _hobName: 'inspect-once!' }));
+
+  env.define('inspect-navigate!', Object.assign(async (opts) => {
+    const lib = await api.require('element-inspector-lib');
+    return await lib.resolveAndNavigate(api, hobToJs(opts));
+  }, { _hobName: 'inspect-navigate!' }));
+
+  env.define('get-debug-mode', Object.assign(() => {
+    return window.kernel?.debugMode || false;
+  }, { _hobName: 'get-debug-mode' }));
+
+  env.define('set-debug-mode!', Object.assign((value) => {
+    window.kernel.debugMode = !!value;
+    return null;
+  }, { _hobName: 'set-debug-mode!' }));
+
+  env.define('get-viewport-root', Object.assign(() => {
+    return api.viewport.getRoot();
+  }, { _hobName: 'get-viewport-root' }));
 }
 
 // ============================================================
