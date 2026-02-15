@@ -275,8 +275,11 @@ export async function render(item, api) {
         row.appendChild(api.createElement('strong', {}, ['Source: ']));
         const label = entry.source + (entry.sourceLine ? ':' + entry.sourceLine : '');
         const link = api.createElement('a', { style: STYLES.link }, [label]);
-        link.onclick = () => lib.resolveAndNavigate(api, { name: entry.source, line: entry.sourceLine });
+        link.onclick = () => lib.resolveAndNavigate(api, { name: entry.source, line: entry.sourceLine, lang: entry.sourceLang });
         row.appendChild(link);
+        if (entry.sourceLang) {
+          row.appendChild(api.createElement('span', { style: 'color: #888; font-size: 11px; margin-left: 4px;' }, ['(' + entry.sourceLang + ')']));
+        }
         card.appendChild(row);
       }
 

@@ -95,6 +95,7 @@ export function collectElementInfo(element) {
     if (el.dataset.source) {
       entry.source = el.dataset.source;
       entry.sourceLine = el.dataset.sourceLine;
+      if (el.dataset.sourceLang) entry.sourceLang = el.dataset.sourceLang;
     }
     if (el.dataset.viewId) {
       entry.viewId = el.dataset.viewId;
@@ -174,7 +175,7 @@ export function inspectOnce(api) {
  * Resolve an inspector link target and navigate to it.
  * Opens as sibling on spatial canvas if available.
  */
-export async function resolveAndNavigate(api, { id, name, line }) {
+export async function resolveAndNavigate(api, { id, name, line, lang }) {
   // Resolve target item ID
   let targetId = id;
   if (!targetId && name) {
@@ -196,8 +197,8 @@ export async function resolveAndNavigate(api, { id, name, line }) {
   if (!targetId) return;
 
   // Build navigation params for scroll-to-line support
-  // Inspector links point to code, so field is 'code'
-  const navigateTo = line ? { field: 'code', lines: line } : null;
+  const field = lang === 'hob' ? 'hob' : 'code';
+  const navigateTo = line ? { field, lines: line } : null;
 
   // Open as sibling on spatial canvas if possible
   const currentRoot = api.viewport.getRoot();
