@@ -2733,6 +2733,12 @@ const STANDARD_MACROS = `
         coll (first (rest bindings))]
     \`(vec (map (fn [~sym] ~body) ~coll))))
 
+;; doseq — (doseq [x coll] body...) => run body for side effects, return nil
+(defmacro doseq [bindings & body]
+  (let [sym (first bindings)
+        coll (first (rest bindings))]
+    \`(do (map (fn [~sym] ~@body) ~coll) nil)))
+
 ;; and — recursive with gensym
 (defmacro and [& args]
   (if (empty? args)

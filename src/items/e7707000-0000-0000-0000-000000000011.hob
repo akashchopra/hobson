@@ -1,0 +1,51 @@
+;; Error List View — displays all errors newest-first with clear all option
+
+(let [error-type-id "e7707000-0000-0000-0000-000000000001"
+
+      ;; Query all errors and sort newest-first
+      all-items (get-all)
+      errors (->> all-items
+                  (filter (fn [i] (= (:type i) error-type-id)))
+                  (sort-by (fn [i] (- (or (get-in i [:content :timestamp]) 0)))))
+      error-count (count errors)
+
+      ;; Find compact-card-view for rendering each error
+      compact-view-id (let [views (find-items {:name "compact-card-view"})]
+                        (when (seq views) (:id (first views))))
+
+      ;; Styles
+      s-container "max-width: 800px; margin: 0 auto; padding: 20px;"
+      s-header "display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; padding-bottom: 15px; border-bottom: 2px solid var(--color-border-light);"
+      s-title "margin: 0; font-size: 1.25rem;"
+      s-count "font-size: 0.875rem; color: var(--color-text-secondary); margin-top: 4px;"
+      s-btn-group "display: flex; gap: 8px;"
+      s-btn-refresh "padding: 8px 16px; background: var(--color-bg-hover); color: var(--color-text); border: none; border-radius: var(--border-radius); cursor: pointer; font-size: 0.875rem;"
+      s-btn-clear "padding: 8px 16px; background: var(--color-danger); color: white; border: none; border-radius: var(--border-radius); cursor: pointer; font-size: 0.875rem;"
+      s-empty "padding: 40px; text-align: center; color: var(--color-text-secondary); font-style: italic;"]
+
+  [:div {:style s-container}
+    ;; Header
+    [:div {:style s-header}
+      [:div {}
+        [:h2 {:style s-title} (or (:name item) "Error List")]
+        [:div {:style s-count}
+          (if (= error-count 0)
+            "No errors"
+            (str error-count " error" (when (not= error-count 1) "s")))]]
+      [:div {:style s-btn-group}
+        [:button {:style s-btn-refresh
+                  :on-click (fn [e] (rerender!))}
+          "Refresh"]
+        (when (> error-count 0)
+          [:button {:style s-btn-clear
+                    :on-click (fn [e]
+                      (when (confirm (str "Delete " error-count " error" (when (not= error-count 1) "s") "?"))
+                        (doseq [err errors] (delete-item! (:id err)))
+                        (rerender!)))}
+            "Clear All"])]]
+
+    ;; Error list or empty state
+    (if (= error-count 0)
+      [:div {:style s-empty} "No errors"]
+      (for [err errors]
+        (render-item (:id err) compact-view-id)))])
