@@ -2522,7 +2522,7 @@ function registerItemOps(env, api) {
   }, { _hobName: 'get-all' }));
 
   env.define('find-items', Object.assign(async (filter) => {
-    return await api.query(filter);
+    return await api.query(hobToJs(filter));
   }, { _hobName: 'find-items' }));
 
   // Resolve item references
