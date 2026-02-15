@@ -2469,6 +2469,13 @@ function createStdlib() {
     }));
   }, { _hobName: 'pmap' }));
 
+  // --- JS Interop ---
+  env.define('invoke', Object.assign(async (obj, method, ...args) => {
+    const jsArgs = args.map(a => hobToJs(a));
+    const result = obj[method](...jsArgs);
+    return (result && typeof result.then === 'function') ? await result : result;
+  }, { _hobName: 'invoke' }));
+
   return env;
 }
 
@@ -2536,6 +2543,8 @@ function registerItemOps(env, api) {
 // ============================================================
 
 function registerViewOps(env, api) {
+  env.define('api', api);
+
   env.define('render-item', Object.assign(async (itemId, viewId) => {
     const dom = await api.renderItem(itemId, viewId || null);
     return dom;
@@ -2621,16 +2630,6 @@ function registerViewOps(env, api) {
     await relatedLib.ensureBuilt(api);
     return relatedLib.getItemsTaggedWithGrouped(itemId);
   }, { _hobName: 'get-tagged-with-grouped!' }));
-
-  env.define('inspect-once!', Object.assign(async () => {
-    const lib = await api.require('element-inspector-lib');
-    return await lib.inspectOnce(api);
-  }, { _hobName: 'inspect-once!' }));
-
-  env.define('inspect-navigate!', Object.assign(async (opts) => {
-    const lib = await api.require('element-inspector-lib');
-    return await lib.resolveAndNavigate(api, hobToJs(opts));
-  }, { _hobName: 'inspect-navigate!' }));
 
   env.define('get-debug-mode', Object.assign(() => {
     return window.kernel?.debugMode || false;
