@@ -566,7 +566,7 @@ function parseTag(tagStr) {
   return { tag: tag || 'div', id, classes };
 }
 
-function hiccupToDOM(hiccup) {
+function hiccupToDOM(hiccup, sourceCtx) {
   if (hiccup === null || hiccup === undefined) return null;
   if (typeof hiccup === 'string' || typeof hiccup === 'number') {
     return document.createTextNode(String(hiccup));
@@ -581,7 +581,7 @@ function hiccupToDOM(hiccup) {
       // Not a hiccup element — treat as fragment of children
       const frag = document.createDocumentFragment();
       for (const child of hiccup) {
-        const node = hiccupToDOM(child);
+        const node = hiccupToDOM(child, sourceCtx);
         if (node) frag.appendChild(node);
       }
       return frag;
@@ -591,6 +591,15 @@ function hiccupToDOM(hiccup) {
     const el = document.createElement(parsed.tag);
     if (parsed.id) el.id = parsed.id;
     if (parsed.classes.length) el.classList.add(...parsed.classes);
+
+    // Stamp source attribution for element inspector
+    if (sourceCtx) {
+      el.setAttribute('data-source', sourceCtx.viewName);
+      el.setAttribute('data-source-lang', 'hob');
+      el.setAttribute('data-view-id', sourceCtx.viewId);
+      if (sourceCtx.forItem) el.setAttribute('data-for-item', sourceCtx.forItem);
+      if (hiccup._hobLine != null) el.setAttribute('data-source-line', String(hiccup._hobLine));
+    }
 
     let childStart = 1;
     // Check for attribute map
@@ -638,7 +647,7 @@ function hiccupToDOM(hiccup) {
 
     // Process children (flatten nested arrays from map/for)
     for (let i = childStart; i < hiccup.length; i++) {
-      appendHiccupChild(el, hiccup[i]);
+      appendHiccupChild(el, hiccup[i], sourceCtx);
     }
     return el;
   }
@@ -646,13 +655,13 @@ function hiccupToDOM(hiccup) {
   return document.createTextNode(String(hiccup));
 }
 
-function appendHiccupChild(parent, child) {
+function appendHiccupChild(parent, child, sourceCtx) {
   if (child === null || child === undefined) return;
   if (Array.isArray(child) && child.length > 0 && !isKeyword(child[0])) {
     // Flatten non-hiccup arrays (e.g. from map)
-    for (const c of child) appendHiccupChild(parent, c);
+    for (const c of child) appendHiccupChild(parent, c, sourceCtx);
   } else {
-    const node = hiccupToDOM(child);
+    const node = hiccupToDOM(child, sourceCtx);
     if (node) parent.appendChild(node);
   }
 }
@@ -936,6 +945,10 @@ async function evaluate(ast, env, callStack) {
       results.push(await evaluate(el, env, callStack));
     }
     Object.defineProperty(results, '_isHobVector', { value: true });
+    if (ast.line != null) {
+      Object.defineProperty(results, '_hobLine', { value: ast.line });
+      Object.defineProperty(results, '_hobCol', { value: ast.col });
+    }
     return results;
   }
 

@@ -98,6 +98,9 @@ export async function render(item, api) {
     // Get current value from item
     const value = getNestedValue(item, path);
 
+    // Skip optional fields that aren't present on this item
+    if (hint.showIfPresent && !value) continue;
+
     // Load field view
     // Default to markdown for description field, json for everything else
     const defaultFieldView = path === 'content.description' ? 'markdown' : 'json';
