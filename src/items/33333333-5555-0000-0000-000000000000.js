@@ -858,9 +858,11 @@ export class RenderingSystem {
     }
 
     // Result should be a hiccup vector — convert to DOM
+    const debugActive = context.debug || this.kernel.debugMode;
+    const sourceCtx = debugActive ? { viewName: view.name, viewId: view.id, forItem: item.id } : null;
     let domNode = null;
     if (result && Array.isArray(result)) {
-      domNode = this._hobModule.hiccupToDOM(result);
+      domNode = this._hobModule.hiccupToDOM(result, sourceCtx);
     } else if (result && result.nodeType) {
       domNode = result;
     }
