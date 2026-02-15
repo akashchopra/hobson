@@ -566,7 +566,7 @@ function parseTag(tagStr) {
   return { tag: tag || 'div', id, classes };
 }
 
-function hiccupToDOM(hiccup, sourceCtx) {
+function hiccupToDOM(hiccup, sourceCtx, _refs) {
   if (hiccup === null || hiccup === undefined) return null;
   if (typeof hiccup === 'string' || typeof hiccup === 'number') {
     return document.createTextNode(String(hiccup));
@@ -581,7 +581,7 @@ function hiccupToDOM(hiccup, sourceCtx) {
       // Not a hiccup element — treat as fragment of children
       const frag = document.createDocumentFragment();
       for (const child of hiccup) {
-        const node = hiccupToDOM(child, sourceCtx);
+        const node = hiccupToDOM(child, sourceCtx, _refs);
         if (node) frag.appendChild(node);
       }
       return frag;
@@ -609,7 +609,11 @@ function hiccupToDOM(hiccup, sourceCtx) {
       childStart = 2;
       for (const [k, v] of Object.entries(attrs)) {
         const attrName = isKeyword(k) ? keywordName(k) : k;
-        if (attrName.startsWith('on-')) {
+        if (attrName === 'ref' && _refs) {
+          // Store element in refs map under the ref name
+          const refName = isKeyword(v) ? keywordName(v) : String(v);
+          _refs[refName] = el;
+        } else if (attrName.startsWith('on-')) {
           const eventName = attrName.slice(3);
           el.addEventListener(eventName, v);
           if (!el.__hobEvents) el.__hobEvents = {};
@@ -647,7 +651,7 @@ function hiccupToDOM(hiccup, sourceCtx) {
 
     // Process children (flatten nested arrays from map/for)
     for (let i = childStart; i < hiccup.length; i++) {
-      appendHiccupChild(el, hiccup[i], sourceCtx);
+      appendHiccupChild(el, hiccup[i], sourceCtx, _refs);
     }
     return el;
   }
@@ -655,13 +659,19 @@ function hiccupToDOM(hiccup, sourceCtx) {
   return document.createTextNode(String(hiccup));
 }
 
-function appendHiccupChild(parent, child, sourceCtx) {
+function hiccupToDOMWithRefs(hiccup, sourceCtx) {
+  const refs = {};
+  const dom = hiccupToDOM(hiccup, sourceCtx, refs);
+  return [dom, refs];
+}
+
+function appendHiccupChild(parent, child, sourceCtx, _refs) {
   if (child === null || child === undefined) return;
   if (Array.isArray(child) && child.length > 0 && !isKeyword(child[0])) {
     // Flatten non-hiccup arrays (e.g. from map)
-    for (const c of child) appendHiccupChild(parent, c, sourceCtx);
+    for (const c of child) appendHiccupChild(parent, c, sourceCtx, _refs);
   } else {
-    const node = hiccupToDOM(child, sourceCtx);
+    const node = hiccupToDOM(child, sourceCtx, _refs);
     if (node) parent.appendChild(node);
   }
 }
@@ -2234,9 +2244,27 @@ function createStdlib() {
     return false;
   }, { _hobName: 'contains?' }));
 
+  // Coerce keywords to getter functions (Clojure-style keyword-as-function)
+  function asFunc(f) {
+    if (typeof f === 'function') return f;
+    if (isKeyword(f)) {
+      const kw = f;
+      return (obj) => {
+        if (obj && typeof obj === 'object' && !Array.isArray(obj)) {
+          if (kw in obj) return obj[kw];
+          const plain = keywordName(kw);
+          if (plain in obj) return obj[plain];
+        }
+        return null;
+      };
+    }
+    return f; // will fail at call site with a clear error
+  }
+
   // Higher-order collection functions
   env.define('map', Object.assign(async (fn, coll) => {
     if (coll === null) return [];
+    fn = asFunc(fn);
     const result = [];
     for (const item of coll) {
       let val = fn(item);
@@ -2248,6 +2276,7 @@ function createStdlib() {
 
   env.define('mapcat', Object.assign(async (fn, coll) => {
     if (coll === null) return [];
+    fn = asFunc(fn);
     const result = [];
     for (const item of coll) {
       let val = fn(item);
@@ -2261,6 +2290,7 @@ function createStdlib() {
 
   env.define('filter', Object.assign(async (fn, coll) => {
     if (coll === null) return [];
+    fn = asFunc(fn);
     const result = [];
     for (const item of coll) {
       let val = fn(item);
@@ -2294,6 +2324,7 @@ function createStdlib() {
 
   env.define('some', Object.assign(async (fn, coll) => {
     if (coll === null) return null;
+    fn = asFunc(fn);
     for (const item of coll) {
       let val = fn(item);
       if (val && typeof val.then === 'function') val = await val;
@@ -2304,6 +2335,7 @@ function createStdlib() {
 
   env.define('every?', Object.assign(async (fn, coll) => {
     if (coll === null) return true;
+    fn = asFunc(fn);
     for (const item of coll) {
       let val = fn(item);
       if (val && typeof val.then === 'function') val = await val;
@@ -2319,6 +2351,7 @@ function createStdlib() {
 
   env.define('sort-by', Object.assign(async (fn, coll) => {
     if (coll === null) return [];
+    fn = asFunc(fn);
     const decorated = [];
     for (const item of coll) {
       let key = fn(item);
@@ -2555,8 +2588,8 @@ function registerViewOps(env, api) {
     return null;
   }, { _hobName: 'navigate!' }));
 
-  env.define('open-item!', Object.assign((itemId) => {
-    api.openItem(itemId);
+  env.define('open-item!', Object.assign((itemId, options) => {
+    api.openItem(itemId, options ? hobToJs(options) : undefined);
     return null;
   }, { _hobName: 'open-item!' }));
 
@@ -2661,7 +2694,7 @@ function registerEventOps(env, eventApi) {
 // ============================================================
 
 export { read, readAll, evaluate, prStr, Environment, HobError, tokenize, parse,
-         keyword, isKeyword, valueToAst, astToValue, hiccupToDOM, parseTag,
+         keyword, isKeyword, valueToAst, astToValue, hiccupToDOM, hiccupToDOMWithRefs, parseTag,
          registerViewOps, registerItemOps, registerEventOps, hobToJs,
          DependencyTracker, setAtomMutationCallback, setupSortable };
 
@@ -2778,6 +2811,64 @@ export function createInterpreter(api, viewApi, eventApi) {
   stdlib.define('hiccup->dom', Object.assign((hiccup) => {
     return hiccupToDOM(hiccup);
   }, { _hobName: 'hiccup->dom' }));
+
+  // hiccup->dom+ returns [dom-node refs-map] for imperative DOM manipulation
+  stdlib.define('hiccup->dom+', Object.assign((hiccup) => {
+    return hiccupToDOMWithRefs(hiccup);
+  }, { _hobName: 'hiccup->dom+' }));
+
+  // DOM mutation ops (no API dependency — pure DOM operations)
+  stdlib.define('dom-on!', Object.assign((el, event, handler) => {
+    const eventName = isKeyword(event) ? keywordName(event) : String(event);
+    el.addEventListener(eventName, handler);
+    return null;
+  }, { _hobName: 'dom-on!' }));
+
+  stdlib.define('dom-set!', Object.assign((el, prop, value) => {
+    const propName = isKeyword(prop) ? keywordName(prop) : String(prop);
+    el[propName] = value;
+    return null;
+  }, { _hobName: 'dom-set!' }));
+
+  stdlib.define('dom-get', Object.assign((el, prop) => {
+    const propName = isKeyword(prop) ? keywordName(prop) : String(prop);
+    return el[propName];
+  }, { _hobName: 'dom-get' }));
+
+  stdlib.define('dom-set-content!', Object.assign((el, content) => {
+    el.innerHTML = '';
+    if (content === null || content === undefined) return null;
+    if (typeof content === 'string') {
+      el.appendChild(document.createTextNode(content));
+    } else if (content.nodeType) {
+      el.appendChild(content);
+    } else {
+      // Treat as hiccup
+      const node = hiccupToDOM(content);
+      if (node) el.appendChild(node);
+    }
+    return null;
+  }, { _hobName: 'dom-set-content!' }));
+
+  stdlib.define('stop-propagation!', Object.assign((e) => {
+    e.stopPropagation();
+    return null;
+  }, { _hobName: 'stop-propagation!' }));
+
+  stdlib.define('prevent-default!', Object.assign((e) => {
+    e.preventDefault();
+    return null;
+  }, { _hobName: 'prevent-default!' }));
+
+  stdlib.define('set-timeout!', Object.assign((f, ms) => {
+    return setTimeout(f, ms);
+  }, { _hobName: 'set-timeout!' }));
+
+  stdlib.define('clear-timeout!', Object.assign((id) => {
+    clearTimeout(id);
+    return null;
+  }, { _hobName: 'clear-timeout!' }));
+
   if (api) registerItemOps(stdlib, api);
   if (viewApi) registerViewOps(stdlib, viewApi);
   if (eventApi) registerEventOps(stdlib, eventApi);
