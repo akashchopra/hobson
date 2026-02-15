@@ -2246,6 +2246,19 @@ function createStdlib() {
     return result;
   }, { _hobName: 'map' }));
 
+  env.define('mapcat', Object.assign(async (fn, coll) => {
+    if (coll === null) return [];
+    const result = [];
+    for (const item of coll) {
+      let val = fn(item);
+      if (val && typeof val.then === 'function') val = await val;
+      if (val != null && typeof val[Symbol.iterator] === 'function') {
+        for (const v of val) result.push(v);
+      }
+    }
+    return result;
+  }, { _hobName: 'mapcat' }));
+
   env.define('filter', Object.assign(async (fn, coll) => {
     if (coll === null) return [];
     const result = [];
