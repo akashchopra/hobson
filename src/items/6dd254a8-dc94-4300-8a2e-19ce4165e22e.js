@@ -3,28 +3,50 @@
 // Type: 66666666-0000-0000-0000-000000000000
 //
 // Minimize/restore for spatial-canvas-view. Single code path fixes overlay bug.
+// Pills are placed in a flex tray that wraps rows upward automatically.
 
 const PILL_WIDTH = 150;
+const PILL_HEIGHT = 32;
 const PILL_GAP = 8;
-const PILL_STRIDE = PILL_WIDTH + PILL_GAP;
-const PILL_BOTTOM = 8;
-const PILL_LEFT_START = 8;
+
+// Find or create the flex tray at the bottom of the container
+function getPillTray(container, api) {
+  let tray = container.querySelector('[data-pill-tray]');
+  if (!tray) {
+    tray = api.createElement('div', {
+      'data-pill-tray': 'true',
+      style: `
+        position: absolute;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        display: flex;
+        flex-wrap: wrap-reverse;
+        gap: ${PILL_GAP}px;
+        padding: ${PILL_GAP}px;
+        pointer-events: none;
+        z-index: 10000;
+      `
+    }, []);
+    container.appendChild(tray);
+  }
+  return tray;
+}
 
 // Create a single minimized pill (idempotent — removes existing pill for same childId first)
-export function createMinimizedPill(childId, childName, dockOverlay, index, api, { onRestore }) {
+export function createMinimizedPill(childId, childName, container, index, api, { onRestore }) {
   // Remove existing pill for this child if present (idempotent)
-  const existing = dockOverlay.querySelector(`[data-minimized-id="${childId}"]`);
+  const existing = container.querySelector(`[data-minimized-id="${childId}"]`);
   if (existing) existing.remove();
+
+  const tray = getPillTray(container, api);
 
   const pill = api.createElement('div', {
     'data-minimized-id': childId,
     'data-minimized': 'true',
     style: `
-      position: absolute;
-      bottom: ${PILL_BOTTOM}px;
-      left: ${PILL_LEFT_START + index * PILL_STRIDE}px;
       width: ${PILL_WIDTH}px;
-      height: 32px;
+      height: ${PILL_HEIGHT}px;
       background: var(--color-bg-hover);
       border: 1px solid var(--color-border);
       border-radius: var(--border-radius);
@@ -32,7 +54,6 @@ export function createMinimizedPill(childId, childName, dockOverlay, index, api,
       align-items: center;
       padding: 0 8px;
       cursor: pointer;
-      z-index: 10000;
       pointer-events: auto;
       box-shadow: var(--shadow-sm);
     `,
@@ -48,30 +69,25 @@ export function createMinimizedPill(childId, childName, dockOverlay, index, api,
     await onRestore(childId);
   });
 
-  dockOverlay.appendChild(pill);
+  tray.appendChild(pill);
   return pill;
 }
 
-// Render all minimized pills into dockOverlay (used by render loop)
-// Clears existing pills, creates one per minimized child at correct index
-export function renderMinimizedPills(minimizedChildren, dockOverlay, api, { getItemName, onRestore }) {
-  // Clear existing pills
-  const existing = dockOverlay.querySelectorAll('[data-minimized="true"]');
-  existing.forEach(el => el.remove());
+// Render all minimized pills into container (used by render loop)
+// Clears existing pills, creates one per minimized child
+export function renderMinimizedPills(minimizedChildren, container, api, { getItemName, onRestore }) {
+  // Clear existing tray (will be recreated by createMinimizedPill)
+  const existingTray = container.querySelector('[data-pill-tray]');
+  if (existingTray) existingTray.remove();
 
   minimizedChildren.forEach((child, index) => {
     const name = getItemName(child);
-    createMinimizedPill(child.id, name, dockOverlay, index, api, { onRestore });
+    createMinimizedPill(child.id, name, container, index, api, { onRestore });
   });
 }
 
-// Reposition existing pills after one is removed (e.g. after restore)
-export function repositionPills(dockOverlay) {
-  const pills = dockOverlay.querySelectorAll('[data-minimized="true"]');
-  pills.forEach((pill, i) => {
-    pill.style.left = `${PILL_LEFT_START + i * PILL_STRIDE}px`;
-  });
-}
+// No-op — flex tray handles repositioning via CSS
+export function repositionPills(container) {}
 
 // Calculate what happens when restoring a window
 // Returns updated attachments array with target unminimized at front and all z-indices normalized
