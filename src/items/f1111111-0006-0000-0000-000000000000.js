@@ -17,9 +17,9 @@ function buildContent() {
     <h2 style="margin-top: 0; margin-bottom: 16px;">Keyboard Shortcuts</h2>
     <table style="width: 100%; border-collapse: collapse;">
       <tr><td style="${tdStyle}"><kbd style="${kbdStyle}">Ctrl+\\</kbd></td><td>Toggle REPL</td></tr>
-      <tr><td style="${tdStyle}"><kbd style="${kbdStyle}">Cmd+K</kbd></td><td>Search items</td></tr>
+      <tr><td style="${tdStyle}"><kbd style="${kbdStyle}">Ctrl+K</kbd></td><td>Search items</td></tr>
       <tr><td style="${tdStyle}"><kbd style="${kbdStyle}">Ctrl+E</kbd></td><td>Edit selected item</td></tr>
-      <tr><td style="${tdStyle}"><kbd style="${kbdStyle}">Cmd+?</kbd></td><td>Show this help</td></tr>
+      <tr><td style="${tdStyle}"><kbd style="${kbdStyle}">Ctrl+Shift+?</kbd></td><td>Show this help</td></tr>
     </table>
     <h3 style="margin-top: 20px; margin-bottom: 12px;">Mouse</h3>
     <table style="width: 100%; border-collapse: collapse;">

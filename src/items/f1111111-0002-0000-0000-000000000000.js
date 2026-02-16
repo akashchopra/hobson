@@ -63,17 +63,20 @@ async function handlePopstate(e) {
 }
 
 // Persist a root change to viewport item
-// Clears view config when changing roots
-async function persistRootChange(newRootId, previousRootId) {
+// Clears view config when changing roots (unless a viewId override is provided)
+async function persistRootChange(newRootId, previousRootId, viewId) {
   const viewport = await window.kernel.storage.get(VIEWPORT_ID);
 
-  if (newRootId === previousRootId) {
-    // Same root - preserve view config
+  if (newRootId === previousRootId && !viewId) {
+    // Same root, no view override - preserve view config
     return;
   }
 
-  // Different root - clear view config
-  viewport.attachments = newRootId ? [{ id: newRootId }] : [];
+  // Build attachment spec
+  const spec = newRootId ? { id: newRootId } : null;
+  if (spec && viewId) spec.view = { type: viewId };
+
+  viewport.attachments = spec ? [spec] : [];
   viewport.modified = Date.now();
   await window.kernel.saveItem(viewport, { silent: true });
 }
@@ -131,6 +134,9 @@ async function updateChildSpec(updater) {
 
 // Navigate to an item
 export async function navigate(itemId, params = {}) {
+  // Extract view override (not a URL param)
+  const { view, ...urlParams } = params;
+
   // Get previous root for event
   const viewport = await window.kernel.storage.get(VIEWPORT_ID);
   const previous = viewport.attachments?.[0]?.id;
@@ -147,19 +153,19 @@ export async function navigate(itemId, params = {}) {
   url.searchParams.delete('region');
 
   // Add optional navigation params
-  if (params.field) url.searchParams.set('field', params.field);
-  if (params.line) url.searchParams.set('line', params.line);
-  if (params.col) url.searchParams.set('col', params.col);
-  if (params.symbol) url.searchParams.set('symbol', params.symbol);
-  if (params.region) url.searchParams.set('region', params.region);
+  if (urlParams.field) url.searchParams.set('field', urlParams.field);
+  if (urlParams.line) url.searchParams.set('line', urlParams.line);
+  if (urlParams.col) url.searchParams.set('col', urlParams.col);
+  if (urlParams.symbol) url.searchParams.set('symbol', urlParams.symbol);
+  if (urlParams.region) url.searchParams.set('region', urlParams.region);
 
   // Only push to history if URL is actually changing
   if (url.href !== window.location.href) {
-    window.history.pushState({ itemId, ...params }, '', url);
+    window.history.pushState({ itemId, ...urlParams }, '', url);
   }
 
-  // Persist to viewport item (clears view config if root changed)
-  await persistRootChange(itemId, previous);
+  // Persist to viewport item (clears view config if root changed, applies view override)
+  await persistRootChange(itemId, previous, view);
 
   // Emit viewport:root-changed event
   window.kernel.events.emit({

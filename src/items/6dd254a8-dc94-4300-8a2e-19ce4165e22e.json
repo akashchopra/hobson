@@ -3,152 +3,162 @@
   "name": "window-minimize-lib",
   "type": "66666666-0000-0000-0000-000000000000",
   "content": {
-    "description": "Minimize and restore handling for spatial-canvas-view windows. Single code path fixes the overlay bug where two implementations (onclick handler and render loop) created duplicate pills.\n\n## Bug Fix\n\n`createMinimizedPill` is idempotent \u2014 it removes any existing pill for the same childId before creating a new one. Both the onclick handler and the render loop call the same functions, preventing pill divergence.\n\nPills are appended as direct children of the main container (not the dock overlay or scroll area) at z-index 10000, so they always appear above all windows.\n\n## Usage\n\n```javascript\nconst minLib = await api.require('window-minimize-lib');\n\n// Onclick: optimistic hide + pill + persist\nwrapper.style.display = 'none';\nminLib.createMinimizedPill(childId, name, container, index, api, { onRestore });\nawait updateChild(childId, { minimized: true });\n\n// Render loop: batch create all pills\nminLib.renderMinimizedPills(minimizedChildren, container, api, { getItemName, onRestore });\n\n// After restoring one pill:\nminLib.repositionPills(container);\n```",
-    "code": "// Item: window-minimize-lib\n// ID: 6dd254a8-dc94-4300-8a2e-19ce4165e22e\n// Type: 66666666-0000-0000-0000-000000000000\n//\n// Minimize/restore for spatial-canvas-view. Single code path fixes overlay bug.\n// Pills are placed in a flex tray that wraps rows upward automatically.\n\nconst PILL_WIDTH = 150;\nconst PILL_HEIGHT = 32;\nconst PILL_GAP = 8;\n\n// Find or create the flex tray at the bottom of the container\nfunction getPillTray(container, api) {\n  let tray = container.querySelector('[data-pill-tray]');\n  if (!tray) {\n    tray = api.createElement('div', {\n      'data-pill-tray': 'true',\n      style: `\n        position: absolute;\n        bottom: 0;\n        left: 0;\n        right: 0;\n        display: flex;\n        flex-wrap: wrap-reverse;\n        gap: ${PILL_GAP}px;\n        padding: ${PILL_GAP}px;\n        pointer-events: none;\n        z-index: 10000;\n      `\n    }, []);\n    container.appendChild(tray);\n  }\n  return tray;\n}\n\n// Create a single minimized pill (idempotent \u2014 removes existing pill for same childId first)\nexport function createMinimizedPill(childId, childName, container, index, api, { onRestore }) {\n  // Remove existing pill for this child if present (idempotent)\n  const existing = container.querySelector(`[data-minimized-id=\"${childId}\"]`);\n  if (existing) existing.remove();\n\n  const tray = getPillTray(container, api);\n\n  const pill = api.createElement('div', {\n    'data-minimized-id': childId,\n    'data-minimized': 'true',\n    style: `\n      width: ${PILL_WIDTH}px;\n      height: ${PILL_HEIGHT}px;\n      background: var(--color-bg-hover);\n      border: 1px solid var(--color-border);\n      border-radius: var(--border-radius);\n      display: flex;\n      align-items: center;\n      padding: 0 8px;\n      cursor: pointer;\n      pointer-events: auto;\n      box-shadow: var(--shadow-sm);\n    `,\n    title: childName\n  }, []);\n\n  const text = api.createElement('span', {\n    style: 'flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.75rem;'\n  }, [childName]);\n  pill.appendChild(text);\n\n  pill.addEventListener('click', async () => {\n    await onRestore(childId);\n  });\n\n  tray.appendChild(pill);\n  return pill;\n}\n\n// Render all minimized pills into container (used by render loop)\n// Clears existing pills, creates one per minimized child\nexport function renderMinimizedPills(minimizedChildren, container, api, { getItemName, onRestore }) {\n  // Clear existing tray (will be recreated by createMinimizedPill)\n  const existingTray = container.querySelector('[data-pill-tray]');\n  if (existingTray) existingTray.remove();\n\n  minimizedChildren.forEach((child, index) => {\n    const name = getItemName(child);\n    createMinimizedPill(child.id, name, container, index, api, { onRestore });\n  });\n}\n\n// No-op \u2014 flex tray handles repositioning via CSS\nexport function repositionPills(container) {}\n\n// Calculate what happens when restoring a window\n// Returns updated attachments array with target unminimized at front and all z-indices normalized\nexport function calculateRestore(childId, allChildren, isAnchoredFn) {\n  // Get floating, non-minimized children sorted by z (excluding the one being restored)\n  const floating = allChildren\n    .filter(c => !isAnchoredFn(c.view?.anchor) && !c.view?.minimized && c.id !== childId)\n    .map(c => ({ id: c.id, z: c.view?.z || 0 }))\n    .sort((a, b) => a.z - b.z);\n\n  // Add restored window at the end (front)\n  floating.push({ id: childId, z: floating.length });\n\n  // Build map of new z-values\n  const newZValues = new Map();\n  floating.forEach((c, idx) => {\n    newZValues.set(c.id, idx);\n  });\n\n  // Build updated children array\n  const updatedChildren = allChildren.map(c => {\n    if (c.id === childId) {\n      return {\n        ...c,\n        view: { ...(c.view || {}), minimized: false, z: newZValues.get(c.id) }\n      };\n    }\n    if (newZValues.has(c.id)) {\n      return {\n        ...c,\n        view: { ...(c.view || {}), z: newZValues.get(c.id) }\n      };\n    }\n    return c;\n  });\n\n  return { updatedChildren };\n}\n",
+    "description": "Minimize and restore handling for spatial-canvas-view windows. Single code path fixes the overlay bug where two implementations (onclick handler and render loop) created duplicate pills.\n\n## Bug Fix\n\n`createMinimizedPill` is idempotent — it removes any existing pill for the same childId before creating a new one. Both the onclick handler and the render loop call the same functions, preventing pill divergence.\n\nPills are appended as direct children of the main container (not the dock overlay or scroll area) at z-index 10000, so they always appear above all windows.\n\n## Usage\n\n```javascript\nconst minLib = await api.require('window-minimize-lib');\n\n// Onclick: optimistic hide + pill + persist\nwrapper.style.display = 'none';\nminLib.createMinimizedPill(childId, name, container, index, api, { onRestore });\nawait updateChild(childId, { minimized: true });\n\n// Render loop: batch create all pills\nminLib.renderMinimizedPills(minimizedChildren, container, api, { getItemName, onRestore });\n\n// After restoring one pill:\nminLib.repositionPills(container);\n```",
+    "code": "// Item: window-minimize-lib\n// ID: 6dd254a8-dc94-4300-8a2e-19ce4165e22e\n// Type: 66666666-0000-0000-0000-000000000000\n//\n// Minimize/restore for spatial-canvas-view. Single code path fixes overlay bug.\n// Pills are placed in a flex tray that wraps rows upward automatically.\n\nconst PILL_WIDTH = 150;\nconst PILL_HEIGHT = 32;\nconst PILL_GAP = 8;\n\n// Find or create the flex tray at the bottom of the container\nfunction getPillTray(container, api) {\n  let tray = container.querySelector('[data-pill-tray]');\n  if (!tray) {\n    tray = api.createElement('div', {\n      'data-pill-tray': 'true',\n      style: `\n        position: absolute;\n        bottom: 0;\n        left: 0;\n        right: 0;\n        display: flex;\n        flex-wrap: wrap-reverse;\n        gap: ${PILL_GAP}px;\n        padding: ${PILL_GAP}px;\n        pointer-events: none;\n        z-index: 10000;\n      `\n    }, []);\n    container.appendChild(tray);\n  }\n  return tray;\n}\n\n// Create a single minimized pill (idempotent — removes existing pill for same childId first)\nexport function createMinimizedPill(childId, childName, container, index, api, { onRestore }) {\n  // Remove existing pill for this child if present (idempotent)\n  const existing = container.querySelector(`[data-minimized-id=\"${childId}\"]`);\n  if (existing) existing.remove();\n\n  const tray = getPillTray(container, api);\n\n  const pill = api.createElement('div', {\n    'data-minimized-id': childId,\n    'data-minimized': 'true',\n    style: `\n      width: ${PILL_WIDTH}px;\n      height: ${PILL_HEIGHT}px;\n      background: var(--color-bg-hover);\n      border: 1px solid var(--color-border);\n      border-radius: var(--border-radius);\n      display: flex;\n      align-items: center;\n      padding: 0 8px;\n      cursor: pointer;\n      pointer-events: auto;\n      box-shadow: var(--shadow-sm);\n    `,\n    title: childName\n  }, []);\n\n  const text = api.createElement('span', {\n    style: 'flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.75rem;'\n  }, [childName]);\n  pill.appendChild(text);\n\n  pill.addEventListener('click', async () => {\n    await onRestore(childId);\n  });\n\n  tray.appendChild(pill);\n  return pill;\n}\n\n// Render all minimized pills into container (used by render loop)\n// Clears existing pills, creates one per minimized child\nexport function renderMinimizedPills(minimizedChildren, container, api, { getItemName, onRestore }) {\n  // Clear existing tray (will be recreated by createMinimizedPill)\n  const existingTray = container.querySelector('[data-pill-tray]');\n  if (existingTray) existingTray.remove();\n\n  minimizedChildren.forEach((child, index) => {\n    const name = getItemName(child);\n    createMinimizedPill(child.id, name, container, index, api, { onRestore });\n  });\n}\n\n// No-op — flex tray handles repositioning via CSS\nexport function repositionPills(container) {}\n\n// Calculate what happens when restoring a window\n// Returns updated attachments array with target unminimized at front and all z-indices normalized\nexport function calculateRestore(childId, allChildren, isAnchoredFn) {\n  // Get floating, non-minimized children sorted by z (excluding the one being restored)\n  const floating = allChildren\n    .filter(c => !isAnchoredFn(c.view?.anchor) && !c.view?.minimized && c.id !== childId)\n    .map(c => ({ id: c.id, z: c.view?.z || 0 }))\n    .sort((a, b) => a.z - b.z);\n\n  // Add restored window at the end (front)\n  floating.push({ id: childId, z: floating.length });\n\n  // Build map of new z-values\n  const newZValues = new Map();\n  floating.forEach((c, idx) => {\n    newZValues.set(c.id, idx);\n  });\n\n  // Build updated children array\n  const updatedChildren = allChildren.map(c => {\n    if (c.id === childId) {\n      return {\n        ...c,\n        view: { ...(c.view || {}), minimized: false, z: newZValues.get(c.id) }\n      };\n    }\n    if (newZValues.has(c.id)) {\n      return {\n        ...c,\n        view: { ...(c.view || {}), z: newZValues.get(c.id) }\n      };\n    }\n    return c;\n  });\n\n  return { updatedChildren };\n}\n",
     "_symbols": {
       "PILL_WIDTH": {
         "name": "PILL_WIDTH",
-        "line": 7,
+        "line": 8,
         "col": 6,
-        "endLine": 7,
+        "endLine": 8,
+        "endCol": 22,
+        "kind": "variable",
+        "scope": null
+      },
+      "PILL_HEIGHT": {
+        "name": "PILL_HEIGHT",
+        "line": 9,
+        "col": 6,
+        "endLine": 9,
         "endCol": 22,
         "kind": "variable",
         "scope": null
       },
       "PILL_GAP": {
         "name": "PILL_GAP",
-        "line": 8,
+        "line": 10,
         "col": 6,
-        "endLine": 8,
+        "endLine": 10,
         "endCol": 18,
         "kind": "variable",
         "scope": null
       },
-      "PILL_STRIDE": {
-        "name": "PILL_STRIDE",
-        "line": 9,
-        "col": 6,
-        "endLine": 9,
-        "endCol": 41,
-        "kind": "variable",
-        "scope": null
-      },
-      "PILL_BOTTOM": {
-        "name": "PILL_BOTTOM",
-        "line": 10,
-        "col": 6,
-        "endLine": 10,
-        "endCol": 21,
-        "kind": "variable",
-        "scope": null
-      },
-      "PILL_LEFT_START": {
-        "name": "PILL_LEFT_START",
-        "line": 11,
-        "col": 6,
-        "endLine": 11,
-        "endCol": 25,
-        "kind": "variable",
-        "scope": null
-      },
-      "createMinimizedPill": {
-        "name": "createMinimizedPill",
-        "line": 14,
-        "col": 7,
-        "endLine": 53,
+      "getPillTray": {
+        "name": "getPillTray",
+        "line": 13,
+        "col": 0,
+        "endLine": 34,
         "endCol": 1,
         "kind": "function",
         "scope": null,
-        "signature": "(childId, childName, dockOverlay, index, api, { ... })"
+        "signature": "(container, api)"
+      },
+      "getPillTray.tray": {
+        "name": "tray",
+        "line": 14,
+        "col": 6,
+        "endLine": 14,
+        "endCol": 56,
+        "kind": "variable",
+        "scope": "getPillTray"
+      },
+      "getPillTray.style": {
+        "name": "style",
+        "line": 18,
+        "col": 6,
+        "endLine": 29,
+        "endCol": 7,
+        "kind": "property",
+        "scope": "getPillTray"
+      },
+      "createMinimizedPill": {
+        "name": "createMinimizedPill",
+        "line": 37,
+        "col": 7,
+        "endLine": 74,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(childId, childName, container, index, api, { ... })"
       },
       "createMinimizedPill.existing": {
         "name": "existing",
-        "line": 16,
+        "line": 39,
         "col": 8,
-        "endLine": 16,
-        "endCol": 80,
+        "endLine": 39,
+        "endCol": 78,
+        "kind": "variable",
+        "scope": "createMinimizedPill"
+      },
+      "createMinimizedPill.tray": {
+        "name": "tray",
+        "line": 42,
+        "col": 8,
+        "endLine": 42,
+        "endCol": 42,
         "kind": "variable",
         "scope": "createMinimizedPill"
       },
       "createMinimizedPill.pill": {
         "name": "pill",
-        "line": 19,
+        "line": 44,
         "col": 8,
-        "endLine": 40,
+        "endLine": 61,
         "endCol": 8,
         "kind": "variable",
         "scope": "createMinimizedPill"
       },
       "createMinimizedPill.text": {
         "name": "text",
-        "line": 42,
+        "line": 63,
         "col": 8,
-        "endLine": 44,
+        "endLine": 65,
         "endCol": 17,
         "kind": "variable",
         "scope": "createMinimizedPill"
       },
       "renderMinimizedPills": {
         "name": "renderMinimizedPills",
-        "line": 57,
+        "line": 78,
         "col": 7,
-        "endLine": 66,
+        "endLine": 87,
         "endCol": 1,
         "kind": "function",
         "scope": null,
-        "signature": "(minimizedChildren, dockOverlay, api, { ... })"
+        "signature": "(minimizedChildren, container, api, { ... })"
       },
-      "renderMinimizedPills.existing": {
-        "name": "existing",
-        "line": 59,
+      "renderMinimizedPills.existingTray": {
+        "name": "existingTray",
+        "line": 80,
         "col": 8,
-        "endLine": 59,
-        "endCol": 74,
+        "endLine": 80,
+        "endCol": 66,
         "kind": "variable",
         "scope": "renderMinimizedPills"
       },
       "renderMinimizedPills.name": {
         "name": "name",
-        "line": 63,
+        "line": 84,
         "col": 10,
-        "endLine": 63,
+        "endLine": 84,
         "endCol": 35,
         "kind": "variable",
         "scope": "renderMinimizedPills"
       },
       "renderMinimizedPills.onRestore": {
         "name": "onRestore",
-        "line": 64,
-        "col": 67,
-        "endLine": 64,
-        "endCol": 76,
+        "line": 85,
+        "col": 65,
+        "endLine": 85,
+        "endCol": 74,
         "kind": "property",
         "scope": "renderMinimizedPills"
       },
       "repositionPills": {
         "name": "repositionPills",
-        "line": 69,
+        "line": 90,
         "col": 7,
-        "endLine": 74,
-        "endCol": 1,
+        "endLine": 90,
+        "endCol": 45,
         "kind": "function",
         "scope": null,
-        "signature": "(dockOverlay)"
-      },
-      "repositionPills.pills": {
-        "name": "pills",
-        "line": 70,
-        "col": 8,
-        "endLine": 70,
-        "endCol": 71,
-        "kind": "variable",
-        "scope": "repositionPills"
+        "signature": "(container)"
       },
       "calculateRestore": {
         "name": "calculateRestore",
-        "line": 78,
+        "line": 94,
         "col": 7,
-        "endLine": 112,
+        "endLine": 128,
         "endCol": 1,
         "kind": "function",
         "scope": null,
@@ -156,52 +166,52 @@
       },
       "calculateRestore.floating": {
         "name": "floating",
-        "line": 80,
+        "line": 96,
         "col": 8,
-        "endLine": 83,
+        "endLine": 99,
         "endCol": 30,
         "kind": "variable",
         "scope": "calculateRestore"
       },
       "calculateRestore.id": {
         "name": "id",
-        "line": 86,
+        "line": 102,
         "col": 18,
-        "endLine": 86,
+        "endLine": 102,
         "endCol": 29,
         "kind": "property",
         "scope": "calculateRestore"
       },
       "calculateRestore.z": {
         "name": "z",
-        "line": 86,
+        "line": 102,
         "col": 31,
-        "endLine": 86,
+        "endLine": 102,
         "endCol": 49,
         "kind": "property",
         "scope": "calculateRestore"
       },
       "calculateRestore.newZValues": {
         "name": "newZValues",
-        "line": 89,
+        "line": 105,
         "col": 8,
-        "endLine": 89,
+        "endLine": 105,
         "endCol": 30,
         "kind": "variable",
         "scope": "calculateRestore"
       },
       "calculateRestore.updatedChildren": {
         "name": "updatedChildren",
-        "line": 111,
+        "line": 127,
         "col": 11,
-        "endLine": 111,
+        "endLine": 127,
         "endCol": 26,
         "kind": "property",
         "scope": "calculateRestore"
       }
     }
   },
-  "modified": 1770390457170,
+  "modified": 1771190331216,
   "created": 1770322000000,
   "attachments": []
 }
