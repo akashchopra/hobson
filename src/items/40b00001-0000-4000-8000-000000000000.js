@@ -615,9 +615,34 @@ function hiccupToDOM(hiccup, sourceCtx, _refs) {
           _refs[refName] = el;
         } else if (attrName.startsWith('on-')) {
           const eventName = attrName.slice(3);
-          el.addEventListener(eventName, v);
-          if (!el.__hobEvents) el.__hobEvents = {};
-          el.__hobEvents[eventName] = v;
+          let handler = v;
+          if (typeof v === 'object' && v !== null && !Array.isArray(v)) {
+            const rawHandler = v[keyword('handler')] || v['handler'];
+            const debounceMs = v[keyword('debounce')] || v['debounce'];
+            const throttleMs = v[keyword('throttle')] || v['throttle'];
+            handler = rawHandler;
+            if (debounceMs) {
+              const orig = handler;
+              handler = function(e) {
+                if (el.__hobTimers?.[eventName]) clearTimeout(el.__hobTimers[eventName]);
+                if (!el.__hobTimers) el.__hobTimers = {};
+                el.__hobTimers[eventName] = setTimeout(() => orig(e), debounceMs);
+              };
+            } else if (throttleMs) {
+              const orig = handler;
+              handler = function(e) {
+                if (el.__hobTimers?.[eventName]) return;
+                if (!el.__hobTimers) el.__hobTimers = {};
+                orig(e);
+                el.__hobTimers[eventName] = setTimeout(() => { el.__hobTimers[eventName] = null; }, throttleMs);
+              };
+            }
+          }
+          if (typeof handler === 'function') {
+            el.addEventListener(eventName, handler);
+            if (!el.__hobEvents) el.__hobEvents = {};
+            el.__hobEvents[eventName] = handler;
+          }
         } else if (attrName === 'style' && typeof v === 'object' && v !== null) {
           for (const [sp, sv] of Object.entries(v)) {
             const cssProp = isKeyword(sp) ? keywordName(sp) : sp;
