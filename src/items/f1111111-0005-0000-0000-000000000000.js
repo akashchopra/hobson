@@ -41,9 +41,14 @@ export async function show(_api) {
     api.get(MODAL_FRAME_ID)
   ]);
 
-  // Reset search state and set frame attachment
+  // Pre-fetch starred items so the first render has data immediately
+  const searchLib = await api.require('item-search-lib');
+  const starred = await searchLib.getStarredItems(api);
+  const starredAtts = starred.map(s => ({ id: s.id }));
+
+  // Reset search state with starred items pre-populated
   searchItem.content = { ...searchItem.content, currentQuery: '' };
-  searchItem.attachments = [];
+  searchItem.attachments = starredAtts;
   searchItem.modified = Date.now();
   frame.attachments = [{ id: searchItem.id }];
   frame.modified = Date.now();
