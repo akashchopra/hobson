@@ -12,10 +12,11 @@
   --color-primary-light: oklch(92% 0.05 var(--base-hue));
   
   /* Backgrounds */
-  --color-bg-body: oklch(96.5% var(--tint-strength) var(--base-hue));
+  --color-bg-body: oklch(93% var(--tint-strength) var(--base-hue));
   --color-bg-surface: oklch(100% 0 0);  /* white */
-  --color-bg-surface-alt: oklch(98.5% var(--tint-strength) var(--base-hue));
-  --color-bg-hover: oklch(94% var(--tint-strength) var(--base-hue));
+  --color-bg-surface-alt: oklch(99% var(--tint-strength) var(--base-hue));
+  --color-bg-hover: oklch(91% var(--tint-strength) var(--base-hue));
+  --color-bg-chrome: oklch(96% var(--tint-strength) var(--base-hue));
   
   /* Borders */
   --color-border: oklch(80% var(--tint-strength) var(--base-hue));
@@ -41,8 +42,8 @@
   /* UI tokens */
   --border-radius: 4px;
   --border-radius-lg: 8px;
-  --shadow-sm: 0 2px 4px oklch(0% 0 0 / 0.1);
-  --shadow-md: 0 4px 12px oklch(0% 0 0 / 0.15);
+  --shadow-sm: 0 1px 2px oklch(0% 0 0 / 0.06), 0 2px 8px oklch(0% 0 0 / 0.04);
+  --shadow-md: 0 2px 4px oklch(0% 0 0 / 0.08), 0 8px 24px oklch(0% 0 0 / 0.08);
 }
 
 /* === BASE STYLES === */
