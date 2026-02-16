@@ -36,11 +36,98 @@ const parseLines = (linesStr) => {
   return { start: line, end: line };
 };
 
+// Inline compact JSON AST → s-expression pretty-printer (avoids loading hob-interpreter)
+const _BF = new Set(['let','when','if','do','fn','defn','for','doseq','cond','when-let','loop','try','catch','def','defmacro','plet','->','->>','as->','quote','quasiquote']);
+const _LF = new Set(['let','loop','when-let','plet']);
+function _esc(s) { return '"' + s.replace(/\\/g,'\\\\').replace(/"/g,'\\"').replace(/\n/g,'\\n').replace(/\t/g,'\\t') + '"'; }
+function pp(j, ind) {
+  if (j === null) return 'nil';
+  if (typeof j === 'number') return String(j);
+  if (typeof j === 'boolean') return j ? 'true' : 'false';
+  if (typeof j === 'string') return j;
+  if (typeof j === 'object' && !Array.isArray(j)) {
+    if ('s' in j) return _esc(j.s);
+    if ('v' in j) return _ppV(j.v, ind);
+    if ('m' in j) return _ppM(j.m, ind);
+  }
+  if (Array.isArray(j)) return _ppL(j, ind);
+  return String(j);
+}
+function _ppL(l, ind) {
+  if (!l.length) return '()';
+  const flat = '(' + l.map(e => pp(e, 0)).join(' ') + ')';
+  if (flat.length + ind <= 80) return flat;
+  const h = typeof l[0] === 'string' ? l[0] : null, bi = ind + 2;
+  if (h && _LF.has(h) && l.length >= 3 && l[1]?.v) {
+    const b = _ppB(l[1].v, ind + 1 + h.length + 1);
+    return '(' + h + ' ' + b + '\n' + l.slice(2).map(x => ' '.repeat(bi) + pp(x, bi)).join('\n') + ')';
+  }
+  if (h === 'fn' && l.length >= 3 && l[1]?.v) {
+    const p = _ppV(l[1].v, ind + 4);
+    return '(fn ' + p + '\n' + l.slice(2).map(x => ' '.repeat(bi) + pp(x, bi)).join('\n') + ')';
+  }
+  if (h === 'defn' && l.length >= 4 && l[2]?.v) {
+    const n = pp(l[1], 0), p = _ppV(l[2].v, ind + 7 + n.length);
+    return '(defn ' + n + ' ' + p + '\n' + l.slice(3).map(x => ' '.repeat(bi) + pp(x, bi)).join('\n') + ')';
+  }
+  if ((h === 'for' || h === 'doseq') && l.length >= 3 && l[1]?.v) {
+    const b = _ppV(l[1].v, ind + h.length + 2);
+    return '(' + h + ' ' + b + '\n' + l.slice(2).map(x => ' '.repeat(bi) + pp(x, bi)).join('\n') + ')';
+  }
+  if (h && _BF.has(h))
+    return '(' + h + '\n' + l.slice(1).map(e => ' '.repeat(bi) + pp(e, bi)).join('\n') + ')';
+  const parts = l.map(e => pp(e, bi));
+  return '(' + parts[0] + '\n' + parts.slice(1).map(p => ' '.repeat(bi) + p).join('\n') + ')';
+}
+function _ppV(els, ind) {
+  if (!els.length) return '[]';
+  const flat = '[' + els.map(e => pp(e, 0)).join(' ') + ']';
+  if (flat.length + ind <= 80) return flat;
+  const ci = ind + 2;
+  if (typeof els[0] === 'string' && els[0][0] === ':') {
+    let a = '', cs = 1;
+    if (els.length > 1 && els[1]?.m !== undefined) { a = ' ' + _ppM(els[1].m, ind + els[0].length + 2); cs = 2; }
+    const hl = '[' + els[0] + a;
+    if (cs >= els.length) return hl + ']';
+    return hl + '\n' + els.slice(cs).map(c => ' '.repeat(ci) + pp(c, ci)).join('\n') + ']';
+  }
+  const parts = els.map(e => pp(e, ind + 1));
+  return '[' + parts[0] + '\n' + parts.slice(1).map(p => ' '.repeat(ind + 1) + p).join('\n') + ']';
+}
+function _ppM(entries, ind) {
+  if (!entries.length) return '{}';
+  const flat = '{' + entries.map(([k,v]) => pp(k, 0) + ' ' + pp(v, 0)).join(' ') + '}';
+  if (flat.length + ind <= 80) return flat;
+  const ci = ind + 1;
+  const lines = entries.map(([k,v], i) => {
+    const ks = pp(k, ci), suf = i === entries.length - 1 ? '}' : '';
+    return ' '.repeat(ci) + ks + ' ' + pp(v, ci + ks.length + 1) + suf;
+  });
+  return '{' + lines[0].trimStart() + '\n' + lines.slice(1).join('\n');
+}
+function _ppB(elems, ind) {
+  if (!elems.length) return '[]';
+  const flat = '[' + elems.map(e => pp(e, 0)).join(' ') + ']';
+  if (flat.length + ind <= 80) return flat;
+  const ci = ind + 1, pairs = [];
+  for (let i = 0; i < elems.length; i += 2) {
+    const n = pp(elems[i], ci);
+    pairs.push(i + 1 < elems.length ? n + ' ' + pp(elems[i+1], ci + n.length + 1) : n);
+  }
+  const lines = pairs.map(p => ' '.repeat(ci) + p);
+  return '[' + lines[0].trimStart() + '\n' + lines.slice(1).join('\n') + ']';
+}
+function ppAll(ast) { return ast.map(e => pp(e, 0)).join('\n\n'); }
+
 // [BEGIN:render]
 // Code editable field view
 export async function render(value, options, api) {
   const { onChange, label, language = 'javascript', scrollToLines, scrollToLine, scrollToRegion, scrollToSymbol } = options;
-  const code = value || '';
+
+  // JSON AST support: if value is a compact JSON AST array, pretty-print for editing.
+  // Inline printer avoids loading hob-interpreter (which can trigger re-render).
+  // Edits save as text — the dual-format system handles both string and array.
+  const code = Array.isArray(value) ? ppAll(value) : (value || '');
 
   const wrapper = api.createElement('div', { className: 'field-code-editable' });
   wrapper.style.cssText = 'display: flex; flex-direction: column; gap: 8px;';
