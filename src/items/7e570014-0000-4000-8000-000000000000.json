@@ -3,13 +3,163 @@
   "name": "hob-view-tests",
   "type": "22222222-0000-0000-0000-000000000000",
   "created": 1739318400000,
-  "modified": 1739318400000,
+  "modified": 1771009258593,
   "content": {
     "code": "// Hob View Tests — def-view macro, view ops, and integration\n\nexport async function run(api) {\n  const { createSuite, assert, assertEquals, assertDeepEquals } = await api.require('test-lib');\n  const { test, testAsync, getResults } = createSuite('Hob Views');\n  const hob = await api.require('hob-interpreter');\n\n  // ============================================================\n  // def-view macro tests\n  // ============================================================\n\n  await testAsync('def-view produces map', async () => {\n    const interp = hob.createInterpreter(api);\n    await interp.macrosReady;\n    const result = await interp.eval(`\n      (def-view my-view \"some-type-id\" [item api]\n        [:div (:name item)])\n    `);\n    assert(result != null, 'Should return a map');\n    assertEquals(result[hob.keyword('for-type')], 'some-type-id');\n    assert(typeof result[hob.keyword('render')] === 'function', ':render should be a function');\n  });\n\n  await testAsync('def-view render is callable', async () => {\n    const interp = hob.createInterpreter(api);\n    await interp.macrosReady;\n    await interp.eval(`\n      (def-view test-view \"type-id\" [item api]\n        [:div \"rendered\"])\n    `);\n    const result = await interp.eval('((:render test-view) {:name \"Test\"} nil)');\n    assert(Array.isArray(result), 'render should return hiccup vector');\n    assertEquals(result[1], 'rendered');\n  });\n\n  await testAsync('def-view render accesses item', async () => {\n    const interp = hob.createInterpreter(api);\n    await interp.macrosReady;\n    await interp.eval(`\n      (def-view name-view \"type-id\" [item api]\n        [:h2 (:name item)])\n    `);\n    const result = await interp.eval('((:render name-view) {:name \"Hello World\"} nil)');\n    assert(Array.isArray(result), 'Should be vector');\n    assertEquals(result[1], 'Hello World');\n  });\n\n  // ============================================================\n  // View ops tests (using registerViewOps directly)\n  // ============================================================\n\n  await testAsync('hiccup->dom in view context', async () => {\n    const mockViewApi = {\n      renderItem: async () => document.createElement('div'),\n      navigate: () => {},\n      rerenderItem: () => {},\n    };\n    const interp = hob.createInterpreter(api, mockViewApi);\n    await interp.macrosReady;\n    const result = await interp.eval('(hiccup->dom [:div \"view\"])');\n    assert(result.nodeType === 1, 'Should be element');\n    assertEquals(result.tagName, 'DIV');\n    assertEquals(result.textContent, 'view');\n  });\n\n  await testAsync('navigate! is callable', async () => {\n    let navigatedTo = null;\n    const mockViewApi = {\n      renderItem: async () => null,\n      navigate: (id) => { navigatedTo = id; },\n      rerenderItem: () => {},\n    };\n    const interp = hob.createInterpreter(api, mockViewApi);\n    await interp.macrosReady;\n    const result = await interp.eval('(navigate! \"some-item-id\")');\n    assertEquals(result, null);\n    assertEquals(navigatedTo, 'some-item-id');\n  });\n\n  await testAsync('rerender! is callable', async () => {\n    let rerendered = false;\n    const mockViewApi = {\n      renderItem: async () => null,\n      navigate: () => {},\n      rerenderItem: () => { rerendered = true; },\n    };\n    const interp = hob.createInterpreter(api, mockViewApi);\n    await interp.macrosReady;\n    const result = await interp.eval('(rerender!)');\n    assertEquals(result, null);\n    assert(rerendered, 'rerenderItem should have been called');\n  });\n\n  await testAsync('render-item returns DOM', async () => {\n    const mockDiv = document.createElement('div');\n    mockDiv.textContent = 'rendered';\n    const mockViewApi = {\n      renderItem: async () => mockDiv,\n      navigate: () => {},\n      rerenderItem: () => {},\n    };\n    const interp = hob.createInterpreter(api, mockViewApi);\n    await interp.macrosReady;\n    const result = await interp.eval('(render-item \"test-id\")');\n    assert(result.nodeType === 1, 'Should be DOM element');\n    assertEquals(result.textContent, 'rendered');\n  });\n\n  // ============================================================\n  // View rendering integration tests\n  // ============================================================\n\n  await testAsync('view renders item name', async () => {\n    const interp = hob.createInterpreter(api);\n    await interp.macrosReady;\n    await interp.eval(`\n      (def-view nv \"type\" [item api]\n        [:div (:name item)])\n    `);\n    const hiccup = await interp.eval('((:render nv) {:name \"My Item\"} nil)');\n    const dom = hob.hiccupToDOM(hiccup);\n    assertEquals(dom.textContent, 'My Item');\n  });\n\n  await testAsync('view renders item content', async () => {\n    const interp = hob.createInterpreter(api);\n    await interp.macrosReady;\n    await interp.eval(`\n      (def-view cv \"type\" [item api]\n        [:p (:description (:content item))])\n    `);\n    const hiccup = await interp.eval(`\n      ((:render cv) {:name \"Test\" :content {:description \"Hello desc\"}} nil)\n    `);\n    const dom = hob.hiccupToDOM(hiccup);\n    assertEquals(dom.tagName, 'P');\n    assertEquals(dom.textContent, 'Hello desc');\n  });\n\n  await testAsync('view with conditional rendering', async () => {\n    const interp = hob.createInterpreter(api);\n    await interp.macrosReady;\n    await interp.eval(`\n      (def-view cond-view \"type\" [item api]\n        (if (:active item) [:div \"active\"] [:div \"inactive\"]))\n    `);\n    const active = await interp.eval('((:render cond-view) {:active true} nil)');\n    const inactive = await interp.eval('((:render cond-view) {:active false} nil)');\n    assertEquals(hob.hiccupToDOM(active).textContent, 'active');\n    assertEquals(hob.hiccupToDOM(inactive).textContent, 'inactive');\n  });\n\n  await testAsync('view with list rendering', async () => {\n    const interp = hob.createInterpreter(api);\n    await interp.macrosReady;\n    await interp.eval(`\n      (def-view list-view \"type\" [item api]\n        [:ul (for [t (:tags item)] [:li t])])\n    `);\n    const hiccup = await interp.eval('((:render list-view) {:tags [\"x\" \"y\" \"z\"]} nil)');\n    const dom = hob.hiccupToDOM(hiccup);\n    assertEquals(dom.tagName, 'UL');\n    assertEquals(dom.children.length, 3);\n    assertEquals(dom.children[0].textContent, 'x');\n    assertEquals(dom.children[2].textContent, 'z');\n  });\n\n  await testAsync('view event handler fires', async () => {\n    const mockViewApi = {\n      renderItem: async () => null,\n      navigate: () => {},\n      rerenderItem: () => {},\n    };\n    const interp = hob.createInterpreter(api, mockViewApi);\n    await interp.macrosReady;\n    const dom = await interp.eval(`\n      (do\n        (def clicks (atom 0))\n        (hiccup->dom [:button {:on-click (fn [] (swap! clicks inc))} \"Click\"]))\n    `);\n    assertEquals(dom.tagName, 'BUTTON');\n    dom.click();\n    dom.click();\n    // swap! is async — yield to microtask queue so both swaps complete\n    await new Promise(r => setTimeout(r, 0));\n    const count = await interp.eval('(deref clicks)');\n    assertEquals(count, 2);\n  });\n\n  return getResults();\n}\n",
     "description": "View integration test suite for the Hob language interpreter. Tests def-view macro output, view ops (navigate!, rerender!, render-item, hiccup->dom), view rendering with item data, conditional rendering, list rendering, and event handlers.",
     "tags": [
       "c0c0c0c0-0070-0000-0000-000000000000"
-    ]
+    ],
+    "_symbols": {
+      "run": {
+        "name": "run",
+        "line": 3,
+        "col": 7,
+        "endLine": 191,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(api)"
+      },
+      "run.hob": {
+        "name": "hob",
+        "line": 6,
+        "col": 8,
+        "endLine": 6,
+        "endCol": 50,
+        "kind": "variable",
+        "scope": "run"
+      },
+      "run.interp": {
+        "name": "interp",
+        "line": 174,
+        "col": 10,
+        "endLine": 174,
+        "endCol": 58,
+        "kind": "variable",
+        "scope": "run"
+      },
+      "run.result": {
+        "name": "result",
+        "line": 104,
+        "col": 10,
+        "endLine": 104,
+        "endCol": 63,
+        "kind": "variable",
+        "scope": "run"
+      },
+      "run.mockViewApi": {
+        "name": "mockViewApi",
+        "line": 169,
+        "col": 10,
+        "endLine": 173,
+        "endCol": 5,
+        "kind": "variable",
+        "scope": "run"
+      },
+      "mockViewApi.renderItem": {
+        "name": "renderItem",
+        "line": 170,
+        "col": 6,
+        "endLine": 170,
+        "endCol": 34,
+        "kind": "property-function",
+        "scope": "mockViewApi",
+        "signature": "()"
+      },
+      "mockViewApi.navigate": {
+        "name": "navigate",
+        "line": 171,
+        "col": 6,
+        "endLine": 171,
+        "endCol": 24,
+        "kind": "property-function",
+        "scope": "mockViewApi",
+        "signature": "()"
+      },
+      "mockViewApi.rerenderItem": {
+        "name": "rerenderItem",
+        "line": 172,
+        "col": 6,
+        "endLine": 172,
+        "endCol": 28,
+        "kind": "property-function",
+        "scope": "mockViewApi",
+        "signature": "()"
+      },
+      "run.navigatedTo": {
+        "name": "navigatedTo",
+        "line": 67,
+        "col": 8,
+        "endLine": 67,
+        "endCol": 26,
+        "kind": "variable",
+        "scope": "run"
+      },
+      "run.rerendered": {
+        "name": "rerendered",
+        "line": 81,
+        "col": 8,
+        "endLine": 81,
+        "endCol": 26,
+        "kind": "variable",
+        "scope": "run"
+      },
+      "run.mockDiv": {
+        "name": "mockDiv",
+        "line": 95,
+        "col": 10,
+        "endLine": 95,
+        "endCol": 49,
+        "kind": "variable",
+        "scope": "run"
+      },
+      "run.hiccup": {
+        "name": "hiccup",
+        "line": 160,
+        "col": 10,
+        "endLine": 160,
+        "endCol": 87,
+        "kind": "variable",
+        "scope": "run"
+      },
+      "run.dom": {
+        "name": "dom",
+        "line": 176,
+        "col": 10,
+        "endLine": 180,
+        "endCol": 6,
+        "kind": "variable",
+        "scope": "run"
+      },
+      "run.active": {
+        "name": "active",
+        "line": 147,
+        "col": 10,
+        "endLine": 147,
+        "endCol": 80,
+        "kind": "variable",
+        "scope": "run"
+      },
+      "run.inactive": {
+        "name": "inactive",
+        "line": 148,
+        "col": 10,
+        "endLine": 148,
+        "endCol": 83,
+        "kind": "variable",
+        "scope": "run"
+      },
+      "run.count": {
+        "name": "count",
+        "line": 186,
+        "col": 10,
+        "endLine": 186,
+        "endCol": 53,
+        "kind": "variable",
+        "scope": "run"
+      }
+    }
   },
   "attachments": []
 }

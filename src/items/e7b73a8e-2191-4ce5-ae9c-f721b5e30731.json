@@ -3,7 +3,7 @@
   "name": "field-view-code-editable",
   "type": "cccccccc-0000-0000-0000-000000000000",
   "created": 1769400000000,
-  "modified": 1770380894247,
+  "modified": 1771253721211,
   "content": {
     "description": "CodeMirror-based code editor with JavaScript syntax highlighting.",
     "code": "// Item: field-view-code-editable\n// ID: e7b73a8e-2191-4ce5-ae9c-f721b5e30731\n// Type: cccccccc-0000-0000-0000-000000000000\n\n// Code Editable Field View - CodeMirror-based code editor\n// See [field-view-code-editable documentation](item://e7b73a8e-2191-4ce5-ae9c-f721b5e30731)\n\n// [BEGIN:findRegionStartLine]\n// Helper: Find the line number where a region starts\nfunction findRegionStartLine(text, regionName) {\n  const lines = text.split('\\n');\n  const marker = '[BEGIN:' + regionName + ']';\n  for (let i = 0; i < lines.length; i++) {\n    const cleaned = lines[i].trim()\n      .replace(/^\\/\\/\\s*/, '')\n      .replace(/^#\\s*/, '')\n      .replace(/^<!--\\s*/, '')\n      .replace(/\\s*-->$/, '')\n      .trim();\n    if (cleaned === marker) return i + 2; // Line after marker (1-indexed)\n  }\n  return null;\n}\n// [END:findRegionStartLine]\n\n// Helper: Parse lines param (\"5\" or \"10-20\") into { start, end }\nconst parseLines = (linesStr) => {\n  if (!linesStr) return null;\n  if (typeof linesStr === 'number') return { start: linesStr, end: linesStr };\n  const str = String(linesStr);\n  if (str.includes('-')) {\n    const [start, end] = str.split('-').map(n => parseInt(n, 10));\n    return { start, end };\n  }\n  const line = parseInt(str, 10);\n  return { start: line, end: line };\n};\n\n// Inline compact JSON AST → s-expression pretty-printer (avoids loading hob-interpreter)\nconst _BF = new Set(['let','when','if','do','fn','defn','for','doseq','cond','when-let','loop','try','catch','def','defmacro','plet','->','->>','as->','quote','quasiquote']);\nconst _LF = new Set(['let','loop','when-let','plet']);\nfunction _esc(s) { return '\"' + s.replace(/\\\\/g,'\\\\\\\\').replace(/\"/g,'\\\\\"').replace(/\\n/g,'\\\\n').replace(/\\t/g,'\\\\t') + '\"'; }\nfunction pp(j, ind) {\n  if (j === null) return 'nil';\n  if (typeof j === 'number') return String(j);\n  if (typeof j === 'boolean') return j ? 'true' : 'false';\n  if (typeof j === 'string') return j;\n  if (typeof j === 'object' && !Array.isArray(j)) {\n    if ('s' in j) return _esc(j.s);\n    if ('v' in j) return _ppV(j.v, ind);\n    if ('m' in j) return _ppM(j.m, ind);\n  }\n  if (Array.isArray(j)) return _ppL(j, ind);\n  return String(j);\n}\nfunction _ppL(l, ind) {\n  if (!l.length) return '()';\n  const flat = '(' + l.map(e => pp(e, 0)).join(' ') + ')';\n  if (flat.length + ind <= 80) return flat;\n  const h = typeof l[0] === 'string' ? l[0] : null, bi = ind + 2;\n  if (h && _LF.has(h) && l.length >= 3 && l[1]?.v) {\n    const b = _ppB(l[1].v, ind + 1 + h.length + 1);\n    return '(' + h + ' ' + b + '\\n' + l.slice(2).map(x => ' '.repeat(bi) + pp(x, bi)).join('\\n') + ')';\n  }\n  if (h === 'fn' && l.length >= 3 && l[1]?.v) {\n    const p = _ppV(l[1].v, ind + 4);\n    return '(fn ' + p + '\\n' + l.slice(2).map(x => ' '.repeat(bi) + pp(x, bi)).join('\\n') + ')';\n  }\n  if (h === 'defn' && l.length >= 4 && l[2]?.v) {\n    const n = pp(l[1], 0), p = _ppV(l[2].v, ind + 7 + n.length);\n    return '(defn ' + n + ' ' + p + '\\n' + l.slice(3).map(x => ' '.repeat(bi) + pp(x, bi)).join('\\n') + ')';\n  }\n  if ((h === 'for' || h === 'doseq') && l.length >= 3 && l[1]?.v) {\n    const b = _ppV(l[1].v, ind + h.length + 2);\n    return '(' + h + ' ' + b + '\\n' + l.slice(2).map(x => ' '.repeat(bi) + pp(x, bi)).join('\\n') + ')';\n  }\n  if (h && _BF.has(h))\n    return '(' + h + '\\n' + l.slice(1).map(e => ' '.repeat(bi) + pp(e, bi)).join('\\n') + ')';\n  const parts = l.map(e => pp(e, bi));\n  return '(' + parts[0] + '\\n' + parts.slice(1).map(p => ' '.repeat(bi) + p).join('\\n') + ')';\n}\nfunction _ppV(els, ind) {\n  if (!els.length) return '[]';\n  const flat = '[' + els.map(e => pp(e, 0)).join(' ') + ']';\n  if (flat.length + ind <= 80) return flat;\n  const ci = ind + 2;\n  if (typeof els[0] === 'string' && els[0][0] === ':') {\n    let a = '', cs = 1;\n    if (els.length > 1 && els[1]?.m !== undefined) { a = ' ' + _ppM(els[1].m, ind + els[0].length + 2); cs = 2; }\n    const hl = '[' + els[0] + a;\n    if (cs >= els.length) return hl + ']';\n    return hl + '\\n' + els.slice(cs).map(c => ' '.repeat(ci) + pp(c, ci)).join('\\n') + ']';\n  }\n  const parts = els.map(e => pp(e, ind + 1));\n  return '[' + parts[0] + '\\n' + parts.slice(1).map(p => ' '.repeat(ind + 1) + p).join('\\n') + ']';\n}\nfunction _ppM(entries, ind) {\n  if (!entries.length) return '{}';\n  const flat = '{' + entries.map(([k,v]) => pp(k, 0) + ' ' + pp(v, 0)).join(' ') + '}';\n  if (flat.length + ind <= 80) return flat;\n  const ci = ind + 1;\n  const lines = entries.map(([k,v], i) => {\n    const ks = pp(k, ci), suf = i === entries.length - 1 ? '}' : '';\n    return ' '.repeat(ci) + ks + ' ' + pp(v, ci + ks.length + 1) + suf;\n  });\n  return '{' + lines[0].trimStart() + '\\n' + lines.slice(1).join('\\n');\n}\nfunction _ppB(elems, ind) {\n  if (!elems.length) return '[]';\n  const flat = '[' + elems.map(e => pp(e, 0)).join(' ') + ']';\n  if (flat.length + ind <= 80) return flat;\n  const ci = ind + 1, pairs = [];\n  for (let i = 0; i < elems.length; i += 2) {\n    const n = pp(elems[i], ci);\n    pairs.push(i + 1 < elems.length ? n + ' ' + pp(elems[i+1], ci + n.length + 1) : n);\n  }\n  const lines = pairs.map(p => ' '.repeat(ci) + p);\n  return '[' + lines[0].trimStart() + '\\n' + lines.slice(1).join('\\n') + ']';\n}\nfunction ppAll(ast) { return ast.map(e => pp(e, 0)).join('\\n\\n'); }\n\n// [BEGIN:render]\n// Code editable field view\nexport async function render(value, options, api) {\n  const { onChange, label, language = 'javascript', scrollToLines, scrollToLine, scrollToRegion, scrollToSymbol } = options;\n\n  // JSON AST support: if value is a compact JSON AST array, pretty-print for editing.\n  // Inline printer avoids loading hob-interpreter (which can trigger re-render).\n  // Edits save as text — the dual-format system handles both string and array.\n  const code = Array.isArray(value) ? ppAll(value) : (value || '');\n\n  const wrapper = api.createElement('div', { className: 'field-code-editable' });\n  wrapper.style.cssText = 'display: flex; flex-direction: column; gap: 8px;';\n\n  if (label) {\n    const labelEl = api.createElement('label');\n    labelEl.textContent = label;\n    labelEl.style.cssText = 'font-weight: 500; font-size: 0.875rem; color: var(--color-text);';\n    wrapper.appendChild(labelEl);\n  }\n\n  // Load CSS and CodeMirror\n  const cssLoader = await api.require('css-loader-lib');\n  await cssLoader.loadCSS('codemirror-css', api);\n  await api.require('codemirror');\n  await api.require('codemirror-javascript');\n  const CodeMirror = window.CodeMirror;\n\n  // Editor container\n  const editorContainer = api.createElement('div');\n  editorContainer.style.cssText = 'border: 1px solid var(--color-border); border-radius: var(--border-radius); overflow: hidden; min-height: 300px;';\n  wrapper.appendChild(editorContainer);\n\n  // Create CodeMirror instance\n  const cm = CodeMirror(editorContainer, {\n    value: code,\n    mode: language,\n    lineNumbers: true,\n    lineWrapping: true,\n    theme: 'default',\n    indentUnit: 2,\n    tabSize: 2,\n    indentWithTabs: false,\n    viewportMargin: 2000,\n    extraKeys: {\n      'Tab': (editor) => {\n        if (editor.somethingSelected()) {\n          editor.indentSelection('add');\n        } else {\n          editor.replaceSelection('  ');\n        }\n      }\n    }\n  });\n\n  cm.setSize('100%', '400px');\n\n  // Function to handle line/region navigation\n  const navigateToTarget = () => {\n    // Parse scrollToLines (\"5\" or \"10-20\") - prefer plural, fall back to singular\n    let lineRange = parseLines(scrollToLines) || parseLines(scrollToLine);\n\n    // If scrollToRegion is specified but no lines, find the region\n    if (scrollToRegion && !lineRange) {\n      const regionStart = findRegionStartLine(code, scrollToRegion);\n      if (regionStart) {\n        lineRange = { start: regionStart, end: regionStart };\n      }\n    }\n\n    // If scrollToSymbol is specified, look up in item's _symbols\n    if (scrollToSymbol && !lineRange) {\n      const currentItem = api.getCurrentItem ? api.getCurrentItem() : null;\n      const symbols = currentItem?.content?._symbols || {};\n      let symbolInfo = symbols[scrollToSymbol];\n      if (!symbolInfo) {\n        for (const [key, info] of Object.entries(symbols)) {\n          if (info.name === scrollToSymbol) {\n            symbolInfo = info;\n            break;\n          }\n        }\n      }\n      if (symbolInfo) {\n        lineRange = { start: symbolInfo.line, end: symbolInfo.endLine || symbolInfo.line };\n      }\n    }\n\n    // Fallback to URL params for backward compatibility\n    if (!lineRange) {\n      const urlParams = new URLSearchParams(window.location.search);\n      const urlLines = urlParams.get('lines');\n      if (urlLines) {\n        lineRange = parseLines(urlLines);\n      } else {\n        const urlLine = parseInt(urlParams.get('line'), 10);\n        if (!isNaN(urlLine) && urlLine > 0) {\n          lineRange = { start: urlLine, end: urlLine };\n        }\n      }\n    }\n\n    if (lineRange) {\n      // CodeMirror uses 0-based line numbers\n      const startLine = lineRange.start - 1;\n      const endLine = lineRange.end - 1;\n\n      // Scroll first line into view and set cursor\n      cm.scrollIntoView({ line: startLine, ch: 0 }, 100);\n      cm.setCursor({ line: startLine, ch: 0 });\n      cm.focus();\n\n      // Add CSS for highlight if not present\n      if (!document.getElementById('line-highlight-css')) {\n        const style = document.createElement('style');\n        style.id = 'line-highlight-css';\n        style.textContent = '.line-highlight { background: var(--color-warning-light) !important; }';\n        document.head.appendChild(style);\n      }\n\n      // Highlight all lines in range\n      for (let i = startLine; i <= endLine; i++) {\n        cm.addLineClass(i, 'background', 'line-highlight');\n      }\n    }\n  };\n\n  // Use IntersectionObserver to refresh CodeMirror when visible\n  const observer = new IntersectionObserver((entries) => {\n    for (const entry of entries) {\n      if (entry.isIntersecting) {\n        cm.refresh();\n        navigateToTarget();\n        observer.disconnect();\n        break;\n      }\n    }\n  }, { threshold: 0.1 });\n  observer.observe(editorContainer);\n\n  // Also refresh on first focus as fallback\n  const focusHandler = () => {\n    cm.refresh();\n    navigateToTarget();\n    editorContainer.removeEventListener('click', focusHandler);\n  };\n  editorContainer.addEventListener('click', focusHandler);\n\n  // Register cleanup handler for DOM removal (prevents CodeMirror memory leaks)\n  wrapper.setAttribute('data-hobson-cleanup', '');\n  wrapper.__hobsonCleanup = () => {\n    if (cm.display?.blinker) clearInterval(cm.display.blinker);\n    observer.disconnect();\n  };\n\n  // Call onChange on edits\n  if (onChange) {\n    cm.on('change', () => {\n      onChange(cm.getValue());\n    });\n  }\n\n  // Keyboard shortcut hint\n  const hint = api.createElement('div');\n  hint.style.cssText = 'font-size: 0.75rem; color: var(--color-text-tertiary);';\n  hint.textContent = 'Tip: Tab for indent, Shift+Tab to dedent';\n  wrapper.appendChild(hint);\n\n  return wrapper;\n}\n// [END:render]\n",
@@ -100,11 +100,297 @@
         "kind": "variable",
         "scope": "parseLines"
       },
+      "_BF": {
+        "name": "_BF",
+        "line": 40,
+        "col": 6,
+        "endLine": 40,
+        "endCol": 173,
+        "kind": "variable",
+        "scope": null
+      },
+      "_LF": {
+        "name": "_LF",
+        "line": 41,
+        "col": 6,
+        "endLine": 41,
+        "endCol": 53,
+        "kind": "variable",
+        "scope": null
+      },
+      "_esc": {
+        "name": "_esc",
+        "line": 42,
+        "col": 0,
+        "endLine": 42,
+        "endCol": 126,
+        "kind": "function",
+        "scope": null,
+        "signature": "(s)"
+      },
+      "pp": {
+        "name": "pp",
+        "line": 43,
+        "col": 0,
+        "endLine": 55,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(j, ind)"
+      },
+      "_ppL": {
+        "name": "_ppL",
+        "line": 56,
+        "col": 0,
+        "endLine": 81,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(l, ind)"
+      },
+      "_ppL.flat": {
+        "name": "flat",
+        "line": 58,
+        "col": 8,
+        "endLine": 58,
+        "endCol": 57,
+        "kind": "variable",
+        "scope": "_ppL"
+      },
+      "_ppL.h": {
+        "name": "h",
+        "line": 60,
+        "col": 8,
+        "endLine": 60,
+        "endCol": 50,
+        "kind": "variable",
+        "scope": "_ppL"
+      },
+      "_ppL.bi": {
+        "name": "bi",
+        "line": 60,
+        "col": 52,
+        "endLine": 60,
+        "endCol": 64,
+        "kind": "variable",
+        "scope": "_ppL"
+      },
+      "_ppL.b": {
+        "name": "b",
+        "line": 74,
+        "col": 10,
+        "endLine": 74,
+        "endCol": 46,
+        "kind": "variable",
+        "scope": "_ppL"
+      },
+      "_ppL.p": {
+        "name": "p",
+        "line": 70,
+        "col": 27,
+        "endLine": 70,
+        "endCol": 63,
+        "kind": "variable",
+        "scope": "_ppL"
+      },
+      "_ppL.n": {
+        "name": "n",
+        "line": 70,
+        "col": 10,
+        "endLine": 70,
+        "endCol": 25,
+        "kind": "variable",
+        "scope": "_ppL"
+      },
+      "_ppL.parts": {
+        "name": "parts",
+        "line": 79,
+        "col": 8,
+        "endLine": 79,
+        "endCol": 37,
+        "kind": "variable",
+        "scope": "_ppL"
+      },
+      "_ppV": {
+        "name": "_ppV",
+        "line": 82,
+        "col": 0,
+        "endLine": 96,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(els, ind)"
+      },
+      "_ppV.flat": {
+        "name": "flat",
+        "line": 84,
+        "col": 8,
+        "endLine": 84,
+        "endCol": 59,
+        "kind": "variable",
+        "scope": "_ppV"
+      },
+      "_ppV.ci": {
+        "name": "ci",
+        "line": 86,
+        "col": 8,
+        "endLine": 86,
+        "endCol": 20,
+        "kind": "variable",
+        "scope": "_ppV"
+      },
+      "_ppV.a": {
+        "name": "a",
+        "line": 88,
+        "col": 8,
+        "endLine": 88,
+        "endCol": 14,
+        "kind": "variable",
+        "scope": "_ppV"
+      },
+      "_ppV.cs": {
+        "name": "cs",
+        "line": 88,
+        "col": 16,
+        "endLine": 88,
+        "endCol": 22,
+        "kind": "variable",
+        "scope": "_ppV"
+      },
+      "_ppV.hl": {
+        "name": "hl",
+        "line": 90,
+        "col": 10,
+        "endLine": 90,
+        "endCol": 31,
+        "kind": "variable",
+        "scope": "_ppV"
+      },
+      "_ppV.parts": {
+        "name": "parts",
+        "line": 94,
+        "col": 8,
+        "endLine": 94,
+        "endCol": 44,
+        "kind": "variable",
+        "scope": "_ppV"
+      },
+      "_ppM": {
+        "name": "_ppM",
+        "line": 97,
+        "col": 0,
+        "endLine": 107,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(entries, ind)"
+      },
+      "_ppM.flat": {
+        "name": "flat",
+        "line": 99,
+        "col": 8,
+        "endLine": 99,
+        "endCol": 86,
+        "kind": "variable",
+        "scope": "_ppM"
+      },
+      "_ppM.ci": {
+        "name": "ci",
+        "line": 101,
+        "col": 8,
+        "endLine": 101,
+        "endCol": 20,
+        "kind": "variable",
+        "scope": "_ppM"
+      },
+      "_ppM.lines": {
+        "name": "lines",
+        "line": 102,
+        "col": 8,
+        "endLine": 105,
+        "endCol": 4,
+        "kind": "variable",
+        "scope": "_ppM"
+      },
+      "_ppB": {
+        "name": "_ppB",
+        "line": 108,
+        "col": 0,
+        "endLine": 119,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(elems, ind)"
+      },
+      "_ppB.flat": {
+        "name": "flat",
+        "line": 110,
+        "col": 8,
+        "endLine": 110,
+        "endCol": 61,
+        "kind": "variable",
+        "scope": "_ppB"
+      },
+      "_ppB.ci": {
+        "name": "ci",
+        "line": 112,
+        "col": 8,
+        "endLine": 112,
+        "endCol": 20,
+        "kind": "variable",
+        "scope": "_ppB"
+      },
+      "_ppB.pairs": {
+        "name": "pairs",
+        "line": 112,
+        "col": 22,
+        "endLine": 112,
+        "endCol": 32,
+        "kind": "variable",
+        "scope": "_ppB"
+      },
+      "_ppB.i": {
+        "name": "i",
+        "line": 113,
+        "col": 11,
+        "endLine": 113,
+        "endCol": 16,
+        "kind": "variable",
+        "scope": "_ppB"
+      },
+      "_ppB.n": {
+        "name": "n",
+        "line": 114,
+        "col": 10,
+        "endLine": 114,
+        "endCol": 30,
+        "kind": "variable",
+        "scope": "_ppB"
+      },
+      "_ppB.lines": {
+        "name": "lines",
+        "line": 117,
+        "col": 8,
+        "endLine": 117,
+        "endCol": 50,
+        "kind": "variable",
+        "scope": "_ppB"
+      },
+      "ppAll": {
+        "name": "ppAll",
+        "line": 120,
+        "col": 0,
+        "endLine": 120,
+        "endCol": 67,
+        "kind": "function",
+        "scope": null,
+        "signature": "(ast)"
+      },
       "render": {
         "name": "render",
-        "line": 41,
+        "line": 124,
         "col": 7,
-        "endLine": 203,
+        "endLine": 290,
         "endCol": 1,
         "kind": "function",
         "scope": null,
@@ -112,72 +398,72 @@
       },
       "render.code": {
         "name": "code",
-        "line": 43,
+        "line": 130,
         "col": 8,
-        "endLine": 43,
-        "endCol": 26,
+        "endLine": 130,
+        "endCol": 66,
         "kind": "variable",
         "scope": "render"
       },
       "render.wrapper": {
         "name": "wrapper",
-        "line": 45,
+        "line": 132,
         "col": 8,
-        "endLine": 45,
+        "endLine": 132,
         "endCol": 80,
         "kind": "variable",
         "scope": "render"
       },
       "render.labelEl": {
         "name": "labelEl",
-        "line": 49,
+        "line": 136,
         "col": 10,
-        "endLine": 49,
+        "endLine": 136,
         "endCol": 46,
         "kind": "variable",
         "scope": "render"
       },
       "render.cssLoader": {
         "name": "cssLoader",
-        "line": 56,
+        "line": 143,
         "col": 8,
-        "endLine": 56,
+        "endLine": 143,
         "endCol": 55,
         "kind": "variable",
         "scope": "render"
       },
       "render.CodeMirror": {
         "name": "CodeMirror",
-        "line": 60,
+        "line": 147,
         "col": 8,
-        "endLine": 60,
+        "endLine": 147,
         "endCol": 38,
         "kind": "variable",
         "scope": "render"
       },
       "render.editorContainer": {
         "name": "editorContainer",
-        "line": 63,
+        "line": 150,
         "col": 8,
-        "endLine": 63,
+        "endLine": 150,
         "endCol": 50,
         "kind": "variable",
         "scope": "render"
       },
       "render.cm": {
         "name": "cm",
-        "line": 68,
+        "line": 155,
         "col": 8,
-        "endLine": 87,
+        "endLine": 174,
         "endCol": 4,
         "kind": "variable",
         "scope": "render"
       },
       "render.navigateToTarget": {
         "name": "navigateToTarget",
-        "line": 92,
+        "line": 179,
         "col": 8,
-        "endLine": 159,
+        "endLine": 246,
         "endCol": 3,
         "kind": "function",
         "scope": "render",
@@ -185,162 +471,162 @@
       },
       "navigateToTarget.lineRange": {
         "name": "lineRange",
-        "line": 94,
+        "line": 181,
         "col": 8,
-        "endLine": 94,
+        "endLine": 181,
         "endCol": 73,
         "kind": "variable",
         "scope": "navigateToTarget"
       },
       "navigateToTarget.regionStart": {
         "name": "regionStart",
-        "line": 98,
+        "line": 185,
         "col": 12,
-        "endLine": 98,
+        "endLine": 185,
         "endCol": 67,
         "kind": "variable",
         "scope": "navigateToTarget"
       },
       "navigateToTarget.start": {
         "name": "start",
-        "line": 131,
+        "line": 218,
         "col": 24,
-        "endLine": 131,
+        "endLine": 218,
         "endCol": 38,
         "kind": "property",
         "scope": "navigateToTarget"
       },
       "navigateToTarget.end": {
         "name": "end",
-        "line": 131,
+        "line": 218,
         "col": 40,
-        "endLine": 131,
+        "endLine": 218,
         "endCol": 52,
         "kind": "property",
         "scope": "navigateToTarget"
       },
       "navigateToTarget.currentItem": {
         "name": "currentItem",
-        "line": 106,
+        "line": 193,
         "col": 12,
-        "endLine": 106,
+        "endLine": 193,
         "endCol": 74,
         "kind": "variable",
         "scope": "navigateToTarget"
       },
       "navigateToTarget.symbols": {
         "name": "symbols",
-        "line": 107,
+        "line": 194,
         "col": 12,
-        "endLine": 107,
+        "endLine": 194,
         "endCol": 58,
         "kind": "variable",
         "scope": "navigateToTarget"
       },
       "navigateToTarget.symbolInfo": {
         "name": "symbolInfo",
-        "line": 108,
+        "line": 195,
         "col": 10,
-        "endLine": 108,
+        "endLine": 195,
         "endCol": 46,
         "kind": "variable",
         "scope": "navigateToTarget"
       },
       "navigateToTarget.urlParams": {
         "name": "urlParams",
-        "line": 124,
+        "line": 211,
         "col": 12,
-        "endLine": 124,
+        "endLine": 211,
         "endCol": 67,
         "kind": "variable",
         "scope": "navigateToTarget"
       },
       "navigateToTarget.urlLines": {
         "name": "urlLines",
-        "line": 125,
+        "line": 212,
         "col": 12,
-        "endLine": 125,
+        "endLine": 212,
         "endCol": 45,
         "kind": "variable",
         "scope": "navigateToTarget"
       },
       "navigateToTarget.urlLine": {
         "name": "urlLine",
-        "line": 129,
+        "line": 216,
         "col": 14,
-        "endLine": 129,
+        "endLine": 216,
         "endCol": 59,
         "kind": "variable",
         "scope": "navigateToTarget"
       },
       "navigateToTarget.startLine": {
         "name": "startLine",
-        "line": 138,
+        "line": 225,
         "col": 12,
-        "endLine": 138,
+        "endLine": 225,
         "endCol": 43,
         "kind": "variable",
         "scope": "navigateToTarget"
       },
       "navigateToTarget.endLine": {
         "name": "endLine",
-        "line": 139,
+        "line": 226,
         "col": 12,
-        "endLine": 139,
+        "endLine": 226,
         "endCol": 39,
         "kind": "variable",
         "scope": "navigateToTarget"
       },
       "navigateToTarget.line": {
         "name": "line",
-        "line": 143,
+        "line": 230,
         "col": 21,
-        "endLine": 143,
+        "endLine": 230,
         "endCol": 36,
         "kind": "property",
         "scope": "navigateToTarget"
       },
       "navigateToTarget.ch": {
         "name": "ch",
-        "line": 143,
+        "line": 230,
         "col": 38,
-        "endLine": 143,
+        "endLine": 230,
         "endCol": 43,
         "kind": "property",
         "scope": "navigateToTarget"
       },
       "navigateToTarget.style": {
         "name": "style",
-        "line": 148,
+        "line": 235,
         "col": 14,
-        "endLine": 148,
+        "endLine": 235,
         "endCol": 53,
         "kind": "variable",
         "scope": "navigateToTarget"
       },
       "navigateToTarget.i": {
         "name": "i",
-        "line": 155,
+        "line": 242,
         "col": 15,
-        "endLine": 155,
+        "endLine": 242,
         "endCol": 28,
         "kind": "variable",
         "scope": "navigateToTarget"
       },
       "render.observer": {
         "name": "observer",
-        "line": 162,
+        "line": 249,
         "col": 8,
-        "endLine": 171,
+        "endLine": 258,
         "endCol": 24,
         "kind": "variable",
         "scope": "render"
       },
       "render.focusHandler": {
         "name": "focusHandler",
-        "line": 175,
+        "line": 262,
         "col": 8,
-        "endLine": 179,
+        "endLine": 266,
         "endCol": 3,
         "kind": "function",
         "scope": "render",
@@ -348,9 +634,9 @@
       },
       "render.hint": {
         "name": "hint",
-        "line": 197,
+        "line": 284,
         "col": 8,
-        "endLine": 197,
+        "endLine": 284,
         "endCol": 39,
         "kind": "variable",
         "scope": "render"

@@ -3,10 +3,10 @@
   "name": "field-view-markdown-editable",
   "type": "cccccccc-0000-0000-0000-000000000000",
   "created": 1769281070614,
-  "modified": 1770822878389,
+  "modified": 1770895231953,
   "content": {
     "description": "CodeMirror-based markdown editor with item link/transclusion insertion.",
-    "code": "\n// Helper: Find the line number where a region starts\nfunction findRegionStartLine(text, regionName) {\n  const lines = text.split('\\n');\n  const marker = '[BEGIN:' + regionName + ']';\n  for (let i = 0; i < lines.length; i++) {\n    const cleaned = lines[i].trim()\n      .replace(/^\\/\\/\\s*/, '')\n      .replace(/^#\\s*/, '')\n      .replace(/^<!--\\s*/, '')\n      .replace(/\\s*-->$/, '')\n      .trim();\n    if (cleaned === marker) return i + 2; // Line after marker (1-indexed)\n  }\n  return null;\n}\n\n// Markdown editable field view\n// Supports sizing option: \"compact\" (default) or \"fill\"\nexport async function render(value, options, api) {\n  const { onChange, label, placeholder, sizing, scrollToLine, scrollToRegion } = options;\n  const markdown = value || '';\n  const isFill = sizing === 'fill';\n\n  const wrapper = api.createElement('div', { className: 'field-markdown-editable' });\n  // For fill mode, wrapper needs flex: 1 and min-height: 0 to allow shrinking\n  wrapper.style.cssText = isFill\n    ? 'display: flex; flex-direction: column; gap: 8px; flex: 1; min-height: 0;'\n    : 'display: flex; flex-direction: column; gap: 8px;';\n\n  if (label) {\n    const labelEl = api.createElement('label');\n    labelEl.textContent = label;\n    labelEl.style.cssText = 'font-weight: 500; font-size: 0.875rem; color: var(--color-text); flex-shrink: 0;';\n    wrapper.appendChild(labelEl);\n  }\n\n  // Load CSS and CodeMirror\n  const cssLoader = await api.require('css-loader-lib');\n  await cssLoader.loadCSS('codemirror-css', api);\n  await api.require('codemirror');\n  await api.require('codemirror-markdown');\n  const CodeMirror = window.CodeMirror;\n\n  // Editor container - sizing depends on mode\n  const editorContainer = api.createElement('div');\n  editorContainer.style.cssText = isFill\n    ? 'border: 1px solid var(--color-border); border-radius: var(--border-radius); overflow: hidden; flex: 1; min-height: 150px;'\n    : 'border: 1px solid var(--color-border); border-radius: var(--border-radius); overflow: hidden; min-height: 120px; height: 150px; resize: vertical;';\n  wrapper.appendChild(editorContainer);\n\n  // Create CodeMirror instance\n  const cm = CodeMirror(editorContainer, {\n    value: markdown,\n    mode: 'markdown',\n    lineNumbers: true,\n    lineWrapping: true,\n    theme: 'default',\n    viewportMargin: Infinity,\n    placeholder: placeholder || '',\n    extraKeys: {\n      'Tab': (editor) => editor.replaceSelection('  ')\n    }\n  });\n\n  cm.setSize('100%', '100%');\n\n  // Function to handle line/region navigation\n  const navigateToTarget = () => {\n    let targetLine = scrollToLine;\n\n    // If scrollToRegion is specified but no line, find the region\n    if (scrollToRegion && !targetLine) {\n      targetLine = findRegionStartLine(markdown, scrollToRegion);\n    }\n\n    if (targetLine) {\n      // CodeMirror uses 0-based line numbers\n      const cmLine = targetLine - 1;\n\n      // Scroll line into view and set cursor\n      cm.scrollIntoView({ line: cmLine, ch: 0 }, 100);\n      cm.setCursor({ line: cmLine, ch: 0 });\n      cm.focus();\n\n      // Add highlight class to the line\n      cm.addLineClass(cmLine, 'background', 'line-highlight');\n\n      // Add CSS for highlight if not present\n      if (!document.getElementById('line-highlight-css')) {\n        const style = document.createElement('style');\n        style.id = 'line-highlight-css';\n        style.textContent = '.line-highlight { background: var(--color-warning-light) !important; }';\n        document.head.appendChild(style);\n      }\n    }\n  };\n\n  // Refresh CodeMirror when container is resized\n  // Self-cleaning: disconnects when element is removed from DOM\n  // Size-change guard prevents cm.refresh() \u2194 ResizeObserver oscillation\n  let lastObsWidth = 0, lastObsHeight = 0;\n  const resizeObserver = new ResizeObserver((entries) => {\n    if (!editorContainer.isConnected) {\n      resizeObserver.disconnect();\n      return;\n    }\n    const { width, height } = entries[0].contentRect;\n    if (width === lastObsWidth && height === lastObsHeight) return;\n    lastObsWidth = width;\n    lastObsHeight = height;\n    cm.refresh();\n  });\n  resizeObserver.observe(editorContainer);\n\n  // Use IntersectionObserver to refresh CodeMirror when visible and navigate\n  const observer = new IntersectionObserver((entries) => {\n    for (const entry of entries) {\n      if (entry.isIntersecting) {\n        cm.refresh();\n        navigateToTarget();\n        observer.disconnect();\n        break;\n      }\n    }\n  }, { threshold: 0.1 });\n  observer.observe(editorContainer);\n\n  // Also refresh after layout completes to fix gutter width calculation\n  requestAnimationFrame(() => cm.refresh());\n\n  // Register cleanup handler for DOM removal (prevents CodeMirror memory leaks)\n  wrapper.setAttribute('data-hobson-cleanup', '');\n  wrapper.__hobsonCleanup = () => {\n    if (cm.display?.blinker) clearInterval(cm.display.blinker);\n    resizeObserver.disconnect();\n    observer.disconnect();\n  };\n\n  // Call onChange on edits\n  if (onChange) {\n    cm.on('change', () => {\n      onChange(cm.getValue());\n    });\n  }\n\n  // Insert link/transclusion button\n  const insertBtn = api.createElement('button');\n  insertBtn.textContent = 'Insert Link/Transclusion';\n  insertBtn.style.cssText = 'padding: 8px 16px; background: var(--color-success); color: var(--color-bg-surface); border: none; border-radius: var(--border-radius); cursor: pointer; align-self: flex-start; flex-shrink: 0;';\n  wrapper.appendChild(insertBtn);\n\n  insertBtn.onclick = async () => {\n    const modalLib = await api.require('modal-lib');\n    const searchLib = await api.require('item-search-lib');\n\n    const searchContainer = api.createElement('div', {}, []);\n\n    const { close } = modalLib.showModal({\n      title: 'Insert Link or Transclusion',\n      width: '600px',\n      maxHeight: '80vh',\n      api,\n      content: searchContainer\n    });\n\n    const insertReference = (targetItem, asTransclusion) => {\n      const targetName = targetItem.name || targetItem.id;\n      const prefix = asTransclusion ? '!' : '';\n      const refText = prefix + '[' + targetName + '](item://' + targetItem.id + ')';\n      cm.replaceSelection(refText);\n      close();\n      cm.focus();\n    };\n\n    searchLib.createSearchUI(searchContainer, null, api, {\n      placeholder: 'Search items...',\n      autoFocus: true,\n      renderActions: (item) => {\n        const actions = api.createElement('div', {\n          style: 'display: flex; gap: 6px; margin-top: 8px;'\n        }, []);\n\n        const linkBtn = api.createElement('button', {}, ['Link']);\n        linkBtn.style.cssText = 'padding: 4px 12px; cursor: pointer; background: var(--color-primary); color: var(--color-bg-surface); border: none; border-radius: var(--border-radius); font-size: 0.75rem;';\n        linkBtn.onclick = (e) => {\n          e.stopPropagation();\n          insertReference(item, false);\n        };\n        actions.appendChild(linkBtn);\n\n        const transcludeBtn = api.createElement('button', {}, ['Transclusion']);\n        transcludeBtn.style.cssText = 'padding: 4px 12px; cursor: pointer; background: var(--color-success); color: var(--color-bg-surface); border: none; border-radius: var(--border-radius); font-size: 0.75rem;';\n        transcludeBtn.onclick = (e) => {\n          e.stopPropagation();\n          insertReference(item, true);\n        };\n        actions.appendChild(transcludeBtn);\n\n        return actions;\n      }\n    });\n  };\n\n  return wrapper;\n}\n",
+    "code": "\n// Helper: Find the line number where a region starts\nfunction findRegionStartLine(text, regionName) {\n  const lines = text.split('\\n');\n  const marker = '[BEGIN:' + regionName + ']';\n  for (let i = 0; i < lines.length; i++) {\n    const cleaned = lines[i].trim()\n      .replace(/^\\/\\/\\s*/, '')\n      .replace(/^#\\s*/, '')\n      .replace(/^<!--\\s*/, '')\n      .replace(/\\s*-->$/, '')\n      .trim();\n    if (cleaned === marker) return i + 2; // Line after marker (1-indexed)\n  }\n  return null;\n}\n\n// Markdown editable field view\n// Supports sizing option: \"compact\" (default) or \"fill\"\nexport async function render(value, options, api) {\n  const { onChange, label, placeholder, sizing, scrollToLine, scrollToRegion } = options;\n  const markdown = value || '';\n  const isFill = sizing === 'fill';\n\n  const wrapper = api.createElement('div', { className: 'field-markdown-editable' });\n  // For fill mode, wrapper needs flex: 1 and min-height: 0 to allow shrinking\n  wrapper.style.cssText = isFill\n    ? 'display: flex; flex-direction: column; gap: 8px; flex: 1; min-height: 0;'\n    : 'display: flex; flex-direction: column; gap: 8px;';\n\n  if (label) {\n    const labelEl = api.createElement('label');\n    labelEl.textContent = label;\n    labelEl.style.cssText = 'font-weight: 500; font-size: 0.875rem; color: var(--color-text); flex-shrink: 0;';\n    wrapper.appendChild(labelEl);\n  }\n\n  // Load CSS and CodeMirror\n  const cssLoader = await api.require('css-loader-lib');\n  await cssLoader.loadCSS('codemirror-css', api);\n  await api.require('codemirror');\n  await api.require('codemirror-markdown');\n  const CodeMirror = window.CodeMirror;\n\n  // Editor container - sizing depends on mode\n  const editorContainer = api.createElement('div');\n  editorContainer.style.cssText = isFill\n    ? 'border: 1px solid var(--color-border); border-radius: var(--border-radius); overflow: hidden; flex: 1; min-height: 150px;'\n    : 'border: 1px solid var(--color-border); border-radius: var(--border-radius); overflow: hidden; min-height: 120px; height: 150px; resize: vertical;';\n  wrapper.appendChild(editorContainer);\n\n  // Create CodeMirror instance\n  const cm = CodeMirror(editorContainer, {\n    value: markdown,\n    mode: 'markdown',\n    lineNumbers: true,\n    lineWrapping: true,\n    theme: 'default',\n    viewportMargin: Infinity,\n    placeholder: placeholder || '',\n    extraKeys: {\n      'Tab': (editor) => editor.replaceSelection('  ')\n    }\n  });\n\n  cm.setSize('100%', '100%');\n\n  // Function to handle line/region navigation\n  const navigateToTarget = () => {\n    let targetLine = scrollToLine;\n\n    // If scrollToRegion is specified but no line, find the region\n    if (scrollToRegion && !targetLine) {\n      targetLine = findRegionStartLine(markdown, scrollToRegion);\n    }\n\n    if (targetLine) {\n      // CodeMirror uses 0-based line numbers\n      const cmLine = targetLine - 1;\n\n      // Scroll line into view and set cursor\n      cm.scrollIntoView({ line: cmLine, ch: 0 }, 100);\n      cm.setCursor({ line: cmLine, ch: 0 });\n      cm.focus();\n\n      // Add highlight class to the line\n      cm.addLineClass(cmLine, 'background', 'line-highlight');\n\n      // Add CSS for highlight if not present\n      if (!document.getElementById('line-highlight-css')) {\n        const style = document.createElement('style');\n        style.id = 'line-highlight-css';\n        style.textContent = '.line-highlight { background: var(--color-warning-light) !important; }';\n        document.head.appendChild(style);\n      }\n    }\n  };\n\n  // Refresh CodeMirror when container is resized\n  // Self-cleaning: disconnects when element is removed from DOM\n  // Size-change guard prevents cm.refresh() ↔ ResizeObserver oscillation\n  let lastObsWidth = 0, lastObsHeight = 0;\n  const resizeObserver = new ResizeObserver((entries) => {\n    if (!editorContainer.isConnected) {\n      resizeObserver.disconnect();\n      return;\n    }\n    const { width, height } = entries[0].contentRect;\n    if (width === lastObsWidth && height === lastObsHeight) return;\n    lastObsWidth = width;\n    lastObsHeight = height;\n    cm.refresh();\n  });\n  resizeObserver.observe(editorContainer);\n\n  // Use IntersectionObserver to refresh CodeMirror when visible and navigate\n  const observer = new IntersectionObserver((entries) => {\n    for (const entry of entries) {\n      if (entry.isIntersecting) {\n        cm.refresh();\n        navigateToTarget();\n        observer.disconnect();\n        break;\n      }\n    }\n  }, { threshold: 0.1 });\n  observer.observe(editorContainer);\n\n  // Also refresh after layout completes to fix gutter width calculation\n  requestAnimationFrame(() => cm.refresh());\n\n  // Register cleanup handler for DOM removal (prevents CodeMirror memory leaks)\n  wrapper.setAttribute('data-hobson-cleanup', '');\n  wrapper.__hobsonCleanup = () => {\n    if (cm.display?.blinker) clearInterval(cm.display.blinker);\n    resizeObserver.disconnect();\n    observer.disconnect();\n  };\n\n  // Call onChange on edits\n  if (onChange) {\n    cm.on('change', () => {\n      onChange(cm.getValue());\n    });\n  }\n\n  // Insert link/transclusion button\n  const insertBtn = api.createElement('button');\n  insertBtn.textContent = 'Insert Link/Transclusion';\n  insertBtn.style.cssText = 'padding: 8px 16px; background: var(--color-success); color: var(--color-bg-surface); border: none; border-radius: var(--border-radius); cursor: pointer; align-self: flex-start; flex-shrink: 0;';\n  wrapper.appendChild(insertBtn);\n\n  insertBtn.onclick = async () => {\n    const modalLib = await api.require('modal-lib');\n    const searchLib = await api.require('item-search-lib');\n\n    const searchContainer = api.createElement('div', {}, []);\n\n    const { close } = modalLib.showModal({\n      title: 'Insert Link or Transclusion',\n      width: '600px',\n      maxHeight: '80vh',\n      api,\n      content: searchContainer\n    });\n\n    const insertReference = (targetItem, asTransclusion) => {\n      const targetName = targetItem.name || targetItem.id;\n      const prefix = asTransclusion ? '!' : '';\n      const refText = prefix + '[' + targetName + '](item://' + targetItem.id + ')';\n      cm.replaceSelection(refText);\n      close();\n      cm.focus();\n    };\n\n    searchLib.createSearchUI(searchContainer, null, api, {\n      placeholder: 'Search items...',\n      autoFocus: true,\n      renderActions: (item) => {\n        const actions = api.createElement('div', {\n          style: 'display: flex; gap: 6px; margin-top: 8px;'\n        }, []);\n\n        const linkBtn = api.createElement('button', {}, ['Link']);\n        linkBtn.style.cssText = 'padding: 4px 12px; cursor: pointer; background: var(--color-primary); color: var(--color-bg-surface); border: none; border-radius: var(--border-radius); font-size: 0.75rem;';\n        linkBtn.onclick = (e) => {\n          e.stopPropagation();\n          insertReference(item, false);\n        };\n        actions.appendChild(linkBtn);\n\n        const transcludeBtn = api.createElement('button', {}, ['Transclusion']);\n        transcludeBtn.style.cssText = 'padding: 4px 12px; cursor: pointer; background: var(--color-success); color: var(--color-bg-surface); border: none; border-radius: var(--border-radius); font-size: 0.75rem;';\n        transcludeBtn.onclick = (e) => {\n          e.stopPropagation();\n          insertReference(item, true);\n        };\n        actions.appendChild(transcludeBtn);\n\n        return actions;\n      }\n    });\n  };\n\n  return wrapper;\n}\n",
     "_symbols": {
       "findRegionStartLine": {
         "name": "findRegionStartLine",
@@ -58,7 +58,7 @@
         "name": "render",
         "line": 20,
         "col": 7,
-        "endLine": 229,
+        "endLine": 206,
         "endCol": 1,
         "kind": "function",
         "scope": null,
@@ -236,65 +236,38 @@
         "kind": "variable",
         "scope": "render"
       },
-      "render.pickerContainer": {
-        "name": "pickerContainer",
+      "render.modalLib": {
+        "name": "modalLib",
         "line": 154,
-        "col": 8,
+        "col": 10,
         "endLine": 154,
-        "endCol": 50,
-        "kind": "variable",
-        "scope": "render"
-      },
-      "render.header": {
-        "name": "header",
-        "line": 162,
-        "col": 10,
-        "endLine": 162,
-        "endCol": 43,
-        "kind": "variable",
-        "scope": "render"
-      },
-      "render.title": {
-        "name": "title",
-        "line": 165,
-        "col": 10,
-        "endLine": 165,
-        "endCol": 41,
-        "kind": "variable",
-        "scope": "render"
-      },
-      "render.closeBtn": {
-        "name": "closeBtn",
-        "line": 170,
-        "col": 10,
-        "endLine": 170,
-        "endCol": 48,
-        "kind": "variable",
-        "scope": "render"
-      },
-      "render.searchContainer": {
-        "name": "searchContainer",
-        "line": 180,
-        "col": 10,
-        "endLine": 180,
-        "endCol": 52,
+        "endCol": 51,
         "kind": "variable",
         "scope": "render"
       },
       "render.searchLib": {
         "name": "searchLib",
-        "line": 183,
+        "line": 155,
         "col": 10,
-        "endLine": 183,
+        "endLine": 155,
         "endCol": 58,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.searchContainer": {
+        "name": "searchContainer",
+        "line": 157,
+        "col": 10,
+        "endLine": 157,
+        "endCol": 60,
         "kind": "variable",
         "scope": "render"
       },
       "render.insertReference": {
         "name": "insertReference",
-        "line": 185,
+        "line": 167,
         "col": 10,
-        "endLine": 193,
+        "endLine": 174,
         "endCol": 5,
         "kind": "function",
         "scope": "render",
@@ -302,103 +275,85 @@
       },
       "insertReference.targetName": {
         "name": "targetName",
-        "line": 186,
+        "line": 168,
         "col": 12,
-        "endLine": 186,
+        "endLine": 168,
         "endCol": 57,
         "kind": "variable",
         "scope": "insertReference"
       },
       "insertReference.prefix": {
         "name": "prefix",
-        "line": 187,
+        "line": 169,
         "col": 12,
-        "endLine": 187,
+        "endLine": 169,
         "endCol": 46,
         "kind": "variable",
         "scope": "insertReference"
       },
       "insertReference.refText": {
         "name": "refText",
-        "line": 188,
+        "line": 170,
         "col": 12,
-        "endLine": 188,
+        "endLine": 170,
         "endCol": 83,
         "kind": "variable",
         "scope": "insertReference"
       },
-      "render.onSelectCallback": {
-        "name": "onSelectCallback",
-        "line": 195,
-        "col": 10,
-        "endLine": 220,
-        "endCol": 5,
-        "kind": "function",
-        "scope": "render",
-        "signature": "(targetItem)"
-      },
-      "onSelectCallback.existing": {
-        "name": "existing",
-        "line": 196,
-        "col": 12,
-        "endLine": 196,
-        "endCol": 76,
-        "kind": "variable",
-        "scope": "onSelectCallback"
-      },
-      "onSelectCallback.actionButtons": {
-        "name": "actionButtons",
-        "line": 199,
-        "col": 12,
-        "endLine": 199,
-        "endCol": 90,
-        "kind": "variable",
-        "scope": "onSelectCallback"
-      },
-      "onSelectCallback.selectedLabel": {
-        "name": "selectedLabel",
-        "line": 202,
-        "col": 12,
-        "endLine": 202,
-        "endCol": 52,
-        "kind": "variable",
-        "scope": "onSelectCallback"
-      },
-      "onSelectCallback.linkBtn": {
-        "name": "linkBtn",
-        "line": 207,
-        "col": 12,
-        "endLine": 207,
-        "endCol": 49,
-        "kind": "variable",
-        "scope": "onSelectCallback"
-      },
-      "onSelectCallback.transcludeBtn": {
-        "name": "transcludeBtn",
-        "line": 213,
-        "col": 12,
-        "endLine": 213,
-        "endCol": 55,
-        "kind": "variable",
-        "scope": "onSelectCallback"
-      },
       "render.placeholder": {
         "name": "placeholder",
-        "line": 223,
+        "line": 177,
         "col": 6,
-        "endLine": 223,
+        "endLine": 177,
         "endCol": 36,
         "kind": "property",
         "scope": "render"
       },
       "render.autoFocus": {
         "name": "autoFocus",
-        "line": 224,
+        "line": 178,
         "col": 6,
-        "endLine": 224,
+        "endLine": 178,
         "endCol": 21,
         "kind": "property",
         "scope": "render"
+      },
+      "render.renderActions": {
+        "name": "renderActions",
+        "line": 179,
+        "col": 6,
+        "endLine": 201,
+        "endCol": 7,
+        "kind": "property-function",
+        "scope": "render",
+        "signature": "(item)"
+      },
+      "render.renderActions.actions": {
+        "name": "actions",
+        "line": 180,
+        "col": 14,
+        "endLine": 182,
+        "endCol": 14,
+        "kind": "variable",
+        "scope": "render.renderActions"
+      },
+      "render.renderActions.linkBtn": {
+        "name": "linkBtn",
+        "line": 184,
+        "col": 14,
+        "endLine": 184,
+        "endCol": 65,
+        "kind": "variable",
+        "scope": "render.renderActions"
+      },
+      "render.renderActions.transcludeBtn": {
+        "name": "transcludeBtn",
+        "line": 192,
+        "col": 14,
+        "endLine": 192,
+        "endCol": 79,
+        "kind": "variable",
+        "scope": "render.renderActions"
       }
     }
   },

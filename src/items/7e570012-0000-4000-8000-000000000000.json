@@ -3,13 +3,309 @@
   "name": "hob-error-tests",
   "type": "22222222-0000-0000-0000-000000000000",
   "created": 1739318400000,
-  "modified": 1739318400000,
+  "modified": 1771004737066,
   "content": {
     "code": "// Hob Error Handling Tests\n\nexport async function run(api) {\n  const { createSuite, assert, assertEquals, assertDeepEquals } = await api.require('test-lib');\n  const { test, testAsync, getResults } = createSuite('Hob Error Handling');\n  const hob = await api.require('hob-interpreter');\n  const interp = hob.createInterpreter(api);\n  await interp.macrosReady;\n\n  // --- throw/catch basics ---\n\n  async function throwCatchBasic() {\n    const result = await interp.eval('(try (throw \"oops\") (catch e e))');\n    assertEquals(result, 'oops');\n  }\n\n  async function throwMapValue() {\n    const result = await interp.eval('(try (throw {:message \"bad\" :code 42}) (catch e (:code e)))');\n    assertEquals(result, 42);\n  }\n\n  // --- No error passes through ---\n\n  async function tryNoError() {\n    const result = await interp.eval('(try (+ 1 2) (catch e \"caught\"))');\n    assertEquals(result, 3);\n  }\n\n  // --- Catch undefined symbol ---\n\n  async function catchUndefined() {\n    const result = await interp.eval('(try undefined-var (catch e (str e)))');\n    assert(typeof result === 'string', 'Should return string');\n    assert(result.includes('Undefined') || result.includes('undefined'), 'Should mention undefined');\n  }\n\n  // --- Nested try/catch ---\n\n  async function nestedTryCatch() {\n    const result = await interp.eval(`\n      (try\n        (try (throw \"inner\") (catch e (str \"inner: \" e)))\n        (catch e (str \"outer: \" e)))\n    `);\n    assertEquals(result, 'inner: inner');\n  }\n\n  // --- Rethrow ---\n\n  async function rethrow() {\n    const result = await interp.eval(`\n      (try\n        (try (throw \"err\") (catch e (throw (str \"re-\" e))))\n        (catch e e))\n    `);\n    assertEquals(result, 're-err');\n  }\n\n  // --- finally clause ---\n\n  async function finallyClause() {\n    const result = await interp.eval(`\n      (do\n        (def a (atom 0))\n        (try\n          (throw \"err\")\n          (catch e nil)\n          (finally (swap! a inc)))\n        (deref a))\n    `);\n    assertEquals(result, 1);\n  }\n\n  async function finallyWithoutError() {\n    const result = await interp.eval(`\n      (do\n        (def a (atom 0))\n        (try\n          42\n          (finally (swap! a inc)))\n        (deref a))\n    `);\n    assertEquals(result, 1);\n  }\n\n  // --- Error in function call ---\n\n  async function errorInFnCall() {\n    const result = await interp.eval('(try ((fn [] (throw \"fn-err\"))) (catch e e))');\n    assertEquals(result, 'fn-err');\n  }\n\n  // --- Catch in loop ---\n\n  async function catchInLoop() {\n    const result = await interp.eval(`\n      (loop [i 0 acc []]\n        (if (>= i 3) acc\n          (recur (inc i)\n            (conj acc (try (if (= i 1) (throw \"skip\") i) (catch e nil))))))\n    `);\n    assertDeepEquals(result, [0, null, 2]);\n  }\n\n  // --- Catch preserves environment ---\n\n  async function catchPreservesEnv() {\n    const result = await interp.eval('(let [x 42] (try (throw \"err\") (catch e x)))');\n    assertEquals(result, 42);\n  }\n\n  // --- Uncaught error propagates ---\n\n  async function uncaughtPropagates() {\n    let caught = false;\n    try {\n      await interp.eval('(throw \"uncaught\")');\n    } catch (e) {\n      caught = true;\n      assert(e.message.includes('uncaught') || (e.hobValue === 'uncaught'), 'Should contain error value');\n    }\n    assert(caught, 'Uncaught error should propagate');\n  }\n\n  // --- Error from try body, no catch ---\n\n  async function tryWithoutCatch() {\n    const result = await interp.eval(`\n      (do\n        (def a (atom 0))\n        (try\n          (do (swap! a inc) 42)\n          (finally (swap! a inc)))\n        (deref a))\n    `);\n    assertEquals(result, 2);\n  }\n\n  // --- Catch type error ---\n\n  async function catchTypeError() {\n    const result = await interp.eval('(try (+ 1 \"a\") (catch e \"caught\"))');\n    // + with string concatenation may not error, so test with explicit throw\n    assert(result === 'caught' || result === '1a' || typeof result === 'string', 'Should catch or concatenate');\n  }\n\n  // --- Run all tests ---\n\n  await testAsync('throw/catch basic', throwCatchBasic);\n  await testAsync('throw map value', throwMapValue);\n  await testAsync('try no error', tryNoError);\n  await testAsync('catch undefined symbol', catchUndefined);\n  await testAsync('nested try/catch', nestedTryCatch);\n  await testAsync('rethrow', rethrow);\n  await testAsync('finally clause', finallyClause);\n  await testAsync('finally without error', finallyWithoutError);\n  await testAsync('error in function call', errorInFnCall);\n  await testAsync('catch in loop', catchInLoop);\n  await testAsync('catch preserves environment', catchPreservesEnv);\n  await testAsync('uncaught error propagates', uncaughtPropagates);\n  await testAsync('try without catch (finally only)', tryWithoutCatch);\n  await testAsync('catch type error', catchTypeError);\n\n  return getResults();\n}\n",
     "description": "Error handling test suite for the Hob language interpreter. Tests try/catch/throw/finally, nested handlers, rethrow, uncaught propagation, and error handling in loops and closures.",
     "tags": [
       "c0c0c0c0-0070-0000-0000-000000000000"
-    ]
+    ],
+    "_symbols": {
+      "run": {
+        "name": "run",
+        "line": 3,
+        "col": 7,
+        "endLine": 165,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(api)"
+      },
+      "run.hob": {
+        "name": "hob",
+        "line": 6,
+        "col": 8,
+        "endLine": 6,
+        "endCol": 50,
+        "kind": "variable",
+        "scope": "run"
+      },
+      "run.interp": {
+        "name": "interp",
+        "line": 7,
+        "col": 8,
+        "endLine": 7,
+        "endCol": 43,
+        "kind": "variable",
+        "scope": "run"
+      },
+      "run.throwCatchBasic": {
+        "name": "throwCatchBasic",
+        "line": 12,
+        "col": 2,
+        "endLine": 15,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "run",
+        "signature": "()"
+      },
+      "throwCatchBasic.result": {
+        "name": "result",
+        "line": 13,
+        "col": 10,
+        "endLine": 13,
+        "endCol": 72,
+        "kind": "variable",
+        "scope": "throwCatchBasic"
+      },
+      "run.throwMapValue": {
+        "name": "throwMapValue",
+        "line": 17,
+        "col": 2,
+        "endLine": 20,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "run",
+        "signature": "()"
+      },
+      "throwMapValue.result": {
+        "name": "result",
+        "line": 18,
+        "col": 10,
+        "endLine": 18,
+        "endCol": 99,
+        "kind": "variable",
+        "scope": "throwMapValue"
+      },
+      "run.tryNoError": {
+        "name": "tryNoError",
+        "line": 24,
+        "col": 2,
+        "endLine": 27,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "run",
+        "signature": "()"
+      },
+      "tryNoError.result": {
+        "name": "result",
+        "line": 25,
+        "col": 10,
+        "endLine": 25,
+        "endCol": 72,
+        "kind": "variable",
+        "scope": "tryNoError"
+      },
+      "run.catchUndefined": {
+        "name": "catchUndefined",
+        "line": 31,
+        "col": 2,
+        "endLine": 35,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "run",
+        "signature": "()"
+      },
+      "catchUndefined.result": {
+        "name": "result",
+        "line": 32,
+        "col": 10,
+        "endLine": 32,
+        "endCol": 77,
+        "kind": "variable",
+        "scope": "catchUndefined"
+      },
+      "run.nestedTryCatch": {
+        "name": "nestedTryCatch",
+        "line": 39,
+        "col": 2,
+        "endLine": 46,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "run",
+        "signature": "()"
+      },
+      "nestedTryCatch.result": {
+        "name": "result",
+        "line": 40,
+        "col": 10,
+        "endLine": 44,
+        "endCol": 6,
+        "kind": "variable",
+        "scope": "nestedTryCatch"
+      },
+      "run.rethrow": {
+        "name": "rethrow",
+        "line": 50,
+        "col": 2,
+        "endLine": 57,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "run",
+        "signature": "()"
+      },
+      "rethrow.result": {
+        "name": "result",
+        "line": 51,
+        "col": 10,
+        "endLine": 55,
+        "endCol": 6,
+        "kind": "variable",
+        "scope": "rethrow"
+      },
+      "run.finallyClause": {
+        "name": "finallyClause",
+        "line": 61,
+        "col": 2,
+        "endLine": 72,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "run",
+        "signature": "()"
+      },
+      "finallyClause.result": {
+        "name": "result",
+        "line": 62,
+        "col": 10,
+        "endLine": 70,
+        "endCol": 6,
+        "kind": "variable",
+        "scope": "finallyClause"
+      },
+      "run.finallyWithoutError": {
+        "name": "finallyWithoutError",
+        "line": 74,
+        "col": 2,
+        "endLine": 84,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "run",
+        "signature": "()"
+      },
+      "finallyWithoutError.result": {
+        "name": "result",
+        "line": 75,
+        "col": 10,
+        "endLine": 82,
+        "endCol": 6,
+        "kind": "variable",
+        "scope": "finallyWithoutError"
+      },
+      "run.errorInFnCall": {
+        "name": "errorInFnCall",
+        "line": 88,
+        "col": 2,
+        "endLine": 91,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "run",
+        "signature": "()"
+      },
+      "errorInFnCall.result": {
+        "name": "result",
+        "line": 89,
+        "col": 10,
+        "endLine": 89,
+        "endCol": 84,
+        "kind": "variable",
+        "scope": "errorInFnCall"
+      },
+      "run.catchInLoop": {
+        "name": "catchInLoop",
+        "line": 95,
+        "col": 2,
+        "endLine": 103,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "run",
+        "signature": "()"
+      },
+      "catchInLoop.result": {
+        "name": "result",
+        "line": 96,
+        "col": 10,
+        "endLine": 101,
+        "endCol": 6,
+        "kind": "variable",
+        "scope": "catchInLoop"
+      },
+      "run.catchPreservesEnv": {
+        "name": "catchPreservesEnv",
+        "line": 107,
+        "col": 2,
+        "endLine": 110,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "run",
+        "signature": "()"
+      },
+      "catchPreservesEnv.result": {
+        "name": "result",
+        "line": 108,
+        "col": 10,
+        "endLine": 108,
+        "endCol": 84,
+        "kind": "variable",
+        "scope": "catchPreservesEnv"
+      },
+      "run.uncaughtPropagates": {
+        "name": "uncaughtPropagates",
+        "line": 114,
+        "col": 2,
+        "endLine": 123,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "run",
+        "signature": "()"
+      },
+      "uncaughtPropagates.caught": {
+        "name": "caught",
+        "line": 115,
+        "col": 8,
+        "endLine": 115,
+        "endCol": 22,
+        "kind": "variable",
+        "scope": "uncaughtPropagates"
+      },
+      "run.tryWithoutCatch": {
+        "name": "tryWithoutCatch",
+        "line": 127,
+        "col": 2,
+        "endLine": 137,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "run",
+        "signature": "()"
+      },
+      "tryWithoutCatch.result": {
+        "name": "result",
+        "line": 128,
+        "col": 10,
+        "endLine": 135,
+        "endCol": 6,
+        "kind": "variable",
+        "scope": "tryWithoutCatch"
+      },
+      "run.catchTypeError": {
+        "name": "catchTypeError",
+        "line": 141,
+        "col": 2,
+        "endLine": 145,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "run",
+        "signature": "()"
+      },
+      "catchTypeError.result": {
+        "name": "result",
+        "line": 142,
+        "col": 10,
+        "endLine": 142,
+        "endCol": 74,
+        "kind": "variable",
+        "scope": "catchTypeError"
+      }
+    }
   },
   "attachments": []
 }

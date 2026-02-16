@@ -3,7 +3,7 @@
   "name": "system-browser-view",
   "type": "aaaaaaaa-0000-0000-0000-000000000000",
   "created": 1770975931918,
-  "modified": 1770975931918,
+  "modified": 1771186696839,
   "content": {
     "for_type": "3a36e7d0-a49c-494b-ae32-1a0c92a10c1c",
     "displayName": "System Browser",
@@ -11,7 +11,1088 @@
       "read"
     ],
     "code": "// System Browser View\n// Multi-pane hierarchical browser for navigating items by structure.\n\nconst BROWSER_TYPE_ID = '3a36e7d0-a49c-494b-ae32-1a0c92a10c1c';\n\nconst AXES = ['Types', 'Tags', 'Views', 'Libraries'];\n\nconst IDS = {\n  TYPE_DEFINITION: '11111111-0000-0000-0000-000000000000',\n  VIEW: 'aaaaaaaa-0000-0000-0000-000000000000',\n  LIBRARY: '66666666-0000-0000-0000-000000000000',\n};\n\n// --- Styles ---\n\nconst STYLES = {\n  container: `\n    display: flex; flex-direction: column;\n    height: 100%; min-height: 400px;\n    font-size: 0.8125rem;\n    border: 1px solid var(--color-border-light, #e5e7eb);\n    border-radius: var(--border-radius, 6px);\n    overflow: hidden;\n  `,\n  tabBar: `\n    display: flex; gap: 0;\n    border-bottom: 1px solid var(--color-border-light, #e5e7eb);\n    background: var(--color-bg-surface-alt, #f9fafb);\n    flex-shrink: 0;\n    align-items: center;\n  `,\n  tabSpacer: `\n    flex: 1;\n  `,\n  refreshBtn: `\n    padding: 4px 10px;\n    margin-right: 8px;\n    cursor: pointer;\n    font-size: 0.75rem;\n    font-weight: 500;\n    border: 1px solid var(--color-border-light, #e5e7eb);\n    border-radius: var(--border-radius, 6px);\n    background: var(--color-bg-surface, #fff);\n    color: var(--color-border-dark, #6b7280);\n    transition: background 0.15s, color 0.15s;\n  `,\n  tab: `\n    padding: 8px 16px;\n    cursor: pointer;\n    font-size: 0.8125rem;\n    font-weight: 500;\n    border: none; background: none;\n    border-bottom: 2px solid transparent;\n    color: var(--color-border-dark, #6b7280);\n    transition: color 0.15s, border-color 0.15s;\n  `,\n  tabActive: `\n    padding: 8px 16px;\n    cursor: pointer;\n    font-size: 0.8125rem;\n    font-weight: 600;\n    border: none; background: none;\n    border-bottom: 2px solid var(--color-link, #2563eb);\n    color: var(--color-link, #2563eb);\n  `,\n  columns: `\n    display: flex; flex: 1; overflow: hidden;\n  `,\n  column: `\n    display: flex; flex-direction: column;\n    border-right: 1px solid var(--color-border-light, #e5e7eb);\n    overflow: hidden;\n  `,\n  columnHeader: `\n    padding: 6px 10px;\n    font-size: 0.6875rem;\n    text-transform: uppercase;\n    letter-spacing: 0.05em;\n    color: var(--color-border-dark, #6b7280);\n    border-bottom: 1px solid var(--color-border-light, #e5e7eb);\n    background: var(--color-bg-surface-alt, #f9fafb);\n    flex-shrink: 0;\n  `,\n  columnList: `\n    flex: 1; overflow-y: auto; padding: 2px 0;\n  `,\n  filterInput: `\n    width: 100%; box-sizing: border-box;\n    padding: 5px 8px;\n    font-size: 0.75rem;\n    border: none;\n    border-bottom: 1px solid var(--color-border-light, #e5e7eb);\n    outline: none;\n    background: var(--color-bg-surface, #fff);\n  `,\n  row: `\n    display: flex; align-items: baseline; gap: 6px;\n    padding: 4px 10px;\n    cursor: pointer;\n    border-radius: 0;\n    transition: background 0.1s;\n    white-space: nowrap;\n    overflow: hidden;\n    text-overflow: ellipsis;\n  `,\n  rowSelected: `\n    background: var(--color-bg-surface-alt, #e8eaed);\n  `,\n  rowName: `\n    flex: 1; overflow: hidden; text-overflow: ellipsis;\n    color: var(--color-link, #2563eb);\n  `,\n  rowCount: `\n    flex-shrink: 0;\n    color: var(--color-border-dark, #6b7280);\n    font-size: 0.6875rem;\n  `,\n  detail: `\n    flex: 1; overflow-y: auto; padding: 16px;\n    min-width: 0;\n  `,\n  detailTitle: `\n    margin: 0 0 8px 0;\n    font-size: 1rem;\n    font-weight: 600;\n  `,\n  detailMeta: `\n    font-size: 0.75rem;\n    color: var(--color-border-dark, #6b7280);\n    margin-bottom: 4px;\n    overflow-wrap: break-word;\n  `,\n  detailDesc: `\n    font-size: 0.8125rem;\n    margin-top: 12px;\n    line-height: 1.5;\n    white-space: pre-wrap;\n    overflow-wrap: break-word;\n  `,\n  openBtn: `\n    margin-top: 12px;\n    padding: 6px 16px;\n    font-size: 0.8125rem;\n    cursor: pointer;\n    border: 1px solid var(--color-border-light, #e5e7eb);\n    border-radius: var(--border-radius, 6px);\n    background: var(--color-bg-surface-alt, #f9fafb);\n    color: var(--color-link, #2563eb);\n    font-weight: 500;\n  `,\n  subTabBar: `\n    display: flex; gap: 0;\n    border-bottom: 1px solid var(--color-border-light, #e5e7eb);\n    flex-shrink: 0;\n  `,\n  subTab: `\n    padding: 4px 10px;\n    cursor: pointer;\n    font-size: 0.6875rem;\n    font-weight: 500;\n    border: none; background: none;\n    border-bottom: 2px solid transparent;\n    color: var(--color-border-dark, #6b7280);\n  `,\n  subTabActive: `\n    padding: 4px 10px;\n    cursor: pointer;\n    font-size: 0.6875rem;\n    font-weight: 600;\n    border: none; background: none;\n    border-bottom: 2px solid var(--color-link, #2563eb);\n    color: var(--color-link, #2563eb);\n  `,\n  empty: `\n    padding: 12px 10px;\n    color: var(--color-border-dark, #6b7280);\n    font-style: italic;\n    font-size: 0.75rem;\n  `,\n};\n\n// --- Main render ---\n\nexport async function render(item, api) {\n  const lib = await api.require('related-items-lib');\n  const tagTreeBuilder = await api.require('tag-tree-builder');\n  await lib.ensureBuilt(api);\n\n  const state = {\n    axis: 'Types',\n    col1Selection: null,\n    col2Tab: 'Instances',\n    col2Selection: null,\n  };\n\n  const container = api.createElement('div', { style: STYLES.container }, []);\n\n  // Tab bar\n  const tabBar = api.createElement('div', { style: STYLES.tabBar }, []);\n  container.appendChild(tabBar);\n\n  // Body: three columns\n  const columnsEl = api.createElement('div', { style: STYLES.columns }, []);\n  container.appendChild(columnsEl);\n\n  const col1El = api.createElement('div', { style: STYLES.column + 'width: 25%; flex-shrink: 0;' }, []);\n  const col2El = api.createElement('div', { style: STYLES.column + 'width: 30%; flex-shrink: 0;' }, []);\n  const detailEl = api.createElement('div', { style: STYLES.detail }, []);\n\n  columnsEl.appendChild(col1El);\n  columnsEl.appendChild(col2El);\n  columnsEl.appendChild(detailEl);\n\n  // --- Build functions ---\n\n  function buildTabBar() {\n    tabBar.innerHTML = '';\n    for (const axis of AXES) {\n      const btn = api.createElement('div', {\n        style: axis === state.axis ? STYLES.tabActive : STYLES.tab\n      }, [axis]);\n      btn.onclick = () => {\n        if (state.axis === axis) return;\n        state.axis = axis;\n        state.col1Selection = null;\n        state.col2Tab = 'Instances';\n        state.col2Selection = null;\n        buildTabBar();\n        buildColumn1();\n        buildColumn2();\n        buildDetail();\n      };\n      tabBar.appendChild(btn);\n    }\n\n    // Spacer pushes refresh button to the right\n    tabBar.appendChild(api.createElement('div', { style: STYLES.tabSpacer }, []));\n\n    // Refresh button\n    const refreshBtn = api.createElement('button', { style: STYLES.refreshBtn }, ['\\u21BB Refresh']);\n    refreshBtn.onmouseover = () => { refreshBtn.style.background = 'var(--color-bg-surface-alt, #f3f4f6)'; refreshBtn.style.color = 'var(--color-link, #2563eb)'; };\n    refreshBtn.onmouseout = () => { refreshBtn.style.background = 'var(--color-bg-surface, #fff)'; refreshBtn.style.color = 'var(--color-border-dark, #6b7280)'; };\n    refreshBtn.onclick = () => {\n      state.col1Selection = null;\n      state.col2Selection = null;\n      buildColumn1();\n      buildColumn2();\n      buildDetail();\n    };\n    tabBar.appendChild(refreshBtn);\n  }\n\n  async function buildColumn1() {\n    col1El.innerHTML = '';\n    const headerLabel = state.axis === 'Types' ? 'Types'\n      : state.axis === 'Tags' ? 'Tags'\n      : state.axis === 'Views' ? 'Views'\n      : 'Libraries';\n\n    const header = api.createElement('div', { style: STYLES.columnHeader }, [headerLabel]);\n    col1El.appendChild(header);\n\n    // Filter input\n    const filterInput = api.createElement('input', {\n      style: STYLES.filterInput,\n      placeholder: 'Filter\\u2026',\n      type: 'text'\n    }, []);\n    col1El.appendChild(filterInput);\n\n    const listEl = api.createElement('div', { style: STYLES.columnList }, []);\n    col1El.appendChild(listEl);\n\n    // Gather data\n    let entries = []; // [{id, name, count}]\n\n    if (state.axis === 'Types') {\n      const typeIds = lib.getInstancesOf(IDS.TYPE_DEFINITION);\n      for (const id of typeIds) {\n        const t = await safeGet(id, api);\n        const instanceCount = lib.getInstancesOf(id).length;\n        entries.push({ id, name: t?.name || id.substring(0, 8), count: instanceCount });\n      }\n    } else if (state.axis === 'Tags') {\n      const tagIds = lib.getAllTags();\n      for (const id of tagIds) {\n        const fqName = await tagTreeBuilder.getFullyQualifiedName(id, api);\n        const taggedCount = lib.getItemsTaggedWith(id).length;\n        entries.push({ id, name: fqName || id.substring(0, 8), count: taggedCount });\n      }\n    } else if (state.axis === 'Views') {\n      const viewIds = lib.getInstancesOf(IDS.VIEW);\n      for (const id of viewIds) {\n        const v = await safeGet(id, api);\n        let targetName = '';\n        if (v?.content?.for_type) {\n          const tt = await safeGet(v.content.for_type, api);\n          targetName = tt?.name || '';\n        }\n        entries.push({ id, name: v?.name || id.substring(0, 8), count: 0, subtitle: targetName });\n      }\n    } else if (state.axis === 'Libraries') {\n      const libIds = lib.getInstancesOf(IDS.LIBRARY);\n      for (const id of libIds) {\n        const l = await safeGet(id, api);\n        entries.push({ id, name: l?.name || id.substring(0, 8), count: 0 });\n      }\n    }\n\n    entries.sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));\n\n    function renderList(filter) {\n      listEl.innerHTML = '';\n      const filtered = filter\n        ? entries.filter(e => e.name.toLowerCase().includes(filter.toLowerCase()))\n        : entries;\n\n      if (filtered.length === 0) {\n        listEl.appendChild(api.createElement('div', { style: STYLES.empty }, ['No items']));\n        return;\n      }\n\n      for (const entry of filtered) {\n        const isSelected = state.col1Selection === entry.id;\n        const row = api.createElement('div', {\n          style: STYLES.row + (isSelected ? STYLES.rowSelected : '')\n        }, []);\n\n        const nameSpan = api.createElement('span', { style: STYLES.rowName }, [entry.name]);\n        row.appendChild(nameSpan);\n\n        if (state.axis === 'Views' && entry.subtitle) {\n          const sub = api.createElement('span', { style: STYLES.rowCount }, [entry.subtitle]);\n          row.appendChild(sub);\n        } else if (entry.count > 0) {\n          const countSpan = api.createElement('span', { style: STYLES.rowCount }, [String(entry.count)]);\n          row.appendChild(countSpan);\n        }\n\n        row.onmouseover = () => { if (!isSelected) row.style.background = 'var(--color-bg-surface-alt, #f3f4f6)'; };\n        row.onmouseout = () => { if (!isSelected) row.style.background = ''; };\n        row.onclick = () => {\n          state.col1Selection = entry.id;\n          state.col2Tab = 'Instances';\n          state.col2Selection = null;\n          renderList(filterInput.value);\n          buildColumn2();\n          buildDetail();\n        };\n        row.ondblclick = () => { api.openItem(entry.id); };\n\n        listEl.appendChild(row);\n      }\n    }\n\n    filterInput.oninput = () => renderList(filterInput.value);\n    renderList('');\n  }\n\n  async function buildColumn2() {\n    col2El.innerHTML = '';\n\n    if (!state.col1Selection) {\n      col2El.appendChild(api.createElement('div', { style: STYLES.columnHeader }, ['']));\n      col2El.appendChild(api.createElement('div', { style: STYLES.empty }, ['Select an item from the left']));\n      return;\n    }\n\n    const selItem = await safeGet(state.col1Selection, api);\n    const selName = selItem?.name || state.col1Selection.substring(0, 8);\n\n    // Sub-tabs for Types axis\n    if (state.axis === 'Types') {\n      const subTabs = ['Instances', 'Subtypes', 'Views'];\n      const subTabBar = api.createElement('div', { style: STYLES.subTabBar }, []);\n      for (const tab of subTabs) {\n        const btn = api.createElement('div', {\n          style: tab === state.col2Tab ? STYLES.subTabActive : STYLES.subTab\n        }, [tab]);\n        btn.onclick = () => {\n          if (state.col2Tab === tab) return;\n          state.col2Tab = tab;\n          state.col2Selection = null;\n          buildColumn2();\n          buildDetail();\n        };\n        subTabBar.appendChild(btn);\n      }\n      col2El.appendChild(subTabBar);\n    } else {\n      const header = api.createElement('div', { style: STYLES.columnHeader }, [selName]);\n      col2El.appendChild(header);\n    }\n\n    // Filter\n    const filterInput = api.createElement('input', {\n      style: STYLES.filterInput,\n      placeholder: 'Filter\\u2026',\n      type: 'text'\n    }, []);\n    col2El.appendChild(filterInput);\n\n    const listEl = api.createElement('div', { style: STYLES.columnList }, []);\n    col2El.appendChild(listEl);\n\n    // Gather items for column 2\n    let itemIds = [];\n\n    if (state.axis === 'Types') {\n      if (state.col2Tab === 'Instances') {\n        itemIds = lib.getInstancesOf(state.col1Selection);\n      } else if (state.col2Tab === 'Subtypes') {\n        itemIds = lib.getSubtypesOf(state.col1Selection);\n      } else if (state.col2Tab === 'Views') {\n        itemIds = lib.getViewsFor(state.col1Selection);\n      }\n    } else if (state.axis === 'Tags') {\n      itemIds = lib.getItemsTaggedWith(state.col1Selection);\n    } else if (state.axis === 'Views') {\n      // Show instances of the type this view targets\n      if (selItem?.content?.for_type) {\n        itemIds = lib.getInstancesOf(selItem.content.for_type);\n      }\n    } else if (state.axis === 'Libraries') {\n      // For libraries, show description text instead of a list\n      const desc = selItem?.content?.description || 'No description available.';\n      const descEl = api.createElement('div', {\n        style: 'padding: 10px; font-size: 0.8125rem; line-height: 1.5; white-space: pre-wrap;'\n      }, [desc]);\n      listEl.appendChild(descEl);\n      filterInput.style.display = 'none';\n      return;\n    }\n\n    // Resolve names for sorting\n    const entries = [];\n    for (const id of itemIds) {\n      const it = await safeGet(id, api);\n      entries.push({ id, name: it?.name || id.substring(0, 8) });\n    }\n    entries.sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));\n\n    function renderList(filter) {\n      listEl.innerHTML = '';\n      const filtered = filter\n        ? entries.filter(e => e.name.toLowerCase().includes(filter.toLowerCase()))\n        : entries;\n\n      if (filtered.length === 0) {\n        listEl.appendChild(api.createElement('div', { style: STYLES.empty }, [\n          itemIds.length === 0 ? 'None' : 'No matches'\n        ]));\n        return;\n      }\n\n      for (const entry of filtered) {\n        const isSelected = state.col2Selection === entry.id;\n        const row = api.createElement('div', {\n          style: STYLES.row + (isSelected ? STYLES.rowSelected : '')\n        }, []);\n\n        const nameSpan = api.createElement('span', { style: STYLES.rowName }, [entry.name]);\n        row.appendChild(nameSpan);\n\n        row.onmouseover = () => { if (!isSelected) row.style.background = 'var(--color-bg-surface-alt, #f3f4f6)'; };\n        row.onmouseout = () => { if (!isSelected) row.style.background = ''; };\n        row.onclick = () => {\n          state.col2Selection = entry.id;\n          renderList(filterInput.value);\n          buildDetail();\n        };\n        row.ondblclick = () => { api.openItem(entry.id); };\n\n        listEl.appendChild(row);\n      }\n    }\n\n    filterInput.oninput = () => renderList(filterInput.value);\n    renderList('');\n  }\n\n  async function buildDetail() {\n    detailEl.innerHTML = '';\n\n    const selectedId = state.col2Selection || state.col1Selection;\n    if (!selectedId) {\n      detailEl.appendChild(api.createElement('div', { style: STYLES.empty }, ['Select an item to see details']));\n      return;\n    }\n\n    const it = await safeGet(selectedId, api);\n    if (!it) {\n      detailEl.appendChild(api.createElement('div', { style: STYLES.empty }, ['Item not found']));\n      return;\n    }\n\n    // Title\n    const title = api.createElement('h3', { style: STYLES.detailTitle }, [it.name || selectedId.substring(0, 8)]);\n    detailEl.appendChild(title);\n\n    // Type\n    const typeItem = await safeGet(it.type, api);\n    const typeLine = api.createElement('div', { style: STYLES.detailMeta }, [\n      'Type: ' + (typeItem?.name || it.type || 'unknown')\n    ]);\n    detailEl.appendChild(typeLine);\n\n    // ID\n    const idLine = api.createElement('div', { style: STYLES.detailMeta }, ['ID: ' + selectedId]);\n    detailEl.appendChild(idLine);\n\n    // Tags (fully qualified)\n    if (Array.isArray(it.content?.tags) && it.content.tags.length > 0) {\n      const tagNames = [];\n      for (const tagId of it.content.tags) {\n        tagNames.push(await tagTreeBuilder.getFullyQualifiedName(tagId, api) || tagId.substring(0, 8));\n      }\n      const tagsLine = api.createElement('div', { style: STYLES.detailMeta }, [\n        'Tags: ' + tagNames.join(', ')\n      ]);\n      detailEl.appendChild(tagsLine);\n    }\n\n    // Dates\n    if (it.created) {\n      const created = api.createElement('div', { style: STYLES.detailMeta }, [\n        'Created: ' + new Date(it.created).toLocaleDateString()\n      ]);\n      detailEl.appendChild(created);\n    }\n    if (it.modified) {\n      const modified = api.createElement('div', { style: STYLES.detailMeta }, [\n        'Modified: ' + new Date(it.modified).toLocaleDateString()\n      ]);\n      detailEl.appendChild(modified);\n    }\n\n    // Capabilities (for views)\n    if (Array.isArray(it.content?.capabilities)) {\n      const caps = api.createElement('div', { style: STYLES.detailMeta }, [\n        'Capabilities: ' + it.content.capabilities.join(', ')\n      ]);\n      detailEl.appendChild(caps);\n    }\n\n    // Description snippet\n    const desc = it.content?.description;\n    if (desc) {\n      const snippet = desc.length > 500 ? desc.substring(0, 500) + '\\u2026' : desc;\n      const descEl = api.createElement('div', { style: STYLES.detailDesc }, [snippet]);\n      detailEl.appendChild(descEl);\n    }\n\n    // Open button\n    const openBtn = api.createElement('button', { style: STYLES.openBtn }, ['Open']);\n    openBtn.onclick = () => api.openItem(selectedId);\n    detailEl.appendChild(openBtn);\n  }\n\n  // --- Init ---\n  buildTabBar();\n  await buildColumn1();\n  await buildColumn2();\n  await buildDetail();\n\n  return container;\n}\n\n// --- Helpers ---\n\nasync function safeGet(id, api) {\n  if (!id) return null;\n  try { return await api.get(id); } catch (e) { return null; }\n}\n\n",
-    "description": "Renders system-browser items as a multi-pane hierarchical browser. Provides four axes (Types, Tags, Views, Libraries) with column-based drill-down navigation using related-items-lib indexes."
+    "description": "Renders system-browser items as a multi-pane hierarchical browser. Provides four axes (Types, Tags, Views, Libraries) with column-based drill-down navigation using related-items-lib indexes.",
+    "_symbols": {
+      "BROWSER_TYPE_ID": {
+        "name": "BROWSER_TYPE_ID",
+        "line": 4,
+        "col": 6,
+        "endLine": 4,
+        "endCol": 62,
+        "kind": "variable",
+        "scope": null
+      },
+      "AXES": {
+        "name": "AXES",
+        "line": 6,
+        "col": 6,
+        "endLine": 6,
+        "endCol": 52,
+        "kind": "variable",
+        "scope": null
+      },
+      "IDS": {
+        "name": "IDS",
+        "line": 8,
+        "col": 6,
+        "endLine": 12,
+        "endCol": 1,
+        "kind": "variable",
+        "scope": null
+      },
+      "IDS.TYPE_DEFINITION": {
+        "name": "TYPE_DEFINITION",
+        "line": 9,
+        "col": 2,
+        "endLine": 9,
+        "endCol": 57,
+        "kind": "property",
+        "scope": "IDS"
+      },
+      "IDS.VIEW": {
+        "name": "VIEW",
+        "line": 10,
+        "col": 2,
+        "endLine": 10,
+        "endCol": 46,
+        "kind": "property",
+        "scope": "IDS"
+      },
+      "IDS.LIBRARY": {
+        "name": "LIBRARY",
+        "line": 11,
+        "col": 2,
+        "endLine": 11,
+        "endCol": 49,
+        "kind": "property",
+        "scope": "IDS"
+      },
+      "STYLES": {
+        "name": "STYLES",
+        "line": 16,
+        "col": 6,
+        "endLine": 180,
+        "endCol": 1,
+        "kind": "variable",
+        "scope": null
+      },
+      "STYLES.container": {
+        "name": "container",
+        "line": 17,
+        "col": 2,
+        "endLine": 24,
+        "endCol": 3,
+        "kind": "property",
+        "scope": "STYLES"
+      },
+      "STYLES.tabBar": {
+        "name": "tabBar",
+        "line": 25,
+        "col": 2,
+        "endLine": 31,
+        "endCol": 3,
+        "kind": "property",
+        "scope": "STYLES"
+      },
+      "STYLES.tabSpacer": {
+        "name": "tabSpacer",
+        "line": 32,
+        "col": 2,
+        "endLine": 34,
+        "endCol": 3,
+        "kind": "property",
+        "scope": "STYLES"
+      },
+      "STYLES.refreshBtn": {
+        "name": "refreshBtn",
+        "line": 35,
+        "col": 2,
+        "endLine": 46,
+        "endCol": 3,
+        "kind": "property",
+        "scope": "STYLES"
+      },
+      "STYLES.tab": {
+        "name": "tab",
+        "line": 47,
+        "col": 2,
+        "endLine": 56,
+        "endCol": 3,
+        "kind": "property",
+        "scope": "STYLES"
+      },
+      "STYLES.tabActive": {
+        "name": "tabActive",
+        "line": 57,
+        "col": 2,
+        "endLine": 65,
+        "endCol": 3,
+        "kind": "property",
+        "scope": "STYLES"
+      },
+      "STYLES.columns": {
+        "name": "columns",
+        "line": 66,
+        "col": 2,
+        "endLine": 68,
+        "endCol": 3,
+        "kind": "property",
+        "scope": "STYLES"
+      },
+      "STYLES.column": {
+        "name": "column",
+        "line": 69,
+        "col": 2,
+        "endLine": 73,
+        "endCol": 3,
+        "kind": "property",
+        "scope": "STYLES"
+      },
+      "STYLES.columnHeader": {
+        "name": "columnHeader",
+        "line": 74,
+        "col": 2,
+        "endLine": 83,
+        "endCol": 3,
+        "kind": "property",
+        "scope": "STYLES"
+      },
+      "STYLES.columnList": {
+        "name": "columnList",
+        "line": 84,
+        "col": 2,
+        "endLine": 86,
+        "endCol": 3,
+        "kind": "property",
+        "scope": "STYLES"
+      },
+      "STYLES.filterInput": {
+        "name": "filterInput",
+        "line": 87,
+        "col": 2,
+        "endLine": 95,
+        "endCol": 3,
+        "kind": "property",
+        "scope": "STYLES"
+      },
+      "STYLES.row": {
+        "name": "row",
+        "line": 96,
+        "col": 2,
+        "endLine": 105,
+        "endCol": 3,
+        "kind": "property",
+        "scope": "STYLES"
+      },
+      "STYLES.rowSelected": {
+        "name": "rowSelected",
+        "line": 106,
+        "col": 2,
+        "endLine": 108,
+        "endCol": 3,
+        "kind": "property",
+        "scope": "STYLES"
+      },
+      "STYLES.rowName": {
+        "name": "rowName",
+        "line": 109,
+        "col": 2,
+        "endLine": 112,
+        "endCol": 3,
+        "kind": "property",
+        "scope": "STYLES"
+      },
+      "STYLES.rowCount": {
+        "name": "rowCount",
+        "line": 113,
+        "col": 2,
+        "endLine": 117,
+        "endCol": 3,
+        "kind": "property",
+        "scope": "STYLES"
+      },
+      "STYLES.detail": {
+        "name": "detail",
+        "line": 118,
+        "col": 2,
+        "endLine": 121,
+        "endCol": 3,
+        "kind": "property",
+        "scope": "STYLES"
+      },
+      "STYLES.detailTitle": {
+        "name": "detailTitle",
+        "line": 122,
+        "col": 2,
+        "endLine": 126,
+        "endCol": 3,
+        "kind": "property",
+        "scope": "STYLES"
+      },
+      "STYLES.detailMeta": {
+        "name": "detailMeta",
+        "line": 127,
+        "col": 2,
+        "endLine": 132,
+        "endCol": 3,
+        "kind": "property",
+        "scope": "STYLES"
+      },
+      "STYLES.detailDesc": {
+        "name": "detailDesc",
+        "line": 133,
+        "col": 2,
+        "endLine": 139,
+        "endCol": 3,
+        "kind": "property",
+        "scope": "STYLES"
+      },
+      "STYLES.openBtn": {
+        "name": "openBtn",
+        "line": 140,
+        "col": 2,
+        "endLine": 150,
+        "endCol": 3,
+        "kind": "property",
+        "scope": "STYLES"
+      },
+      "STYLES.subTabBar": {
+        "name": "subTabBar",
+        "line": 151,
+        "col": 2,
+        "endLine": 155,
+        "endCol": 3,
+        "kind": "property",
+        "scope": "STYLES"
+      },
+      "STYLES.subTab": {
+        "name": "subTab",
+        "line": 156,
+        "col": 2,
+        "endLine": 164,
+        "endCol": 3,
+        "kind": "property",
+        "scope": "STYLES"
+      },
+      "STYLES.subTabActive": {
+        "name": "subTabActive",
+        "line": 165,
+        "col": 2,
+        "endLine": 173,
+        "endCol": 3,
+        "kind": "property",
+        "scope": "STYLES"
+      },
+      "STYLES.empty": {
+        "name": "empty",
+        "line": 174,
+        "col": 2,
+        "endLine": 179,
+        "endCol": 3,
+        "kind": "property",
+        "scope": "STYLES"
+      },
+      "render": {
+        "name": "render",
+        "line": 184,
+        "col": 7,
+        "endLine": 567,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(item, api)"
+      },
+      "render.lib": {
+        "name": "lib",
+        "line": 185,
+        "col": 8,
+        "endLine": 185,
+        "endCol": 52,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.tagTreeBuilder": {
+        "name": "tagTreeBuilder",
+        "line": 186,
+        "col": 8,
+        "endLine": 186,
+        "endCol": 62,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.state": {
+        "name": "state",
+        "line": 189,
+        "col": 8,
+        "endLine": 194,
+        "endCol": 3,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "state.axis": {
+        "name": "axis",
+        "line": 190,
+        "col": 4,
+        "endLine": 190,
+        "endCol": 17,
+        "kind": "property",
+        "scope": "state"
+      },
+      "state.col1Selection": {
+        "name": "col1Selection",
+        "line": 191,
+        "col": 4,
+        "endLine": 191,
+        "endCol": 23,
+        "kind": "property",
+        "scope": "state"
+      },
+      "state.col2Tab": {
+        "name": "col2Tab",
+        "line": 192,
+        "col": 4,
+        "endLine": 192,
+        "endCol": 24,
+        "kind": "property",
+        "scope": "state"
+      },
+      "state.col2Selection": {
+        "name": "col2Selection",
+        "line": 193,
+        "col": 4,
+        "endLine": 193,
+        "endCol": 23,
+        "kind": "property",
+        "scope": "state"
+      },
+      "render.container": {
+        "name": "container",
+        "line": 196,
+        "col": 8,
+        "endLine": 196,
+        "endCol": 77,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.tabBar": {
+        "name": "tabBar",
+        "line": 199,
+        "col": 8,
+        "endLine": 199,
+        "endCol": 71,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.columnsEl": {
+        "name": "columnsEl",
+        "line": 203,
+        "col": 8,
+        "endLine": 203,
+        "endCol": 75,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.col1El": {
+        "name": "col1El",
+        "line": 206,
+        "col": 8,
+        "endLine": 206,
+        "endCol": 103,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.col2El": {
+        "name": "col2El",
+        "line": 207,
+        "col": 8,
+        "endLine": 207,
+        "endCol": 103,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.detailEl": {
+        "name": "detailEl",
+        "line": 208,
+        "col": 8,
+        "endLine": 208,
+        "endCol": 73,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.buildTabBar": {
+        "name": "buildTabBar",
+        "line": 216,
+        "col": 2,
+        "endLine": 251,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "render",
+        "signature": "()"
+      },
+      "buildTabBar.axis": {
+        "name": "axis",
+        "line": 218,
+        "col": 15,
+        "endLine": 218,
+        "endCol": 19,
+        "kind": "variable",
+        "scope": "buildTabBar"
+      },
+      "buildTabBar.btn": {
+        "name": "btn",
+        "line": 219,
+        "col": 12,
+        "endLine": 221,
+        "endCol": 16,
+        "kind": "variable",
+        "scope": "buildTabBar"
+      },
+      "buildTabBar.style": {
+        "name": "style",
+        "line": 237,
+        "col": 50,
+        "endLine": 237,
+        "endCol": 73,
+        "kind": "property",
+        "scope": "buildTabBar"
+      },
+      "buildTabBar.refreshBtn": {
+        "name": "refreshBtn",
+        "line": 240,
+        "col": 10,
+        "endLine": 240,
+        "endCol": 100,
+        "kind": "variable",
+        "scope": "buildTabBar"
+      },
+      "render.buildColumn1": {
+        "name": "buildColumn1",
+        "line": 253,
+        "col": 2,
+        "endLine": 358,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "render",
+        "signature": "()"
+      },
+      "buildColumn1.headerLabel": {
+        "name": "headerLabel",
+        "line": 255,
+        "col": 10,
+        "endLine": 258,
+        "endCol": 19,
+        "kind": "variable",
+        "scope": "buildColumn1"
+      },
+      "buildColumn1.header": {
+        "name": "header",
+        "line": 260,
+        "col": 10,
+        "endLine": 260,
+        "endCol": 90,
+        "kind": "variable",
+        "scope": "buildColumn1"
+      },
+      "buildColumn1.filterInput": {
+        "name": "filterInput",
+        "line": 264,
+        "col": 10,
+        "endLine": 268,
+        "endCol": 10,
+        "kind": "variable",
+        "scope": "buildColumn1"
+      },
+      "buildColumn1.listEl": {
+        "name": "listEl",
+        "line": 271,
+        "col": 10,
+        "endLine": 271,
+        "endCol": 77,
+        "kind": "variable",
+        "scope": "buildColumn1"
+      },
+      "buildColumn1.entries": {
+        "name": "entries",
+        "line": 275,
+        "col": 8,
+        "endLine": 275,
+        "endCol": 20,
+        "kind": "variable",
+        "scope": "buildColumn1"
+      },
+      "buildColumn1.typeIds": {
+        "name": "typeIds",
+        "line": 278,
+        "col": 12,
+        "endLine": 278,
+        "endCol": 61,
+        "kind": "variable",
+        "scope": "buildColumn1"
+      },
+      "buildColumn1.id": {
+        "name": "id",
+        "line": 306,
+        "col": 23,
+        "endLine": 306,
+        "endCol": 25,
+        "kind": "property",
+        "scope": "buildColumn1"
+      },
+      "buildColumn1.t": {
+        "name": "t",
+        "line": 280,
+        "col": 14,
+        "endLine": 280,
+        "endCol": 40,
+        "kind": "variable",
+        "scope": "buildColumn1"
+      },
+      "buildColumn1.instanceCount": {
+        "name": "instanceCount",
+        "line": 281,
+        "col": 14,
+        "endLine": 281,
+        "endCol": 59,
+        "kind": "variable",
+        "scope": "buildColumn1"
+      },
+      "buildColumn1.name": {
+        "name": "name",
+        "line": 306,
+        "col": 27,
+        "endLine": 306,
+        "endCol": 62,
+        "kind": "property",
+        "scope": "buildColumn1"
+      },
+      "buildColumn1.count": {
+        "name": "count",
+        "line": 306,
+        "col": 64,
+        "endLine": 306,
+        "endCol": 72,
+        "kind": "property",
+        "scope": "buildColumn1"
+      },
+      "buildColumn1.tagIds": {
+        "name": "tagIds",
+        "line": 285,
+        "col": 12,
+        "endLine": 285,
+        "endCol": 37,
+        "kind": "variable",
+        "scope": "buildColumn1"
+      },
+      "buildColumn1.fqName": {
+        "name": "fqName",
+        "line": 287,
+        "col": 14,
+        "endLine": 287,
+        "endCol": 74,
+        "kind": "variable",
+        "scope": "buildColumn1"
+      },
+      "buildColumn1.taggedCount": {
+        "name": "taggedCount",
+        "line": 288,
+        "col": 14,
+        "endLine": 288,
+        "endCol": 61,
+        "kind": "variable",
+        "scope": "buildColumn1"
+      },
+      "buildColumn1.viewIds": {
+        "name": "viewIds",
+        "line": 292,
+        "col": 12,
+        "endLine": 292,
+        "endCol": 50,
+        "kind": "variable",
+        "scope": "buildColumn1"
+      },
+      "buildColumn1.v": {
+        "name": "v",
+        "line": 294,
+        "col": 14,
+        "endLine": 294,
+        "endCol": 40,
+        "kind": "variable",
+        "scope": "buildColumn1"
+      },
+      "buildColumn1.targetName": {
+        "name": "targetName",
+        "line": 295,
+        "col": 12,
+        "endLine": 295,
+        "endCol": 27,
+        "kind": "variable",
+        "scope": "buildColumn1"
+      },
+      "buildColumn1.tt": {
+        "name": "tt",
+        "line": 297,
+        "col": 16,
+        "endLine": 297,
+        "endCol": 59,
+        "kind": "variable",
+        "scope": "buildColumn1"
+      },
+      "buildColumn1.subtitle": {
+        "name": "subtitle",
+        "line": 300,
+        "col": 74,
+        "endLine": 300,
+        "endCol": 94,
+        "kind": "property",
+        "scope": "buildColumn1"
+      },
+      "buildColumn1.libIds": {
+        "name": "libIds",
+        "line": 303,
+        "col": 12,
+        "endLine": 303,
+        "endCol": 52,
+        "kind": "variable",
+        "scope": "buildColumn1"
+      },
+      "buildColumn1.l": {
+        "name": "l",
+        "line": 305,
+        "col": 14,
+        "endLine": 305,
+        "endCol": 40,
+        "kind": "variable",
+        "scope": "buildColumn1"
+      },
+      "buildColumn1.renderList": {
+        "name": "renderList",
+        "line": 312,
+        "col": 4,
+        "endLine": 354,
+        "endCol": 5,
+        "kind": "function",
+        "scope": "buildColumn1",
+        "signature": "(filter)"
+      },
+      "renderList.filtered": {
+        "name": "filtered",
+        "line": 445,
+        "col": 12,
+        "endLine": 447,
+        "endCol": 17,
+        "kind": "variable",
+        "scope": "renderList"
+      },
+      "renderList.style": {
+        "name": "style",
+        "line": 450,
+        "col": 54,
+        "endLine": 450,
+        "endCol": 73,
+        "kind": "property",
+        "scope": "renderList"
+      },
+      "renderList.entry": {
+        "name": "entry",
+        "line": 456,
+        "col": 17,
+        "endLine": 456,
+        "endCol": 22,
+        "kind": "variable",
+        "scope": "renderList"
+      },
+      "renderList.isSelected": {
+        "name": "isSelected",
+        "line": 457,
+        "col": 14,
+        "endLine": 457,
+        "endCol": 59,
+        "kind": "variable",
+        "scope": "renderList"
+      },
+      "renderList.row": {
+        "name": "row",
+        "line": 458,
+        "col": 14,
+        "endLine": 460,
+        "endCol": 14,
+        "kind": "variable",
+        "scope": "renderList"
+      },
+      "renderList.nameSpan": {
+        "name": "nameSpan",
+        "line": 462,
+        "col": 14,
+        "endLine": 462,
+        "endCol": 91,
+        "kind": "variable",
+        "scope": "renderList"
+      },
+      "renderList.sub": {
+        "name": "sub",
+        "line": 333,
+        "col": 16,
+        "endLine": 333,
+        "endCol": 93,
+        "kind": "variable",
+        "scope": "renderList"
+      },
+      "renderList.countSpan": {
+        "name": "countSpan",
+        "line": 336,
+        "col": 16,
+        "endLine": 336,
+        "endCol": 104,
+        "kind": "variable",
+        "scope": "renderList"
+      },
+      "render.buildColumn2": {
+        "name": "buildColumn2",
+        "line": 360,
+        "col": 2,
+        "endLine": 480,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "render",
+        "signature": "()"
+      },
+      "buildColumn2.style": {
+        "name": "style",
+        "line": 365,
+        "col": 52,
+        "endLine": 365,
+        "endCol": 71,
+        "kind": "property",
+        "scope": "buildColumn2"
+      },
+      "buildColumn2.selItem": {
+        "name": "selItem",
+        "line": 369,
+        "col": 10,
+        "endLine": 369,
+        "endCol": 59,
+        "kind": "variable",
+        "scope": "buildColumn2"
+      },
+      "buildColumn2.selName": {
+        "name": "selName",
+        "line": 370,
+        "col": 10,
+        "endLine": 370,
+        "endCol": 72,
+        "kind": "variable",
+        "scope": "buildColumn2"
+      },
+      "buildColumn2.subTabs": {
+        "name": "subTabs",
+        "line": 374,
+        "col": 12,
+        "endLine": 374,
+        "endCol": 56,
+        "kind": "variable",
+        "scope": "buildColumn2"
+      },
+      "buildColumn2.subTabBar": {
+        "name": "subTabBar",
+        "line": 375,
+        "col": 12,
+        "endLine": 375,
+        "endCol": 81,
+        "kind": "variable",
+        "scope": "buildColumn2"
+      },
+      "buildColumn2.tab": {
+        "name": "tab",
+        "line": 376,
+        "col": 17,
+        "endLine": 376,
+        "endCol": 20,
+        "kind": "variable",
+        "scope": "buildColumn2"
+      },
+      "buildColumn2.btn": {
+        "name": "btn",
+        "line": 377,
+        "col": 14,
+        "endLine": 379,
+        "endCol": 17,
+        "kind": "variable",
+        "scope": "buildColumn2"
+      },
+      "buildColumn2.header": {
+        "name": "header",
+        "line": 391,
+        "col": 12,
+        "endLine": 391,
+        "endCol": 88,
+        "kind": "variable",
+        "scope": "buildColumn2"
+      },
+      "buildColumn2.filterInput": {
+        "name": "filterInput",
+        "line": 396,
+        "col": 10,
+        "endLine": 400,
+        "endCol": 10,
+        "kind": "variable",
+        "scope": "buildColumn2"
+      },
+      "buildColumn2.listEl": {
+        "name": "listEl",
+        "line": 403,
+        "col": 10,
+        "endLine": 403,
+        "endCol": 77,
+        "kind": "variable",
+        "scope": "buildColumn2"
+      },
+      "buildColumn2.itemIds": {
+        "name": "itemIds",
+        "line": 407,
+        "col": 8,
+        "endLine": 407,
+        "endCol": 20,
+        "kind": "variable",
+        "scope": "buildColumn2"
+      },
+      "buildColumn2.desc": {
+        "name": "desc",
+        "line": 426,
+        "col": 12,
+        "endLine": 426,
+        "endCol": 79,
+        "kind": "variable",
+        "scope": "buildColumn2"
+      },
+      "buildColumn2.descEl": {
+        "name": "descEl",
+        "line": 427,
+        "col": 12,
+        "endLine": 429,
+        "endCol": 16,
+        "kind": "variable",
+        "scope": "buildColumn2"
+      },
+      "buildColumn2.entries": {
+        "name": "entries",
+        "line": 436,
+        "col": 10,
+        "endLine": 436,
+        "endCol": 22,
+        "kind": "variable",
+        "scope": "buildColumn2"
+      },
+      "buildColumn2.id": {
+        "name": "id",
+        "line": 439,
+        "col": 21,
+        "endLine": 439,
+        "endCol": 23,
+        "kind": "property",
+        "scope": "buildColumn2"
+      },
+      "buildColumn2.it": {
+        "name": "it",
+        "line": 438,
+        "col": 12,
+        "endLine": 438,
+        "endCol": 39,
+        "kind": "variable",
+        "scope": "buildColumn2"
+      },
+      "buildColumn2.name": {
+        "name": "name",
+        "line": 439,
+        "col": 25,
+        "endLine": 439,
+        "endCol": 61,
+        "kind": "property",
+        "scope": "buildColumn2"
+      },
+      "buildColumn2.renderList": {
+        "name": "renderList",
+        "line": 443,
+        "col": 4,
+        "endLine": 476,
+        "endCol": 5,
+        "kind": "function",
+        "scope": "buildColumn2",
+        "signature": "(filter)"
+      },
+      "render.buildDetail": {
+        "name": "buildDetail",
+        "line": 482,
+        "col": 2,
+        "endLine": 558,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "render",
+        "signature": "()"
+      },
+      "buildDetail.selectedId": {
+        "name": "selectedId",
+        "line": 485,
+        "col": 10,
+        "endLine": 485,
+        "endCol": 65,
+        "kind": "variable",
+        "scope": "buildDetail"
+      },
+      "buildDetail.style": {
+        "name": "style",
+        "line": 493,
+        "col": 54,
+        "endLine": 493,
+        "endCol": 73,
+        "kind": "property",
+        "scope": "buildDetail"
+      },
+      "buildDetail.it": {
+        "name": "it",
+        "line": 491,
+        "col": 10,
+        "endLine": 491,
+        "endCol": 45,
+        "kind": "variable",
+        "scope": "buildDetail"
+      },
+      "buildDetail.title": {
+        "name": "title",
+        "line": 498,
+        "col": 10,
+        "endLine": 498,
+        "endCol": 113,
+        "kind": "variable",
+        "scope": "buildDetail"
+      },
+      "buildDetail.typeItem": {
+        "name": "typeItem",
+        "line": 502,
+        "col": 10,
+        "endLine": 502,
+        "endCol": 48,
+        "kind": "variable",
+        "scope": "buildDetail"
+      },
+      "buildDetail.typeLine": {
+        "name": "typeLine",
+        "line": 503,
+        "col": 10,
+        "endLine": 505,
+        "endCol": 6,
+        "kind": "variable",
+        "scope": "buildDetail"
+      },
+      "buildDetail.idLine": {
+        "name": "idLine",
+        "line": 509,
+        "col": 10,
+        "endLine": 509,
+        "endCol": 96,
+        "kind": "variable",
+        "scope": "buildDetail"
+      },
+      "buildDetail.tagNames": {
+        "name": "tagNames",
+        "line": 514,
+        "col": 12,
+        "endLine": 514,
+        "endCol": 25,
+        "kind": "variable",
+        "scope": "buildDetail"
+      },
+      "buildDetail.tagId": {
+        "name": "tagId",
+        "line": 515,
+        "col": 17,
+        "endLine": 515,
+        "endCol": 22,
+        "kind": "variable",
+        "scope": "buildDetail"
+      },
+      "buildDetail.tagsLine": {
+        "name": "tagsLine",
+        "line": 518,
+        "col": 12,
+        "endLine": 520,
+        "endCol": 8,
+        "kind": "variable",
+        "scope": "buildDetail"
+      },
+      "buildDetail.created": {
+        "name": "created",
+        "line": 526,
+        "col": 12,
+        "endLine": 528,
+        "endCol": 8,
+        "kind": "variable",
+        "scope": "buildDetail"
+      },
+      "buildDetail.modified": {
+        "name": "modified",
+        "line": 532,
+        "col": 12,
+        "endLine": 534,
+        "endCol": 8,
+        "kind": "variable",
+        "scope": "buildDetail"
+      },
+      "buildDetail.caps": {
+        "name": "caps",
+        "line": 540,
+        "col": 12,
+        "endLine": 542,
+        "endCol": 8,
+        "kind": "variable",
+        "scope": "buildDetail"
+      },
+      "buildDetail.desc": {
+        "name": "desc",
+        "line": 547,
+        "col": 10,
+        "endLine": 547,
+        "endCol": 40,
+        "kind": "variable",
+        "scope": "buildDetail"
+      },
+      "buildDetail.snippet": {
+        "name": "snippet",
+        "line": 549,
+        "col": 12,
+        "endLine": 549,
+        "endCol": 82,
+        "kind": "variable",
+        "scope": "buildDetail"
+      },
+      "buildDetail.descEl": {
+        "name": "descEl",
+        "line": 550,
+        "col": 12,
+        "endLine": 550,
+        "endCol": 86,
+        "kind": "variable",
+        "scope": "buildDetail"
+      },
+      "buildDetail.openBtn": {
+        "name": "openBtn",
+        "line": 555,
+        "col": 10,
+        "endLine": 555,
+        "endCol": 84,
+        "kind": "variable",
+        "scope": "buildDetail"
+      },
+      "safeGet": {
+        "name": "safeGet",
+        "line": 571,
+        "col": 0,
+        "endLine": 574,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(id, api)"
+      }
+    }
   },
   "attachments": []
 }

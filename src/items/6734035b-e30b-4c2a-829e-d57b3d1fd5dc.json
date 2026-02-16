@@ -3,9 +3,9 @@
   "name": "item-search-lib",
   "type": "66666666-0000-0000-0000-000000000000",
   "created": 1768590420356,
-  "modified": 1770822878389,
+  "modified": 1770895232051,
   "content": {
-    "description": "Item search functionality used throughout Hobson. Provides both a search function and a reusable search UI widget.\n\n## Query Language\n\n```\n# Text search\nmeeting notes              # matches items containing both words\n\n# Type filter\ntype:note                  # exact type match by name or ID\ntype:code+                 # type or subtypes (inherited)\ntype:note,task             # OR: note or task\n\n# Tag filter\ntag:todo                   # has tag\ntag:todo,urgent            # OR: has todo OR urgent\ntag:todo tag:urgent        # AND: has both\n#todo                      # shorthand for tag:todo\n\n# Negation\n-type:renderer             # exclude type\n-tag:archived              # exclude tag\n-keyword                   # exclude text\n\n# Field-specific\nname:my-lib                # search name field\ntitle:\"quoted phrase\"      # quoted phrase\n```\n\n## Exports\n\n### `parseQuery(query, caches)`\n\nParses a query string into structured filters.\n\n**Returns:** `{ text, negatedText, types, tags, fields }`\n\n### `matchesFilters(item, filters, api)`\n\nEvaluates parsed filters against an item.\n\n### `searchItems(query, api, options)`\n\nFilters items by query string, supporting the full query language above.\n\n**Options:**\n- `targetContainer`: Restrict search to attachments of specific container\n- `allItems`: Pre-fetched items array (skips api.getAll)\n\n### `getStarredItems(api, options)`\n\nReturns items tagged with \"starred\", sorted by most recently modified.\n\n**Options:**\n- `targetContainer`: Restrict to attachments of specific container\n- `allItems`: Pre-fetched items array\n\n### `createSearchUI(containerEl, onSelect, api, options)`\n\nCreates a full search interface with:\n- Debounced search input (300ms)\n- Results list with item previews\n- \"Create New\" button when no matches found\n- Smooth hover animations\n\n**Options:**\n- `placeholder`: Input placeholder text\n- `savedQuery`: Initial query value\n- `targetContainer`: Restrict search scope\n- `autoFocus`: Focus input on mount\n- `renderActions`: Function `(item) => HTMLElement` \u2014 when provided, each result row renders the returned element as inline action buttons instead of being clickable. Useful for multi-action pickers (e.g. Link vs Transclusion).\n\n**Returns:** Object with `performSearch()`, `getQuery()`, `setQuery()`, `destroy()`\n\n## Used By\n\n- [item-palette](item://fc87b6bf-d1d7-48e1-af48-7dfb8abfbcb5) (Cmd+K navigation)\n- [field-editor-itemref](item://bccf2a2b-c750-417e-9d86-b96699cc5078) (item reference picker)\n- [item-search-view](item://1f8e6b48-1de3-4f10-987d-85fa7b0a437b)",
+    "description": "Item search functionality used throughout Hobson. Provides both a search function and a reusable search UI widget.\n\n## Query Language\n\n```\n# Text search\nmeeting notes              # matches items containing both words\n\n# Type filter\ntype:note                  # exact type match by name or ID\ntype:code+                 # type or subtypes (inherited)\ntype:note,task             # OR: note or task\n\n# Tag filter\ntag:todo                   # has tag\ntag:todo,urgent            # OR: has todo OR urgent\ntag:todo tag:urgent        # AND: has both\n#todo                      # shorthand for tag:todo\n\n# Negation\n-type:renderer             # exclude type\n-tag:archived              # exclude tag\n-keyword                   # exclude text\n\n# Field-specific\nname:my-lib                # search name field\ntitle:\"quoted phrase\"      # quoted phrase\n```\n\n## Exports\n\n### `parseQuery(query, caches)`\n\nParses a query string into structured filters.\n\n**Returns:** `{ text, negatedText, types, tags, fields }`\n\n### `matchesFilters(item, filters, api)`\n\nEvaluates parsed filters against an item.\n\n### `searchItems(query, api, options)`\n\nFilters items by query string, supporting the full query language above.\n\n**Options:**\n- `targetContainer`: Restrict search to attachments of specific container\n- `allItems`: Pre-fetched items array (skips api.getAll)\n\n### `getStarredItems(api, options)`\n\nReturns items tagged with \"starred\", sorted by most recently modified.\n\n**Options:**\n- `targetContainer`: Restrict to attachments of specific container\n- `allItems`: Pre-fetched items array\n\n### `createSearchUI(containerEl, onSelect, api, options)`\n\nCreates a full search interface with:\n- Debounced search input (300ms)\n- Results list with item previews\n- \"Create New\" button when no matches found\n- Smooth hover animations\n\n**Options:**\n- `placeholder`: Input placeholder text\n- `savedQuery`: Initial query value\n- `targetContainer`: Restrict search scope\n- `autoFocus`: Focus input on mount\n- `renderActions`: Function `(item) => HTMLElement` — when provided, each result row renders the returned element as inline action buttons instead of being clickable. Useful for multi-action pickers (e.g. Link vs Transclusion).\n\n**Returns:** Object with `performSearch()`, `getQuery()`, `setQuery()`, `destroy()`\n\n## Used By\n\n- [item-palette](item://fc87b6bf-d1d7-48e1-af48-7dfb8abfbcb5) (Cmd+K navigation)\n- [field-editor-itemref](item://bccf2a2b-c750-417e-9d86-b96699cc5078) (item reference picker)\n- [item-search-view](item://1f8e6b48-1de3-4f10-987d-85fa7b0a437b)",
     "code": "// Item Search Library\n// See [item-search-lib documentation](item://6734035b-e30b-4c2a-829e-d57b3d1fd5dc)\n\nconst TYPE_DEFINITION_ID = '11111111-0000-0000-0000-000000000000';\nconst STARRED_TAG_ID = 'c0c0c0c0-0060-0000-0000-000000000000';\n\n// [BEGIN:tokenize]\n/**\n * Tokenize a query string, respecting quoted phrases\n */\nfunction tokenize(queryString) {\n  const tokens = [];\n  let current = '';\n  let inQuotes = false;\n  let quoteChar = null;\n\n  for (let i = 0; i < queryString.length; i++) {\n    const char = queryString[i];\n\n    if ((char === '\"' || char === \"'\") && !inQuotes) {\n      inQuotes = true;\n      quoteChar = char;\n    } else if (char === quoteChar && inQuotes) {\n      inQuotes = false;\n      quoteChar = null;\n    } else if (char === ' ' && !inQuotes) {\n      if (current.length > 0) {\n        tokens.push(current);\n        current = '';\n      }\n    } else {\n      current += char;\n    }\n  }\n\n  if (current.length > 0) {\n    tokens.push(current);\n  }\n\n  return tokens;\n}\n// [END:tokenize]\n\n// [BEGIN:parseQuery]\n/**\n * Parse a query string into structured filters\n * @param {string} queryString - The query to parse\n * @param {Object} caches - { typeCache: Map<name, id>, tagCache: Map<name, id> }\n * @returns {Object} Parsed filters\n */\nexport function parseQuery(queryString, caches = {}) {\n  const { typeCache = new Map(), tagCache = new Map() } = caches;\n\n  const result = {\n    text: [],\n    negatedText: [],\n    types: {\n      include: [],\n      exclude: []\n    },\n    tags: {\n      include: [],\n      exclude: []\n    },\n    fields: {}\n  };\n\n  const tokens = tokenize(queryString);\n\n  for (const token of tokens) {\n    const isNegated = token.startsWith('-');\n    const cleanToken = isNegated ? token.slice(1) : token;\n\n    // type:xxx or type:xxx+\n    if (cleanToken.startsWith('type:')) {\n      const typeValue = cleanToken.slice(5);\n      const inherited = typeValue.endsWith('+');\n      const typeNames = (inherited ? typeValue.slice(0, -1) : typeValue).split(',');\n\n      for (const typeName of typeNames) {\n        const typeId = resolveTypeId(typeName, typeCache);\n        const typeFilter = { id: typeId, inherited };\n\n        if (isNegated) {\n          result.types.exclude.push(typeFilter);\n        } else {\n          result.types.include.push(typeFilter);\n        }\n      }\n      continue;\n    }\n\n    // tag:xxx or #xxx\n    if (cleanToken.startsWith('tag:') || cleanToken.startsWith('#')) {\n      const tagValue = cleanToken.startsWith('tag:') ? cleanToken.slice(4) : cleanToken.slice(1);\n      const tagNames = tagValue.split(',');\n      // Each name can resolve to multiple IDs, flatten them\n      const tagIdArrays = tagNames.map(name => resolveTagIds(name, tagCache));\n      const tagIds = tagIdArrays.flat();\n\n      if (isNegated) {\n        result.tags.exclude.push(...tagIds);\n      } else {\n        result.tags.include.push(tagIds);\n      }\n      continue;\n    }\n\n    // name:xxx\n    if (cleanToken.startsWith('name:')) {\n      result.fields.name = cleanToken.slice(5);\n      continue;\n    }\n\n    // title:xxx\n    if (cleanToken.startsWith('title:')) {\n      result.fields.title = cleanToken.slice(6);\n      continue;\n    }\n\n    // Plain text term\n    if (isNegated) {\n      result.negatedText.push(cleanToken.toLowerCase());\n    } else {\n      result.text.push(token.toLowerCase());\n    }\n  }\n\n  return result;\n}\n\nfunction resolveTypeId(name, typeCache) {\n  const lowerName = name.toLowerCase();\n  if (typeCache.has(lowerName)) {\n    return typeCache.get(lowerName);\n  }\n  if (name.match(/^[0-9a-f-]{36}$/i)) {\n    return name;\n  }\n  return name;\n}\n\nfunction resolveTagIds(name, tagCache) {\n  const lowerName = name.toLowerCase();\n  if (tagCache.has(lowerName)) {\n    return tagCache.get(lowerName);  // Returns array of IDs\n  }\n  if (name.match(/^[0-9a-f-]{36}$/i)) {\n    return [name];\n  }\n  return [name];\n}\n// [END:parseQuery]\n\n// [BEGIN:buildSearchableText]\n/**\n * Build searchable text from an item\n */\nfunction buildSearchableText(item) {\n  return [\n    item.id,\n    item.type,\n    item.name,\n    item.content?.title,\n    item.content?.body,\n    item.content?.description,\n    JSON.stringify(item.content)\n  ].filter(Boolean).join(' ').toLowerCase();\n}\n// [END:buildSearchableText]\n\n// [BEGIN:matchesFilters]\n/**\n * Check if an item matches the parsed filters\n * @param {Object} item - The item to check\n * @param {Object} filters - Parsed filters from parseQuery\n * @param {Object} api - The API object\n * @returns {Promise<boolean>}\n */\nexport async function matchesFilters(item, filters, api) {\n  // Text matching\n  if (filters.text.length > 0) {\n    const searchableText = buildSearchableText(item);\n    if (!filters.text.every(term => searchableText.includes(term))) {\n      return false;\n    }\n  }\n\n  // Negated text\n  if (filters.negatedText.length > 0) {\n    const searchableText = buildSearchableText(item);\n    if (filters.negatedText.some(term => searchableText.includes(term))) {\n      return false;\n    }\n  }\n\n  // Type includes (OR across all type filters)\n  if (filters.types.include.length > 0) {\n    const matches = await Promise.all(\n      filters.types.include.map(async ({ id, inherited }) => {\n        if (inherited && api.typeChainIncludes) {\n          return api.typeChainIncludes(item.type, id);\n        }\n        return item.type === id;\n      })\n    );\n    if (!matches.some(m => m)) return false;\n  }\n\n  // Type excludes\n  for (const { id, inherited } of filters.types.exclude) {\n    if (inherited && api.typeChainIncludes) {\n      if (await api.typeChainIncludes(item.type, id)) return false;\n    } else {\n      if (item.type === id) return false;\n    }\n  }\n\n  // Tag includes - outer array is AND, inner is OR\n  const itemTags = item.content?.tags || [];\n  for (const orGroup of filters.tags.include) {\n    if (!orGroup.some(tagId => itemTags.includes(tagId))) {\n      return false;\n    }\n  }\n\n  // Tag excludes\n  for (const tagId of filters.tags.exclude) {\n    if (itemTags.includes(tagId)) return false;\n  }\n\n  // Field-specific filters\n  for (const [field, value] of Object.entries(filters.fields)) {\n    const itemValue = (item[field] || item.content?.[field] || '').toLowerCase();\n    if (!itemValue.includes(value.toLowerCase())) {\n      return false;\n    }\n  }\n\n  return true;\n}\n// [END:matchesFilters]\n\n// [BEGIN:hasFilterSyntax]\n/**\n * Check if a query string contains filter syntax\n */\nfunction hasFilterSyntax(query) {\n  return /(?:^|\\s)(?:-?(?:type:|tag:|name:|title:)|#)/.test(query);\n}\n// [END:hasFilterSyntax]\n\n// [BEGIN:searchItems]\n/**\n * Search items based on query string\n */\nexport async function searchItems(query, api, options = {}) {\n  if (!query || query.trim().length === 0) {\n    return [];\n  }\n\n  const { targetContainer, allItems } = options;\n  let itemsToSearch;\n\n  if (allItems) {\n    itemsToSearch = allItems;\n  } else if (targetContainer) {\n    try {\n      const container = await api.get(targetContainer);\n      const childIds = (container.attachments || []).map(c =>\n        typeof c === 'string' ? c : c.id\n      );\n      itemsToSearch = await Promise.all(\n        childIds.map(id => api.get(id).catch(() => null))\n      );\n      itemsToSearch = itemsToSearch.filter(i => i !== null);\n    } catch (err) {\n      console.error('Error fetching container:', err);\n      itemsToSearch = [];\n    }\n  } else {\n    itemsToSearch = await api.getAll();\n  }\n\n  // Fast path: no filter syntax, use simple text matching\n  if (!hasFilterSyntax(query)) {\n    const queryLower = query.toLowerCase();\n    const matches = itemsToSearch.filter(item => {\n      const searchableText = buildSearchableText(item);\n      return searchableText.includes(queryLower);\n    });\n    matches.sort((a, b) => (a.name || '').localeCompare(b.name || ''));\n    return matches;\n  }\n\n  // Build lookup caches for type and tag names\n  const typeCache = new Map();\n  const tagCache = new Map();  // name -> [id1, id2, ...] (multiple tags can share names)\n\n  try {\n    const allTypes = await api.query({ type: api.IDS?.TYPE_DEFINITION || TYPE_DEFINITION_ID });\n    allTypes.forEach(t => {\n      if (t.name) {\n        const fullName = t.name.toLowerCase();\n        typeCache.set(fullName, t.id);\n        // Also index without namespace prefix (kernel:code -> code)\n        if (fullName.includes(':')) {\n          const shortName = fullName.split(':').pop();\n          if (!typeCache.has(shortName)) {\n            typeCache.set(shortName, t.id);\n          }\n        }\n      }\n    });\n  } catch (err) {\n    console.warn('Could not load types for search cache:', err);\n  }\n\n  try {\n    // Discover tags from actual usage in content.tags across all items\n    const tagIds = new Set();\n    for (const item of itemsToSearch) {\n      const tags = item.content?.tags || [];\n      for (const tagId of tags) tagIds.add(tagId);\n    }\n    // Resolve each tag ID to its item for name lookup\n    const itemById = new Map(itemsToSearch.map(i => [i.id, i]));\n    const tagItemsById = new Map();\n    for (const tagId of tagIds) {\n      const tagItem = itemById.get(tagId) || await api.get(tagId).catch(() => null);\n      if (tagItem) {\n        tagItemsById.set(tagId, tagItem);\n        const name = (tagItem.name || tagItem.content?.name || '').toLowerCase();\n        if (name) {\n          if (!tagCache.has(name)) tagCache.set(name, []);\n          tagCache.get(name).push(tagItem.id);\n        }\n      }\n    }\n    // Walk parent chains so ancestor tag names also match descendant tag IDs.\n    // e.g. tag:concept should match items tagged with primitive (child of concept).\n    for (const [tagId, tagItem] of tagItemsById) {\n      let parentId = tagItem.content?.parent;\n      const visited = new Set();\n      while (parentId && !visited.has(parentId)) {\n        visited.add(parentId);\n        let parentItem = tagItemsById.get(parentId) || itemById.get(parentId);\n        if (!parentItem) parentItem = await api.get(parentId).catch(() => null);\n        if (!parentItem) break;\n        tagItemsById.set(parentId, parentItem);\n        const parentName = (parentItem.name || parentItem.content?.name || '').toLowerCase();\n        if (parentName) {\n          if (!tagCache.has(parentName)) tagCache.set(parentName, []);\n          const ids = tagCache.get(parentName);\n          if (!ids.includes(tagId)) ids.push(tagId);\n          // Also ensure the parent's own ID is in its cache entry\n          if (!ids.includes(parentId)) ids.push(parentId);\n        }\n        parentId = parentItem.content?.parent;\n      }\n    }\n  } catch (err) {\n    console.warn('Could not load tags for search cache:', err);\n  }\n\n  // Parse the query with caches\n  const filters = parseQuery(query, { typeCache, tagCache });\n\n  // Filter items\n  const matches = [];\n  for (const item of itemsToSearch) {\n    if (await matchesFilters(item, filters, api)) {\n      matches.push(item);\n    }\n  }\n\n  matches.sort((a, b) => (a.name || '').localeCompare(b.name || ''));\n  return matches;\n}\n// [END:searchItems]\n\n// [BEGIN:getStarredItems]\n/**\n * Get items tagged with \"starred\", sorted by most recently modified\n */\nexport async function getStarredItems(api, options = {}) {\n  const { targetContainer, allItems } = options;\n  let itemsToSearch;\n\n  if (allItems) {\n    itemsToSearch = allItems;\n  } else if (targetContainer) {\n    try {\n      const container = await api.get(targetContainer);\n      const childIds = (container.attachments || []).map(c =>\n        typeof c === 'string' ? c : c.id\n      );\n      itemsToSearch = await Promise.all(\n        childIds.map(id => api.get(id).catch(() => null))\n      );\n      itemsToSearch = itemsToSearch.filter(i => i !== null);\n    } catch (err) {\n      itemsToSearch = [];\n    }\n  } else {\n    itemsToSearch = await api.getAll();\n  }\n\n  const starred = itemsToSearch.filter(item => {\n    const tags = item.content?.tags || [];\n    return tags.includes(STARRED_TAG_ID);\n  });\n\n  starred.sort((a, b) => (b.modified || 0) - (a.modified || 0));\n  return starred;\n}\n// [END:getStarredItems]\n\n// [BEGIN:createSearchUI]\n/**\n * Create a search UI widget\n */\nexport function createSearchUI(containerEl, onSelect, api, options = {}) {\n  const {\n    placeholder = 'Search for items...',\n    savedQuery = '',\n    targetContainer = null,\n    autoFocus = false,\n    renderActions = null\n  } = options;\n\n  containerEl.innerHTML = '';\n\n  const searchBox = api.createElement('div', {\n    style: 'margin-bottom: 20px;'\n  }, []);\n\n  const input = api.createElement('input', {\n    type: 'text',\n    placeholder,\n    value: savedQuery,\n    style: 'width: 100%; padding: 12px 16px; font-size: 1rem; border: 2px solid var(--color-border); border-radius: var(--border-radius); outline: none; transition: border-color 0.2s;'\n  }, []);\n\n  input.onfocus = () => { input.style.borderColor = 'var(--color-primary)'; };\n  input.onblur = () => { input.style.borderColor = 'var(--color-border)'; };\n\n  searchBox.appendChild(input);\n  containerEl.appendChild(searchBox);\n\n  const resultsContainer = api.createElement('div', {}, []);\n  containerEl.appendChild(resultsContainer);\n\n  const statusDiv = api.createElement('div', {\n    style: 'padding: 40px; text-align: center; color: var(--color-border-dark); font-style: italic;'\n  }, ['Type to search...']);\n  resultsContainer.appendChild(statusDiv);\n\n  const resultsList = api.createElement('div', {\n    style: 'display: none; max-height: 600px; overflow-y: auto;'\n  }, []);\n  resultsContainer.appendChild(resultsList);\n\n  let searchTimeout = null;\n  let currentQuery = savedQuery;\n\n  const renderResultItem = (item) => {\n    const resultDiv = api.createElement('div', {\n      style: 'padding: 12px; margin-bottom: 8px; background: var(--color-bg-surface); border: 1px solid var(--color-border-light); border-radius: var(--border-radius); cursor: pointer; transition: all 0.2s;'\n    }, []);\n\n    const itemTitle = api.createElement('div', {\n      style: 'font-weight: 500; color: var(--color-text); margin-bottom: 6px; font-size: 0.9375rem;'\n    }, [item.name || item.content?.title || item.id]);\n    resultDiv.appendChild(itemTitle);\n\n    const previewText = item.content?.body || item.content?.description ||\n                       JSON.stringify(item.content).substring(0, 150);\n    const preview = api.createElement('div', {\n      style: 'font-size: 0.8125rem; color: var(--color-text-secondary); margin-bottom: 6px; line-height: 1.4; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;'\n    }, [previewText.substring(0, 200)]);\n    resultDiv.appendChild(preview);\n\n    const meta = api.createElement('div', {\n      style: 'font-size: 0.75rem; color: var(--color-border-dark);'\n    }, [\n      'Type: ' + item.type.substring(0, 8) + '... | Modified: ' +\n      new Date(item.modified).toLocaleDateString()\n    ]);\n    resultDiv.appendChild(meta);\n\n    if (renderActions) {\n      resultDiv.style.cursor = 'default';\n      const actionsEl = renderActions(item);\n      if (actionsEl) resultDiv.appendChild(actionsEl);\n    } else {\n      resultDiv.onclick = () => { onSelect(item); };\n    }\n\n    resultDiv.onmouseover = () => {\n      resultDiv.style.background = 'var(--color-bg-surface-alt)';\n      resultDiv.style.borderColor = 'var(--color-primary)';\n      resultDiv.style.transform = 'translateX(4px)';\n    };\n    resultDiv.onmouseout = () => {\n      resultDiv.style.background = 'white';\n      resultDiv.style.borderColor = 'var(--color-border-light)';\n      resultDiv.style.transform = 'translateX(0)';\n    };\n\n    resultsList.appendChild(resultDiv);\n  };\n\n  const executeSearch = async (query) => {\n    currentQuery = query;\n\n    if (!query || query.trim().length === 0) {\n      // Show starred items as defaults\n      const starred = await getStarredItems(api, { targetContainer });\n      if (starred.length === 0) {\n        statusDiv.style.display = 'block';\n        resultsList.style.display = 'none';\n        statusDiv.textContent = 'Type to search...';\n        return;\n      }\n      statusDiv.style.display = 'none';\n      resultsList.style.display = 'block';\n      resultsList.innerHTML = '';\n\n      const header = api.createElement('div', {\n        style: 'margin-bottom: 15px; font-size: 0.875rem; color: var(--color-text-secondary); font-weight: 500;'\n      }, ['\\u2605 Starred']);\n      resultsList.appendChild(header);\n\n      starred.forEach(item => renderResultItem(item));\n      return;\n    }\n\n    statusDiv.style.display = 'block';\n    resultsList.style.display = 'none';\n    statusDiv.textContent = 'Searching...';\n\n    const matches = await searchItems(query, api, { targetContainer });\n\n    if (matches.length === 0) {\n      statusDiv.style.display = 'block';\n      resultsList.style.display = 'none';\n      statusDiv.innerHTML = '';\n\n      // Message\n      const noMatchMsg = api.createElement('div', {\n        style: 'margin-bottom: 16px;'\n      }, ['No items found matching \"' + query + '\"']);\n      statusDiv.appendChild(noMatchMsg);\n\n      // Create New button\n      const createBtn = api.createElement('button', {\n        style: 'padding: 10px 20px; background: var(--color-primary); color: white; border: none; border-radius: var(--border-radius); cursor: pointer; font-size: 0.875rem; font-weight: 500; transition: background 0.2s;',\n        onclick: async () => {\n          try {\n            // Look up note type\n            const noteTypes = await api.query({ name: 'note' });\n            const noteTypeId = noteTypes[0]?.id || '871ae771-b9b1-4f40-8c7f-d9038bfb69c3';\n\n            // Create sanitized name (lowercase, underscores for spaces)\n            const sanitizedName = query.toLowerCase().replace(/\\s+/g, '_');\n\n            // Create new note item\n            const newItem = {\n              id: crypto.randomUUID(),\n              name: sanitizedName,\n              type: noteTypeId,\n              created: Date.now(),\n              modified: Date.now(),\n              children: [],\n              content: {\n                title: query,\n                description: ''\n              }\n            };\n\n            // Save and select\n            await api.set(newItem);\n            onSelect(newItem);\n          } catch (err) {\n            console.error('Failed to create item:', err);\n            alert('Failed to create item: ' + err.message);\n          }\n        }\n      }, ['Create New: ' + query]);\n\n      // Hover effects\n      createBtn.onmouseover = () => {\n        createBtn.style.background = 'var(--color-primary-hover)';\n      };\n      createBtn.onmouseout = () => {\n        createBtn.style.background = 'var(--color-primary)';\n      };\n\n      statusDiv.appendChild(createBtn);\n    } else {\n      statusDiv.style.display = 'none';\n      resultsList.style.display = 'block';\n      resultsList.innerHTML = '';\n\n      const countHeader = api.createElement('div', {\n        style: 'margin-bottom: 15px; font-size: 0.875rem; color: var(--color-text-secondary); font-weight: 500;'\n      }, ['Found ' + matches.length + ' item' + (matches.length === 1 ? '' : 's')]);\n      resultsList.appendChild(countHeader);\n\n      matches.forEach(item => renderResultItem(item));\n    }\n  };\n\n  const performSearch = (query) => {\n    if (searchTimeout) {\n      clearTimeout(searchTimeout);\n    }\n    searchTimeout = setTimeout(() => {\n      executeSearch(query);\n    }, 300);\n  };\n\n  input.oninput = (e) => {\n    performSearch(e.target.value);\n  };\n\n  if (autoFocus) {\n    setTimeout(() => input.focus(), 0);\n  }\n\n  // Show starred items immediately, or run saved query\n  executeSearch(savedQuery);\n\n  return {\n    performSearch: executeSearch,\n    getQuery: () => currentQuery,\n    setQuery: (query) => {\n      input.value = query;\n      executeSearch(query);\n    },\n    destroy: () => {\n      if (searchTimeout) {\n        clearTimeout(searchTimeout);\n      }\n      containerEl.innerHTML = '';\n    }\n  };\n}\n// [END:createSearchUI]\n",
     "_symbols": {
       "TYPE_DEFINITION_ID": {
@@ -34,7 +34,8 @@
         "endCol": 1,
         "kind": "function",
         "scope": null,
-        "signature": "(queryString)"
+        "signature": "(queryString)",
+        "description": "Tokenize a query string, respecting quoted phrases"
       },
       "tokenize.tokens": {
         "name": "tokens",
@@ -98,7 +99,24 @@
         "endCol": 1,
         "kind": "function",
         "scope": null,
-        "signature": "(queryString, caches = ...)"
+        "signature": "(queryString, caches = ...)",
+        "description": "Parse a query string into structured filters",
+        "params": [
+          {
+            "name": "queryString",
+            "type": "string",
+            "description": "The query to parse"
+          },
+          {
+            "name": "caches",
+            "type": "Object",
+            "description": "{ typeCache: Map<name, id>, tagCache: Map<name, id> }"
+          }
+        ],
+        "returns": {
+          "type": "Object",
+          "description": "Parsed filters"
+        }
       },
       "parseQuery.result": {
         "name": "result",
@@ -380,7 +398,8 @@
         "endCol": 1,
         "kind": "function",
         "scope": null,
-        "signature": "(item)"
+        "signature": "(item)",
+        "description": "Build searchable text from an item"
       },
       "matchesFilters": {
         "name": "matchesFilters",
@@ -390,7 +409,28 @@
         "endCol": 1,
         "kind": "function",
         "scope": null,
-        "signature": "(item, filters, api)"
+        "signature": "(item, filters, api)",
+        "description": "Check if an item matches the parsed filters",
+        "params": [
+          {
+            "name": "item",
+            "type": "Object",
+            "description": "The item to check"
+          },
+          {
+            "name": "filters",
+            "type": "Object",
+            "description": "Parsed filters from parseQuery"
+          },
+          {
+            "name": "api",
+            "type": "Object",
+            "description": "The API object"
+          }
+        ],
+        "returns": {
+          "type": "Promise<boolean>"
+        }
       },
       "matchesFilters.searchableText": {
         "name": "searchableText",
@@ -454,7 +494,8 @@
         "endCol": 1,
         "kind": "function",
         "scope": null,
-        "signature": "(query)"
+        "signature": "(query)",
+        "description": "Check if a query string contains filter syntax"
       },
       "searchItems": {
         "name": "searchItems",
@@ -464,7 +505,8 @@
         "endCol": 1,
         "kind": "function",
         "scope": null,
-        "signature": "(query, api, options = ...)"
+        "signature": "(query, api, options = ...)",
+        "description": "Search items based on query string"
       },
       "searchItems.itemsToSearch": {
         "name": "itemsToSearch",
@@ -690,7 +732,8 @@
         "endCol": 1,
         "kind": "function",
         "scope": null,
-        "signature": "(api, options = ...)"
+        "signature": "(api, options = ...)",
+        "description": "Get items tagged with \"starred\", sorted by most recently modified"
       },
       "getStarredItems.itemsToSearch": {
         "name": "itemsToSearch",
@@ -732,80 +775,81 @@
         "name": "createSearchUI",
         "line": 423,
         "col": 7,
-        "endLine": 642,
+        "endLine": 649,
         "endCol": 1,
         "kind": "function",
         "scope": null,
-        "signature": "(containerEl, onSelect, api, options = ...)"
+        "signature": "(containerEl, onSelect, api, options = ...)",
+        "description": "Create a search UI widget"
       },
       "createSearchUI.searchBox": {
         "name": "searchBox",
-        "line": 433,
+        "line": 434,
         "col": 8,
-        "endLine": 435,
+        "endLine": 436,
         "endCol": 8,
         "kind": "variable",
         "scope": "createSearchUI"
       },
       "createSearchUI.input": {
         "name": "input",
-        "line": 437,
+        "line": 438,
         "col": 8,
-        "endLine": 442,
+        "endLine": 443,
         "endCol": 8,
         "kind": "variable",
         "scope": "createSearchUI"
       },
       "createSearchUI.resultsContainer": {
         "name": "resultsContainer",
-        "line": 450,
+        "line": 451,
         "col": 8,
-        "endLine": 450,
+        "endLine": 451,
         "endCol": 59,
         "kind": "variable",
         "scope": "createSearchUI"
       },
       "createSearchUI.statusDiv": {
         "name": "statusDiv",
-        "line": 453,
+        "line": 454,
         "col": 8,
-        "endLine": 455,
+        "endLine": 456,
         "endCol": 27,
         "kind": "variable",
         "scope": "createSearchUI"
       },
       "createSearchUI.resultsList": {
         "name": "resultsList",
-        "line": 458,
+        "line": 459,
         "col": 8,
-        "endLine": 460,
+        "endLine": 461,
         "endCol": 8,
         "kind": "variable",
         "scope": "createSearchUI"
       },
       "createSearchUI.searchTimeout": {
         "name": "searchTimeout",
-        "line": 463,
+        "line": 464,
         "col": 6,
-        "endLine": 463,
+        "endLine": 464,
         "endCol": 26,
         "kind": "variable",
         "scope": "createSearchUI"
       },
       "createSearchUI.currentQuery": {
         "name": "currentQuery",
-        "line": 464,
+        "line": 465,
         "col": 6,
-        "endLine": 464,
+        "endLine": 465,
         "endCol": 31,
         "kind": "variable",
         "scope": "createSearchUI"
       },
       "createSearchUI.renderResultItem": {
         "name": "renderResultItem",
-        "line": 466,
+        "line": 467,
         "col": 8,
-        "endLine": 505,
+        "endLine": 512,
         "endCol": 3,
         "kind": "function",
         "scope": "createSearchUI",
@@ -813,54 +857,63 @@
       },
       "renderResultItem.resultDiv": {
         "name": "resultDiv",
-        "line": 467,
+        "line": 468,
         "col": 10,
-        "endLine": 469,
+        "endLine": 470,
         "endCol": 10,
         "kind": "variable",
         "scope": "renderResultItem"
       },
       "renderResultItem.itemTitle": {
         "name": "itemTitle",
-        "line": 471,
+        "line": 472,
         "col": 10,
-        "endLine": 473,
+        "endLine": 474,
         "endCol": 53,
         "kind": "variable",
         "scope": "renderResultItem"
       },
       "renderResultItem.previewText": {
         "name": "previewText",
-        "line": 476,
+        "line": 477,
         "col": 10,
-        "endLine": 477,
+        "endLine": 478,
         "endCol": 69,
         "kind": "variable",
         "scope": "renderResultItem"
       },
       "renderResultItem.preview": {
         "name": "preview",
-        "line": 478,
+        "line": 479,
         "col": 10,
-        "endLine": 480,
+        "endLine": 481,
         "endCol": 39,
         "kind": "variable",
         "scope": "renderResultItem"
       },
       "renderResultItem.meta": {
         "name": "meta",
-        "line": 483,
+        "line": 484,
         "col": 10,
-        "endLine": 488,
+        "endLine": 489,
         "endCol": 6,
+        "kind": "variable",
+        "scope": "renderResultItem"
+      },
+      "renderResultItem.actionsEl": {
+        "name": "actionsEl",
+        "line": 494,
+        "col": 12,
+        "endLine": 494,
+        "endCol": 43,
         "kind": "variable",
         "scope": "renderResultItem"
       },
       "createSearchUI.executeSearch": {
         "name": "executeSearch",
-        "line": 507,
+        "line": 514,
         "col": 8,
-        "endLine": 606,
+        "endLine": 613,
         "endCol": 3,
         "kind": "function",
         "scope": "createSearchUI",
@@ -868,72 +921,72 @@
       },
       "executeSearch.starred": {
         "name": "starred",
-        "line": 512,
+        "line": 519,
         "col": 12,
-        "endLine": 512,
+        "endLine": 519,
         "endCol": 69,
         "kind": "variable",
         "scope": "executeSearch"
       },
       "executeSearch.header": {
         "name": "header",
-        "line": 523,
+        "line": 530,
         "col": 12,
-        "endLine": 525,
+        "endLine": 532,
         "endCol": 28,
         "kind": "variable",
         "scope": "executeSearch"
       },
       "executeSearch.matches": {
         "name": "matches",
-        "line": 536,
+        "line": 543,
         "col": 10,
-        "endLine": 536,
+        "endLine": 543,
         "endCol": 70,
         "kind": "variable",
         "scope": "executeSearch"
       },
       "executeSearch.noMatchMsg": {
         "name": "noMatchMsg",
-        "line": 544,
+        "line": 551,
         "col": 12,
-        "endLine": 546,
+        "endLine": 553,
         "endCol": 53,
         "kind": "variable",
         "scope": "executeSearch"
       },
       "executeSearch.createBtn": {
         "name": "createBtn",
-        "line": 550,
+        "line": 557,
         "col": 12,
-        "endLine": 583,
+        "endLine": 590,
         "endCol": 34,
         "kind": "variable",
         "scope": "executeSearch"
       },
       "executeSearch.countHeader": {
         "name": "countHeader",
-        "line": 599,
+        "line": 606,
         "col": 12,
-        "endLine": 601,
+        "endLine": 608,
         "endCol": 83,
         "kind": "variable",
         "scope": "executeSearch"
       },
       "createSearchUI.performSearch": {
         "name": "performSearch",
-        "line": 629,
+        "line": 636,
         "col": 4,
-        "endLine": 629,
+        "endLine": 636,
         "endCol": 32,
         "kind": "property",
         "scope": "createSearchUI"
       },
       "createSearchUI.getQuery": {
         "name": "getQuery",
-        "line": 630,
+        "line": 637,
         "col": 4,
-        "endLine": 630,
+        "endLine": 637,
         "endCol": 32,
         "kind": "property-function",
         "scope": "createSearchUI",
@@ -941,9 +994,9 @@
       },
       "createSearchUI.setQuery": {
         "name": "setQuery",
-        "line": 631,
+        "line": 638,
         "col": 4,
-        "endLine": 634,
+        "endLine": 641,
         "endCol": 5,
         "kind": "property-function",
         "scope": "createSearchUI",
@@ -951,9 +1004,9 @@
       },
       "createSearchUI.destroy": {
         "name": "destroy",
-        "line": 635,
+        "line": 642,
         "col": 4,
-        "endLine": 640,
+        "endLine": 647,
         "endCol": 5,
         "kind": "property-function",
         "scope": "createSearchUI",

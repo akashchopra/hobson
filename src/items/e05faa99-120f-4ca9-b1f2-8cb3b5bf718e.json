@@ -3,10 +3,10 @@
   "name": "tag-picker-ui",
   "type": "66666666-0000-0000-0000-000000000000",
   "created": 1768467979545,
-  "modified": 1770216043696,
+  "modified": 1770895231790,
   "content": {
     "description": "Shared UI components for tag picker and tag browser",
-    "code": "// Tag Picker UI Library\n// Shared component for rendering hierarchical tag picker\n// See [tag-picker-ui documentation](item://e05faa99-120f-4ca9-b1f2-8cb3b5bf718e)\n\n// [BEGIN:renderTagPicker]\n/**\n * Renders a hierarchical tag picker tree\n * @param {Object} config - Configuration object\n * @param {HTMLElement} config.container - Container element to render into\n * @param {Array} config.tree - Tree structure (from buildTagTree)\n * @param {Array} config.selectedTags - Array of selected tag IDs\n * @param {Map} config.expandedState - Map tracking expanded/collapsed state\n * @param {Function} config.onToggle - Callback when tag is selected/deselected (tagId)\n * @param {Function} config.onExpand - Callback when node is expanded/collapsed (tagId, isExpanded)\n * @param {Object} api - Hobson API\n */\nexport function renderTagPicker(config, api) {\n  const { container, tree, selectedTags, expandedState, onToggle, onExpand } = config;\n\n  container.innerHTML = '';\n\n  if (tree.length === 0) {\n    const emptyMsg = api.createElement('div', {\n      style: 'padding: 20px; text-align: center; color: var(--color-border-dark); font-style: italic;'\n    }, ['No tags available. Create tag items first.']);\n    container.appendChild(emptyMsg);\n    return;\n  }\n\n  /**\n   * Renders a single tag node and its children\n   */\n  const renderTagNode = (tagNode, depth = 0) => {\n    const nodeContainer = api.createElement('div', {\n      style: 'display: flex; flex-direction: column;'\n    }, []);\n\n    const tagName = tagNode.content.name || tagNode.name || tagNode.id;\n    const tagColor = tagNode.content.color || '#3b82f6';\n    const hasChildren = tagNode.children.length > 0;\n    const isExpanded = expandedState.get(tagNode.id) || false;\n    const isSelected = selectedTags.includes(tagNode.id);\n\n    // Tag row\n    const tagRow = api.createElement('div', {\n      style: `\n        padding: 6px 8px;\n        padding-left: ${depth * 20 + 8}px;\n        display: flex;\n        align-items: center;\n        gap: 8px;\n        cursor: pointer;\n        border-radius: var(--border-radius);\n        transition: background 0.2s;\n        ${isSelected ? 'opacity: 0.5;' : ''}\n      `\n    }, []);\n\n    // Expand/collapse icon (if has children)\n    if (hasChildren) {\n      const expandIcon = api.createElement('span', {\n        style: 'font-size: 0.625rem; color: var(--color-text-secondary); width: 10px;'\n      }, [isExpanded ? '\u25bc' : '\u25b6']);\n      tagRow.appendChild(expandIcon);\n    } else {\n      // Spacer for leaf nodes\n      const spacer = api.createElement('span', {\n        style: 'width: 10px;'\n      }, ['\u2022']);\n      tagRow.appendChild(spacer);\n    }\n\n    // Color dot\n    const colorDot = api.createElement('div', {\n      style: `\n        width: 8px;\n        height: 8px;\n        border-radius: 50%;\n        background: ${tagColor};\n        flex-shrink: 0;\n      `\n    }, []);\n    tagRow.appendChild(colorDot);\n\n    // Tag name\n    const nameText = api.createElement('span', {\n      style: 'font-size: 0.8125rem; color: var(--color-text); flex-grow: 1;'\n    }, [tagName]);\n    tagRow.appendChild(nameText);\n\n    // Click handler\n    tagRow.onclick = (e) => {\n      e.stopPropagation();\n\n      if (hasChildren && e.offsetX < depth * 20 + 30) {\n        // Clicked on expand/collapse icon\n        const newExpandedState = !isExpanded;\n        expandedState.set(tagNode.id, newExpandedState);\n        if (onExpand) {\n          onExpand(tagNode.id, newExpandedState);\n        }\n      } else if (!isSelected && onToggle) {\n        // Clicked on tag itself (and not already selected)\n        onToggle(tagNode.id);\n      }\n    };\n\n    // Hover effect (only if not selected)\n    if (!isSelected) {\n      tagRow.onmouseover = () => {\n        tagRow.style.background = tagColor + '10';\n      };\n      tagRow.onmouseout = () => {\n        tagRow.style.background = 'transparent';\n      };\n    }\n\n    nodeContainer.appendChild(tagRow);\n\n    // Render children if expanded\n    if (hasChildren && isExpanded) {\n      tagNode.children.forEach(child => {\n        nodeContainer.appendChild(renderTagNode(child, depth + 1));\n      });\n    }\n\n    return nodeContainer;\n  };\n\n  // Render all root nodes\n  tree.forEach(rootNode => {\n    container.appendChild(renderTagNode(rootNode, 0));\n  });\n}\n// [END:renderTagPicker]\n\n// [BEGIN:renderTagBrowser]\n/**\n * Renders a simple tag browser tree (for browsing/viewing, not picking)\n * @param {Object} config - Configuration object\n * @param {HTMLElement} config.container - Container element\n * @param {Array} config.tree - Tree structure\n * @param {Map} config.expandedState - Expanded state map\n * @param {Function} config.onClick - Callback when tag is clicked (tagNode)\n * @param {Function} config.onExpand - Callback when expanded/collapsed (tagId, isExpanded)\n * @param {Object} api - Hobson API\n */\nexport function renderTagBrowser(config, api) {\n  const { container, tree, expandedState, onClick, onExpand } = config;\n\n  container.innerHTML = '';\n\n  if (tree.length === 0) {\n    const emptyMsg = api.createElement('div', {\n      style: 'padding: 40px; text-align: center; color: var(--color-border-dark); font-style: italic;'\n    }, ['No tags found. Create tag items to get started.']);\n    container.appendChild(emptyMsg);\n    return;\n  }\n\n  const renderTagNode = (tagNode, depth = 0) => {\n    const nodeContainer = api.createElement('div', {\n      style: 'display: flex; flex-direction: column;'\n    }, []);\n\n    const tagName = tagNode.content.name || tagNode.name || tagNode.id;\n    const tagColor = tagNode.content.color || '#3b82f6';\n    const hasChildren = tagNode.children.length > 0;\n    const isExpanded = expandedState.get(tagNode.id) || false;\n\n    // Tag row\n    const tagRow = api.createElement('div', {\n      style: `\n        padding: 8px 12px;\n        padding-left: ${depth * 20 + 12}px;\n        display: flex;\n        align-items: center;\n        gap: 8px;\n        cursor: pointer;\n        transition: background 0.2s;\n        border-radius: var(--border-radius);\n      `\n    }, []);\n\n    // Expand/collapse icon (if has children)\n    if (hasChildren) {\n      const expandIcon = api.createElement('span', {\n        style: 'font-size: 0.75rem; color: var(--color-text-secondary); user-select: none; width: 12px;'\n      }, [isExpanded ? '\u25bc' : '\u25b6']);\n      tagRow.appendChild(expandIcon);\n    } else {\n      // Spacer for leaf nodes\n      const spacer = api.createElement('span', {\n        style: 'width: 12px;'\n      }, ['\u2022']);\n      tagRow.appendChild(spacer);\n    }\n\n    // Color dot\n    const colorDot = api.createElement('div', {\n      style: `\n        width: 10px;\n        height: 10px;\n        border-radius: 50%;\n        background: ${tagColor};\n        flex-shrink: 0;\n      `\n    }, []);\n    tagRow.appendChild(colorDot);\n\n    // Tag name\n    const nameText = api.createElement('span', {\n      style: 'font-weight: 500; color: var(--color-text); flex-grow: 1;'\n    }, [tagName]);\n    tagRow.appendChild(nameText);\n\n    // Tag ID (shortened)\n    const tagId = api.createElement('span', {\n      style: 'font-family: monospace; font-size: 0.6875rem; color: var(--color-border-dark);'\n    }, [tagNode.id.substring(0, 8) + '...']);\n    tagRow.appendChild(tagId);\n\n    // Click handler\n    tagRow.onclick = (e) => {\n      e.stopPropagation();\n\n      // If has children and clicked on left side, toggle expansion\n      if (hasChildren && e.offsetX < depth * 20 + 40) {\n        const newExpandedState = !isExpanded;\n        expandedState.set(tagNode.id, newExpandedState);\n        if (onExpand) {\n          onExpand(tagNode.id, newExpandedState);\n        }\n      } else if (onClick) {\n        // Show tagged items\n        onClick(tagNode);\n      }\n    };\n\n    // Hover effects\n    tagRow.onmouseover = () => {\n      tagRow.style.background = tagColor + '10';\n    };\n    tagRow.onmouseout = () => {\n      tagRow.style.background = 'transparent';\n    };\n\n    nodeContainer.appendChild(tagRow);\n\n    // Render children if expanded\n    if (hasChildren && isExpanded) {\n      tagNode.children.forEach(child => {\n        nodeContainer.appendChild(renderTagNode(child, depth + 1));\n      });\n    }\n\n    return nodeContainer;\n  };\n\n  tree.forEach(rootNode => {\n    container.appendChild(renderTagNode(rootNode, 0));\n  });\n}\n// [END:renderTagBrowser]\n",
+    "code": "// Tag Picker UI Library\n// Shared component for rendering hierarchical tag picker\n// See [tag-picker-ui documentation](item://e05faa99-120f-4ca9-b1f2-8cb3b5bf718e)\n\n// [BEGIN:renderTagPicker]\n/**\n * Renders a hierarchical tag picker tree\n * @param {Object} config - Configuration object\n * @param {HTMLElement} config.container - Container element to render into\n * @param {Array} config.tree - Tree structure (from buildTagTree)\n * @param {Array} config.selectedTags - Array of selected tag IDs\n * @param {Map} config.expandedState - Map tracking expanded/collapsed state\n * @param {Function} config.onToggle - Callback when tag is selected/deselected (tagId)\n * @param {Function} config.onExpand - Callback when node is expanded/collapsed (tagId, isExpanded)\n * @param {Object} api - Hobson API\n */\nexport function renderTagPicker(config, api) {\n  const { container, tree, selectedTags, expandedState, onToggle, onExpand } = config;\n\n  container.innerHTML = '';\n\n  if (tree.length === 0) {\n    const emptyMsg = api.createElement('div', {\n      style: 'padding: 20px; text-align: center; color: var(--color-border-dark); font-style: italic;'\n    }, ['No tags available. Create tag items first.']);\n    container.appendChild(emptyMsg);\n    return;\n  }\n\n  /**\n   * Renders a single tag node and its children\n   */\n  const renderTagNode = (tagNode, depth = 0) => {\n    const nodeContainer = api.createElement('div', {\n      style: 'display: flex; flex-direction: column;'\n    }, []);\n\n    const tagName = tagNode.content.name || tagNode.name || tagNode.id;\n    const tagColor = tagNode.content.color || '#3b82f6';\n    const hasChildren = tagNode.children.length > 0;\n    const isExpanded = expandedState.get(tagNode.id) || false;\n    const isSelected = selectedTags.includes(tagNode.id);\n\n    // Tag row\n    const tagRow = api.createElement('div', {\n      style: `\n        padding: 6px 8px;\n        padding-left: ${depth * 20 + 8}px;\n        display: flex;\n        align-items: center;\n        gap: 8px;\n        cursor: pointer;\n        border-radius: var(--border-radius);\n        transition: background 0.2s;\n        ${isSelected ? 'opacity: 0.5;' : ''}\n      `\n    }, []);\n\n    // Expand/collapse icon (if has children)\n    if (hasChildren) {\n      const expandIcon = api.createElement('span', {\n        style: 'font-size: 0.625rem; color: var(--color-text-secondary); width: 10px;'\n      }, [isExpanded ? '▼' : '▶']);\n      tagRow.appendChild(expandIcon);\n    } else {\n      // Spacer for leaf nodes\n      const spacer = api.createElement('span', {\n        style: 'width: 10px;'\n      }, ['•']);\n      tagRow.appendChild(spacer);\n    }\n\n    // Color dot\n    const colorDot = api.createElement('div', {\n      style: `\n        width: 8px;\n        height: 8px;\n        border-radius: 50%;\n        background: ${tagColor};\n        flex-shrink: 0;\n      `\n    }, []);\n    tagRow.appendChild(colorDot);\n\n    // Tag name\n    const nameText = api.createElement('span', {\n      style: 'font-size: 0.8125rem; color: var(--color-text); flex-grow: 1;'\n    }, [tagName]);\n    tagRow.appendChild(nameText);\n\n    // Click handler\n    tagRow.onclick = (e) => {\n      e.stopPropagation();\n\n      if (hasChildren && e.offsetX < depth * 20 + 30) {\n        // Clicked on expand/collapse icon\n        const newExpandedState = !isExpanded;\n        expandedState.set(tagNode.id, newExpandedState);\n        if (onExpand) {\n          onExpand(tagNode.id, newExpandedState);\n        }\n      } else if (!isSelected && onToggle) {\n        // Clicked on tag itself (and not already selected)\n        onToggle(tagNode.id);\n      }\n    };\n\n    // Hover effect (only if not selected)\n    if (!isSelected) {\n      tagRow.onmouseover = () => {\n        tagRow.style.background = tagColor + '10';\n      };\n      tagRow.onmouseout = () => {\n        tagRow.style.background = 'transparent';\n      };\n    }\n\n    nodeContainer.appendChild(tagRow);\n\n    // Render children if expanded\n    if (hasChildren && isExpanded) {\n      tagNode.children.forEach(child => {\n        nodeContainer.appendChild(renderTagNode(child, depth + 1));\n      });\n    }\n\n    return nodeContainer;\n  };\n\n  // Render all root nodes\n  tree.forEach(rootNode => {\n    container.appendChild(renderTagNode(rootNode, 0));\n  });\n}\n// [END:renderTagPicker]\n\n// [BEGIN:renderTagBrowser]\n/**\n * Renders a simple tag browser tree (for browsing/viewing, not picking)\n * @param {Object} config - Configuration object\n * @param {HTMLElement} config.container - Container element\n * @param {Array} config.tree - Tree structure\n * @param {Map} config.expandedState - Expanded state map\n * @param {Function} config.onClick - Callback when tag is clicked (tagNode)\n * @param {Function} config.onExpand - Callback when expanded/collapsed (tagId, isExpanded)\n * @param {Object} api - Hobson API\n */\nexport function renderTagBrowser(config, api) {\n  const { container, tree, expandedState, onClick, onExpand } = config;\n\n  container.innerHTML = '';\n\n  if (tree.length === 0) {\n    const emptyMsg = api.createElement('div', {\n      style: 'padding: 40px; text-align: center; color: var(--color-border-dark); font-style: italic;'\n    }, ['No tags found. Create tag items to get started.']);\n    container.appendChild(emptyMsg);\n    return;\n  }\n\n  const renderTagNode = (tagNode, depth = 0) => {\n    const nodeContainer = api.createElement('div', {\n      style: 'display: flex; flex-direction: column;'\n    }, []);\n\n    const tagName = tagNode.content.name || tagNode.name || tagNode.id;\n    const tagColor = tagNode.content.color || '#3b82f6';\n    const hasChildren = tagNode.children.length > 0;\n    const isExpanded = expandedState.get(tagNode.id) || false;\n\n    // Tag row\n    const tagRow = api.createElement('div', {\n      style: `\n        padding: 8px 12px;\n        padding-left: ${depth * 20 + 12}px;\n        display: flex;\n        align-items: center;\n        gap: 8px;\n        cursor: pointer;\n        transition: background 0.2s;\n        border-radius: var(--border-radius);\n      `\n    }, []);\n\n    // Expand/collapse icon (if has children)\n    if (hasChildren) {\n      const expandIcon = api.createElement('span', {\n        style: 'font-size: 0.75rem; color: var(--color-text-secondary); user-select: none; width: 12px;'\n      }, [isExpanded ? '▼' : '▶']);\n      tagRow.appendChild(expandIcon);\n    } else {\n      // Spacer for leaf nodes\n      const spacer = api.createElement('span', {\n        style: 'width: 12px;'\n      }, ['•']);\n      tagRow.appendChild(spacer);\n    }\n\n    // Color dot\n    const colorDot = api.createElement('div', {\n      style: `\n        width: 10px;\n        height: 10px;\n        border-radius: 50%;\n        background: ${tagColor};\n        flex-shrink: 0;\n      `\n    }, []);\n    tagRow.appendChild(colorDot);\n\n    // Tag name\n    const nameText = api.createElement('span', {\n      style: 'font-weight: 500; color: var(--color-text); flex-grow: 1;'\n    }, [tagName]);\n    tagRow.appendChild(nameText);\n\n    // Tag ID (shortened)\n    const tagId = api.createElement('span', {\n      style: 'font-family: monospace; font-size: 0.6875rem; color: var(--color-border-dark);'\n    }, [tagNode.id.substring(0, 8) + '...']);\n    tagRow.appendChild(tagId);\n\n    // Click handler\n    tagRow.onclick = (e) => {\n      e.stopPropagation();\n\n      // If has children and clicked on left side, toggle expansion\n      if (hasChildren && e.offsetX < depth * 20 + 40) {\n        const newExpandedState = !isExpanded;\n        expandedState.set(tagNode.id, newExpandedState);\n        if (onExpand) {\n          onExpand(tagNode.id, newExpandedState);\n        }\n      } else if (onClick) {\n        // Show tagged items\n        onClick(tagNode);\n      }\n    };\n\n    // Hover effects\n    tagRow.onmouseover = () => {\n      tagRow.style.background = tagColor + '10';\n    };\n    tagRow.onmouseout = () => {\n      tagRow.style.background = 'transparent';\n    };\n\n    nodeContainer.appendChild(tagRow);\n\n    // Render children if expanded\n    if (hasChildren && isExpanded) {\n      tagNode.children.forEach(child => {\n        nodeContainer.appendChild(renderTagNode(child, depth + 1));\n      });\n    }\n\n    return nodeContainer;\n  };\n\n  tree.forEach(rootNode => {\n    container.appendChild(renderTagNode(rootNode, 0));\n  });\n}\n// [END:renderTagBrowser]\n",
     "_symbols": {
       "renderTagPicker": {
         "name": "renderTagPicker",
@@ -16,7 +16,50 @@
         "endCol": 1,
         "kind": "function",
         "scope": null,
-        "signature": "(config, api)"
+        "signature": "(config, api)",
+        "description": "Renders a hierarchical tag picker tree",
+        "params": [
+          {
+            "name": "config",
+            "type": "Object",
+            "description": "Configuration object"
+          },
+          {
+            "name": "config",
+            "type": "HTMLElement",
+            "description": ".container - Container element to render into"
+          },
+          {
+            "name": "config",
+            "type": "Array",
+            "description": ".tree - Tree structure (from buildTagTree)"
+          },
+          {
+            "name": "config",
+            "type": "Array",
+            "description": ".selectedTags - Array of selected tag IDs"
+          },
+          {
+            "name": "config",
+            "type": "Map",
+            "description": ".expandedState - Map tracking expanded/collapsed state"
+          },
+          {
+            "name": "config",
+            "type": "Function",
+            "description": ".onToggle - Callback when tag is selected/deselected (tagId)"
+          },
+          {
+            "name": "config",
+            "type": "Function",
+            "description": ".onExpand - Callback when node is expanded/collapsed (tagId, isExpanded)"
+          },
+          {
+            "name": "api",
+            "type": "Object",
+            "description": "Hobson API"
+          }
+        ]
       },
       "renderTagPicker.emptyMsg": {
         "name": "emptyMsg",
@@ -35,7 +78,8 @@
         "endCol": 3,
         "kind": "function",
         "scope": "renderTagPicker",
-        "signature": "(tagNode, depth = ...)"
+        "signature": "(tagNode, depth = ...)",
+        "description": "Renders a single tag node and its children"
       },
       "renderTagNode.nodeContainer": {
         "name": "nodeContainer",
@@ -153,7 +197,45 @@
         "endCol": 1,
         "kind": "function",
         "scope": null,
-        "signature": "(config, api)"
+        "signature": "(config, api)",
+        "description": "Renders a simple tag browser tree (for browsing/viewing, not picking)",
+        "params": [
+          {
+            "name": "config",
+            "type": "Object",
+            "description": "Configuration object"
+          },
+          {
+            "name": "config",
+            "type": "HTMLElement",
+            "description": ".container - Container element"
+          },
+          {
+            "name": "config",
+            "type": "Array",
+            "description": ".tree - Tree structure"
+          },
+          {
+            "name": "config",
+            "type": "Map",
+            "description": ".expandedState - Expanded state map"
+          },
+          {
+            "name": "config",
+            "type": "Function",
+            "description": ".onClick - Callback when tag is clicked (tagNode)"
+          },
+          {
+            "name": "config",
+            "type": "Function",
+            "description": ".onExpand - Callback when expanded/collapsed (tagId, isExpanded)"
+          },
+          {
+            "name": "api",
+            "type": "Object",
+            "description": "Hobson API"
+          }
+        ]
       },
       "renderTagBrowser.emptyMsg": {
         "name": "emptyMsg",
