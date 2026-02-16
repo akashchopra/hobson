@@ -839,7 +839,11 @@ export class RenderingSystem {
     if (!this._hobAstCache) this._hobAstCache = new Map();
     let asts = this._hobAstCache.get(cacheKey);
     if (!asts) {
-      asts = this._hobModule.readAll(view.content.hob);
+      if (Array.isArray(view.content.hob)) {
+        asts = view.content.hob.map(this._hobModule.expandCompact);
+      } else {
+        asts = this._hobModule.readAll(view.content.hob);
+      }
       this._hobAstCache.set(cacheKey, asts);
     }
 
