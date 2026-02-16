@@ -60,7 +60,15 @@ export async function show(_api) {
     id: rootId,
     addSibling: async (childId) => {
       if (hasSpatialCanvas) {
-        await api.attach(rootId, childId);
+        const root = await api.get(rootId);
+        const existing = (root.attachments || []).find(c => c.id === childId);
+        if (existing?.view?.minimized) {
+          existing.view.minimized = false;
+          root.modified = Date.now();
+          await api.set(root);
+        } else if (!existing) {
+          await api.attach(rootId, childId);
+        }
         await api.rerenderItem(rootId);
       } else {
         api.navigate(childId);
