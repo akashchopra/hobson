@@ -283,7 +283,7 @@ export async function render(item, api) {
       // Titlebar
       const titlebar = api.createElement('div', {
         class: 'titlebar',
-        style: `height: 24px; background: var(--color-bg-hover); border-bottom: 1px solid var(--color-border); padding: 0 8px; display: flex; align-items: center; justify-content: space-between; font-size: 0.75rem; font-weight: 500; cursor: ${canDrag ? 'move' : 'default'}; user-select: none;`
+        style: `height: 24px; background: var(--color-bg-chrome); border-bottom: 1px solid var(--color-border); padding: 0 8px; display: flex; align-items: center; justify-content: space-between; font-size: 0.75rem; font-weight: 500; cursor: ${canDrag ? 'move' : 'default'}; user-select: none;`
       }, []);
 
       // Menu button
