@@ -2775,6 +2775,17 @@ function registerViewOps(env, api) {
     return null;
   }, { _hobName: 'rerender!' }));
 
+  env.define('get-view-config', Object.assign(async () => {
+    if (!api.getViewConfig) return null;
+    const config = await api.getViewConfig();
+    return config || null;
+  }, { _hobName: 'get-view-config' }));
+
+  env.define('update-view-config!', Object.assign(async (updates) => {
+    if (!api.updateViewConfig) return false;
+    return await api.updateViewConfig(hobToJs(updates));
+  }, { _hobName: 'update-view-config!' }));
+
   env.define('require', Object.assign(async (name) => {
     return await api.require(name);
   }, { _hobName: 'require' }));
