@@ -1018,6 +1018,9 @@ class DependencyTracker {
   recordAtomAccess(atom) {
     if (!_currentTrackingContext) return;
     const ctxId = _currentTrackingContext.trackerId;
+    // Skip tracking self-owned atoms — atoms created by this view's own evaluation
+    // should not trigger re-renders of that same view (they're managed internally via handlers)
+    if (atom._ownerCtx === ctxId) return;
     const deps = this.contextAtomDeps.get(ctxId);
     if (deps) deps.add(atom);
     if (!this.atomDependents.has(atom)) this.atomDependents.set(atom, new Set());
@@ -2572,7 +2575,12 @@ function createStdlib() {
   env.define('atom?', Object.assign((x) => x && typeof x === 'object' && x._hobType === 'atom', { _hobName: 'atom?' }));
 
   // --- Atoms ---
-  env.define('atom', Object.assign((value) => ({ _hobType: 'atom', value }), { _hobName: 'atom' }));
+  env.define('atom', Object.assign((value) => {
+    const a = { _hobType: 'atom', value };
+    // Tag with creation context so self-owned atoms don't trigger re-renders of their own view
+    if (_currentTrackingContext) a._ownerCtx = _currentTrackingContext.trackerId;
+    return a;
+  }, { _hobName: 'atom' }));
   env.define('deref', Object.assign((atom) => {
     if (!atom || atom._hobType !== 'atom') throw new Error('deref requires an atom');
     if (_currentTrackingContext) _currentTrackingContext.tracker.recordAtomAccess(atom);
