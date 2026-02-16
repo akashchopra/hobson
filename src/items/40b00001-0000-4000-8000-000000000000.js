@@ -460,6 +460,105 @@ function readAll(source) {
 }
 
 // ============================================================
+// Compact JSON AST — bridge between storage format and internal AST
+// ============================================================
+
+// Internal AST node → compact JSON
+function compactify(node) {
+  switch (node.type) {
+    case 'number':
+    case 'boolean':
+      return node.value;
+    case 'nil':
+      return null;
+    case 'symbol':
+      return node.value;
+    case 'keyword':
+      return ':' + node.value;
+    case 'item-ref':
+      return '@' + node.value;
+    case 'string':
+      return { s: node.value };
+    case 'list':
+      return node.elements.map(compactify);
+    case 'vector':
+      return { v: node.elements.map(compactify) };
+    case 'map':
+      return { m: node.entries.map(([k, v]) => [compactify(k), compactify(v)]) };
+    default:
+      throw new Error(`compactify: unknown node type '${node.type}'`);
+  }
+}
+
+// Compact JSON → internal AST node (no line/col — error reporting degrades gracefully)
+function expandCompact(json) {
+  if (json === null) return { type: 'nil', value: null, line: null, col: null };
+  if (typeof json === 'number') return { type: 'number', value: json, line: null, col: null };
+  if (typeof json === 'boolean') return { type: 'boolean', value: json, line: null, col: null };
+  if (typeof json === 'string') {
+    if (json.startsWith(':')) return { type: 'keyword', value: json.slice(1), line: null, col: null };
+    if (json.startsWith('@')) return { type: 'item-ref', value: json.slice(1), line: null, col: null };
+    return { type: 'symbol', value: json, line: null, col: null };
+  }
+  if (Array.isArray(json)) {
+    return { type: 'list', elements: json.map(expandCompact), line: null, col: null };
+  }
+  if (typeof json === 'object') {
+    if ('s' in json) return { type: 'string', value: json.s, line: null, col: null };
+    if ('v' in json) return { type: 'vector', elements: json.v.map(expandCompact), line: null, col: null };
+    if ('m' in json) return { type: 'map', entries: json.m.map(([k, v]) => [expandCompact(k), expandCompact(v)]), line: null, col: null };
+    throw new Error(`expandCompact: unrecognized object shape: ${JSON.stringify(json)}`);
+  }
+  throw new Error(`expandCompact: unexpected value: ${json}`);
+}
+
+// Convenience: parse s-expression text → compact JSON array
+function compactifyAll(source) {
+  return readAll(source).map(compactify);
+}
+
+// Compact JSON → pretty-printed s-expression text
+function prettyPrint(json, indent = 0) {
+  if (json === null) return 'nil';
+  if (typeof json === 'number') return String(json);
+  if (typeof json === 'boolean') return json ? 'true' : 'false';
+  if (typeof json === 'string') {
+    if (json.startsWith(':')) return json;       // keyword already has ':'
+    if (json.startsWith('@')) return json;       // item-ref already has '@'
+    return json;                                  // symbol
+  }
+  if (typeof json === 'object' && !Array.isArray(json)) {
+    if ('s' in json) {
+      return '"' + json.s.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n').replace(/\t/g, '\\t') + '"';
+    }
+    if ('v' in json) {
+      const inner = json.v.map(el => prettyPrint(el, indent)).join(' ');
+      return '[' + inner + ']';
+    }
+    if ('m' in json) {
+      const pairs = json.m.map(([k, v]) => prettyPrint(k, indent) + ' ' + prettyPrint(v, indent));
+      return '{' + pairs.join(' ') + '}';
+    }
+  }
+  if (Array.isArray(json)) {
+    if (json.length === 0) return '()';
+    const parts = json.map(el => prettyPrint(el, indent + 2));
+    const flat = '(' + parts.join(' ') + ')';
+    if (flat.length <= 80 - indent) return flat;
+    // Multi-line: first element on same line, rest indented
+    const head = parts[0];
+    const rest = parts.slice(1).map(p => ' '.repeat(indent + 2) + p);
+    return '(' + head + '\n' + rest.join('\n') + ')';
+  }
+  return String(json);
+}
+
+// Pretty-print an array of top-level compact JSON expressions
+function prettyPrintAll(jsonAst) {
+  return jsonAst.map(expr => prettyPrint(expr, 0)).join('\n\n');
+}
+
+// ============================================================
 // Environment
 // ============================================================
 
@@ -2721,7 +2820,8 @@ function registerEventOps(env, eventApi) {
 export { read, readAll, evaluate, prStr, Environment, HobError, tokenize, parse,
          keyword, isKeyword, valueToAst, astToValue, hiccupToDOM, hiccupToDOMWithRefs, parseTag,
          registerViewOps, registerItemOps, registerEventOps, hobToJs,
-         DependencyTracker, setAtomMutationCallback, setupSortable };
+         DependencyTracker, setAtomMutationCallback, setupSortable,
+         compactify, expandCompact, compactifyAll, prettyPrint, prettyPrintAll };
 
 // ============================================================
 // Standard Macros (loaded at interpreter creation time)
@@ -2934,5 +3034,10 @@ export function createInterpreter(api, viewApi, eventApi) {
     env: stdlib,
     createEnvironment: () => new Environment(stdlib),
     macrosReady: macrosPromise,
+    compactify,
+    expandCompact,
+    compactifyAll,
+    prettyPrint,
+    prettyPrintAll,
   };
 }
