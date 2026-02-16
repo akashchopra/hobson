@@ -2339,7 +2339,11 @@ export async function loadKernel(require, storageBackend) {
       if (!this._hobWatchAstCache) this._hobWatchAstCache = new Map();
       let asts = this._hobWatchAstCache.get(cacheKey);
       if (!asts) {
-        asts = this._hobModule.readAll(watcherItem.content.hob);
+        if (Array.isArray(watcherItem.content.hob)) {
+          asts = watcherItem.content.hob.map(this._hobModule.expandCompact);
+        } else {
+          asts = this._hobModule.readAll(watcherItem.content.hob);
+        }
         this._hobWatchAstCache.set(cacheKey, asts);
       }
 
