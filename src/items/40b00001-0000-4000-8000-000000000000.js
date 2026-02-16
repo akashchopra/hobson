@@ -2537,11 +2537,11 @@ function registerItemOps(env, api) {
 
   env.define('get-item', Object.assign(async (id) => {
     if (_currentTrackingContext) _currentTrackingContext.tracker.recordAccess(id);
-    return await api.get(id);
+    try { return await api.get(id); } catch { return null; }
   }, { _hobName: 'get-item' }));
 
   env.define('set-item!', Object.assign(async (item) => {
-    await api.set(item);
+    await api.set(hobToJs(item));
     return item;
   }, { _hobName: 'set-item!' }));
 
