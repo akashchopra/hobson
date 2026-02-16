@@ -224,7 +224,7 @@ export async function render(pageItem, api) {
         let widgetElement;
         try {
           if (viewItem.content?.hob && !viewItem.content?.code) {
-            // Hob view: render through the rendering system (handles expandCompact etc.)
+            // Hob view: render through the rendering system (handles AST caching etc.)
             // Pass pageContext via options so the rendering system can attach it to the api
             widgetElement = await api.renderItem(childId, viewItem.id, { pageContext });
           } else {

@@ -441,13 +441,12 @@ function read(source) {
   if (!trimmed) throw hobError('Empty input', { line: 1, col: 0 });
   const tokens = tokenize(trimmed);
   if (tokens.length === 0) throw hobError('Empty input', { line: 1, col: 0 });
-  return parse(tokens);
+  return compactify(parse(tokens));
 }
 
-// Read multiple top-level expressions
+// Read multiple top-level expressions — always returns compact JSON
 function readAll(source) {
-  // Support JSON AST arrays (compact format) transparently
-  if (Array.isArray(source)) return source.map(expandCompact);
+  if (Array.isArray(source)) return source;  // already compact JSON
 
   const trimmed = source.trim();
   if (!trimmed) return [];
@@ -456,9 +455,7 @@ function readAll(source) {
 
   const parser = createParser(tokens);
   const exprs = [];
-  while (parser.peek()) {
-    exprs.push(parser.parseExpr());
-  }
+  while (parser.peek()) exprs.push(compactify(parser.parseExpr()));
   return exprs;
 }
 
@@ -493,32 +490,8 @@ function compactify(node) {
   }
 }
 
-// Compact JSON → internal AST node (no line/col — error reporting degrades gracefully)
-function expandCompact(json) {
-  if (json === null) return { type: 'nil', value: null, line: null, col: null };
-  if (typeof json === 'number') return { type: 'number', value: json, line: null, col: null };
-  if (typeof json === 'boolean') return { type: 'boolean', value: json, line: null, col: null };
-  if (typeof json === 'string') {
-    if (json.startsWith(':')) return { type: 'keyword', value: json.slice(1), line: null, col: null };
-    if (json.startsWith('@')) return { type: 'item-ref', value: json.slice(1), line: null, col: null };
-    return { type: 'symbol', value: json, line: null, col: null };
-  }
-  if (Array.isArray(json)) {
-    return { type: 'list', elements: json.map(expandCompact), line: null, col: null };
-  }
-  if (typeof json === 'object') {
-    if ('s' in json) return { type: 'string', value: json.s, line: null, col: null };
-    if ('v' in json) return { type: 'vector', elements: json.v.map(expandCompact), line: null, col: null };
-    if ('m' in json) return { type: 'map', entries: json.m.map(([k, v]) => [expandCompact(k), expandCompact(v)]), line: null, col: null };
-    throw new Error(`expandCompact: unrecognized object shape: ${JSON.stringify(json)}`);
-  }
-  throw new Error(`expandCompact: unexpected value: ${json}`);
-}
-
 // Convenience: parse s-expression text → compact JSON array
-function compactifyAll(source) {
-  return readAll(source).map(compactify);
-}
+function compactifyAll(source) { return readAll(source); }
 
 // Compact JSON → pretty-printed s-expression text
 // Handles let bindings, body forms, hiccup vectors, and maps idiomatically.
@@ -1109,38 +1082,36 @@ const BUILT_IN_SPECIAL_FORMS = new Set([
 ]);
 
 // ============================================================
+// Compact JSON AST type predicates
+// ============================================================
+
+function isSym(n) { return typeof n === 'string' && n[0] !== ':' && n[0] !== '@'; }
+function isVec(n) { return n != null && typeof n === 'object' && !Array.isArray(n) && 'v' in n; }
+function isMap(n) { return n != null && typeof n === 'object' && !Array.isArray(n) && 'm' in n; }
+
+// ============================================================
 // Value ↔ AST conversion
 // ============================================================
 
-function valueToAst(value, line, col) {
-  if (value === null || value === undefined) return { type: 'nil', value: null, line, col };
-  if (typeof value === 'boolean') return { type: 'boolean', value, line, col };
-  if (typeof value === 'number') return { type: 'number', value, line, col };
+function valueToAst(value) {
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return value;
   if (typeof value === 'string') {
-    if (value.startsWith('\u029e')) {
-      return { type: 'keyword', value: value.slice(1), line, col };
-    }
-    return { type: 'string', value, line, col };
+    if (value.startsWith('\u029e')) return ':' + value.slice(1);
+    return { s: value };
   }
   if (Array.isArray(value)) {
-    const nodeType = value._isHobVector ? 'vector' : 'list';
-    return { type: nodeType, elements: value.map(v => valueToAst(v, line, col)), line, col };
+    if (value._isHobVector) return { v: value.map(valueToAst) };
+    return value.map(valueToAst);
   }
   if (value && typeof value === 'object') {
-    if (value._hobType === 'symbol') {
-      return { type: 'symbol', value: value.value, line, col };
-    }
-    if (value._hobType === 'item-ref') {
-      return { type: 'item-ref', value: value.value, line, col };
-    }
-    // Plain object → map node
-    const entries = Object.entries(value).map(([k, v]) => [
-      valueToAst(k.startsWith('\u029e') ? k : k, line, col),
-      valueToAst(v, line, col)
-    ]);
-    return { type: 'map', entries, line, col };
+    if (value._hobType === 'symbol') return value.value;
+    if (value._hobType === 'item-ref') return '@' + value.value;
+    const entries = Object.entries(value).map(([k, v]) => [valueToAst(k), valueToAst(v)]);
+    return { m: entries };
   }
-  return { type: 'nil', value: null, line, col };
+  return null;
 }
 
 // ============================================================
@@ -1162,77 +1133,48 @@ const RECUR = Symbol('recur');
 async function evaluate(ast, env, callStack) {
   if (!callStack) callStack = [];
 
-  // Self-evaluating
-  if (ast.type === 'number') return ast.value;
-  if (ast.type === 'string') return ast.value;
-  if (ast.type === 'boolean') return ast.value;
-  if (ast.type === 'nil') return null;
-  if (ast.type === 'keyword') return keyword(ast.value);
+  // Nil
+  if (ast === null) return null;
 
-  // Item reference — return marker (resolved by createInterpreter or eagerly)
-  if (ast.type === 'item-ref') {
-    return { _hobType: 'item-ref', value: ast.value, line: ast.line, col: ast.col };
-  }
+  // Self-evaluating primitives
+  if (typeof ast === 'number') return ast;
+  if (typeof ast === 'boolean') return ast;
 
-  // Symbol lookup
-  if (ast.type === 'symbol') {
+  // String types: keyword, item-ref, or symbol
+  if (typeof ast === 'string') {
+    if (ast[0] === ':') return keyword(ast.slice(1));
+    if (ast[0] === '@') return { _hobType: 'item-ref', value: ast.slice(1) };
+    // Symbol lookup
     try {
-      return env.lookup(ast.value);
+      return env.lookup(ast);
     } catch (e) {
-      throw hobError(`Undefined symbol '${ast.value}'`, ast, callStack);
+      throw hobError(`Undefined symbol '${ast}'`, null, callStack);
     }
-  }
-
-  // Vector — evaluate all elements
-  if (ast.type === 'vector') {
-    const results = [];
-    for (const el of ast.elements) {
-      results.push(await evaluate(el, env, callStack));
-    }
-    Object.defineProperty(results, '_isHobVector', { value: true });
-    if (ast.line != null) {
-      Object.defineProperty(results, '_hobLine', { value: ast.line });
-      Object.defineProperty(results, '_hobCol', { value: ast.col });
-    }
-    return results;
-  }
-
-  // Map — evaluate all keys and values
-  if (ast.type === 'map') {
-    const obj = {};
-    for (const [keyNode, valNode] of ast.entries) {
-      let key = await evaluate(keyNode, env, callStack);
-      const val = await evaluate(valNode, env, callStack);
-      // Use keyword string as key, or convert to string
-      if (typeof key !== 'string') key = String(key);
-      obj[key] = val;
-    }
-    return obj;
   }
 
   // List — special forms or function application
-  if (ast.type === 'list') {
-    if (ast.elements.length === 0) return [];
+  if (Array.isArray(ast)) {
+    if (ast.length === 0) return [];
 
-    const head = ast.elements[0];
+    const head = ast[0];
 
     // Macro expansion — check before special forms
-    if (head.type === 'symbol' && !BUILT_IN_SPECIAL_FORMS.has(head.value)) {
-      if (env.has(head.value)) {
-        const macroFn = env.lookup(head.value);
+    if (isSym(head) && !BUILT_IN_SPECIAL_FORMS.has(head)) {
+      if (env.has(head)) {
+        const macroFn = env.lookup(head);
         if (typeof macroFn === 'function' && macroFn._isMacro) {
-          const macroArgs = ast.elements.slice(1).map(astToValue);
+          const macroArgs = ast.slice(1).map(astToValue);
           let expanded = macroFn(...macroArgs);
           if (expanded && typeof expanded.then === 'function') expanded = await expanded;
-          const expandedAst = valueToAst(expanded, ast.line, ast.col);
+          const expandedAst = valueToAst(expanded);
           return evaluate(expandedAst, env, callStack);
         }
       }
     }
 
     // Special forms
-    if (head.type === 'symbol') {
-      switch (head.value) {
+    if (isSym(head)) {
+      switch (head) {
         case 'def': return evalDef(ast, env, callStack);
         case 'fn': return evalFn(ast, env, callStack);
         case 'let': return evalLet(ast, env, callStack);
@@ -1255,26 +1197,51 @@ async function evaluate(ast, env, callStack) {
     return evalApply(ast, env, callStack);
   }
 
-  throw hobError(`Unknown AST node type: ${ast.type}`, ast, callStack);
+  // Object types: string literal, vector, map
+  if (typeof ast === 'object') {
+    if ('s' in ast) return ast.s;
+
+    if ('v' in ast) {
+      const results = [];
+      for (const el of ast.v) {
+        results.push(await evaluate(el, env, callStack));
+      }
+      Object.defineProperty(results, '_isHobVector', { value: true });
+      return results;
+    }
+
+    if ('m' in ast) {
+      const obj = {};
+      for (const [keyNode, valNode] of ast.m) {
+        let key = await evaluate(keyNode, env, callStack);
+        const val = await evaluate(valNode, env, callStack);
+        if (typeof key !== 'string') key = String(key);
+        obj[key] = val;
+      }
+      return obj;
+    }
+  }
+
+  throw hobError(`Unknown AST node: ${JSON.stringify(ast)}`, null, callStack);
 }
 
 // ---- Special forms ----
 
 async function evalDef(ast, env, callStack) {
-  if (ast.elements.length !== 3) throw hobError('def requires exactly 2 arguments (name value)', ast, callStack);
-  const nameNode = ast.elements[1];
-  if (nameNode.type !== 'symbol') throw hobError('def first argument must be a symbol', nameNode, callStack);
-  const value = await evaluate(ast.elements[2], env, callStack);
-  if (typeof value === 'function' && !value._hobName) value._hobName = nameNode.value;
-  env.define(nameNode.value, value);
+  if (ast.length !== 3) throw hobError('def requires exactly 2 arguments (name value)', null, callStack);
+  const nameNode = ast[1];
+  if (!isSym(nameNode)) throw hobError('def first argument must be a symbol', null, callStack);
+  const value = await evaluate(ast[2], env, callStack);
+  if (typeof value === 'function' && !value._hobName) value._hobName = nameNode;
+  env.define(nameNode, value);
   return value;
 }
 
 async function evalFn(ast, env, callStack) {
-  if (ast.elements.length < 2) throw hobError('fn requires parameters and body', ast, callStack);
+  if (ast.length < 2) throw hobError('fn requires parameters and body', null, callStack);
 
   // Detect multi-arity: (fn ([p1] b1) ([p2 p3] b2))
-  if (ast.elements[1].type === 'list') {
+  if (Array.isArray(ast[1])) {
     return evalFnMultiArity(ast, env, callStack);
   }
 
@@ -1282,24 +1249,24 @@ async function evalFn(ast, env, callStack) {
 }
 
 async function evalLet(ast, env, callStack) {
-  if (ast.elements.length < 3) throw hobError('let requires bindings and body', ast, callStack);
-  const bindingsNode = ast.elements[1];
-  if (bindingsNode.type !== 'vector') throw hobError('let bindings must be a vector', bindingsNode, callStack);
-  if (bindingsNode.elements.length % 2 !== 0) throw hobError('let bindings must have an even number of forms', bindingsNode, callStack);
+  if (ast.length < 3) throw hobError('let requires bindings and body', null, callStack);
+  const bindingsNode = ast[1];
+  if (!isVec(bindingsNode)) throw hobError('let bindings must be a vector', null, callStack);
+  if (bindingsNode.v.length % 2 !== 0) throw hobError('let bindings must have an even number of forms', null, callStack);
 
   const letEnv = new Environment(env);
 
   // Build pairs with dependency info for auto-parallel
   const pairs = [];
   const definedNames = new Set();
-  for (let i = 0; i < bindingsNode.elements.length; i += 2) {
-    const nameNode = bindingsNode.elements[i];
-    const exprNode = bindingsNode.elements[i + 1];
+  for (let i = 0; i < bindingsNode.v.length; i += 2) {
+    const nameNode = bindingsNode.v[i];
+    const exprNode = bindingsNode.v[i + 1];
     const refs = freeSymbols(exprNode, new Set());
     const dependsOn = new Set([...refs].filter(r => definedNames.has(r)));
     const names = new Set();
-    if (nameNode.type === 'symbol') {
-      names.add(nameNode.value);
+    if (isSym(nameNode)) {
+      names.add(nameNode);
     } else {
       extractBoundNames(nameNode, names);
     }
@@ -1315,8 +1282,8 @@ async function evalLet(ast, env, callStack) {
       // Sequential
       const { nameNode, exprNode } = batch[0];
       const value = await evaluate(exprNode, letEnv, callStack);
-      if (nameNode.type === 'symbol') {
-        letEnv.define(nameNode.value, value);
+      if (isSym(nameNode)) {
+        letEnv.define(nameNode, value);
       } else {
         const bindings = await destructure(nameNode, value, letEnv, callStack);
         for (const [bindName, bindVal] of bindings) {
@@ -1328,8 +1295,8 @@ async function evalLet(ast, env, callStack) {
       const values = await Promise.all(batch.map(b => evaluate(b.exprNode, letEnv, callStack)));
       for (let i = 0; i < batch.length; i++) {
         const { nameNode } = batch[i];
-        if (nameNode.type === 'symbol') {
-          letEnv.define(nameNode.value, values[i]);
+        if (isSym(nameNode)) {
+          letEnv.define(nameNode, values[i]);
         } else {
           const bindings = await destructure(nameNode, values[i], letEnv, callStack);
           for (const [bindName, bindVal] of bindings) {
@@ -1341,100 +1308,102 @@ async function evalLet(ast, env, callStack) {
   }
 
   let result = null;
-  for (let i = 2; i < ast.elements.length; i++) {
-    result = await evaluate(ast.elements[i], letEnv, callStack);
+  for (let i = 2; i < ast.length; i++) {
+    result = await evaluate(ast[i], letEnv, callStack);
   }
   return result;
 }
 
 async function evalIf(ast, env, callStack) {
-  if (ast.elements.length < 3 || ast.elements.length > 4) {
-    throw hobError('if requires 2 or 3 arguments', ast, callStack);
+  if (ast.length < 3 || ast.length > 4) {
+    throw hobError('if requires 2 or 3 arguments', null, callStack);
   }
-  const test = await evaluate(ast.elements[1], env, callStack);
+  const test = await evaluate(ast[1], env, callStack);
   // Only false and nil are falsy
   if (test !== false && test !== null) {
-    return await evaluate(ast.elements[2], env, callStack);
+    return await evaluate(ast[2], env, callStack);
   } else {
-    return ast.elements[3] ? await evaluate(ast.elements[3], env, callStack) : null;
+    return ast.length > 3 ? await evaluate(ast[3], env, callStack) : null;
   }
 }
 
 async function evalDo(ast, env, callStack) {
   let result = null;
-  for (let i = 1; i < ast.elements.length; i++) {
-    result = await evaluate(ast.elements[i], env, callStack);
+  for (let i = 1; i < ast.length; i++) {
+    result = await evaluate(ast[i], env, callStack);
   }
   return result;
 }
 
 function evalQuote(ast) {
-  if (ast.elements.length !== 2) throw hobError('quote requires exactly 1 argument', ast);
-  return astToValue(ast.elements[1]);
+  if (ast.length !== 2) throw hobError('quote requires exactly 1 argument', null);
+  return astToValue(ast[1]);
 }
 
 function astToValue(node) {
-  switch (node.type) {
-    case 'number': return node.value;
-    case 'string': return node.value;
-    case 'boolean': return node.value;
-    case 'nil': return null;
-    case 'keyword': return keyword(node.value);
-    case 'symbol': return { _hobType: 'symbol', value: node.value };
-    case 'item-ref': return { _hobType: 'item-ref', value: node.value };
-    case 'list': return node.elements.map(astToValue);
-    case 'vector': {
-      const arr = node.elements.map(astToValue);
+  if (node === null) return null;
+  if (typeof node === 'number') return node;
+  if (typeof node === 'boolean') return node;
+  if (typeof node === 'string') {
+    if (node[0] === ':') return keyword(node.slice(1));
+    if (node[0] === '@') return { _hobType: 'item-ref', value: node.slice(1) };
+    return { _hobType: 'symbol', value: node };
+  }
+  if (Array.isArray(node)) return node.map(astToValue);
+  if (typeof node === 'object') {
+    if ('s' in node) return node.s;
+    if ('v' in node) {
+      const arr = node.v.map(astToValue);
       Object.defineProperty(arr, '_isHobVector', { value: true });
       return arr;
     }
-    case 'map': {
+    if ('m' in node) {
       const obj = {};
-      for (const [k, v] of node.entries) {
+      for (const [k, v] of node.m) {
         let key = astToValue(k);
         if (typeof key !== 'string') key = String(key);
         obj[key] = astToValue(v);
       }
       return obj;
     }
-    default: return null;
   }
+  return null;
 }
 
 async function evalAnd(ast, env, callStack) {
-  if (ast.elements.length === 1) return true;
+  if (ast.length === 1) return true;
   let result = true;
-  for (let i = 1; i < ast.elements.length; i++) {
-    result = await evaluate(ast.elements[i], env, callStack);
+  for (let i = 1; i < ast.length; i++) {
+    result = await evaluate(ast[i], env, callStack);
     if (result === false || result === null) return result;
   }
   return result;
 }
 
 async function evalOr(ast, env, callStack) {
-  if (ast.elements.length === 1) return null;
+  if (ast.length === 1) return null;
   let result = null;
-  for (let i = 1; i < ast.elements.length; i++) {
-    result = await evaluate(ast.elements[i], env, callStack);
+  for (let i = 1; i < ast.length; i++) {
+    result = await evaluate(ast[i], env, callStack);
     if (result !== false && result !== null) return result;
   }
   return result;
 }
 
 async function evalLoop(ast, env, callStack) {
-  if (ast.elements.length < 3) throw hobError('loop requires bindings and body', ast, callStack);
-  const bindingsNode = ast.elements[1];
-  if (bindingsNode.type !== 'vector') throw hobError('loop bindings must be a vector', bindingsNode, callStack);
-  if (bindingsNode.elements.length % 2 !== 0) throw hobError('loop bindings must have an even number of forms', bindingsNode, callStack);
+  if (ast.length < 3) throw hobError('loop requires bindings and body', null, callStack);
+  const bindingsNode = ast[1];
+  if (!isVec(bindingsNode)) throw hobError('loop bindings must be a vector', null, callStack);
+  if (bindingsNode.v.length % 2 !== 0) throw hobError('loop bindings must have an even number of forms', null, callStack);
 
   const bindingPatterns = [];
   const loopEnv = new Environment(env);
-  for (let i = 0; i < bindingsNode.elements.length; i += 2) {
-    const nameNode = bindingsNode.elements[i];
-    const value = await evaluate(bindingsNode.elements[i + 1], loopEnv, callStack);
-    if (nameNode.type === 'symbol') {
-      bindingPatterns.push({ pattern: nameNode, isSimple: true, name: nameNode.value });
-      loopEnv.define(nameNode.value, value);
+  for (let i = 0; i < bindingsNode.v.length; i += 2) {
+    const nameNode = bindingsNode.v[i];
+    const value = await evaluate(bindingsNode.v[i + 1], loopEnv, callStack);
+    if (isSym(nameNode)) {
+      bindingPatterns.push({ pattern: nameNode, isSimple: true, name: nameNode });
+      loopEnv.define(nameNode, value);
     } else {
       bindingPatterns.push({ pattern: nameNode, isSimple: false });
       const bindings = await destructure(nameNode, value, loopEnv, callStack);
@@ -1444,18 +1413,17 @@ async function evalLoop(ast, env, callStack) {
     }
   }
 
-  const bodyExprs = ast.elements.slice(2);
+  const bodyExprs = ast.slice(2);
 
   while (true) {
     let result = null;
     for (const expr of bodyExprs) {
       result = await evaluate(expr, loopEnv, callStack);
     }
-    // Check if result is a recur signal
     if (result && result[RECUR]) {
       const newValues = result.values;
       if (newValues.length !== bindingPatterns.length) {
-        throw hobError(`recur expected ${bindingPatterns.length} values, got ${newValues.length}`, ast, callStack);
+        throw hobError(`recur expected ${bindingPatterns.length} values, got ${newValues.length}`, null, callStack);
       }
       for (let i = 0; i < bindingPatterns.length; i++) {
         const bp = bindingPatterns[i];
@@ -1476,8 +1444,8 @@ async function evalLoop(ast, env, callStack) {
 
 async function evalRecur(ast, env, callStack) {
   const values = [];
-  for (let i = 1; i < ast.elements.length; i++) {
-    values.push(await evaluate(ast.elements[i], env, callStack));
+  for (let i = 1; i < ast.length; i++) {
+    values.push(await evaluate(ast[i], env, callStack));
   }
   return { [RECUR]: true, values };
 }
@@ -1485,9 +1453,9 @@ async function evalRecur(ast, env, callStack) {
 // ---- throw / try / catch / finally ----
 
 async function evalThrow(ast, env, callStack) {
-  if (ast.elements.length !== 2) throw hobError('throw requires exactly 1 argument', ast, callStack);
-  const value = await evaluate(ast.elements[1], env, callStack);
-  const err = new HobError(typeof value === 'string' ? value : prStr(value, false), ast.line, ast.col, callStack);
+  if (ast.length !== 2) throw hobError('throw requires exactly 1 argument', null, callStack);
+  const value = await evaluate(ast[1], env, callStack);
+  const err = new HobError(typeof value === 'string' ? value : prStr(value, false), null, null, callStack);
   err.hobValue = value;
   throw err;
 }
@@ -1498,17 +1466,17 @@ async function evalTry(ast, env, callStack) {
   let catchClause = null;
   let finallyClause = null;
 
-  for (let i = 1; i < ast.elements.length; i++) {
-    const el = ast.elements[i];
-    if (el.type === 'list' && el.elements.length > 0 && el.elements[0].type === 'symbol') {
-      if (el.elements[0].value === 'catch') {
-        if (el.elements.length < 3) throw hobError('catch requires an error binding and body', el, callStack);
-        if (el.elements[1].type !== 'symbol') throw hobError('catch error binding must be a symbol', el.elements[1], callStack);
-        catchClause = { bindName: el.elements[1].value, body: el.elements.slice(2), node: el };
+  for (let i = 1; i < ast.length; i++) {
+    const el = ast[i];
+    if (Array.isArray(el) && el.length > 0 && isSym(el[0])) {
+      if (el[0] === 'catch') {
+        if (el.length < 3) throw hobError('catch requires an error binding and body', null, callStack);
+        if (!isSym(el[1])) throw hobError('catch error binding must be a symbol', null, callStack);
+        catchClause = { bindName: el[1], body: el.slice(2), node: el };
         continue;
       }
-      if (el.elements[0].value === 'finally') {
-        finallyClause = { body: el.elements.slice(1), node: el };
+      if (el[0] === 'finally') {
+        finallyClause = { body: el.slice(1), node: el };
         continue;
       }
     }
@@ -1524,7 +1492,6 @@ async function evalTry(ast, env, callStack) {
   } catch (e) {
     if (catchClause) {
       const catchEnv = new Environment(env);
-      // Extract Hob value from error
       const errValue = (e instanceof HobError && e.hobValue !== undefined) ? e.hobValue :
                         (e instanceof Error ? e.message : String(e));
       catchEnv.define(catchClause.bindName, errValue);
@@ -1533,7 +1500,6 @@ async function evalTry(ast, env, callStack) {
         result = await evaluate(expr, catchEnv, callStack);
       }
     } else {
-      // No catch clause — run finally before rethrowing
       if (finallyClause) {
         finallyRan = true;
         for (const expr of finallyClause.body) {
@@ -1555,26 +1521,24 @@ async function evalTry(ast, env, callStack) {
 // ---- Quasiquote ----
 
 async function evalQuasiquote(ast, env, callStack) {
-  if (ast.elements.length !== 2) throw hobError('quasiquote requires exactly 1 argument', ast, callStack);
-  return qqProcess(ast.elements[1], env, callStack);
+  if (ast.length !== 2) throw hobError('quasiquote requires exactly 1 argument', null, callStack);
+  return qqProcess(ast[1], env, callStack);
 }
 
 async function qqProcess(node, env, callStack) {
-  if (!node) return null;
+  if (node === null) return null;
 
   // (unquote expr) → evaluate expr
-  if (node.type === 'list' && node.elements.length === 2 &&
-      node.elements[0].type === 'symbol' && node.elements[0].value === 'unquote') {
-    return evaluate(node.elements[1], env, callStack);
+  if (Array.isArray(node) && node.length === 2 && node[0] === 'unquote') {
+    return evaluate(node[1], env, callStack);
   }
 
   // List — process elements, handling unquote-splicing
-  if (node.type === 'list') {
+  if (Array.isArray(node)) {
     const result = [];
-    for (const el of node.elements) {
-      if (el.type === 'list' && el.elements.length === 2 &&
-          el.elements[0].type === 'symbol' && el.elements[0].value === 'unquote-splicing') {
-        const spliced = await evaluate(el.elements[1], env, callStack);
+    for (const el of node) {
+      if (Array.isArray(el) && el.length === 2 && el[0] === 'unquote-splicing') {
+        const spliced = await evaluate(el[1], env, callStack);
         if (Array.isArray(spliced)) {
           result.push(...spliced);
         } else if (spliced !== null) {
@@ -1588,12 +1552,11 @@ async function qqProcess(node, env, callStack) {
   }
 
   // Vector — same as list but marks result as vector
-  if (node.type === 'vector') {
+  if (isVec(node)) {
     const result = [];
-    for (const el of node.elements) {
-      if (el.type === 'list' && el.elements.length === 2 &&
-          el.elements[0].type === 'symbol' && el.elements[0].value === 'unquote-splicing') {
-        const spliced = await evaluate(el.elements[1], env, callStack);
+    for (const el of node.v) {
+      if (Array.isArray(el) && el.length === 2 && el[0] === 'unquote-splicing') {
+        const spliced = await evaluate(el[1], env, callStack);
         if (Array.isArray(spliced)) {
           result.push(...spliced);
         } else if (spliced !== null) {
@@ -1608,9 +1571,9 @@ async function qqProcess(node, env, callStack) {
   }
 
   // Map — process keys and values (no splicing)
-  if (node.type === 'map') {
+  if (isMap(node)) {
     const obj = {};
-    for (const [kNode, vNode] of node.entries) {
+    for (const [kNode, vNode] of node.m) {
       let key = await qqProcess(kNode, env, callStack);
       const val = await qqProcess(vNode, env, callStack);
       if (typeof key !== 'string') key = String(key);
@@ -1626,28 +1589,19 @@ async function qqProcess(node, env, callStack) {
 // ---- defmacro ----
 
 async function evalDefmacro(ast, env, callStack) {
-  if (ast.elements.length < 4) throw hobError('defmacro requires name, params, and body', ast, callStack);
-  const nameNode = ast.elements[1];
-  if (nameNode.type !== 'symbol') throw hobError('defmacro name must be a symbol', nameNode, callStack);
+  if (ast.length < 4) throw hobError('defmacro requires name, params, and body', null, callStack);
+  const nameNode = ast[1];
+  if (!isSym(nameNode)) throw hobError('defmacro name must be a symbol', null, callStack);
 
-  const paramsNode = ast.elements[2];
-  if (paramsNode.type !== 'vector') throw hobError('defmacro params must be a vector', paramsNode, callStack);
+  const paramsNode = ast[2];
+  if (!isVec(paramsNode)) throw hobError('defmacro params must be a vector', null, callStack);
 
   // Build a fn from the params and body, then mark as macro
-  const fnAst = {
-    type: 'list',
-    elements: [
-      { type: 'symbol', value: 'fn', line: ast.line, col: ast.col },
-      paramsNode,
-      ...ast.elements.slice(3)
-    ],
-    line: ast.line,
-    col: ast.col
-  };
+  const fnAst = ['fn', paramsNode, ...ast.slice(3)];
   const macroFn = await evalFn(fnAst, env, callStack);
   macroFn._isMacro = true;
-  macroFn._hobName = nameNode.value;
-  env.define(nameNode.value, macroFn);
+  macroFn._hobName = nameNode;
+  env.define(nameNode, macroFn);
   return macroFn;
 }
 
@@ -1656,24 +1610,23 @@ async function evalDefmacro(ast, env, callStack) {
 function parseParamList(paramsNode, callStack) {
   const paramNames = [];
   let restParam = null;
-  const paramPatterns = []; // for destructuring support
-  for (let i = 0; i < paramsNode.elements.length; i++) {
-    const p = paramsNode.elements[i];
-    if (p.type === 'symbol' && p.value === '&') {
-      if (i + 1 >= paramsNode.elements.length) throw hobError('& must be followed by a parameter name', p, callStack);
-      const restNode = paramsNode.elements[i + 1];
-      if (restNode.type === 'symbol') {
-        restParam = restNode.value;
+  const paramPatterns = [];
+  for (let i = 0; i < paramsNode.v.length; i++) {
+    const p = paramsNode.v[i];
+    if (p === '&') {
+      if (i + 1 >= paramsNode.v.length) throw hobError('& must be followed by a parameter name', null, callStack);
+      const restNode = paramsNode.v[i + 1];
+      if (isSym(restNode)) {
+        restParam = restNode;
       } else {
         restParam = '__rest__' + i;
         paramPatterns.push({ name: restParam, pattern: restNode });
       }
       break;
     }
-    if (p.type === 'symbol') {
-      paramNames.push(p.value);
+    if (isSym(p)) {
+      paramNames.push(p);
     } else {
-      // Destructuring pattern
       const tmpName = '__destr__' + i;
       paramNames.push(tmpName);
       paramPatterns.push({ name: tmpName, pattern: p });
@@ -1702,11 +1655,11 @@ async function bindArgs(fnEnv, paramNames, restParam, args, paramPatterns, callS
 }
 
 async function evalFnSingleArity(ast, env, callStack) {
-  const paramsNode = ast.elements[1];
-  if (paramsNode.type !== 'vector') throw hobError('fn parameters must be a vector', paramsNode, callStack);
+  const paramsNode = ast[1];
+  if (!isVec(paramsNode)) throw hobError('fn parameters must be a vector', null, callStack);
 
   const { paramNames, restParam, paramPatterns } = parseParamList(paramsNode, callStack);
-  const bodyExprs = ast.elements.slice(2);
+  const bodyExprs = ast.slice(2);
   const closureEnv = env;
 
   const fn = async function (...args) {
@@ -1729,22 +1682,21 @@ async function evalFnSingleArity(ast, env, callStack) {
 
 async function evalFnMultiArity(ast, env, callStack) {
   const arities = [];
-  for (let i = 1; i < ast.elements.length; i++) {
-    const clause = ast.elements[i];
-    if (clause.type !== 'list' || clause.elements.length < 2) {
-      throw hobError('Multi-arity fn clause must be a list with params and body', clause, callStack);
+  for (let i = 1; i < ast.length; i++) {
+    const clause = ast[i];
+    if (!Array.isArray(clause) || clause.length < 2) {
+      throw hobError('Multi-arity fn clause must be a list with params and body', null, callStack);
     }
-    const paramsNode = clause.elements[0];
-    if (paramsNode.type !== 'vector') throw hobError('fn parameters must be a vector', paramsNode, callStack);
+    const paramsNode = clause[0];
+    if (!isVec(paramsNode)) throw hobError('fn parameters must be a vector', null, callStack);
     const { paramNames, restParam, paramPatterns } = parseParamList(paramsNode, callStack);
-    const bodyExprs = clause.elements.slice(1);
+    const bodyExprs = clause.slice(1);
     arities.push({ paramNames, restParam, paramPatterns, bodyExprs, arityCount: paramNames.length });
   }
 
   const closureEnv = env;
 
   const fn = async function (...args) {
-    // Find matching arity: exact fixed-arity first, then variadic fallback
     let matched = null;
     for (const arity of arities) {
       if (!arity.restParam && args.length === arity.arityCount) {
@@ -1761,7 +1713,7 @@ async function evalFnMultiArity(ast, env, callStack) {
       }
     }
     if (!matched) {
-      throw hobError(`No matching arity for ${args.length} arguments`, ast, callStack);
+      throw hobError(`No matching arity for ${args.length} arguments`, null, callStack);
     }
 
     const fnEnv = new Environment(closureEnv);
@@ -1781,29 +1733,27 @@ async function evalFnMultiArity(ast, env, callStack) {
 // ---- plet ----
 
 async function evalPlet(ast, env, callStack) {
-  if (ast.elements.length < 3) throw hobError('plet requires bindings and body', ast, callStack);
-  const bindingsNode = ast.elements[1];
-  if (bindingsNode.type !== 'vector') throw hobError('plet bindings must be a vector', bindingsNode, callStack);
-  if (bindingsNode.elements.length % 2 !== 0) throw hobError('plet bindings must have an even number of forms', bindingsNode, callStack);
+  if (ast.length < 3) throw hobError('plet requires bindings and body', null, callStack);
+  const bindingsNode = ast[1];
+  if (!isVec(bindingsNode)) throw hobError('plet bindings must be a vector', null, callStack);
+  if (bindingsNode.v.length % 2 !== 0) throw hobError('plet bindings must have an even number of forms', null, callStack);
 
-  // Evaluate ALL binding expressions concurrently against parent env
   const names = [];
   const patterns = [];
   const promises = [];
-  for (let i = 0; i < bindingsNode.elements.length; i += 2) {
-    names.push(bindingsNode.elements[i]);
-    patterns.push(bindingsNode.elements[i]);
-    promises.push(evaluate(bindingsNode.elements[i + 1], env, callStack));
+  for (let i = 0; i < bindingsNode.v.length; i += 2) {
+    names.push(bindingsNode.v[i]);
+    patterns.push(bindingsNode.v[i]);
+    promises.push(evaluate(bindingsNode.v[i + 1], env, callStack));
   }
   const values = await Promise.all(promises);
 
   const pletEnv = new Environment(env);
   for (let i = 0; i < names.length; i++) {
     const nameNode = names[i];
-    if (nameNode.type === 'symbol') {
-      pletEnv.define(nameNode.value, values[i]);
+    if (isSym(nameNode)) {
+      pletEnv.define(nameNode, values[i]);
     } else {
-      // Destructuring
       const bindings = await destructure(nameNode, values[i], pletEnv, callStack);
       for (const [bindName, bindVal] of bindings) {
         pletEnv.define(bindName, bindVal);
@@ -1812,8 +1762,8 @@ async function evalPlet(ast, env, callStack) {
   }
 
   let result = null;
-  for (let i = 2; i < ast.elements.length; i++) {
-    result = await evaluate(ast.elements[i], pletEnv, callStack);
+  for (let i = 2; i < ast.length; i++) {
+    result = await evaluate(ast[i], pletEnv, callStack);
   }
   return result;
 }
@@ -1823,20 +1773,19 @@ async function evalPlet(ast, env, callStack) {
 async function destructure(pattern, value, env, callStack) {
   const bindings = [];
 
-  if (pattern.type === 'vector') {
+  if (isVec(pattern)) {
     // Vector destructuring
     const arr = value === null ? [] : value;
     if (value !== null && !Array.isArray(arr)) {
-      throw hobError('Cannot destructure non-sequential value as vector', pattern, callStack);
+      throw hobError('Cannot destructure non-sequential value as vector', null, callStack);
     }
-    for (let i = 0; i < pattern.elements.length; i++) {
-      const p = pattern.elements[i];
-      if (p.type === 'symbol' && p.value === '&') {
-        // Rest binding
-        if (i + 1 < pattern.elements.length) {
-          const restPattern = pattern.elements[i + 1];
-          if (restPattern.type === 'symbol') {
-            bindings.push([restPattern.value, arr.slice(i)]);
+    for (let i = 0; i < pattern.v.length; i++) {
+      const p = pattern.v[i];
+      if (p === '&') {
+        if (i + 1 < pattern.v.length) {
+          const restPattern = pattern.v[i + 1];
+          if (isSym(restPattern)) {
+            bindings.push([restPattern, arr.slice(i)]);
           } else {
             const nested = await destructure(restPattern, arr.slice(i), env, callStack);
             bindings.push(...nested);
@@ -1844,14 +1793,13 @@ async function destructure(pattern, value, env, callStack) {
         }
         break;
       }
-      if (p.type === 'symbol' && p.value === '_') {
-        continue; // skip placeholder
+      if (p === '_') {
+        continue;
       }
       const val = i < arr.length ? arr[i] : null;
-      if (p.type === 'symbol') {
-        bindings.push([p.value, val]);
+      if (isSym(p)) {
+        bindings.push([p, val]);
       } else {
-        // Nested destructuring
         const nested = await destructure(p, val, env, callStack);
         bindings.push(...nested);
       }
@@ -1859,7 +1807,7 @@ async function destructure(pattern, value, env, callStack) {
     return bindings;
   }
 
-  if (pattern.type === 'map') {
+  if (isMap(pattern)) {
     // Map destructuring
     const map = value === null ? {} : value;
     let keysEntries = null;
@@ -1868,33 +1816,34 @@ async function destructure(pattern, value, env, callStack) {
     let asName = null;
     const directBindings = [];
 
-    for (const [kNode, vNode] of pattern.entries) {
-      const keyStr = kNode.type === 'keyword' ? kNode.value : (kNode.type === 'symbol' ? kNode.value : null);
+    for (const [kNode, vNode] of pattern.m) {
+      let keyStr = null;
+      if (typeof kNode === 'string' && kNode[0] === ':') keyStr = kNode.slice(1);
+      else if (isSym(kNode)) keyStr = kNode;
 
-      if (keyStr === 'keys' && vNode.type === 'vector') {
-        keysEntries = vNode.elements;
+      if (keyStr === 'keys' && isVec(vNode)) {
+        keysEntries = vNode.v;
         continue;
       }
-      if (keyStr === 'strs' && vNode.type === 'vector') {
-        strsEntries = vNode.elements;
+      if (keyStr === 'strs' && isVec(vNode)) {
+        strsEntries = vNode.v;
         continue;
       }
-      if (keyStr === 'or' && vNode.type === 'map') {
+      if (keyStr === 'or' && isMap(vNode)) {
         orDefaults = vNode;
         continue;
       }
-      if (keyStr === 'as' && vNode.type === 'symbol') {
-        asName = vNode.value;
+      if (keyStr === 'as' && isSym(vNode)) {
+        asName = vNode;
         continue;
       }
-      // Direct binding: {localName :key} or {localName keyExpr}
       directBindings.push([kNode, vNode]);
     }
 
     // Process :keys [a b] — look up keyword ʞa, ʞb
     if (keysEntries) {
       for (const entry of keysEntries) {
-        const name = entry.value;
+        const name = entry; // symbol string in compact JSON
         const key = keyword(name);
         const val = (map && typeof map === 'object' && key in map) ? map[key] : null;
         bindings.push([name, val]);
@@ -1904,7 +1853,7 @@ async function destructure(pattern, value, env, callStack) {
     // Process :strs [a b] — look up string "a", "b"
     if (strsEntries) {
       for (const entry of strsEntries) {
-        const name = entry.value;
+        const name = entry;
         const val = (map && typeof map === 'object' && name in map) ? map[name] : null;
         bindings.push([name, val]);
       }
@@ -1913,17 +1862,16 @@ async function destructure(pattern, value, env, callStack) {
     // Direct bindings: {a :a} → bind local `a` to map[ʞa]
     for (const [localNode, keyNode] of directBindings) {
       let key;
-      if (keyNode.type === 'keyword') {
-        key = keyword(keyNode.value);
+      if (typeof keyNode === 'string' && keyNode[0] === ':') {
+        key = keyword(keyNode.slice(1));
       } else {
         key = await evaluate(keyNode, env, callStack);
         if (typeof key !== 'string') key = String(key);
       }
       const val = (map && typeof map === 'object' && key in map) ? map[key] : null;
-      if (localNode.type === 'symbol') {
-        bindings.push([localNode.value, val]);
+      if (isSym(localNode)) {
+        bindings.push([localNode, val]);
       } else {
-        // Nested destructuring
         const nested = await destructure(localNode, val, env, callStack);
         bindings.push(...nested);
       }
@@ -1931,9 +1879,8 @@ async function destructure(pattern, value, env, callStack) {
 
     // Apply :or defaults
     if (orDefaults) {
-      for (const [kNode, vNode] of orDefaults.entries) {
-        const defName = kNode.type === 'symbol' ? kNode.value : kNode.value;
-        // Find the binding and check if nil
+      for (const [kNode, vNode] of orDefaults.m) {
+        const defName = isSym(kNode) ? kNode : (typeof kNode === 'string' && kNode[0] === ':' ? kNode.slice(1) : String(kNode));
         const idx = bindings.findIndex(([n]) => n === defName);
         if (idx !== -1 && bindings[idx][1] === null) {
           bindings[idx][1] = await evaluate(vNode, env, callStack);
@@ -1949,7 +1896,7 @@ async function destructure(pattern, value, env, callStack) {
     return bindings;
   }
 
-  throw hobError('Destructuring pattern must be a vector or map', pattern, callStack);
+  throw hobError('Destructuring pattern must be a vector or map', null, callStack);
 }
 
 // ---- Free symbol analysis for auto-parallel let ----
@@ -1959,63 +1906,57 @@ function freeSymbols(ast, bound) {
   const free = new Set();
 
   function walk(node, localBound) {
-    if (!node) return;
+    if (node === null || node === undefined) return;
 
-    if (node.type === 'symbol') {
-      if (!localBound.has(node.value)) {
-        free.add(node.value);
+    if (typeof node === 'string') {
+      if (isSym(node) && !localBound.has(node)) free.add(node);
+      return;
+    }
+
+    if (typeof node === 'number' || typeof node === 'boolean') return;
+
+    if (typeof node === 'object' && !Array.isArray(node)) {
+      if ('s' in node) return;
+      if ('v' in node) {
+        for (const el of node.v) walk(el, localBound);
+        return;
+      }
+      if ('m' in node) {
+        for (const [k, v] of node.m) {
+          walk(k, localBound);
+          walk(v, localBound);
+        }
+        return;
       }
       return;
     }
 
-    if (node.type === 'number' || node.type === 'string' || node.type === 'boolean' ||
-        node.type === 'nil' || node.type === 'keyword' || node.type === 'item-ref') {
-      return;
-    }
+    if (Array.isArray(node)) {
+      if (node.length === 0) return;
+      const head = node[0];
 
-    if (node.type === 'vector') {
-      for (const el of node.elements) walk(el, localBound);
-      return;
-    }
+      if (head === 'quote') return;
 
-    if (node.type === 'map') {
-      for (const [k, v] of node.entries) {
-        walk(k, localBound);
-        walk(v, localBound);
-      }
-      return;
-    }
-
-    if (node.type === 'list') {
-      if (node.elements.length === 0) return;
-      const head = node.elements[0];
-
-      // quote — nothing free inside
-      if (head.type === 'symbol' && head.value === 'quote') return;
-
-      // quasiquote — only unquote/unquote-splicing contents
-      if (head.type === 'symbol' && head.value === 'quasiquote') {
-        walkQQ(node.elements[1], localBound);
+      if (head === 'quasiquote') {
+        walkQQ(node[1], localBound);
         return;
       }
 
-      // fn — parameters are bound in body
-      if (head.type === 'symbol' && head.value === 'fn') {
-        if (node.elements.length >= 3 && node.elements[1].type === 'vector') {
+      if (head === 'fn') {
+        if (node.length >= 3 && isVec(node[1])) {
           const fnBound = new Set(localBound);
-          extractBoundNames(node.elements[1], fnBound);
-          for (let i = 2; i < node.elements.length; i++) {
-            walk(node.elements[i], fnBound);
+          extractBoundNames(node[1], fnBound);
+          for (let i = 2; i < node.length; i++) {
+            walk(node[i], fnBound);
           }
         } else {
-          // Multi-arity
-          for (let i = 1; i < node.elements.length; i++) {
-            const clause = node.elements[i];
-            if (clause.type === 'list' && clause.elements[0]?.type === 'vector') {
+          for (let i = 1; i < node.length; i++) {
+            const clause = node[i];
+            if (Array.isArray(clause) && isVec(clause[0])) {
               const fnBound = new Set(localBound);
-              extractBoundNames(clause.elements[0], fnBound);
-              for (let j = 1; j < clause.elements.length; j++) {
-                walk(clause.elements[j], fnBound);
+              extractBoundNames(clause[0], fnBound);
+              for (let j = 1; j < clause.length; j++) {
+                walk(clause[j], fnBound);
               }
             }
           }
@@ -2023,50 +1964,47 @@ function freeSymbols(ast, bound) {
         return;
       }
 
-      // let/loop — bindings shadow progressively
-      if (head.type === 'symbol' && (head.value === 'let' || head.value === 'loop')) {
-        if (node.elements.length >= 3 && node.elements[1].type === 'vector') {
+      if (head === 'let' || head === 'loop') {
+        if (node.length >= 3 && isVec(node[1])) {
           const letBound = new Set(localBound);
-          const binds = node.elements[1].elements;
+          const binds = node[1].v;
           for (let i = 0; i < binds.length; i += 2) {
             if (i + 1 < binds.length) walk(binds[i + 1], letBound);
             extractBoundNames(binds[i], letBound);
           }
-          for (let i = 2; i < node.elements.length; i++) {
-            walk(node.elements[i], letBound);
+          for (let i = 2; i < node.length; i++) {
+            walk(node[i], letBound);
           }
           return;
         }
       }
 
-      // Default: walk all elements
-      for (const el of node.elements) walk(el, localBound);
+      for (const el of node) walk(el, localBound);
     }
   }
 
   function walkQQ(node, localBound) {
-    if (!node) return;
-    if (node.type === 'list') {
-      if (node.elements.length === 2 && node.elements[0].type === 'symbol') {
-        if (node.elements[0].value === 'unquote' || node.elements[0].value === 'unquote-splicing') {
-          walk(node.elements[1], localBound);
+    if (node === null || node === undefined) return;
+    if (Array.isArray(node)) {
+      if (node.length === 2 && isSym(node[0])) {
+        if (node[0] === 'unquote' || node[0] === 'unquote-splicing') {
+          walk(node[1], localBound);
           return;
         }
       }
-      for (const el of node.elements) walkQQ(el, localBound);
+      for (const el of node) walkQQ(el, localBound);
       return;
     }
-    if (node.type === 'vector') {
-      for (const el of node.elements) walkQQ(el, localBound);
+    if (isVec(node)) {
+      for (const el of node.v) walkQQ(el, localBound);
       return;
     }
-    if (node.type === 'map') {
-      for (const [k, v] of node.entries) {
+    if (isMap(node)) {
+      for (const [k, v] of node.m) {
         walkQQ(k, localBound);
         walkQQ(v, localBound);
       }
     }
-    // Atoms (symbols etc.) in quasiquote are not free — they're quoted
   }
 
   walk(ast, bound);
@@ -2074,23 +2012,23 @@ function freeSymbols(ast, bound) {
 }
 
 function extractBoundNames(pattern, nameSet) {
-  if (!pattern) return;
-  if (pattern.type === 'symbol') {
-    if (pattern.value !== '&' && pattern.value !== '_') {
-      nameSet.add(pattern.value);
-    }
+  if (pattern === null || pattern === undefined) return;
+  if (isSym(pattern)) {
+    if (pattern !== '&' && pattern !== '_') nameSet.add(pattern);
     return;
   }
-  if (pattern.type === 'vector') {
-    for (const el of pattern.elements) extractBoundNames(el, nameSet);
+  if (isVec(pattern)) {
+    for (const el of pattern.v) extractBoundNames(el, nameSet);
     return;
   }
-  if (pattern.type === 'map') {
-    for (const [k, v] of pattern.entries) {
-      const keyStr = k.type === 'keyword' ? k.value : (k.type === 'symbol' ? k.value : null);
+  if (isMap(pattern)) {
+    for (const [k, v] of pattern.m) {
+      let keyStr = null;
+      if (typeof k === 'string' && k[0] === ':') keyStr = k.slice(1);
+      else if (isSym(k)) keyStr = k;
       if (keyStr === 'keys' || keyStr === 'strs') {
-        if (v.type === 'vector') {
-          for (const el of v.elements) extractBoundNames(el, nameSet);
+        if (isVec(v)) {
+          for (const el of v.v) extractBoundNames(el, nameSet);
         }
       } else if (keyStr === 'as') {
         extractBoundNames(v, nameSet);
@@ -2134,19 +2072,18 @@ function topologicalBatch(pairs) {
 // ---- Function application ----
 
 async function evalApply(ast, env, callStack) {
-  const headNode = ast.elements[0];
+  const headNode = ast[0];
   const headVal = await evaluate(headNode, env, callStack);
 
   // Keywords as functions: (:key map) => get(map, key)
   if (isKeyword(headVal)) {
-    if (ast.elements.length < 2 || ast.elements.length > 3) {
-      throw hobError('Keyword lookup requires 1 or 2 arguments', ast, callStack);
+    if (ast.length < 2 || ast.length > 3) {
+      throw hobError('Keyword lookup requires 1 or 2 arguments', null, callStack);
     }
-    const target = await evaluate(ast.elements[1], env, callStack);
-    const defaultVal = ast.elements[2] ? await evaluate(ast.elements[2], env, callStack) : null;
+    const target = await evaluate(ast[1], env, callStack);
+    const defaultVal = ast.length > 2 ? await evaluate(ast[2], env, callStack) : null;
     if (target && typeof target === 'object' && !Array.isArray(target)) {
       if (headVal in target) return target[headVal];
-      // Fallback: try plain string key (JS interop)
       const plainKey = keywordName(headVal);
       if (plainKey in target) return target[plainKey];
       return defaultVal;
@@ -2155,20 +2092,20 @@ async function evalApply(ast, env, callStack) {
   }
 
   if (typeof headVal !== 'function') {
-    throw hobError(`'${prStr(headVal, false)}' is not a function`, headNode, callStack);
+    throw hobError(`'${prStr(headVal, false)}' is not a function`, null, callStack);
   }
 
   // Evaluate arguments
   const args = [];
-  for (let i = 1; i < ast.elements.length; i++) {
-    args.push(await evaluate(ast.elements[i], env, callStack));
+  for (let i = 1; i < ast.length; i++) {
+    args.push(await evaluate(ast[i], env, callStack));
   }
 
   // Push call frame
   const frame = {
-    name: headVal._hobName || (headNode.type === 'symbol' ? headNode.value : null),
-    line: headNode.line,
-    col: headNode.col
+    name: headVal._hobName || (isSym(headNode) ? headNode : null),
+    line: null,
+    col: null
   };
   callStack.push(frame);
 
@@ -2178,7 +2115,7 @@ async function evalApply(ast, env, callStack) {
     return result;
   } catch (e) {
     if (e instanceof HobError) throw e;
-    throw hobError(e.message, headNode, callStack);
+    throw hobError(e.message, null, callStack);
   } finally {
     callStack.pop();
   }
@@ -2932,7 +2869,7 @@ export { read, readAll, evaluate, prStr, Environment, HobError, tokenize, parse,
          keyword, isKeyword, valueToAst, astToValue, hiccupToDOM, hiccupToDOMWithRefs, parseTag,
          registerViewOps, registerItemOps, registerEventOps, hobToJs,
          DependencyTracker, setAtomMutationCallback, setupSortable,
-         compactify, expandCompact, compactifyAll, prettyPrint, prettyPrintAll };
+         compactify, compactifyAll, prettyPrint, prettyPrintAll };
 
 // ============================================================
 // Standard Macros (loaded at interpreter creation time)
@@ -3146,7 +3083,6 @@ export function createInterpreter(api, viewApi, eventApi) {
     createEnvironment: () => new Environment(stdlib),
     macrosReady: macrosPromise,
     compactify,
-    expandCompact,
     compactifyAll,
     prettyPrint,
     prettyPrintAll,

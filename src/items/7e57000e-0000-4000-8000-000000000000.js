@@ -11,25 +11,25 @@ export async function run(api) {
 
   function readsQuasiquote() {
     const ast = hob.read('`(a b c)');
-    assertEquals(ast.type, 'list');
-    assertEquals(ast.elements[0].value, 'quasiquote');
-    assertEquals(ast.elements[1].type, 'list');
+    assert(Array.isArray(ast), 'Should be an array (list)');
+    assertEquals(ast[0], 'quasiquote');
+    assert(Array.isArray(ast[1]), 'Second element should be a list');
   }
 
   function readsUnquote() {
     const ast = hob.read('`(a ~b c)');
-    const inner = ast.elements[1]; // (a ~b c)
-    assertEquals(inner.elements[1].type, 'list');
-    assertEquals(inner.elements[1].elements[0].value, 'unquote');
-    assertEquals(inner.elements[1].elements[1].value, 'b');
+    const inner = ast[1]; // (a ~b c)
+    assert(Array.isArray(inner[1]), 'Unquote should be a list');
+    assertEquals(inner[1][0], 'unquote');
+    assertEquals(inner[1][1], 'b');
   }
 
   function readsUnquoteSplicing() {
     const ast = hob.read('`(a ~@xs c)');
-    const inner = ast.elements[1];
-    assertEquals(inner.elements[1].type, 'list');
-    assertEquals(inner.elements[1].elements[0].value, 'unquote-splicing');
-    assertEquals(inner.elements[1].elements[1].value, 'xs');
+    const inner = ast[1];
+    assert(Array.isArray(inner[1]), 'Unquote-splicing should be a list');
+    assertEquals(inner[1][0], 'unquote-splicing');
+    assertEquals(inner[1][1], 'xs');
   }
 
   // --- Quasiquote evaluation ---
@@ -197,12 +197,12 @@ export async function run(api) {
 
   function readsAnonFn() {
     const ast = hob.read('#(+ %1 %2)');
-    assertEquals(ast.type, 'list');
-    assertEquals(ast.elements[0].value, 'fn');
-    assertEquals(ast.elements[1].type, 'vector');
-    assertEquals(ast.elements[1].elements.length, 2);
-    assertEquals(ast.elements[1].elements[0].value, '%1');
-    assertEquals(ast.elements[1].elements[1].value, '%2');
+    assert(Array.isArray(ast), 'Should be a list');
+    assertEquals(ast[0], 'fn');
+    assert(ast[1].v !== undefined, 'Second element should be a vector');
+    assertEquals(ast[1].v.length, 2);
+    assertEquals(ast[1].v[0], '%1');
+    assertEquals(ast[1].v[1], '%2');
   }
 
   async function anonFnEval() {
