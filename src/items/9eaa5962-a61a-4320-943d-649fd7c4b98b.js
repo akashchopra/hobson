@@ -36,7 +36,7 @@
   console.log(`Found ${hobItems.length} items with hob`);
 
   for (const item of hobItems) {
-    const code = JSON.stringify(item.content.hob);
+    const code = JSON.stringify(item.content.hob, null, "\t");
     const filename = `${item.id}.hob`;
 
     // Create and download the file
