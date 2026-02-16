@@ -1,132 +1,75 @@
-;; Tag Browser View — browse tags hierarchically and view tagged items
-
-(let [;; Load tree builder for data operations
-      tree-builder (invoke api "require" "tag-tree-builder")
-
-      ;; Get all items to discover tags
-      all-items (get-all)
-
-      ;; Build items-by-id lookup for local parent chain walking
-      items-by-id (reduce (fn [acc it] (assoc acc (:id it) it)) {} all-items)
-
-      ;; Discover all tag IDs used in content.tags arrays
-      used-tag-ids (distinct
-        (mapcat (fn [it] (or (get-in it [:content :tags]) [])) all-items))
-
-      ;; Walk parent chains to include ancestor tags (loop/recur, no async)
-      all-tag-ids (reduce
-        (fn [seen tag-id]
-          (loop [id tag-id acc seen]
-            (if (or (nil? id) (get acc id))
-              acc
-              (let [it (get items-by-id id)
-                    parent (get-in it [:content :parent])]
-                (recur parent (assoc acc id true))))))
-        {} used-tag-ids)
-
-      ;; Filter to existing tag items and build tree
-      tag-items (filter (fn [it] (get all-tag-ids (:id it))) all-items)
-      tree (invoke tree-builder "buildTagTree" tag-items)
-
-      ;; Read view state
-      selected-tag (get-in item [:content :selectedTag])
-      expanded-tags (or (get-in item [:content :expandedTags]) [])
-
-      ;; Find compact card view for result rendering
-      compact-view-id (let [views (find-items {:name "compact-card-view"})]
-        (when (seq views) (:id (first views))))
-
-      ;; Styles
-      s-container "max-width: 600px; margin: 0 auto;"
-      s-header "margin-bottom: 20px; padding-bottom: 15px; border-bottom: 2px solid var(--color-border-light);"
-      s-title "margin: 0; font-size: 1.25rem;"
-      s-tree "display: flex; flex-direction: column;"
-      s-results "margin-top: 20px; padding: 15px; background: var(--color-bg-surface-alt); border-radius: var(--border-radius);"
-      s-results-title "margin: 0 0 15px 0; font-size: 1rem; color: var(--color-text);"
-      s-results-list "max-height: 400px; overflow-y: auto;"
-      s-empty "padding: 20px; text-align: center; color: var(--color-border-dark); font-style: italic;"
-      s-node-row "display: flex; align-items: center; padding: 6px 8px; cursor: pointer; border-radius: var(--border-radius);"
-      s-chevron "width: 16px; margin-right: 4px; font-size: 0.75rem; user-select: none; text-align: center; flex-shrink: 0;"
-      s-dot "width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 8px; flex-shrink: 0;"
-      s-name "font-size: 0.8125rem;"
-      s-error "padding: 12px; margin-bottom: 8px; color: var(--color-danger); border: 1px solid var(--color-danger); border-radius: var(--border-radius); background: var(--color-danger-light);"
-
-      ;; Toggle expand/collapse
-      toggle-expand! (fn [tag-id]
-        (let [updated (if (some (fn [x] (= x tag-id)) expanded-tags)
-                        (vec (filter (fn [x] (not= x tag-id)) expanded-tags))
-                        (conj expanded-tags tag-id))]
-          (set-item! (-> item
-            (assoc-in [:content :expandedTags] updated)
-            (assoc :modified (now))))))
-
-      ;; Select a tag — find tagged items and store as attachments
-      select-tag! (fn [tag-node]
-        (let [tag-id (:id tag-node)
-              tagged-items (filter
-                (fn [it] (some (fn [t] (= t tag-id)) (or (get-in it [:content :tags]) [])))
-                all-items)]
-          (set-item! (-> item
-            (assoc :attachments (vec (map (fn [it] {:id (:id it)}) tagged-items)))
-            (assoc-in [:content :selectedTag] tag-id)
-            (assoc :modified (now))))))
-
-      ;; Recursive tree renderer (atom-based self-reference)
-      render-node (atom nil)
-      _ (reset! render-node (fn [node depth]
-          (let [self (deref render-node)
-                tag-name (invoke tree-builder "getTagName" node)
-                tag-color (invoke tree-builder "getTagColor" node)
-                children (:children node)
-                has-children (seq children)
-                is-expanded (some (fn [x] (= x (:id node))) expanded-tags)
-                indent-px (+ (* depth 20) 8)]
-            [:div
-              [:div {:style (str s-node-row " padding-left: " indent-px "px;")
-                     :on-click (fn [e] (select-tag! node))}
-                ;; Expand/collapse chevron
-                [:span {:style s-chevron
-                        :on-click (fn [e]
-                          (invoke e "stopPropagation")
-                          (when has-children (toggle-expand! (:id node))))}
-                  (if has-children (if is-expanded "▼" "▶") "")]
-                ;; Color dot
-                [:span {:style (str s-dot " background: " tag-color ";")}]
-                ;; Name
-                [:span {:style s-name} tag-name]]
-              ;; Children (recursive)
-              (when (and has-children is-expanded)
-                (for [child children]
-                  (self child (inc depth))))])))]
-
-  [:div {:style s-container}
-    ;; Header
-    [:div {:style s-header}
-      [:h2 {:style s-title} (or (:name item) "Tag Browser")]]
-
-    ;; Tag tree
-    [:div {:style s-tree}
-      (for [node tree]
-        ((deref render-node) node 0))]
-
-    ;; Results (shown when a tag is selected)
-    (when selected-tag
-      (let [attachments (or (:attachments item) [])
-            tag-name (get-fqn! selected-tag)]
-        [:div {:style s-results}
-          [:h3 {:style s-results-title}
-            (str "Items tagged with \"" (or tag-name selected-tag) "\" (" (count attachments) ")")]
-          [:div {:style s-results-list}
-            (if (empty? attachments)
-              [:div {:style s-empty} "No items found with this tag."]
-              (for [att attachments]
-                (let [child-id (if (map? att) (:id att) att)
-                      child-view-id (if (and (map? att) (:view att)) (:view att) compact-view-id)]
-                  [:div {:data-sort-key child-id}
-                    (try
-                      (let [node (render-item child-id child-view-id)]
-                        (invoke node "setAttribute" "data-parent-id" (:id item))
-                        node)
-                      (catch err
-                        [:div {:style s-error}
-                          (str "Error loading item: " child-id)]))])))]]))])
+(let
+  [tree-builder (invoke api "require" "tag-tree-builder") all-items (get-all) items-by-id (reduce (fn [acc it] (assoc acc (:id it) it)) {} all-items) used-tag-ids (distinct (mapcat (fn [it] (or (get-in it [:content :tags]) [])) all-items)) all-tag-ids (reduce
+    (fn
+      [seen tag-id]
+      (loop
+        [id tag-id acc seen]
+        (if
+          (or (nil? id) (get acc id))
+          acc
+          (let
+            [it (get items-by-id id) parent (get-in it [:content :parent])]
+            (recur parent (assoc acc id true))))))
+    {}
+    used-tag-ids) tag-items (filter (fn [it] (get all-tag-ids (:id it))) all-items) tree (invoke tree-builder "buildTagTree" tag-items) selected-tag (get-in item [:content :selectedTag]) expanded-tags (or (get-in item [:content :expandedTags]) []) compact-view-id (let
+    [views (find-items {:name "compact-card-view"})]
+    (when (seq views) (:id (first views)))) s-container "max-width: 600px; margin: 0 auto;" s-header "margin-bottom: 20px; padding-bottom: 15px; border-bottom: 2px solid var(--color-border-light);" s-title "margin: 0; font-size: 1.25rem;" s-tree "display: flex; flex-direction: column;" s-results "margin-top: 20px; padding: 15px; background: var(--color-bg-surface-alt); border-radius: var(--border-radius);" s-results-title "margin: 0 0 15px 0; font-size: 1rem; color: var(--color-text);" s-results-list "max-height: 400px; overflow-y: auto;" s-empty "padding: 20px; text-align: center; color: var(--color-border-dark); font-style: italic;" s-node-row "display: flex; align-items: center; padding: 6px 8px; cursor: pointer; border-radius: var(--border-radius);" s-chevron "width: 16px; margin-right: 4px; font-size: 0.75rem; user-select: none; text-align: center; flex-shrink: 0;" s-dot "width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 8px; flex-shrink: 0;" s-name "font-size: 0.8125rem;" s-error "padding: 12px; margin-bottom: 8px; color: var(--color-danger); border: 1px solid var(--color-danger); border-radius: var(--border-radius); background: var(--color-danger-light);" toggle-expand! (fn
+    [tag-id]
+    (let
+      [updated (if
+        (some (fn [x] (= x tag-id)) expanded-tags)
+        (vec (filter (fn [x] (not= x tag-id)) expanded-tags))
+        (conj expanded-tags tag-id))]
+      (set-item!
+        (->
+          item
+          (assoc-in [:content :expandedTags] updated)
+          (assoc :modified (now)))))) select-tag! (fn
+    [tag-node]
+    (let
+      [tag-id (:id tag-node) tagged-items (filter
+        (fn
+          [it]
+          (some (fn [t] (= t tag-id)) (or (get-in it [:content :tags]) [])))
+        all-items)]
+      (set-item!
+        (->
+          item
+          (assoc :attachments (vec (map (fn [it] {:id (:id it)}) tagged-items)))
+          (assoc-in [:content :selectedTag] tag-id)
+          (assoc :modified (now)))))) render-node (atom nil) _ (reset!
+    render-node
+    (fn
+      [node depth]
+      (let
+        [self (deref render-node) tag-name (invoke tree-builder "getTagName" node) tag-color (invoke tree-builder "getTagColor" node) children (:children node) has-children (seq children) is-expanded (some (fn [x] (= x (:id node))) expanded-tags) indent-px (+ (* depth 20) 8)]
+        [:div [:div {:style (str s-node-row " padding-left: " indent-px "px;") :on-click (fn [e] (select-tag! node))} [:span {:style s-chevron :on-click (fn
+          [e]
+          (invoke e "stopPropagation")
+          (when has-children (toggle-expand! (:id node))))} (if has-children (if is-expanded "▼" "▶") "")] [:span {:style (str s-dot " background: " tag-color ";")}] [:span {:style s-name} tag-name]] (when
+          (and has-children is-expanded)
+          (for [child children] (self child (inc depth))))])))]
+  [:div {:style s-container} [:div {:style s-header} [:h2 {:style s-title} (or (:name item) "Tag Browser")]] [:div {:style s-tree} (for [node tree] ((deref render-node) node 0))] (when
+    selected-tag
+    (let
+      [attachments (or (:attachments item) []) tag-name (get-fqn! selected-tag)]
+      [:div {:style s-results} [:h3 {:style s-results-title} (str
+        "Items tagged with \""
+        (or tag-name selected-tag)
+        "\" ("
+        (count attachments)
+        ")")] [:div {:style s-results-list} (if
+        (empty? attachments)
+        [:div {:style s-empty} "No items found with this tag."]
+        (for
+          [att attachments]
+          (let
+            [child-id (if (map? att) (:id att) att) child-view-id (if (and (map? att) (:view att)) (:view att) compact-view-id)]
+            [:div {:data-sort-key child-id} (try
+              (let
+                [node (render-item child-id child-view-id)]
+                (invoke node "setAttribute" "data-parent-id" (:id item))
+                node)
+              (catch
+                err
+                [:div {:style s-error} (str "Error loading item: " child-id)]))])))]]))])

@@ -470,7 +470,1078 @@
         "signature": "()"
       }
     },
-    "hob": ";; Tag Browser View — browse tags hierarchically and view tagged items\n\n(let [;; Load tree builder for data operations\n      tree-builder (invoke api \"require\" \"tag-tree-builder\")\n\n      ;; Get all items to discover tags\n      all-items (get-all)\n\n      ;; Build items-by-id lookup for local parent chain walking\n      items-by-id (reduce (fn [acc it] (assoc acc (:id it) it)) {} all-items)\n\n      ;; Discover all tag IDs used in content.tags arrays\n      used-tag-ids (distinct\n        (mapcat (fn [it] (or (get-in it [:content :tags]) [])) all-items))\n\n      ;; Walk parent chains to include ancestor tags (loop/recur, no async)\n      all-tag-ids (reduce\n        (fn [seen tag-id]\n          (loop [id tag-id acc seen]\n            (if (or (nil? id) (get acc id))\n              acc\n              (let [it (get items-by-id id)\n                    parent (get-in it [:content :parent])]\n                (recur parent (assoc acc id true))))))\n        {} used-tag-ids)\n\n      ;; Filter to existing tag items and build tree\n      tag-items (filter (fn [it] (get all-tag-ids (:id it))) all-items)\n      tree (invoke tree-builder \"buildTagTree\" tag-items)\n\n      ;; Read view state\n      selected-tag (get-in item [:content :selectedTag])\n      expanded-tags (or (get-in item [:content :expandedTags]) [])\n\n      ;; Find compact card view for result rendering\n      compact-view-id (let [views (find-items {:name \"compact-card-view\"})]\n        (when (seq views) (:id (first views))))\n\n      ;; Styles\n      s-container \"max-width: 600px; margin: 0 auto;\"\n      s-header \"margin-bottom: 20px; padding-bottom: 15px; border-bottom: 2px solid var(--color-border-light);\"\n      s-title \"margin: 0; font-size: 1.25rem;\"\n      s-tree \"display: flex; flex-direction: column;\"\n      s-results \"margin-top: 20px; padding: 15px; background: var(--color-bg-surface-alt); border-radius: var(--border-radius);\"\n      s-results-title \"margin: 0 0 15px 0; font-size: 1rem; color: var(--color-text);\"\n      s-results-list \"max-height: 400px; overflow-y: auto;\"\n      s-empty \"padding: 20px; text-align: center; color: var(--color-border-dark); font-style: italic;\"\n      s-node-row \"display: flex; align-items: center; padding: 6px 8px; cursor: pointer; border-radius: var(--border-radius);\"\n      s-chevron \"width: 16px; margin-right: 4px; font-size: 0.75rem; user-select: none; text-align: center; flex-shrink: 0;\"\n      s-dot \"width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 8px; flex-shrink: 0;\"\n      s-name \"font-size: 0.8125rem;\"\n      s-error \"padding: 12px; margin-bottom: 8px; color: var(--color-danger); border: 1px solid var(--color-danger); border-radius: var(--border-radius); background: var(--color-danger-light);\"\n\n      ;; Toggle expand/collapse\n      toggle-expand! (fn [tag-id]\n        (let [updated (if (some (fn [x] (= x tag-id)) expanded-tags)\n                        (vec (filter (fn [x] (not= x tag-id)) expanded-tags))\n                        (conj expanded-tags tag-id))]\n          (set-item! (-> item\n            (assoc-in [:content :expandedTags] updated)\n            (assoc :modified (now))))))\n\n      ;; Select a tag — find tagged items and store as attachments\n      select-tag! (fn [tag-node]\n        (let [tag-id (:id tag-node)\n              tagged-items (filter\n                (fn [it] (some (fn [t] (= t tag-id)) (or (get-in it [:content :tags]) [])))\n                all-items)]\n          (set-item! (-> item\n            (assoc :attachments (vec (map (fn [it] {:id (:id it)}) tagged-items)))\n            (assoc-in [:content :selectedTag] tag-id)\n            (assoc :modified (now))))))\n\n      ;; Recursive tree renderer (atom-based self-reference)\n      render-node (atom nil)\n      _ (reset! render-node (fn [node depth]\n          (let [self (deref render-node)\n                tag-name (invoke tree-builder \"getTagName\" node)\n                tag-color (invoke tree-builder \"getTagColor\" node)\n                children (:children node)\n                has-children (seq children)\n                is-expanded (some (fn [x] (= x (:id node))) expanded-tags)\n                indent-px (+ (* depth 20) 8)]\n            [:div\n              [:div {:style (str s-node-row \" padding-left: \" indent-px \"px;\")\n                     :on-click (fn [e] (select-tag! node))}\n                ;; Expand/collapse chevron\n                [:span {:style s-chevron\n                        :on-click (fn [e]\n                          (invoke e \"stopPropagation\")\n                          (when has-children (toggle-expand! (:id node))))}\n                  (if has-children (if is-expanded \"▼\" \"▶\") \"\")]\n                ;; Color dot\n                [:span {:style (str s-dot \" background: \" tag-color \";\")}]\n                ;; Name\n                [:span {:style s-name} tag-name]]\n              ;; Children (recursive)\n              (when (and has-children is-expanded)\n                (for [child children]\n                  (self child (inc depth))))])))]\n\n  [:div {:style s-container}\n    ;; Header\n    [:div {:style s-header}\n      [:h2 {:style s-title} (or (:name item) \"Tag Browser\")]]\n\n    ;; Tag tree\n    [:div {:style s-tree}\n      (for [node tree]\n        ((deref render-node) node 0))]\n\n    ;; Results (shown when a tag is selected)\n    (when selected-tag\n      (let [attachments (or (:attachments item) [])\n            tag-name (get-fqn! selected-tag)]\n        [:div {:style s-results}\n          [:h3 {:style s-results-title}\n            (str \"Items tagged with \\\"\" (or tag-name selected-tag) \"\\\" (\" (count attachments) \")\")]\n          [:div {:style s-results-list}\n            (if (empty? attachments)\n              [:div {:style s-empty} \"No items found with this tag.\"]\n              (for [att attachments]\n                (let [child-id (if (map? att) (:id att) att)\n                      child-view-id (if (and (map? att) (:view att)) (:view att) compact-view-id)]\n                  [:div {:data-sort-key child-id}\n                    (try\n                      (let [node (render-item child-id child-view-id)]\n                        (invoke node \"setAttribute\" \"data-parent-id\" (:id item))\n                        node)\n                      (catch err\n                        [:div {:style s-error}\n                          (str \"Error loading item: \" child-id)]))])))]]))])\n"
+    "hob": [
+      [
+        "let",
+        {
+          "v": [
+            "tree-builder",
+            [
+              "invoke",
+              "api",
+              {
+                "s": "require"
+              },
+              {
+                "s": "tag-tree-builder"
+              }
+            ],
+            "all-items",
+            [
+              "get-all"
+            ],
+            "items-by-id",
+            [
+              "reduce",
+              [
+                "fn",
+                {
+                  "v": [
+                    "acc",
+                    "it"
+                  ]
+                },
+                [
+                  "assoc",
+                  "acc",
+                  [
+                    ":id",
+                    "it"
+                  ],
+                  "it"
+                ]
+              ],
+              {
+                "m": []
+              },
+              "all-items"
+            ],
+            "used-tag-ids",
+            [
+              "distinct",
+              [
+                "mapcat",
+                [
+                  "fn",
+                  {
+                    "v": [
+                      "it"
+                    ]
+                  },
+                  [
+                    "or",
+                    [
+                      "get-in",
+                      "it",
+                      {
+                        "v": [
+                          ":content",
+                          ":tags"
+                        ]
+                      }
+                    ],
+                    {
+                      "v": []
+                    }
+                  ]
+                ],
+                "all-items"
+              ]
+            ],
+            "all-tag-ids",
+            [
+              "reduce",
+              [
+                "fn",
+                {
+                  "v": [
+                    "seen",
+                    "tag-id"
+                  ]
+                },
+                [
+                  "loop",
+                  {
+                    "v": [
+                      "id",
+                      "tag-id",
+                      "acc",
+                      "seen"
+                    ]
+                  },
+                  [
+                    "if",
+                    [
+                      "or",
+                      [
+                        "nil?",
+                        "id"
+                      ],
+                      [
+                        "get",
+                        "acc",
+                        "id"
+                      ]
+                    ],
+                    "acc",
+                    [
+                      "let",
+                      {
+                        "v": [
+                          "it",
+                          [
+                            "get",
+                            "items-by-id",
+                            "id"
+                          ],
+                          "parent",
+                          [
+                            "get-in",
+                            "it",
+                            {
+                              "v": [
+                                ":content",
+                                ":parent"
+                              ]
+                            }
+                          ]
+                        ]
+                      },
+                      [
+                        "recur",
+                        "parent",
+                        [
+                          "assoc",
+                          "acc",
+                          "id",
+                          true
+                        ]
+                      ]
+                    ]
+                  ]
+                ]
+              ],
+              {
+                "m": []
+              },
+              "used-tag-ids"
+            ],
+            "tag-items",
+            [
+              "filter",
+              [
+                "fn",
+                {
+                  "v": [
+                    "it"
+                  ]
+                },
+                [
+                  "get",
+                  "all-tag-ids",
+                  [
+                    ":id",
+                    "it"
+                  ]
+                ]
+              ],
+              "all-items"
+            ],
+            "tree",
+            [
+              "invoke",
+              "tree-builder",
+              {
+                "s": "buildTagTree"
+              },
+              "tag-items"
+            ],
+            "selected-tag",
+            [
+              "get-in",
+              "item",
+              {
+                "v": [
+                  ":content",
+                  ":selectedTag"
+                ]
+              }
+            ],
+            "expanded-tags",
+            [
+              "or",
+              [
+                "get-in",
+                "item",
+                {
+                  "v": [
+                    ":content",
+                    ":expandedTags"
+                  ]
+                }
+              ],
+              {
+                "v": []
+              }
+            ],
+            "compact-view-id",
+            [
+              "let",
+              {
+                "v": [
+                  "views",
+                  [
+                    "find-items",
+                    {
+                      "m": [
+                        [
+                          ":name",
+                          {
+                            "s": "compact-card-view"
+                          }
+                        ]
+                      ]
+                    }
+                  ]
+                ]
+              },
+              [
+                "when",
+                [
+                  "seq",
+                  "views"
+                ],
+                [
+                  ":id",
+                  [
+                    "first",
+                    "views"
+                  ]
+                ]
+              ]
+            ],
+            "s-container",
+            {
+              "s": "max-width: 600px; margin: 0 auto;"
+            },
+            "s-header",
+            {
+              "s": "margin-bottom: 20px; padding-bottom: 15px; border-bottom: 2px solid var(--color-border-light);"
+            },
+            "s-title",
+            {
+              "s": "margin: 0; font-size: 1.25rem;"
+            },
+            "s-tree",
+            {
+              "s": "display: flex; flex-direction: column;"
+            },
+            "s-results",
+            {
+              "s": "margin-top: 20px; padding: 15px; background: var(--color-bg-surface-alt); border-radius: var(--border-radius);"
+            },
+            "s-results-title",
+            {
+              "s": "margin: 0 0 15px 0; font-size: 1rem; color: var(--color-text);"
+            },
+            "s-results-list",
+            {
+              "s": "max-height: 400px; overflow-y: auto;"
+            },
+            "s-empty",
+            {
+              "s": "padding: 20px; text-align: center; color: var(--color-border-dark); font-style: italic;"
+            },
+            "s-node-row",
+            {
+              "s": "display: flex; align-items: center; padding: 6px 8px; cursor: pointer; border-radius: var(--border-radius);"
+            },
+            "s-chevron",
+            {
+              "s": "width: 16px; margin-right: 4px; font-size: 0.75rem; user-select: none; text-align: center; flex-shrink: 0;"
+            },
+            "s-dot",
+            {
+              "s": "width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 8px; flex-shrink: 0;"
+            },
+            "s-name",
+            {
+              "s": "font-size: 0.8125rem;"
+            },
+            "s-error",
+            {
+              "s": "padding: 12px; margin-bottom: 8px; color: var(--color-danger); border: 1px solid var(--color-danger); border-radius: var(--border-radius); background: var(--color-danger-light);"
+            },
+            "toggle-expand!",
+            [
+              "fn",
+              {
+                "v": [
+                  "tag-id"
+                ]
+              },
+              [
+                "let",
+                {
+                  "v": [
+                    "updated",
+                    [
+                      "if",
+                      [
+                        "some",
+                        [
+                          "fn",
+                          {
+                            "v": [
+                              "x"
+                            ]
+                          },
+                          [
+                            "=",
+                            "x",
+                            "tag-id"
+                          ]
+                        ],
+                        "expanded-tags"
+                      ],
+                      [
+                        "vec",
+                        [
+                          "filter",
+                          [
+                            "fn",
+                            {
+                              "v": [
+                                "x"
+                              ]
+                            },
+                            [
+                              "not=",
+                              "x",
+                              "tag-id"
+                            ]
+                          ],
+                          "expanded-tags"
+                        ]
+                      ],
+                      [
+                        "conj",
+                        "expanded-tags",
+                        "tag-id"
+                      ]
+                    ]
+                  ]
+                },
+                [
+                  "set-item!",
+                  [
+                    "->",
+                    "item",
+                    [
+                      "assoc-in",
+                      {
+                        "v": [
+                          ":content",
+                          ":expandedTags"
+                        ]
+                      },
+                      "updated"
+                    ],
+                    [
+                      "assoc",
+                      ":modified",
+                      [
+                        "now"
+                      ]
+                    ]
+                  ]
+                ]
+              ]
+            ],
+            "select-tag!",
+            [
+              "fn",
+              {
+                "v": [
+                  "tag-node"
+                ]
+              },
+              [
+                "let",
+                {
+                  "v": [
+                    "tag-id",
+                    [
+                      ":id",
+                      "tag-node"
+                    ],
+                    "tagged-items",
+                    [
+                      "filter",
+                      [
+                        "fn",
+                        {
+                          "v": [
+                            "it"
+                          ]
+                        },
+                        [
+                          "some",
+                          [
+                            "fn",
+                            {
+                              "v": [
+                                "t"
+                              ]
+                            },
+                            [
+                              "=",
+                              "t",
+                              "tag-id"
+                            ]
+                          ],
+                          [
+                            "or",
+                            [
+                              "get-in",
+                              "it",
+                              {
+                                "v": [
+                                  ":content",
+                                  ":tags"
+                                ]
+                              }
+                            ],
+                            {
+                              "v": []
+                            }
+                          ]
+                        ]
+                      ],
+                      "all-items"
+                    ]
+                  ]
+                },
+                [
+                  "set-item!",
+                  [
+                    "->",
+                    "item",
+                    [
+                      "assoc",
+                      ":attachments",
+                      [
+                        "vec",
+                        [
+                          "map",
+                          [
+                            "fn",
+                            {
+                              "v": [
+                                "it"
+                              ]
+                            },
+                            {
+                              "m": [
+                                [
+                                  ":id",
+                                  [
+                                    ":id",
+                                    "it"
+                                  ]
+                                ]
+                              ]
+                            }
+                          ],
+                          "tagged-items"
+                        ]
+                      ]
+                    ],
+                    [
+                      "assoc-in",
+                      {
+                        "v": [
+                          ":content",
+                          ":selectedTag"
+                        ]
+                      },
+                      "tag-id"
+                    ],
+                    [
+                      "assoc",
+                      ":modified",
+                      [
+                        "now"
+                      ]
+                    ]
+                  ]
+                ]
+              ]
+            ],
+            "render-node",
+            [
+              "atom",
+              null
+            ],
+            "_",
+            [
+              "reset!",
+              "render-node",
+              [
+                "fn",
+                {
+                  "v": [
+                    "node",
+                    "depth"
+                  ]
+                },
+                [
+                  "let",
+                  {
+                    "v": [
+                      "self",
+                      [
+                        "deref",
+                        "render-node"
+                      ],
+                      "tag-name",
+                      [
+                        "invoke",
+                        "tree-builder",
+                        {
+                          "s": "getTagName"
+                        },
+                        "node"
+                      ],
+                      "tag-color",
+                      [
+                        "invoke",
+                        "tree-builder",
+                        {
+                          "s": "getTagColor"
+                        },
+                        "node"
+                      ],
+                      "children",
+                      [
+                        ":children",
+                        "node"
+                      ],
+                      "has-children",
+                      [
+                        "seq",
+                        "children"
+                      ],
+                      "is-expanded",
+                      [
+                        "some",
+                        [
+                          "fn",
+                          {
+                            "v": [
+                              "x"
+                            ]
+                          },
+                          [
+                            "=",
+                            "x",
+                            [
+                              ":id",
+                              "node"
+                            ]
+                          ]
+                        ],
+                        "expanded-tags"
+                      ],
+                      "indent-px",
+                      [
+                        "+",
+                        [
+                          "*",
+                          "depth",
+                          20
+                        ],
+                        8
+                      ]
+                    ]
+                  },
+                  {
+                    "v": [
+                      ":div",
+                      {
+                        "v": [
+                          ":div",
+                          {
+                            "m": [
+                              [
+                                ":style",
+                                [
+                                  "str",
+                                  "s-node-row",
+                                  {
+                                    "s": " padding-left: "
+                                  },
+                                  "indent-px",
+                                  {
+                                    "s": "px;"
+                                  }
+                                ]
+                              ],
+                              [
+                                ":on-click",
+                                [
+                                  "fn",
+                                  {
+                                    "v": [
+                                      "e"
+                                    ]
+                                  },
+                                  [
+                                    "select-tag!",
+                                    "node"
+                                  ]
+                                ]
+                              ]
+                            ]
+                          },
+                          {
+                            "v": [
+                              ":span",
+                              {
+                                "m": [
+                                  [
+                                    ":style",
+                                    "s-chevron"
+                                  ],
+                                  [
+                                    ":on-click",
+                                    [
+                                      "fn",
+                                      {
+                                        "v": [
+                                          "e"
+                                        ]
+                                      },
+                                      [
+                                        "invoke",
+                                        "e",
+                                        {
+                                          "s": "stopPropagation"
+                                        }
+                                      ],
+                                      [
+                                        "when",
+                                        "has-children",
+                                        [
+                                          "toggle-expand!",
+                                          [
+                                            ":id",
+                                            "node"
+                                          ]
+                                        ]
+                                      ]
+                                    ]
+                                  ]
+                                ]
+                              },
+                              [
+                                "if",
+                                "has-children",
+                                [
+                                  "if",
+                                  "is-expanded",
+                                  {
+                                    "s": "▼"
+                                  },
+                                  {
+                                    "s": "▶"
+                                  }
+                                ],
+                                {
+                                  "s": ""
+                                }
+                              ]
+                            ]
+                          },
+                          {
+                            "v": [
+                              ":span",
+                              {
+                                "m": [
+                                  [
+                                    ":style",
+                                    [
+                                      "str",
+                                      "s-dot",
+                                      {
+                                        "s": " background: "
+                                      },
+                                      "tag-color",
+                                      {
+                                        "s": ";"
+                                      }
+                                    ]
+                                  ]
+                                ]
+                              }
+                            ]
+                          },
+                          {
+                            "v": [
+                              ":span",
+                              {
+                                "m": [
+                                  [
+                                    ":style",
+                                    "s-name"
+                                  ]
+                                ]
+                              },
+                              "tag-name"
+                            ]
+                          }
+                        ]
+                      },
+                      [
+                        "when",
+                        [
+                          "and",
+                          "has-children",
+                          "is-expanded"
+                        ],
+                        [
+                          "for",
+                          {
+                            "v": [
+                              "child",
+                              "children"
+                            ]
+                          },
+                          [
+                            "self",
+                            "child",
+                            [
+                              "inc",
+                              "depth"
+                            ]
+                          ]
+                        ]
+                      ]
+                    ]
+                  }
+                ]
+              ]
+            ]
+          ]
+        },
+        {
+          "v": [
+            ":div",
+            {
+              "m": [
+                [
+                  ":style",
+                  "s-container"
+                ]
+              ]
+            },
+            {
+              "v": [
+                ":div",
+                {
+                  "m": [
+                    [
+                      ":style",
+                      "s-header"
+                    ]
+                  ]
+                },
+                {
+                  "v": [
+                    ":h2",
+                    {
+                      "m": [
+                        [
+                          ":style",
+                          "s-title"
+                        ]
+                      ]
+                    },
+                    [
+                      "or",
+                      [
+                        ":name",
+                        "item"
+                      ],
+                      {
+                        "s": "Tag Browser"
+                      }
+                    ]
+                  ]
+                }
+              ]
+            },
+            {
+              "v": [
+                ":div",
+                {
+                  "m": [
+                    [
+                      ":style",
+                      "s-tree"
+                    ]
+                  ]
+                },
+                [
+                  "for",
+                  {
+                    "v": [
+                      "node",
+                      "tree"
+                    ]
+                  },
+                  [
+                    [
+                      "deref",
+                      "render-node"
+                    ],
+                    "node",
+                    0
+                  ]
+                ]
+              ]
+            },
+            [
+              "when",
+              "selected-tag",
+              [
+                "let",
+                {
+                  "v": [
+                    "attachments",
+                    [
+                      "or",
+                      [
+                        ":attachments",
+                        "item"
+                      ],
+                      {
+                        "v": []
+                      }
+                    ],
+                    "tag-name",
+                    [
+                      "get-fqn!",
+                      "selected-tag"
+                    ]
+                  ]
+                },
+                {
+                  "v": [
+                    ":div",
+                    {
+                      "m": [
+                        [
+                          ":style",
+                          "s-results"
+                        ]
+                      ]
+                    },
+                    {
+                      "v": [
+                        ":h3",
+                        {
+                          "m": [
+                            [
+                              ":style",
+                              "s-results-title"
+                            ]
+                          ]
+                        },
+                        [
+                          "str",
+                          {
+                            "s": "Items tagged with \""
+                          },
+                          [
+                            "or",
+                            "tag-name",
+                            "selected-tag"
+                          ],
+                          {
+                            "s": "\" ("
+                          },
+                          [
+                            "count",
+                            "attachments"
+                          ],
+                          {
+                            "s": ")"
+                          }
+                        ]
+                      ]
+                    },
+                    {
+                      "v": [
+                        ":div",
+                        {
+                          "m": [
+                            [
+                              ":style",
+                              "s-results-list"
+                            ]
+                          ]
+                        },
+                        [
+                          "if",
+                          [
+                            "empty?",
+                            "attachments"
+                          ],
+                          {
+                            "v": [
+                              ":div",
+                              {
+                                "m": [
+                                  [
+                                    ":style",
+                                    "s-empty"
+                                  ]
+                                ]
+                              },
+                              {
+                                "s": "No items found with this tag."
+                              }
+                            ]
+                          },
+                          [
+                            "for",
+                            {
+                              "v": [
+                                "att",
+                                "attachments"
+                              ]
+                            },
+                            [
+                              "let",
+                              {
+                                "v": [
+                                  "child-id",
+                                  [
+                                    "if",
+                                    [
+                                      "map?",
+                                      "att"
+                                    ],
+                                    [
+                                      ":id",
+                                      "att"
+                                    ],
+                                    "att"
+                                  ],
+                                  "child-view-id",
+                                  [
+                                    "if",
+                                    [
+                                      "and",
+                                      [
+                                        "map?",
+                                        "att"
+                                      ],
+                                      [
+                                        ":view",
+                                        "att"
+                                      ]
+                                    ],
+                                    [
+                                      ":view",
+                                      "att"
+                                    ],
+                                    "compact-view-id"
+                                  ]
+                                ]
+                              },
+                              {
+                                "v": [
+                                  ":div",
+                                  {
+                                    "m": [
+                                      [
+                                        ":data-sort-key",
+                                        "child-id"
+                                      ]
+                                    ]
+                                  },
+                                  [
+                                    "try",
+                                    [
+                                      "let",
+                                      {
+                                        "v": [
+                                          "node",
+                                          [
+                                            "render-item",
+                                            "child-id",
+                                            "child-view-id"
+                                          ]
+                                        ]
+                                      },
+                                      [
+                                        "invoke",
+                                        "node",
+                                        {
+                                          "s": "setAttribute"
+                                        },
+                                        {
+                                          "s": "data-parent-id"
+                                        },
+                                        [
+                                          ":id",
+                                          "item"
+                                        ]
+                                      ],
+                                      "node"
+                                    ],
+                                    [
+                                      "catch",
+                                      "err",
+                                      {
+                                        "v": [
+                                          ":div",
+                                          {
+                                            "m": [
+                                              [
+                                                ":style",
+                                                "s-error"
+                                              ]
+                                            ]
+                                          },
+                                          [
+                                            "str",
+                                            {
+                                              "s": "Error loading item: "
+                                            },
+                                            "child-id"
+                                          ]
+                                        ]
+                                      }
+                                    ]
+                                  ]
+                                ]
+                              }
+                            ]
+                          ]
+                        ]
+                      ]
+                    }
+                  ]
+                }
+              ]
+            ]
+          ]
+        }
+      ]
+    ]
   },
   "attachments": []
 }
