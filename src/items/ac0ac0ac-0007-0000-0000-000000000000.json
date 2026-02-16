@@ -524,7 +524,2090 @@
         "scope": "kindColor"
       }
     },
-    "hob": ";; Symbol Browser View — searchable UI for browsing _symbols across all code items\n;; Uses DOM mutation primitives for interactive search, module dropdown, and kind filter chips\n\n(let [;; --- Data (queried once at render) ---\n      all-items (get-all)\n      code-items (filter (fn [it] (get-in it [:content :_symbols])) all-items)\n      total-symbols (reduce + 0 (map (fn [it] (count (keys (get-in it [:content :_symbols])))) code-items))\n      sorted-modules (->> code-items\n                       (map (fn [it] {:id (:id it) :name (or (:name it) (subs (:id it) 0 8))}))\n                       (sort-by :name))\n\n      ;; --- Mutable state (local to this render, not persisted) ---\n      active-kinds (atom {})\n      active-module (atom nil)\n      timeout-id (atom nil)\n\n      ;; --- Helpers ---\n      function-kinds {\"function\" true \"property-function\" true \"field-function\" true}\n\n      kind-short (fn [kind]\n        (cond\n          (get function-kinds kind) \"fn\"\n          (= kind \"class\") \"class\"\n          (= kind \"method\") \"method\"\n          (or (= kind \"property\") (= kind \"field\")) \"prop\"\n          (= kind \"variable\") \"var\"\n          :else kind))\n\n      kind-color (fn [kind]\n        (cond\n          (get function-kinds kind) \"#3b82f6\"\n          (= kind \"class\") \"#8b5cf6\"\n          (= kind \"method\") \"#06b6d4\"\n          (or (= kind \"property\") (= kind \"field\")) \"#f59e0b\"\n          :else \"#6b7280\"))\n\n      chip-style (fn [active]\n        (str \"padding: 5px 14px; font-size: 0.8125rem; border-radius: 16px; cursor: pointer; transition: all 0.15s; border: 1px solid; \"\n          (if active\n            \"background: var(--color-primary); color: white; border-color: var(--color-primary);\"\n            \"background: transparent; color: var(--color-text-secondary); border-color: var(--color-border);\")))\n\n      ;; Kind filter definitions: [label value]\n      kinds [[\"All\" nil]\n             [\"Functions\" \"function\"]\n             [\"Classes\" \"class\"]\n             [\"Methods\" \"method\"]\n             [\"Properties\" \"property\"]]\n\n      ;; --- Build DOM with refs ---\n      [root refs] (hiccup->dom+\n        [:div {:style \"width: 100%; max-width: 800px; margin: 0 auto; padding: 20px; box-sizing: border-box;\"}\n          ;; Header\n          [:div {:style \"margin-bottom: 20px; padding-bottom: 15px; border-bottom: 2px solid var(--color-border-light);\"}\n            [:h2 {:style \"margin: 0; font-size: 1.25rem;\"}\n              (or (:name item) \"Symbol Browser\")]]\n\n          ;; Search input\n          [:div {:style \"margin-bottom: 12px;\"}\n            [:input {:ref :search\n                     :type \"text\"\n                     :placeholder \"Search symbols...\"\n                     :style \"width: 100%; padding: 12px 16px; font-size: 1rem; border: 2px solid var(--color-border); border-radius: 8px; outline: none; transition: border-color 0.2s; box-sizing: border-box;\"}]]\n\n          ;; Module dropdown\n          [:div {:style \"margin-bottom: 12px;\"}\n            [:select {:ref :module\n                      :style \"width: 100%; padding: 8px 12px; font-size: 0.875rem; border: 1px solid var(--color-border); border-radius: 8px; background: var(--color-bg-surface); color: var(--color-text); outline: none; cursor: pointer;\"}\n              [:option {:value \"\"} (str \"All modules (\" (count code-items) \")\")]\n              (for [mod sorted-modules]\n                [:option {:value (:id mod)}\n                  (str (:name mod) \" (\" (count (keys (get-in (first (filter (fn [it] (= (:id it) (:id mod))) code-items)) [:content :_symbols]))) \")\")])]]\n\n          ;; Kind filter chips\n          [:div {:ref :chips :style \"display: flex; gap: 8px; margin-bottom: 20px; flex-wrap: wrap;\"}\n            (for [k kinds]\n              (let [label (nth k 0)\n                    value (nth k 1)]\n                [:button {:style (chip-style (if (nil? value) (= 0 (count (deref active-kinds))) (get (deref active-kinds) value)))}\n                  label]))]\n\n          ;; Results area\n          [:div {:ref :results}]])\n\n      search-el (:search refs)\n      module-el (:module refs)\n      chips-el (:chips refs)\n      results-el (:results refs)\n\n      ;; --- Rebuild chip bar ---\n      rebuild-chips! (fn []\n        (dom-set-content! chips-el\n          [:div {:style \"display: flex; gap: 8px; flex-wrap: wrap;\"}\n            (for [k kinds]\n              (let [label (nth k 0)\n                    value (nth k 1)\n                    active (if (nil? value) (= 0 (count (deref active-kinds))) (get (deref active-kinds) value))]\n                [:button {:style (chip-style active)\n                          :on-click (fn [e]\n                            (if (nil? value)\n                              (reset! active-kinds {})\n                              (if (get (deref active-kinds) value)\n                                (swap! active-kinds dissoc value)\n                                (swap! active-kinds assoc value true)))\n                            (rebuild-chips!)\n                            (render-results!))}\n                  label]))]))\n\n      ;; --- Render results ---\n      render-results! (fn []\n        (let [q (str/lower-case (str/trim (or (dom-get search-el :value) \"\")))\n              mod-filter (deref active-module)\n              kinds-filter (deref active-kinds)\n              filtered-items (if mod-filter\n                               (filter (fn [it] (= (:id it) mod-filter)) code-items)\n                               code-items)]\n\n          (if (and (= q \"\") (nil? mod-filter))\n            ;; Empty state: show stats\n            (dom-set-content! results-el\n              [:div {:style \"padding: 40px; text-align: center; color: var(--color-text-secondary); font-style: italic;\"}\n                (str (count code-items) \" code items, \" total-symbols \" total symbols\")])\n\n            ;; Search/filter results\n            (let [groups (vec (filter seq\n                          (map (fn [it]\n                            (let [syms (vals (get-in it [:content :_symbols]))\n                                  matches (vec (filter (fn [sym]\n                                    (and\n                                      (or (= q \"\") (str/includes? (str/lower-case (:name sym)) q))\n                                      (or (= 0 (count kinds-filter))\n                                          (and (get kinds-filter \"function\") (get function-kinds (:kind sym)))\n                                          (and (get kinds-filter \"property\")\n                                               (or (= (:kind sym) \"property\") (= (:kind sym) \"field\")))\n                                          (and (get kinds-filter \"class\") (= (:kind sym) \"class\"))\n                                          (and (get kinds-filter \"method\") (= (:kind sym) \"method\")))))\n                                    syms))\n                                  sorted-matches (sort-by :line matches)]\n                              (when (seq sorted-matches)\n                                {:item it :matches sorted-matches})))\n                            filtered-items)))]\n\n              (if (= 0 (count groups))\n                ;; No results\n                (dom-set-content! results-el\n                  [:div {:style \"padding: 40px; text-align: center; color: var(--color-text-secondary); font-style: italic;\"}\n                    (str \"No symbols matching \\\"\" (dom-get search-el :value) \"\\\"\")])\n\n                ;; Render grouped results\n                (let [total (reduce + 0 (map (fn [g] (count (:matches g))) groups))]\n                  (dom-set-content! results-el\n                    [:div {}\n                      ;; Count header\n                      [:div {:style \"margin-bottom: 15px; font-size: 0.875rem; color: var(--color-text-secondary); font-weight: 500;\"}\n                        (str total \" symbol\" (if (= total 1) \"\" \"s\")\n                             \" across \" (count groups) \" item\" (if (= 1 (count groups)) \"\" \"s\"))]\n\n                      ;; Result groups\n                      (for [group groups]\n                        (let [it (:item group)]\n                          [:div {:style \"margin-bottom: 16px; background: var(--color-bg-surface-alt); border-radius: var(--border-radius); overflow: hidden;\"}\n                            ;; Item header\n                            [:div {:style \"display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; border-bottom: 1px solid var(--color-border-light); cursor: pointer; transition: background 0.15s;\"\n                                   :on-click (fn [e] (open-item! (:id it)))}\n                              [:span {:style \"font-weight: 600; font-size: 0.875rem; color: var(--color-text);\"}\n                                (or (:name it) (subs (:id it) 0 8))]\n                              [:span {:style \"color: var(--color-text-secondary); font-size: 0.75rem;\"} \"\\u2197\"]]\n\n                            ;; Symbol rows\n                            (for [sym (:matches group)]\n                              [:div {}\n                                ;; Main row\n                                [:div {:style \"display: flex; align-items: center; gap: 8px; padding: 7px 14px; cursor: pointer; transition: all 0.15s; border-bottom: 1px solid var(--color-border-light);\"\n                                       :on-click (fn [e] (open-item! (:id it) {:symbol (:name sym)}))}\n                                  ;; Name + signature\n                                  [:span {:style \"font-family: monospace; font-size: 0.8125rem; color: var(--color-text); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;\"}\n                                    (str (:name sym) (or (:signature sym) \"\"))]\n                                  ;; Kind badge\n                                  [:span {:style (str \"font-size: 0.6875rem; padding: 1px 6px; border-radius: var(--border-radius); color: white; flex-shrink: 0; background: \" (kind-color (:kind sym)))}\n                                    (kind-short (:kind sym))]\n                                  ;; Line number\n                                  [:span {:style \"font-size: 0.75rem; color: var(--color-text-secondary); font-family: monospace; min-width: 36px; text-align: right; flex-shrink: 0;\"}\n                                    (str \":\" (:line sym))]]\n\n                                ;; JSDoc details\n                                (when (or (:description sym) (:params sym) (:returns sym))\n                                  [:div {:style \"padding: 2px 14px 6px 22px; font-size: 0.75rem; color: var(--color-text-secondary); border-bottom: 1px solid var(--color-border-light); line-height: 1.4;\"}\n                                    ;; Description (first line only)\n                                    (when (:description sym)\n                                      [:div {} (first (str/split (:description sym) \"\\n\"))])\n                                    ;; Params\n                                    (when (:params sym)\n                                      (for [p (:params sym)]\n                                        [:div {:style \"padding-left: 8px; font-family: monospace; font-size: 0.6875rem;\"}\n                                          [:span {:style \"color: var(--color-text);\"} (:name p)]\n                                          (when (:type p)\n                                            [:span {:style \"color: var(--color-text-secondary); opacity: 0.7;\"} (str \" : \" (:type p))])\n                                          (when (:description p)\n                                            [:span {} (str \" \\u2014 \" (:description p))])]))\n                                    ;; Returns\n                                    (when (:returns sym)\n                                      [:div {:style \"padding-left: 8px; font-family: monospace; font-size: 0.6875rem;\"}\n                                        [:span {:style \"color: var(--color-text); opacity: 0.7;\"} \"\\u2192 \"]\n                                        (when (:type (:returns sym))\n                                          [:span {:style \"color: var(--color-text-secondary); opacity: 0.7;\"} (:type (:returns sym))])\n                                        (when (:description (:returns sym))\n                                          [:span {} (str \" \\u2014 \" (:description (:returns sym)))])]\n                                      )  ; (when (:returns sym)\n                                    ]    ; [:div JSDoc details]\n                                  )      ; (when JSDoc)\n                                ]        ; [:div sym row wrapper]\n                              )          ; (for [sym])\n                            ]            ; [:div group]\n                          )              ; (let [it])\n                        )                ; (for [group groups])\n                      ]                  ; [:div results container]\n                    )                    ; (dom-set-content!)\n                  )                      ; (let [total])\n                )                        ; (if groups empty?)\n              )                          ; (let [groups])\n            )                            ; (if empty query?)\n          )                              ; (let [q])\n        )]                               ; (fn []), close let bindings vector\n\n  ;; --- Wire up event handlers ---\n\n  ;; Search input: focus/blur styling\n  (dom-on! search-el :focus\n    (fn [e] (dom-set! (dom-get search-el :style) :borderColor \"var(--color-primary)\")))\n  (dom-on! search-el :blur\n    (fn [e] (dom-set! (dom-get search-el :style) :borderColor \"var(--color-border)\")))\n\n  ;; Search input: debounced search\n  (dom-on! search-el :input\n    (fn [e]\n      (when (deref timeout-id) (clear-timeout! (deref timeout-id)))\n      (reset! timeout-id (set-timeout! render-results! 300))))\n\n  ;; Module dropdown\n  (dom-on! module-el :change\n    (fn [e]\n      (let [v (dom-get module-el :value)]\n        (reset! active-module (if (= v \"\") nil v))\n        (render-results!))))\n\n  ;; Build initial chips with click handlers\n  (rebuild-chips!)\n\n  ;; Initial render\n  (render-results!)\n\n  ;; Auto-focus search\n  (set-timeout! (fn [] (invoke search-el \"focus\")) 0)\n\n  ;; Return root DOM node\n  root)\n"
+    "hob": [
+      [
+        "let",
+        {
+          "v": [
+            "all-items",
+            [
+              "get-all"
+            ],
+            "code-items",
+            [
+              "filter",
+              [
+                "fn",
+                {
+                  "v": [
+                    "it"
+                  ]
+                },
+                [
+                  "get-in",
+                  "it",
+                  {
+                    "v": [
+                      ":content",
+                      ":_symbols"
+                    ]
+                  }
+                ]
+              ],
+              "all-items"
+            ],
+            "total-symbols",
+            [
+              "reduce",
+              "+",
+              0,
+              [
+                "map",
+                [
+                  "fn",
+                  {
+                    "v": [
+                      "it"
+                    ]
+                  },
+                  [
+                    "count",
+                    [
+                      "keys",
+                      [
+                        "get-in",
+                        "it",
+                        {
+                          "v": [
+                            ":content",
+                            ":_symbols"
+                          ]
+                        }
+                      ]
+                    ]
+                  ]
+                ],
+                "code-items"
+              ]
+            ],
+            "sorted-modules",
+            [
+              "->>",
+              "code-items",
+              [
+                "map",
+                [
+                  "fn",
+                  {
+                    "v": [
+                      "it"
+                    ]
+                  },
+                  {
+                    "m": [
+                      [
+                        ":id",
+                        [
+                          ":id",
+                          "it"
+                        ]
+                      ],
+                      [
+                        ":name",
+                        [
+                          "or",
+                          [
+                            ":name",
+                            "it"
+                          ],
+                          [
+                            "subs",
+                            [
+                              ":id",
+                              "it"
+                            ],
+                            0,
+                            8
+                          ]
+                        ]
+                      ]
+                    ]
+                  }
+                ]
+              ],
+              [
+                "sort-by",
+                ":name"
+              ]
+            ],
+            "active-kinds",
+            [
+              "atom",
+              {
+                "m": []
+              }
+            ],
+            "active-module",
+            [
+              "atom",
+              null
+            ],
+            "timeout-id",
+            [
+              "atom",
+              null
+            ],
+            "function-kinds",
+            {
+              "m": [
+                [
+                  {
+                    "s": "function"
+                  },
+                  true
+                ],
+                [
+                  {
+                    "s": "property-function"
+                  },
+                  true
+                ],
+                [
+                  {
+                    "s": "field-function"
+                  },
+                  true
+                ]
+              ]
+            },
+            "kind-short",
+            [
+              "fn",
+              {
+                "v": [
+                  "kind"
+                ]
+              },
+              [
+                "cond",
+                [
+                  "get",
+                  "function-kinds",
+                  "kind"
+                ],
+                {
+                  "s": "fn"
+                },
+                [
+                  "=",
+                  "kind",
+                  {
+                    "s": "class"
+                  }
+                ],
+                {
+                  "s": "class"
+                },
+                [
+                  "=",
+                  "kind",
+                  {
+                    "s": "method"
+                  }
+                ],
+                {
+                  "s": "method"
+                },
+                [
+                  "or",
+                  [
+                    "=",
+                    "kind",
+                    {
+                      "s": "property"
+                    }
+                  ],
+                  [
+                    "=",
+                    "kind",
+                    {
+                      "s": "field"
+                    }
+                  ]
+                ],
+                {
+                  "s": "prop"
+                },
+                [
+                  "=",
+                  "kind",
+                  {
+                    "s": "variable"
+                  }
+                ],
+                {
+                  "s": "var"
+                },
+                ":else",
+                "kind"
+              ]
+            ],
+            "kind-color",
+            [
+              "fn",
+              {
+                "v": [
+                  "kind"
+                ]
+              },
+              [
+                "cond",
+                [
+                  "get",
+                  "function-kinds",
+                  "kind"
+                ],
+                {
+                  "s": "#3b82f6"
+                },
+                [
+                  "=",
+                  "kind",
+                  {
+                    "s": "class"
+                  }
+                ],
+                {
+                  "s": "#8b5cf6"
+                },
+                [
+                  "=",
+                  "kind",
+                  {
+                    "s": "method"
+                  }
+                ],
+                {
+                  "s": "#06b6d4"
+                },
+                [
+                  "or",
+                  [
+                    "=",
+                    "kind",
+                    {
+                      "s": "property"
+                    }
+                  ],
+                  [
+                    "=",
+                    "kind",
+                    {
+                      "s": "field"
+                    }
+                  ]
+                ],
+                {
+                  "s": "#f59e0b"
+                },
+                ":else",
+                {
+                  "s": "#6b7280"
+                }
+              ]
+            ],
+            "chip-style",
+            [
+              "fn",
+              {
+                "v": [
+                  "active"
+                ]
+              },
+              [
+                "str",
+                {
+                  "s": "padding: 5px 14px; font-size: 0.8125rem; border-radius: 16px; cursor: pointer; transition: all 0.15s; border: 1px solid; "
+                },
+                [
+                  "if",
+                  "active",
+                  {
+                    "s": "background: var(--color-primary); color: white; border-color: var(--color-primary);"
+                  },
+                  {
+                    "s": "background: transparent; color: var(--color-text-secondary); border-color: var(--color-border);"
+                  }
+                ]
+              ]
+            ],
+            "kinds",
+            {
+              "v": [
+                {
+                  "v": [
+                    {
+                      "s": "All"
+                    },
+                    null
+                  ]
+                },
+                {
+                  "v": [
+                    {
+                      "s": "Functions"
+                    },
+                    {
+                      "s": "function"
+                    }
+                  ]
+                },
+                {
+                  "v": [
+                    {
+                      "s": "Classes"
+                    },
+                    {
+                      "s": "class"
+                    }
+                  ]
+                },
+                {
+                  "v": [
+                    {
+                      "s": "Methods"
+                    },
+                    {
+                      "s": "method"
+                    }
+                  ]
+                },
+                {
+                  "v": [
+                    {
+                      "s": "Properties"
+                    },
+                    {
+                      "s": "property"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "v": [
+                "root",
+                "refs"
+              ]
+            },
+            [
+              "hiccup->dom+",
+              {
+                "v": [
+                  ":div",
+                  {
+                    "m": [
+                      [
+                        ":style",
+                        {
+                          "s": "width: 100%; max-width: 800px; margin: 0 auto; padding: 20px; box-sizing: border-box;"
+                        }
+                      ]
+                    ]
+                  },
+                  {
+                    "v": [
+                      ":div",
+                      {
+                        "m": [
+                          [
+                            ":style",
+                            {
+                              "s": "margin-bottom: 20px; padding-bottom: 15px; border-bottom: 2px solid var(--color-border-light);"
+                            }
+                          ]
+                        ]
+                      },
+                      {
+                        "v": [
+                          ":h2",
+                          {
+                            "m": [
+                              [
+                                ":style",
+                                {
+                                  "s": "margin: 0; font-size: 1.25rem;"
+                                }
+                              ]
+                            ]
+                          },
+                          [
+                            "or",
+                            [
+                              ":name",
+                              "item"
+                            ],
+                            {
+                              "s": "Symbol Browser"
+                            }
+                          ]
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "v": [
+                      ":div",
+                      {
+                        "m": [
+                          [
+                            ":style",
+                            {
+                              "s": "margin-bottom: 12px;"
+                            }
+                          ]
+                        ]
+                      },
+                      {
+                        "v": [
+                          ":input",
+                          {
+                            "m": [
+                              [
+                                ":ref",
+                                ":search"
+                              ],
+                              [
+                                ":type",
+                                {
+                                  "s": "text"
+                                }
+                              ],
+                              [
+                                ":placeholder",
+                                {
+                                  "s": "Search symbols..."
+                                }
+                              ],
+                              [
+                                ":style",
+                                {
+                                  "s": "width: 100%; padding: 12px 16px; font-size: 1rem; border: 2px solid var(--color-border); border-radius: 8px; outline: none; transition: border-color 0.2s; box-sizing: border-box;"
+                                }
+                              ]
+                            ]
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "v": [
+                      ":div",
+                      {
+                        "m": [
+                          [
+                            ":style",
+                            {
+                              "s": "margin-bottom: 12px;"
+                            }
+                          ]
+                        ]
+                      },
+                      {
+                        "v": [
+                          ":select",
+                          {
+                            "m": [
+                              [
+                                ":ref",
+                                ":module"
+                              ],
+                              [
+                                ":style",
+                                {
+                                  "s": "width: 100%; padding: 8px 12px; font-size: 0.875rem; border: 1px solid var(--color-border); border-radius: 8px; background: var(--color-bg-surface); color: var(--color-text); outline: none; cursor: pointer;"
+                                }
+                              ]
+                            ]
+                          },
+                          {
+                            "v": [
+                              ":option",
+                              {
+                                "m": [
+                                  [
+                                    ":value",
+                                    {
+                                      "s": ""
+                                    }
+                                  ]
+                                ]
+                              },
+                              [
+                                "str",
+                                {
+                                  "s": "All modules ("
+                                },
+                                [
+                                  "count",
+                                  "code-items"
+                                ],
+                                {
+                                  "s": ")"
+                                }
+                              ]
+                            ]
+                          },
+                          [
+                            "for",
+                            {
+                              "v": [
+                                "mod",
+                                "sorted-modules"
+                              ]
+                            },
+                            {
+                              "v": [
+                                ":option",
+                                {
+                                  "m": [
+                                    [
+                                      ":value",
+                                      [
+                                        ":id",
+                                        "mod"
+                                      ]
+                                    ]
+                                  ]
+                                },
+                                [
+                                  "str",
+                                  [
+                                    ":name",
+                                    "mod"
+                                  ],
+                                  {
+                                    "s": " ("
+                                  },
+                                  [
+                                    "count",
+                                    [
+                                      "keys",
+                                      [
+                                        "get-in",
+                                        [
+                                          "first",
+                                          [
+                                            "filter",
+                                            [
+                                              "fn",
+                                              {
+                                                "v": [
+                                                  "it"
+                                                ]
+                                              },
+                                              [
+                                                "=",
+                                                [
+                                                  ":id",
+                                                  "it"
+                                                ],
+                                                [
+                                                  ":id",
+                                                  "mod"
+                                                ]
+                                              ]
+                                            ],
+                                            "code-items"
+                                          ]
+                                        ],
+                                        {
+                                          "v": [
+                                            ":content",
+                                            ":_symbols"
+                                          ]
+                                        }
+                                      ]
+                                    ]
+                                  ],
+                                  {
+                                    "s": ")"
+                                  }
+                                ]
+                              ]
+                            }
+                          ]
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "v": [
+                      ":div",
+                      {
+                        "m": [
+                          [
+                            ":ref",
+                            ":chips"
+                          ],
+                          [
+                            ":style",
+                            {
+                              "s": "display: flex; gap: 8px; margin-bottom: 20px; flex-wrap: wrap;"
+                            }
+                          ]
+                        ]
+                      },
+                      [
+                        "for",
+                        {
+                          "v": [
+                            "k",
+                            "kinds"
+                          ]
+                        },
+                        [
+                          "let",
+                          {
+                            "v": [
+                              "label",
+                              [
+                                "nth",
+                                "k",
+                                0
+                              ],
+                              "value",
+                              [
+                                "nth",
+                                "k",
+                                1
+                              ]
+                            ]
+                          },
+                          {
+                            "v": [
+                              ":button",
+                              {
+                                "m": [
+                                  [
+                                    ":style",
+                                    [
+                                      "chip-style",
+                                      [
+                                        "if",
+                                        [
+                                          "nil?",
+                                          "value"
+                                        ],
+                                        [
+                                          "=",
+                                          0,
+                                          [
+                                            "count",
+                                            [
+                                              "deref",
+                                              "active-kinds"
+                                            ]
+                                          ]
+                                        ],
+                                        [
+                                          "get",
+                                          [
+                                            "deref",
+                                            "active-kinds"
+                                          ],
+                                          "value"
+                                        ]
+                                      ]
+                                    ]
+                                  ]
+                                ]
+                              },
+                              "label"
+                            ]
+                          }
+                        ]
+                      ]
+                    ]
+                  },
+                  {
+                    "v": [
+                      ":div",
+                      {
+                        "m": [
+                          [
+                            ":ref",
+                            ":results"
+                          ]
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ],
+            "search-el",
+            [
+              ":search",
+              "refs"
+            ],
+            "module-el",
+            [
+              ":module",
+              "refs"
+            ],
+            "chips-el",
+            [
+              ":chips",
+              "refs"
+            ],
+            "results-el",
+            [
+              ":results",
+              "refs"
+            ],
+            "rebuild-chips!",
+            [
+              "fn",
+              {
+                "v": []
+              },
+              [
+                "dom-set-content!",
+                "chips-el",
+                {
+                  "v": [
+                    ":div",
+                    {
+                      "m": [
+                        [
+                          ":style",
+                          {
+                            "s": "display: flex; gap: 8px; flex-wrap: wrap;"
+                          }
+                        ]
+                      ]
+                    },
+                    [
+                      "for",
+                      {
+                        "v": [
+                          "k",
+                          "kinds"
+                        ]
+                      },
+                      [
+                        "let",
+                        {
+                          "v": [
+                            "label",
+                            [
+                              "nth",
+                              "k",
+                              0
+                            ],
+                            "value",
+                            [
+                              "nth",
+                              "k",
+                              1
+                            ],
+                            "active",
+                            [
+                              "if",
+                              [
+                                "nil?",
+                                "value"
+                              ],
+                              [
+                                "=",
+                                0,
+                                [
+                                  "count",
+                                  [
+                                    "deref",
+                                    "active-kinds"
+                                  ]
+                                ]
+                              ],
+                              [
+                                "get",
+                                [
+                                  "deref",
+                                  "active-kinds"
+                                ],
+                                "value"
+                              ]
+                            ]
+                          ]
+                        },
+                        {
+                          "v": [
+                            ":button",
+                            {
+                              "m": [
+                                [
+                                  ":style",
+                                  [
+                                    "chip-style",
+                                    "active"
+                                  ]
+                                ],
+                                [
+                                  ":on-click",
+                                  [
+                                    "fn",
+                                    {
+                                      "v": [
+                                        "e"
+                                      ]
+                                    },
+                                    [
+                                      "if",
+                                      [
+                                        "nil?",
+                                        "value"
+                                      ],
+                                      [
+                                        "reset!",
+                                        "active-kinds",
+                                        {
+                                          "m": []
+                                        }
+                                      ],
+                                      [
+                                        "if",
+                                        [
+                                          "get",
+                                          [
+                                            "deref",
+                                            "active-kinds"
+                                          ],
+                                          "value"
+                                        ],
+                                        [
+                                          "swap!",
+                                          "active-kinds",
+                                          "dissoc",
+                                          "value"
+                                        ],
+                                        [
+                                          "swap!",
+                                          "active-kinds",
+                                          "assoc",
+                                          "value",
+                                          true
+                                        ]
+                                      ]
+                                    ],
+                                    [
+                                      "rebuild-chips!"
+                                    ],
+                                    [
+                                      "render-results!"
+                                    ]
+                                  ]
+                                ]
+                              ]
+                            },
+                            "label"
+                          ]
+                        }
+                      ]
+                    ]
+                  ]
+                }
+              ]
+            ],
+            "render-results!",
+            [
+              "fn",
+              {
+                "v": []
+              },
+              [
+                "let",
+                {
+                  "v": [
+                    "q",
+                    [
+                      "str/lower-case",
+                      [
+                        "str/trim",
+                        [
+                          "or",
+                          [
+                            "dom-get",
+                            "search-el",
+                            ":value"
+                          ],
+                          {
+                            "s": ""
+                          }
+                        ]
+                      ]
+                    ],
+                    "mod-filter",
+                    [
+                      "deref",
+                      "active-module"
+                    ],
+                    "kinds-filter",
+                    [
+                      "deref",
+                      "active-kinds"
+                    ],
+                    "filtered-items",
+                    [
+                      "if",
+                      "mod-filter",
+                      [
+                        "filter",
+                        [
+                          "fn",
+                          {
+                            "v": [
+                              "it"
+                            ]
+                          },
+                          [
+                            "=",
+                            [
+                              ":id",
+                              "it"
+                            ],
+                            "mod-filter"
+                          ]
+                        ],
+                        "code-items"
+                      ],
+                      "code-items"
+                    ]
+                  ]
+                },
+                [
+                  "if",
+                  [
+                    "and",
+                    [
+                      "=",
+                      "q",
+                      {
+                        "s": ""
+                      }
+                    ],
+                    [
+                      "nil?",
+                      "mod-filter"
+                    ]
+                  ],
+                  [
+                    "dom-set-content!",
+                    "results-el",
+                    {
+                      "v": [
+                        ":div",
+                        {
+                          "m": [
+                            [
+                              ":style",
+                              {
+                                "s": "padding: 40px; text-align: center; color: var(--color-text-secondary); font-style: italic;"
+                              }
+                            ]
+                          ]
+                        },
+                        [
+                          "str",
+                          [
+                            "count",
+                            "code-items"
+                          ],
+                          {
+                            "s": " code items, "
+                          },
+                          "total-symbols",
+                          {
+                            "s": " total symbols"
+                          }
+                        ]
+                      ]
+                    }
+                  ],
+                  [
+                    "let",
+                    {
+                      "v": [
+                        "groups",
+                        [
+                          "vec",
+                          [
+                            "filter",
+                            "seq",
+                            [
+                              "map",
+                              [
+                                "fn",
+                                {
+                                  "v": [
+                                    "it"
+                                  ]
+                                },
+                                [
+                                  "let",
+                                  {
+                                    "v": [
+                                      "syms",
+                                      [
+                                        "vals",
+                                        [
+                                          "get-in",
+                                          "it",
+                                          {
+                                            "v": [
+                                              ":content",
+                                              ":_symbols"
+                                            ]
+                                          }
+                                        ]
+                                      ],
+                                      "matches",
+                                      [
+                                        "vec",
+                                        [
+                                          "filter",
+                                          [
+                                            "fn",
+                                            {
+                                              "v": [
+                                                "sym"
+                                              ]
+                                            },
+                                            [
+                                              "and",
+                                              [
+                                                "or",
+                                                [
+                                                  "=",
+                                                  "q",
+                                                  {
+                                                    "s": ""
+                                                  }
+                                                ],
+                                                [
+                                                  "str/includes?",
+                                                  [
+                                                    "str/lower-case",
+                                                    [
+                                                      ":name",
+                                                      "sym"
+                                                    ]
+                                                  ],
+                                                  "q"
+                                                ]
+                                              ],
+                                              [
+                                                "or",
+                                                [
+                                                  "=",
+                                                  0,
+                                                  [
+                                                    "count",
+                                                    "kinds-filter"
+                                                  ]
+                                                ],
+                                                [
+                                                  "and",
+                                                  [
+                                                    "get",
+                                                    "kinds-filter",
+                                                    {
+                                                      "s": "function"
+                                                    }
+                                                  ],
+                                                  [
+                                                    "get",
+                                                    "function-kinds",
+                                                    [
+                                                      ":kind",
+                                                      "sym"
+                                                    ]
+                                                  ]
+                                                ],
+                                                [
+                                                  "and",
+                                                  [
+                                                    "get",
+                                                    "kinds-filter",
+                                                    {
+                                                      "s": "property"
+                                                    }
+                                                  ],
+                                                  [
+                                                    "or",
+                                                    [
+                                                      "=",
+                                                      [
+                                                        ":kind",
+                                                        "sym"
+                                                      ],
+                                                      {
+                                                        "s": "property"
+                                                      }
+                                                    ],
+                                                    [
+                                                      "=",
+                                                      [
+                                                        ":kind",
+                                                        "sym"
+                                                      ],
+                                                      {
+                                                        "s": "field"
+                                                      }
+                                                    ]
+                                                  ]
+                                                ],
+                                                [
+                                                  "and",
+                                                  [
+                                                    "get",
+                                                    "kinds-filter",
+                                                    {
+                                                      "s": "class"
+                                                    }
+                                                  ],
+                                                  [
+                                                    "=",
+                                                    [
+                                                      ":kind",
+                                                      "sym"
+                                                    ],
+                                                    {
+                                                      "s": "class"
+                                                    }
+                                                  ]
+                                                ],
+                                                [
+                                                  "and",
+                                                  [
+                                                    "get",
+                                                    "kinds-filter",
+                                                    {
+                                                      "s": "method"
+                                                    }
+                                                  ],
+                                                  [
+                                                    "=",
+                                                    [
+                                                      ":kind",
+                                                      "sym"
+                                                    ],
+                                                    {
+                                                      "s": "method"
+                                                    }
+                                                  ]
+                                                ]
+                                              ]
+                                            ]
+                                          ],
+                                          "syms"
+                                        ]
+                                      ],
+                                      "sorted-matches",
+                                      [
+                                        "sort-by",
+                                        ":line",
+                                        "matches"
+                                      ]
+                                    ]
+                                  },
+                                  [
+                                    "when",
+                                    [
+                                      "seq",
+                                      "sorted-matches"
+                                    ],
+                                    {
+                                      "m": [
+                                        [
+                                          ":item",
+                                          "it"
+                                        ],
+                                        [
+                                          ":matches",
+                                          "sorted-matches"
+                                        ]
+                                      ]
+                                    }
+                                  ]
+                                ]
+                              ],
+                              "filtered-items"
+                            ]
+                          ]
+                        ]
+                      ]
+                    },
+                    [
+                      "if",
+                      [
+                        "=",
+                        0,
+                        [
+                          "count",
+                          "groups"
+                        ]
+                      ],
+                      [
+                        "dom-set-content!",
+                        "results-el",
+                        {
+                          "v": [
+                            ":div",
+                            {
+                              "m": [
+                                [
+                                  ":style",
+                                  {
+                                    "s": "padding: 40px; text-align: center; color: var(--color-text-secondary); font-style: italic;"
+                                  }
+                                ]
+                              ]
+                            },
+                            [
+                              "str",
+                              {
+                                "s": "No symbols matching \""
+                              },
+                              [
+                                "dom-get",
+                                "search-el",
+                                ":value"
+                              ],
+                              {
+                                "s": "\""
+                              }
+                            ]
+                          ]
+                        }
+                      ],
+                      [
+                        "let",
+                        {
+                          "v": [
+                            "total",
+                            [
+                              "reduce",
+                              "+",
+                              0,
+                              [
+                                "map",
+                                [
+                                  "fn",
+                                  {
+                                    "v": [
+                                      "g"
+                                    ]
+                                  },
+                                  [
+                                    "count",
+                                    [
+                                      ":matches",
+                                      "g"
+                                    ]
+                                  ]
+                                ],
+                                "groups"
+                              ]
+                            ]
+                          ]
+                        },
+                        [
+                          "dom-set-content!",
+                          "results-el",
+                          {
+                            "v": [
+                              ":div",
+                              {
+                                "m": []
+                              },
+                              {
+                                "v": [
+                                  ":div",
+                                  {
+                                    "m": [
+                                      [
+                                        ":style",
+                                        {
+                                          "s": "margin-bottom: 15px; font-size: 0.875rem; color: var(--color-text-secondary); font-weight: 500;"
+                                        }
+                                      ]
+                                    ]
+                                  },
+                                  [
+                                    "str",
+                                    "total",
+                                    {
+                                      "s": " symbol"
+                                    },
+                                    [
+                                      "if",
+                                      [
+                                        "=",
+                                        "total",
+                                        1
+                                      ],
+                                      {
+                                        "s": ""
+                                      },
+                                      {
+                                        "s": "s"
+                                      }
+                                    ],
+                                    {
+                                      "s": " across "
+                                    },
+                                    [
+                                      "count",
+                                      "groups"
+                                    ],
+                                    {
+                                      "s": " item"
+                                    },
+                                    [
+                                      "if",
+                                      [
+                                        "=",
+                                        1,
+                                        [
+                                          "count",
+                                          "groups"
+                                        ]
+                                      ],
+                                      {
+                                        "s": ""
+                                      },
+                                      {
+                                        "s": "s"
+                                      }
+                                    ]
+                                  ]
+                                ]
+                              },
+                              [
+                                "for",
+                                {
+                                  "v": [
+                                    "group",
+                                    "groups"
+                                  ]
+                                },
+                                [
+                                  "let",
+                                  {
+                                    "v": [
+                                      "it",
+                                      [
+                                        ":item",
+                                        "group"
+                                      ]
+                                    ]
+                                  },
+                                  {
+                                    "v": [
+                                      ":div",
+                                      {
+                                        "m": [
+                                          [
+                                            ":style",
+                                            {
+                                              "s": "margin-bottom: 16px; background: var(--color-bg-surface-alt); border-radius: var(--border-radius); overflow: hidden;"
+                                            }
+                                          ]
+                                        ]
+                                      },
+                                      {
+                                        "v": [
+                                          ":div",
+                                          {
+                                            "m": [
+                                              [
+                                                ":style",
+                                                {
+                                                  "s": "display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; border-bottom: 1px solid var(--color-border-light); cursor: pointer; transition: background 0.15s;"
+                                                }
+                                              ],
+                                              [
+                                                ":on-click",
+                                                [
+                                                  "fn",
+                                                  {
+                                                    "v": [
+                                                      "e"
+                                                    ]
+                                                  },
+                                                  [
+                                                    "open-item!",
+                                                    [
+                                                      ":id",
+                                                      "it"
+                                                    ]
+                                                  ]
+                                                ]
+                                              ]
+                                            ]
+                                          },
+                                          {
+                                            "v": [
+                                              ":span",
+                                              {
+                                                "m": [
+                                                  [
+                                                    ":style",
+                                                    {
+                                                      "s": "font-weight: 600; font-size: 0.875rem; color: var(--color-text);"
+                                                    }
+                                                  ]
+                                                ]
+                                              },
+                                              [
+                                                "or",
+                                                [
+                                                  ":name",
+                                                  "it"
+                                                ],
+                                                [
+                                                  "subs",
+                                                  [
+                                                    ":id",
+                                                    "it"
+                                                  ],
+                                                  0,
+                                                  8
+                                                ]
+                                              ]
+                                            ]
+                                          },
+                                          {
+                                            "v": [
+                                              ":span",
+                                              {
+                                                "m": [
+                                                  [
+                                                    ":style",
+                                                    {
+                                                      "s": "color: var(--color-text-secondary); font-size: 0.75rem;"
+                                                    }
+                                                  ]
+                                                ]
+                                              },
+                                              {
+                                                "s": "\\u2197"
+                                              }
+                                            ]
+                                          }
+                                        ]
+                                      },
+                                      [
+                                        "for",
+                                        {
+                                          "v": [
+                                            "sym",
+                                            [
+                                              ":matches",
+                                              "group"
+                                            ]
+                                          ]
+                                        },
+                                        {
+                                          "v": [
+                                            ":div",
+                                            {
+                                              "m": []
+                                            },
+                                            {
+                                              "v": [
+                                                ":div",
+                                                {
+                                                  "m": [
+                                                    [
+                                                      ":style",
+                                                      {
+                                                        "s": "display: flex; align-items: center; gap: 8px; padding: 7px 14px; cursor: pointer; transition: all 0.15s; border-bottom: 1px solid var(--color-border-light);"
+                                                      }
+                                                    ],
+                                                    [
+                                                      ":on-click",
+                                                      [
+                                                        "fn",
+                                                        {
+                                                          "v": [
+                                                            "e"
+                                                          ]
+                                                        },
+                                                        [
+                                                          "open-item!",
+                                                          [
+                                                            ":id",
+                                                            "it"
+                                                          ],
+                                                          {
+                                                            "m": [
+                                                              [
+                                                                ":symbol",
+                                                                [
+                                                                  ":name",
+                                                                  "sym"
+                                                                ]
+                                                              ]
+                                                            ]
+                                                          }
+                                                        ]
+                                                      ]
+                                                    ]
+                                                  ]
+                                                },
+                                                {
+                                                  "v": [
+                                                    ":span",
+                                                    {
+                                                      "m": [
+                                                        [
+                                                          ":style",
+                                                          {
+                                                            "s": "font-family: monospace; font-size: 0.8125rem; color: var(--color-text); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"
+                                                          }
+                                                        ]
+                                                      ]
+                                                    },
+                                                    [
+                                                      "str",
+                                                      [
+                                                        ":name",
+                                                        "sym"
+                                                      ],
+                                                      [
+                                                        "or",
+                                                        [
+                                                          ":signature",
+                                                          "sym"
+                                                        ],
+                                                        {
+                                                          "s": ""
+                                                        }
+                                                      ]
+                                                    ]
+                                                  ]
+                                                },
+                                                {
+                                                  "v": [
+                                                    ":span",
+                                                    {
+                                                      "m": [
+                                                        [
+                                                          ":style",
+                                                          [
+                                                            "str",
+                                                            {
+                                                              "s": "font-size: 0.6875rem; padding: 1px 6px; border-radius: var(--border-radius); color: white; flex-shrink: 0; background: "
+                                                            },
+                                                            [
+                                                              "kind-color",
+                                                              [
+                                                                ":kind",
+                                                                "sym"
+                                                              ]
+                                                            ]
+                                                          ]
+                                                        ]
+                                                      ]
+                                                    },
+                                                    [
+                                                      "kind-short",
+                                                      [
+                                                        ":kind",
+                                                        "sym"
+                                                      ]
+                                                    ]
+                                                  ]
+                                                },
+                                                {
+                                                  "v": [
+                                                    ":span",
+                                                    {
+                                                      "m": [
+                                                        [
+                                                          ":style",
+                                                          {
+                                                            "s": "font-size: 0.75rem; color: var(--color-text-secondary); font-family: monospace; min-width: 36px; text-align: right; flex-shrink: 0;"
+                                                          }
+                                                        ]
+                                                      ]
+                                                    },
+                                                    [
+                                                      "str",
+                                                      {
+                                                        "s": ":"
+                                                      },
+                                                      [
+                                                        ":line",
+                                                        "sym"
+                                                      ]
+                                                    ]
+                                                  ]
+                                                }
+                                              ]
+                                            },
+                                            [
+                                              "when",
+                                              [
+                                                "or",
+                                                [
+                                                  ":description",
+                                                  "sym"
+                                                ],
+                                                [
+                                                  ":params",
+                                                  "sym"
+                                                ],
+                                                [
+                                                  ":returns",
+                                                  "sym"
+                                                ]
+                                              ],
+                                              {
+                                                "v": [
+                                                  ":div",
+                                                  {
+                                                    "m": [
+                                                      [
+                                                        ":style",
+                                                        {
+                                                          "s": "padding: 2px 14px 6px 22px; font-size: 0.75rem; color: var(--color-text-secondary); border-bottom: 1px solid var(--color-border-light); line-height: 1.4;"
+                                                        }
+                                                      ]
+                                                    ]
+                                                  },
+                                                  [
+                                                    "when",
+                                                    [
+                                                      ":description",
+                                                      "sym"
+                                                    ],
+                                                    {
+                                                      "v": [
+                                                        ":div",
+                                                        {
+                                                          "m": []
+                                                        },
+                                                        [
+                                                          "first",
+                                                          [
+                                                            "str/split",
+                                                            [
+                                                              ":description",
+                                                              "sym"
+                                                            ],
+                                                            {
+                                                              "s": "\n"
+                                                            }
+                                                          ]
+                                                        ]
+                                                      ]
+                                                    }
+                                                  ],
+                                                  [
+                                                    "when",
+                                                    [
+                                                      ":params",
+                                                      "sym"
+                                                    ],
+                                                    [
+                                                      "for",
+                                                      {
+                                                        "v": [
+                                                          "p",
+                                                          [
+                                                            ":params",
+                                                            "sym"
+                                                          ]
+                                                        ]
+                                                      },
+                                                      {
+                                                        "v": [
+                                                          ":div",
+                                                          {
+                                                            "m": [
+                                                              [
+                                                                ":style",
+                                                                {
+                                                                  "s": "padding-left: 8px; font-family: monospace; font-size: 0.6875rem;"
+                                                                }
+                                                              ]
+                                                            ]
+                                                          },
+                                                          {
+                                                            "v": [
+                                                              ":span",
+                                                              {
+                                                                "m": [
+                                                                  [
+                                                                    ":style",
+                                                                    {
+                                                                      "s": "color: var(--color-text);"
+                                                                    }
+                                                                  ]
+                                                                ]
+                                                              },
+                                                              [
+                                                                ":name",
+                                                                "p"
+                                                              ]
+                                                            ]
+                                                          },
+                                                          [
+                                                            "when",
+                                                            [
+                                                              ":type",
+                                                              "p"
+                                                            ],
+                                                            {
+                                                              "v": [
+                                                                ":span",
+                                                                {
+                                                                  "m": [
+                                                                    [
+                                                                      ":style",
+                                                                      {
+                                                                        "s": "color: var(--color-text-secondary); opacity: 0.7;"
+                                                                      }
+                                                                    ]
+                                                                  ]
+                                                                },
+                                                                [
+                                                                  "str",
+                                                                  {
+                                                                    "s": " : "
+                                                                  },
+                                                                  [
+                                                                    ":type",
+                                                                    "p"
+                                                                  ]
+                                                                ]
+                                                              ]
+                                                            }
+                                                          ],
+                                                          [
+                                                            "when",
+                                                            [
+                                                              ":description",
+                                                              "p"
+                                                            ],
+                                                            {
+                                                              "v": [
+                                                                ":span",
+                                                                {
+                                                                  "m": []
+                                                                },
+                                                                [
+                                                                  "str",
+                                                                  {
+                                                                    "s": " \\u2014 "
+                                                                  },
+                                                                  [
+                                                                    ":description",
+                                                                    "p"
+                                                                  ]
+                                                                ]
+                                                              ]
+                                                            }
+                                                          ]
+                                                        ]
+                                                      }
+                                                    ]
+                                                  ],
+                                                  [
+                                                    "when",
+                                                    [
+                                                      ":returns",
+                                                      "sym"
+                                                    ],
+                                                    {
+                                                      "v": [
+                                                        ":div",
+                                                        {
+                                                          "m": [
+                                                            [
+                                                              ":style",
+                                                              {
+                                                                "s": "padding-left: 8px; font-family: monospace; font-size: 0.6875rem;"
+                                                              }
+                                                            ]
+                                                          ]
+                                                        },
+                                                        {
+                                                          "v": [
+                                                            ":span",
+                                                            {
+                                                              "m": [
+                                                                [
+                                                                  ":style",
+                                                                  {
+                                                                    "s": "color: var(--color-text); opacity: 0.7;"
+                                                                  }
+                                                                ]
+                                                              ]
+                                                            },
+                                                            {
+                                                              "s": "\\u2192 "
+                                                            }
+                                                          ]
+                                                        },
+                                                        [
+                                                          "when",
+                                                          [
+                                                            ":type",
+                                                            [
+                                                              ":returns",
+                                                              "sym"
+                                                            ]
+                                                          ],
+                                                          {
+                                                            "v": [
+                                                              ":span",
+                                                              {
+                                                                "m": [
+                                                                  [
+                                                                    ":style",
+                                                                    {
+                                                                      "s": "color: var(--color-text-secondary); opacity: 0.7;"
+                                                                    }
+                                                                  ]
+                                                                ]
+                                                              },
+                                                              [
+                                                                ":type",
+                                                                [
+                                                                  ":returns",
+                                                                  "sym"
+                                                                ]
+                                                              ]
+                                                            ]
+                                                          }
+                                                        ],
+                                                        [
+                                                          "when",
+                                                          [
+                                                            ":description",
+                                                            [
+                                                              ":returns",
+                                                              "sym"
+                                                            ]
+                                                          ],
+                                                          {
+                                                            "v": [
+                                                              ":span",
+                                                              {
+                                                                "m": []
+                                                              },
+                                                              [
+                                                                "str",
+                                                                {
+                                                                  "s": " \\u2014 "
+                                                                },
+                                                                [
+                                                                  ":description",
+                                                                  [
+                                                                    ":returns",
+                                                                    "sym"
+                                                                  ]
+                                                                ]
+                                                              ]
+                                                            ]
+                                                          }
+                                                        ]
+                                                      ]
+                                                    }
+                                                  ]
+                                                ]
+                                              }
+                                            ]
+                                          ]
+                                        }
+                                      ]
+                                    ]
+                                  }
+                                ]
+                              ]
+                            ]
+                          }
+                        ]
+                      ]
+                    ]
+                  ]
+                ]
+              ]
+            ]
+          ]
+        },
+        [
+          "dom-on!",
+          "search-el",
+          ":focus",
+          [
+            "fn",
+            {
+              "v": [
+                "e"
+              ]
+            },
+            [
+              "dom-set!",
+              [
+                "dom-get",
+                "search-el",
+                ":style"
+              ],
+              ":borderColor",
+              {
+                "s": "var(--color-primary)"
+              }
+            ]
+          ]
+        ],
+        [
+          "dom-on!",
+          "search-el",
+          ":blur",
+          [
+            "fn",
+            {
+              "v": [
+                "e"
+              ]
+            },
+            [
+              "dom-set!",
+              [
+                "dom-get",
+                "search-el",
+                ":style"
+              ],
+              ":borderColor",
+              {
+                "s": "var(--color-border)"
+              }
+            ]
+          ]
+        ],
+        [
+          "dom-on!",
+          "search-el",
+          ":input",
+          [
+            "fn",
+            {
+              "v": [
+                "e"
+              ]
+            },
+            [
+              "when",
+              [
+                "deref",
+                "timeout-id"
+              ],
+              [
+                "clear-timeout!",
+                [
+                  "deref",
+                  "timeout-id"
+                ]
+              ]
+            ],
+            [
+              "reset!",
+              "timeout-id",
+              [
+                "set-timeout!",
+                "render-results!",
+                300
+              ]
+            ]
+          ]
+        ],
+        [
+          "dom-on!",
+          "module-el",
+          ":change",
+          [
+            "fn",
+            {
+              "v": [
+                "e"
+              ]
+            },
+            [
+              "let",
+              {
+                "v": [
+                  "v",
+                  [
+                    "dom-get",
+                    "module-el",
+                    ":value"
+                  ]
+                ]
+              },
+              [
+                "reset!",
+                "active-module",
+                [
+                  "if",
+                  [
+                    "=",
+                    "v",
+                    {
+                      "s": ""
+                    }
+                  ],
+                  null,
+                  "v"
+                ]
+              ],
+              [
+                "render-results!"
+              ]
+            ]
+          ]
+        ],
+        [
+          "rebuild-chips!"
+        ],
+        [
+          "render-results!"
+        ],
+        [
+          "set-timeout!",
+          [
+            "fn",
+            {
+              "v": []
+            },
+            [
+              "invoke",
+              "search-el",
+              {
+                "s": "focus"
+              }
+            ]
+          ],
+          0
+        ],
+        "root"
+      ]
+    ]
   },
   "attachments": []
 }
