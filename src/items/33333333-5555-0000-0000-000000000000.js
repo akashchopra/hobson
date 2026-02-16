@@ -545,6 +545,8 @@ export class RenderingSystem {
     if (view.content?.hob) {
       try {
         const api = this.kernel.createAPI(item, newContext);
+        // Propagate pageContext from options (e.g. app-page widgets)
+        if (options.pageContext) api.pageContext = options.pageContext;
         const hobResult = await this.renderHobView(view, item, api, newContext);
         if (hobResult.domNode) {
           const parentId = context.parentId || null;

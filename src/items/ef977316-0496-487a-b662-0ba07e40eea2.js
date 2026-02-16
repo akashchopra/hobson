@@ -220,18 +220,21 @@ export async function render(pageItem, api) {
           continue;
         }
 
-        // Load view module
-        const viewModule = await api.require(viewItem.id);
-
-        // Create augmented API with page context and correct view ID
-        const widgetApi = Object.create(api);
-        widgetApi.pageContext = pageContext;
-        widgetApi.getViewId = () => viewItem.id;
-
-        // Render the widget
+        // Render the widget — use rendering system for Hob views, require for JS
         let widgetElement;
         try {
-          widgetElement = await viewModule.render(childItem, widgetApi);
+          if (viewItem.content?.hob && !viewItem.content?.code) {
+            // Hob view: render through the rendering system (handles expandCompact etc.)
+            // Pass pageContext via options so the rendering system can attach it to the api
+            widgetElement = await api.renderItem(childId, viewItem.id, { pageContext });
+          } else {
+            // JS view: load module and call render directly (supports pageContext injection)
+            const viewModule = await api.require(viewItem.id);
+            const widgetApi = Object.create(api);
+            widgetApi.pageContext = pageContext;
+            widgetApi.getViewId = () => viewItem.id;
+            widgetElement = await viewModule.render(childItem, widgetApi);
+          }
         } catch (err) {
           window.kernel?.captureError(err, { operation: 'app-page-widget-render', itemId: childId, itemName: childItem.name });
           widgetElement = api.createElement('div', {
