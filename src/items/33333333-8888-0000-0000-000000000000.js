@@ -12,9 +12,9 @@
   --color-primary-light: oklch(92% 0.05 var(--base-hue));
   
   /* Backgrounds */
-  --color-bg-body: oklch(96% var(--tint-strength) var(--base-hue));
+  --color-bg-body: oklch(96.5% var(--tint-strength) var(--base-hue));
   --color-bg-surface: oklch(100% 0 0);  /* white */
-  --color-bg-surface-alt: oklch(99% var(--tint-strength) var(--base-hue));
+  --color-bg-surface-alt: oklch(98.5% var(--tint-strength) var(--base-hue));
   --color-bg-hover: oklch(94% var(--tint-strength) var(--base-hue));
   
   /* Borders */

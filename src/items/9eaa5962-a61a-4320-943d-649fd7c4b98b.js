@@ -29,4 +29,30 @@
   }
 
   console.log(`Done! Extracted ${codeItems.length} code files.`);
+  
+  // Filter items that have content.hob
+  const hobItems = items.filter(item => item.content?.hob);
+
+  console.log(`Found ${hobItems.length} items with hob`);
+
+  for (const item of hobItems) {
+    const code = JSON.stringify(item.content.hob);
+    const filename = `${item.id}.hob`;
+
+    // Create and download the file
+    const blob = new Blob([code], { type: 'text/javascript' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+
+    // Small delay to avoid overwhelming the browser
+    await new Promise(r => setTimeout(r, 100));
+
+    console.log(`Saved: ${filename} (${item.name || item.id})`);
+  }
+
+  console.log(`Done! Extracted ${codeItems.length} hob files.`);
 })();

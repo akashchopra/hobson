@@ -3,10 +3,1053 @@
   "name": "app-page-design-lib",
   "type": "66666666-0000-0000-0000-000000000000",
   "created": 1770768000000,
-  "modified": 1770884639649,
+  "modified": 1770895232003,
   "content": {
     "description": "Design mode library for app-page-view. Provides toolbar, widget wrappers with drag/resize, column overlay, and widget picker modal.",
-    "code": "// app-page-design-lib \u2014 Design mode logic for app-page-view\n\n/**\n * Renders the design toolbar above the grid.\n * @param {Object} pageItem - The app-page item\n * @param {Object} api - Hobson API\n * @param {Object} callbacks - { onToggle, onAddWidget }\n * @returns {HTMLElement}\n */\nexport function renderToolbar(pageItem, api, callbacks) {\n  const toolbar = document.createElement('div');\n  toolbar.style.cssText = `\n    display: flex; align-items: center; gap: 8px; padding: 8px 16px;\n    background: var(--color-bg-surface-alt, #1e1e2e);\n    border-bottom: 1px solid var(--color-border, #444);\n    max-width: 960px; width: 100%; box-sizing: border-box;\n  `;\n\n  // Design/Live toggle\n  const toggleBtn = document.createElement('button');\n  toggleBtn.textContent = 'Live Mode';\n  toggleBtn.title = 'Switch to live mode';\n  toggleBtn.style.cssText = `\n    padding: 4px 12px; cursor: pointer; border: 1px solid var(--color-primary, #7c3aed);\n    background: var(--color-primary, #7c3aed); color: white;\n    border-radius: var(--border-radius, 4px); font-size: 0.75rem; font-weight: 500;\n  `;\n  toggleBtn.onclick = () => callbacks.onToggle();\n  toolbar.appendChild(toggleBtn);\n\n  // Add Widget button\n  const addBtn = document.createElement('button');\n  addBtn.textContent = '+ Add Widget';\n  addBtn.style.cssText = `\n    padding: 4px 12px; cursor: pointer;\n    border: 1px solid var(--color-border, #444);\n    background: var(--color-bg-surface, #2a2a3e); color: var(--color-text, #ccc);\n    border-radius: var(--border-radius, 4px); font-size: 0.75rem;\n  `;\n  addBtn.onclick = () => callbacks.onAddWidget();\n  toolbar.appendChild(addBtn);\n\n  // Spacer\n  toolbar.appendChild(document.createElement('span'));\n  toolbar.lastChild.style.flex = '1';\n\n  // Grid settings display\n  const columns = pageItem.content?.columns || 12;\n  const gap = pageItem.content?.gap || 8;\n  const rowHeight = pageItem.content?.rowHeight || 40;\n  const info = document.createElement('span');\n  info.textContent = `${columns} cols \\u00b7 ${gap}px gap \\u00b7 ${rowHeight}px rows`;\n  info.style.cssText = 'font-size: 0.6875rem; color: var(--color-text-secondary, #888);';\n  toolbar.appendChild(info);\n\n  return toolbar;\n}\n\n/**\n * Wraps a rendered widget cell with a design overlay.\n * @param {HTMLElement} widgetElement - The rendered widget DOM\n * @param {Object} childSpec - The attachment spec { id, view }\n * @param {Object} childItem - The loaded child item\n * @param {Object} pageItem - The parent app-page item\n * @param {Object} api - Hobson API\n * @param {Object} callbacks - { onSelect, onMove, onResize, onDelete, onEdit }\n * @returns {HTMLElement}\n */\nexport function wrapWidgetForDesign(widgetElement, childSpec, childItem, pageItem, api, callbacks) {\n  const columns = pageItem.content?.columns || 12;\n  const childId = typeof childSpec === 'string' ? childSpec : childSpec.id;\n  const viewConfig = (typeof childSpec === 'object' ? childSpec.view : null) || {};\n\n  const col = viewConfig.col || 1;\n  const row = viewConfig.row || 'auto';\n  const colSpan = viewConfig.colSpan || columns;\n  const rowSpan = viewConfig.rowSpan || 1;\n\n  // Outer cell with grid positioning\n  const cell = document.createElement('div');\n  cell.style.cssText = `\n    grid-column: ${col} / span ${colSpan};\n    ${row !== 'auto' ? `grid-row: ${row} / span ${rowSpan};` : ''}\n    min-width: 0; position: relative; overflow: hidden;\n    display: flex; flex-direction: column;\n    border: 2px solid transparent; border-radius: var(--border-radius, 4px);\n    transition: border-color 0.15s;\n  `;\n  cell.dataset.itemId = childId;\n  cell.dataset.designCell = 'true';\n\n  // Selection on click\n  cell.addEventListener('click', (e) => {\n    // Deselect siblings\n    const grid = cell.parentElement;\n    if (grid) grid.querySelectorAll('[data-design-cell]').forEach(c => {\n      c.style.borderColor = 'transparent';\n    });\n    cell.style.borderColor = 'var(--color-primary, #7c3aed)';\n    callbacks.onSelect?.(childId);\n  });\n\n  // Hover effect\n  cell.addEventListener('mouseenter', () => {\n    if (cell.style.borderColor === 'transparent') {\n      cell.style.borderColor = 'var(--color-border-dark, #666)';\n    }\n  });\n  cell.addEventListener('mouseleave', () => {\n    if (cell.style.borderColor !== 'var(--color-primary, #7c3aed)') {\n      cell.style.borderColor = 'transparent';\n    }\n  });\n\n  // Header bar with controls\n  const header = document.createElement('div');\n  header.style.cssText = `\n    display: flex; align-items: center; gap: 4px; padding: 2px 6px;\n    background: var(--color-bg-hover, #333); border-radius: var(--border-radius, 4px) var(--border-radius, 4px) 0 0;\n    font-size: 0.6875rem; color: var(--color-text-secondary, #aaa); user-select: none;\n  `;\n\n  // Drag handle\n  const dragHandle = document.createElement('span');\n  dragHandle.textContent = '\\u2630';\n  dragHandle.title = 'Drag to reposition';\n  dragHandle.style.cssText = 'cursor: grab; padding: 0 4px; font-size: 0.75rem;';\n  header.appendChild(dragHandle);\n\n  // Widget name\n  const nameEl = document.createElement('span');\n  nameEl.textContent = childItem.name || childId.slice(0, 8);\n  nameEl.style.cssText = 'flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;';\n  header.appendChild(nameEl);\n\n  // Position label\n  const posLabel = document.createElement('span');\n  posLabel.textContent = `c${col} r${row === 'auto' ? '?' : row} ${colSpan}\\u00d7${rowSpan}`;\n  posLabel.style.cssText = 'font-size: 0.625rem; color: var(--color-text-tertiary, #666); margin-right: 4px;';\n  header.appendChild(posLabel);\n\n  // Edit button\n  const editBtn = document.createElement('button');\n  editBtn.textContent = '\\u270e';\n  editBtn.title = 'Edit widget properties';\n  editBtn.style.cssText = `\n    border: none; background: transparent; cursor: pointer;\n    font-size: 0.8125rem; padding: 0 3px; color: var(--color-text-secondary, #aaa);\n  `;\n  editBtn.onclick = (e) => { e.stopPropagation(); callbacks.onEdit(childId); };\n  header.appendChild(editBtn);\n\n  // Delete button\n  const deleteBtn = document.createElement('button');\n  deleteBtn.textContent = '\\u00d7';\n  deleteBtn.title = 'Remove widget';\n  deleteBtn.style.cssText = `\n    border: none; background: transparent; cursor: pointer;\n    font-size: 0.9375rem; font-weight: bold; padding: 0 3px; color: var(--color-danger, #e74c3c);\n  `;\n  deleteBtn.onclick = (e) => { e.stopPropagation(); callbacks.onDelete(childId); };\n  header.appendChild(deleteBtn);\n\n  cell.appendChild(header);\n\n  // Widget content (non-interactive in design mode)\n  const contentWrap = document.createElement('div');\n  contentWrap.style.cssText = 'pointer-events: none; opacity: 0.85; flex: 1; overflow: hidden;';\n  contentWrap.appendChild(widgetElement);\n  cell.appendChild(contentWrap);\n\n  // Resize handle at bottom-right\n  const resizeHandle = document.createElement('div');\n  resizeHandle.style.cssText = `\n    position: absolute; bottom: 0; right: 0; width: 14px; height: 14px;\n    cursor: nwse-resize; background: var(--color-primary, #7c3aed);\n    clip-path: polygon(100% 0, 100% 100%, 0 100%); border-radius: 0 0 var(--border-radius, 4px) 0;\n  `;\n  resizeHandle.title = 'Drag to resize';\n  cell.appendChild(resizeHandle);\n\n  // --- Drag to reposition ---\n  attachDragToReposition(dragHandle, cell, pageItem, childId, callbacks);\n\n  // --- Resize interaction ---\n  attachResizeHandle(resizeHandle, cell, pageItem, childId, callbacks, posLabel);\n\n  return cell;\n}\n\n/**\n * Renders semi-transparent column overlay lines behind the grid.\n * @param {HTMLElement} gridEl - The grid container\n * @param {number} columns - Number of columns\n */\nexport function renderColumnOverlay(gridEl, columns) {\n  const overlay = document.createElement('div');\n  overlay.dataset.columnOverlay = 'true';\n  overlay.style.cssText = `\n    display: grid; grid-template-columns: repeat(${columns}, 1fr);\n    position: absolute; inset: 0; pointer-events: none; z-index: 0;\n  `;\n\n  for (let i = 0; i < columns; i++) {\n    const col = document.createElement('div');\n    col.style.cssText = `\n      border-right: 1px solid var(--color-border-light, rgba(255,255,255,0.06));\n      ${i % 2 === 0 ? 'background: rgba(124, 58, 237, 0.03);' : ''}\n    `;\n    overlay.appendChild(col);\n  }\n\n  return overlay;\n}\n\n/**\n * Shows a two-tab modal picker: \"Attach Existing\" (item search) or \"Create New\" (tag-filtered types).\n * @param {Object} api - Hobson API\n * @returns {Promise<{mode:'create',typeId:string}|{mode:'attach',item:Object}|null>}\n */\nexport async function showWidgetPicker(api) {\n  const PAGE_WIDGET_TAG = 'c0c0c0c0-0071-0000-0000-000000000000';\n  const modalLib = await api.require('modal-lib');\n\n  return new Promise((resolve) => {\n    let resolved = false;\n    modalLib.showModal({\n      title: 'Add Widget',\n      width: '480px',\n      onClose: () => { if (!resolved) resolve(null); },\n      content: ({ close: closeModal }) => {\n        const container = document.createElement('div');\n\n        // --- Tab bar ---\n        const tabBar = document.createElement('div');\n        tabBar.style.cssText = 'display: flex; gap: 0; margin-bottom: 12px; border-bottom: 1px solid var(--color-border, #444);';\n\n        const tabs = ['Attach Existing', 'Create New'];\n        const tabBtns = [];\n        const panels = [];\n        let activeTab = 0;\n\n        const tabBtnStyle = (active) => `\n          padding: 8px 16px; cursor: pointer; border: none; border-bottom: 2px solid ${active ? 'var(--color-primary, #7c3aed)' : 'transparent'};\n          background: transparent; color: ${active ? 'var(--color-text, #ccc)' : 'var(--color-text-secondary, #888)'};\n          font-size: 0.8125rem; font-weight: ${active ? '600' : '400'};\n        `;\n\n        function switchTab(idx) {\n          activeTab = idx;\n          tabBtns.forEach((btn, i) => btn.style.cssText = tabBtnStyle(i === idx));\n          panels.forEach((p, i) => p.style.display = i === idx ? 'block' : 'none');\n        }\n\n        for (let i = 0; i < tabs.length; i++) {\n          const btn = document.createElement('button');\n          btn.textContent = tabs[i];\n          btn.style.cssText = tabBtnStyle(i === 0);\n          btn.onclick = () => switchTab(i);\n          tabBtns.push(btn);\n          tabBar.appendChild(btn);\n        }\n        container.appendChild(tabBar);\n\n        // --- Attach Existing panel ---\n        const attachPanel = document.createElement('div');\n        attachPanel.style.cssText = 'min-height: 200px;';\n        panels.push(attachPanel);\n\n        // Load item-search-lib asynchronously\n        (async () => {\n          try {\n            const searchLib = await api.require('item-search-lib');\n            searchLib.createSearchUI(attachPanel, (item) => {\n              resolved = true;\n              closeModal();\n              resolve({ mode: 'attach', item });\n            }, api, { placeholder: 'Search items...', autoFocus: true });\n          } catch (e) {\n            attachPanel.textContent = 'Failed to load search: ' + e.message;\n          }\n        })();\n\n        container.appendChild(attachPanel);\n\n        // --- Create New panel ---\n        const createPanel = document.createElement('div');\n        createPanel.style.display = 'none';\n        createPanel.style.minHeight = '200px';\n        panels.push(createPanel);\n\n        // Load tagged type-defs asynchronously\n        (async () => {\n          const TYPE_DEF = '11111111-0000-0000-0000-000000000000';\n          const allTypeDefs = await api.query({ type: TYPE_DEF });\n          const widgetTypes = allTypeDefs.filter(td => (td.content?.tags || []).includes(PAGE_WIDGET_TAG));\n\n          if (widgetTypes.length === 0) {\n            const empty = document.createElement('p');\n            empty.textContent = 'No widget types found. Tag a type-def with \"page-widget\" to make it available here.';\n            empty.style.cssText = 'color: var(--color-text-secondary); font-size: 0.8125rem;';\n            createPanel.appendChild(empty);\n            return;\n          }\n\n          const list = document.createElement('div');\n          list.style.cssText = 'display: flex; flex-direction: column; gap: 4px;';\n\n          for (const wt of widgetTypes.sort((a, b) => (a.name || '').localeCompare(b.name || ''))) {\n            const btn = document.createElement('button');\n            btn.style.cssText = `\n              display: block; width: 100%; text-align: left; padding: 10px 14px;\n              border: 1px solid var(--color-border, #444); background: var(--color-bg-surface, #2a2a3e);\n              color: var(--color-text, #ccc); border-radius: var(--border-radius, 4px);\n              cursor: pointer; font-size: 0.8125rem;\n            `;\n            btn.onmouseenter = () => { btn.style.background = 'var(--color-bg-hover, #333)'; };\n            btn.onmouseleave = () => { btn.style.background = 'var(--color-bg-surface, #2a2a3e)'; };\n\n            const nameSpan = document.createElement('strong');\n            nameSpan.textContent = wt.name;\n            btn.appendChild(nameSpan);\n\n            if (wt.content?.description) {\n              const desc = document.createElement('div');\n              desc.textContent = wt.content.description.split('\\n')[0].slice(0, 80);\n              desc.style.cssText = 'font-size: 0.6875rem; color: var(--color-text-secondary, #888); margin-top: 2px;';\n              btn.appendChild(desc);\n            }\n\n            btn.onclick = () => {\n              resolved = true;\n              closeModal();\n              resolve({ mode: 'create', typeId: wt.id });\n            };\n            list.appendChild(btn);\n          }\n\n          createPanel.appendChild(list);\n        })();\n\n        container.appendChild(createPanel);\n\n        return container;\n      }\n    });\n  });\n}\n\n// --- Internal: drag to reposition ---\nfunction attachDragToReposition(handle, cell, pageItem, childId, callbacks) {\n  const columns = pageItem.content?.columns || 12;\n  const gap = pageItem.content?.gap || 8;\n  const rowHeight = pageItem.content?.rowHeight || 40;\n\n  handle.addEventListener('mousedown', (e) => {\n    e.preventDefault();\n    e.stopPropagation();\n\n    const grid = cell.parentElement;\n    if (!grid) return;\n    const gridRect = grid.getBoundingClientRect();\n    const gridPaddingTop = parseFloat(getComputedStyle(grid).paddingTop) || 0;\n    const colWidth = (gridRect.width - gap * (columns - 1)) / columns + gap;\n    const currentColSpan = parseInt(cell.style.gridColumn?.match(/span (\\d+)/)?.[1]) || columns;\n\n    // Fade source cell (no in-grid preview \u2014 avoids layout reflow)\n    cell.style.opacity = '0.3';\n\n    // Floating position label near cursor\n    const label = document.createElement('div');\n    label.style.cssText = `\n      position: fixed; pointer-events: none; z-index: 999999;\n      padding: 3px 8px; background: var(--color-primary, #7c3aed); color: white;\n      border-radius: var(--border-radius, 4px); font-size: 0.6875rem; font-weight: 500;\n      white-space: nowrap;\n    `;\n    document.body.appendChild(label);\n\n    let targetCol = 1;\n    let targetRow = 1;\n\n    const onMouseMove = (me) => {\n      // Column from X\n      const relX = me.clientX - gridRect.left;\n      targetCol = Math.min(columns - currentColSpan + 1, Math.max(1, Math.floor(relX / colWidth) + 1));\n\n      // Row from Y \u2014 calculate directly from fixed row height\n      const relY = me.clientY - gridRect.top - gridPaddingTop;\n      targetRow = Math.max(1, Math.floor(relY / rowHeight) + 1);\n\n      // Update label\n      label.style.left = (me.clientX + 14) + 'px';\n      label.style.top = (me.clientY - 12) + 'px';\n      label.textContent = `col ${targetCol}, row ${targetRow}`;\n    };\n\n    const onMouseUp = () => {\n      document.removeEventListener('mousemove', onMouseMove);\n      document.removeEventListener('mouseup', onMouseUp);\n      cell.style.opacity = '';\n      label.remove();\n\n      callbacks.onMove(childId, { col: targetCol, row: targetRow });\n    };\n\n    document.addEventListener('mousemove', onMouseMove);\n    document.addEventListener('mouseup', onMouseUp);\n  });\n}\n\n// --- Internal: resize handle ---\nfunction attachResizeHandle(handle, cell, pageItem, childId, callbacks, posLabel) {\n  const columns = pageItem.content?.columns || 12;\n  const gap = pageItem.content?.gap || 8;\n  const rowHeight = pageItem.content?.rowHeight || 40;\n\n  handle.addEventListener('mousedown', (e) => {\n    e.preventDefault();\n    e.stopPropagation();\n\n    const grid = cell.parentElement;\n    if (!grid) return;\n    const gridRect = grid.getBoundingClientRect();\n    const colWidth = (gridRect.width - gap * (columns - 1)) / columns + gap;\n\n    const startX = e.clientX;\n    const startY = e.clientY;\n    const cellRect = cell.getBoundingClientRect();\n    const startColSpan = parseInt(cell.style.gridColumn?.match(/span (\\d+)/)?.[1]) || columns;\n    const startRowSpan = parseInt(cell.style.gridRow?.match(/span (\\d+)/)?.[1]) || 1;\n\n    let newColSpan = startColSpan;\n    let newRowSpan = startRowSpan;\n\n    const onMouseMove = (me) => {\n      const deltaX = me.clientX - startX;\n      const deltaY = me.clientY - startY;\n      newColSpan = Math.max(1, Math.min(columns, Math.round((cellRect.width + deltaX) / colWidth)));\n      newRowSpan = Math.max(1, Math.round((cellRect.height + deltaY) / rowHeight));\n\n      // Live preview \u2014 columns\n      const currentCol = cell.style.gridColumn?.match(/^(\\d+)/)?.[1] || '1';\n      const maxSpan = columns - parseInt(currentCol) + 1;\n      newColSpan = Math.min(newColSpan, maxSpan);\n      cell.style.gridColumn = `${currentCol} / span ${newColSpan}`;\n\n      // Live preview \u2014 rows\n      const currentRow = cell.style.gridRow?.match(/^(\\d+)/)?.[1] || '1';\n      cell.style.gridRow = `${currentRow} / span ${newRowSpan}`;\n\n      // Update position label live\n      if (posLabel) {\n        posLabel.textContent = `c${currentCol} r${currentRow} ${newColSpan}\\u00d7${newRowSpan}`;\n      }\n    };\n\n    const onMouseUp = () => {\n      document.removeEventListener('mousemove', onMouseMove);\n      document.removeEventListener('mouseup', onMouseUp);\n\n      callbacks.onResize(childId, { colSpan: newColSpan, rowSpan: newRowSpan });\n    };\n\n    document.addEventListener('mousemove', onMouseMove);\n    document.addEventListener('mouseup', onMouseUp);\n  });\n}\n"
+    "code": "// app-page-design-lib — Design mode logic for app-page-view\n\n/**\n * Renders the design toolbar above the grid.\n * @param {Object} pageItem - The app-page item\n * @param {Object} api - Hobson API\n * @param {Object} callbacks - { onToggle, onAddWidget }\n * @returns {HTMLElement}\n */\nexport function renderToolbar(pageItem, api, callbacks) {\n  const toolbar = document.createElement('div');\n  toolbar.style.cssText = `\n    display: flex; align-items: center; gap: 8px; padding: 8px 16px;\n    background: var(--color-bg-surface-alt, #1e1e2e);\n    border-bottom: 1px solid var(--color-border, #444);\n    max-width: 960px; width: 100%; box-sizing: border-box;\n  `;\n\n  // Design/Live toggle\n  const toggleBtn = document.createElement('button');\n  toggleBtn.textContent = 'Live Mode';\n  toggleBtn.title = 'Switch to live mode';\n  toggleBtn.style.cssText = `\n    padding: 4px 12px; cursor: pointer; border: 1px solid var(--color-primary, #7c3aed);\n    background: var(--color-primary, #7c3aed); color: white;\n    border-radius: var(--border-radius, 4px); font-size: 0.75rem; font-weight: 500;\n  `;\n  toggleBtn.onclick = () => callbacks.onToggle();\n  toolbar.appendChild(toggleBtn);\n\n  // Add Widget button\n  const addBtn = document.createElement('button');\n  addBtn.textContent = '+ Add Widget';\n  addBtn.style.cssText = `\n    padding: 4px 12px; cursor: pointer;\n    border: 1px solid var(--color-border, #444);\n    background: var(--color-bg-surface, #2a2a3e); color: var(--color-text, #ccc);\n    border-radius: var(--border-radius, 4px); font-size: 0.75rem;\n  `;\n  addBtn.onclick = () => callbacks.onAddWidget();\n  toolbar.appendChild(addBtn);\n\n  // Spacer\n  toolbar.appendChild(document.createElement('span'));\n  toolbar.lastChild.style.flex = '1';\n\n  // Grid settings display\n  const columns = pageItem.content?.columns || 12;\n  const gap = pageItem.content?.gap || 8;\n  const rowHeight = pageItem.content?.rowHeight || 40;\n  const info = document.createElement('span');\n  info.textContent = `${columns} cols \\u00b7 ${gap}px gap \\u00b7 ${rowHeight}px rows`;\n  info.style.cssText = 'font-size: 0.6875rem; color: var(--color-text-secondary, #888);';\n  toolbar.appendChild(info);\n\n  return toolbar;\n}\n\n/**\n * Wraps a rendered widget cell with a design overlay.\n * @param {HTMLElement} widgetElement - The rendered widget DOM\n * @param {Object} childSpec - The attachment spec { id, view }\n * @param {Object} childItem - The loaded child item\n * @param {Object} pageItem - The parent app-page item\n * @param {Object} api - Hobson API\n * @param {Object} callbacks - { onSelect, onMove, onResize, onDelete, onEdit }\n * @returns {HTMLElement}\n */\nexport function wrapWidgetForDesign(widgetElement, childSpec, childItem, pageItem, api, callbacks) {\n  const columns = pageItem.content?.columns || 12;\n  const childId = typeof childSpec === 'string' ? childSpec : childSpec.id;\n  const viewConfig = (typeof childSpec === 'object' ? childSpec.view : null) || {};\n\n  const col = viewConfig.col || 1;\n  const row = viewConfig.row || 'auto';\n  const colSpan = viewConfig.colSpan || columns;\n  const rowSpan = viewConfig.rowSpan || 1;\n\n  // Outer cell with grid positioning\n  const cell = document.createElement('div');\n  cell.style.cssText = `\n    grid-column: ${col} / span ${colSpan};\n    ${row !== 'auto' ? `grid-row: ${row} / span ${rowSpan};` : ''}\n    min-width: 0; position: relative; overflow: hidden;\n    display: flex; flex-direction: column;\n    border: 2px solid transparent; border-radius: var(--border-radius, 4px);\n    transition: border-color 0.15s;\n  `;\n  cell.dataset.itemId = childId;\n  cell.dataset.designCell = 'true';\n\n  // Selection on click\n  cell.addEventListener('click', (e) => {\n    // Deselect siblings\n    const grid = cell.parentElement;\n    if (grid) grid.querySelectorAll('[data-design-cell]').forEach(c => {\n      c.style.borderColor = 'transparent';\n    });\n    cell.style.borderColor = 'var(--color-primary, #7c3aed)';\n    callbacks.onSelect?.(childId);\n  });\n\n  // Hover effect\n  cell.addEventListener('mouseenter', () => {\n    if (cell.style.borderColor === 'transparent') {\n      cell.style.borderColor = 'var(--color-border-dark, #666)';\n    }\n  });\n  cell.addEventListener('mouseleave', () => {\n    if (cell.style.borderColor !== 'var(--color-primary, #7c3aed)') {\n      cell.style.borderColor = 'transparent';\n    }\n  });\n\n  // Header bar with controls\n  const header = document.createElement('div');\n  header.style.cssText = `\n    display: flex; align-items: center; gap: 4px; padding: 2px 6px;\n    background: var(--color-bg-hover, #333); border-radius: var(--border-radius, 4px) var(--border-radius, 4px) 0 0;\n    font-size: 0.6875rem; color: var(--color-text-secondary, #aaa); user-select: none;\n  `;\n\n  // Drag handle\n  const dragHandle = document.createElement('span');\n  dragHandle.textContent = '\\u2630';\n  dragHandle.title = 'Drag to reposition';\n  dragHandle.style.cssText = 'cursor: grab; padding: 0 4px; font-size: 0.75rem;';\n  header.appendChild(dragHandle);\n\n  // Widget name\n  const nameEl = document.createElement('span');\n  nameEl.textContent = childItem.name || childId.slice(0, 8);\n  nameEl.style.cssText = 'flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;';\n  header.appendChild(nameEl);\n\n  // Position label\n  const posLabel = document.createElement('span');\n  posLabel.textContent = `c${col} r${row === 'auto' ? '?' : row} ${colSpan}\\u00d7${rowSpan}`;\n  posLabel.style.cssText = 'font-size: 0.625rem; color: var(--color-text-tertiary, #666); margin-right: 4px;';\n  header.appendChild(posLabel);\n\n  // Edit button\n  const editBtn = document.createElement('button');\n  editBtn.textContent = '\\u270e';\n  editBtn.title = 'Edit widget properties';\n  editBtn.style.cssText = `\n    border: none; background: transparent; cursor: pointer;\n    font-size: 0.8125rem; padding: 0 3px; color: var(--color-text-secondary, #aaa);\n  `;\n  editBtn.onclick = (e) => { e.stopPropagation(); callbacks.onEdit(childId); };\n  header.appendChild(editBtn);\n\n  // Delete button\n  const deleteBtn = document.createElement('button');\n  deleteBtn.textContent = '\\u00d7';\n  deleteBtn.title = 'Remove widget';\n  deleteBtn.style.cssText = `\n    border: none; background: transparent; cursor: pointer;\n    font-size: 0.9375rem; font-weight: bold; padding: 0 3px; color: var(--color-danger, #e74c3c);\n  `;\n  deleteBtn.onclick = (e) => { e.stopPropagation(); callbacks.onDelete(childId); };\n  header.appendChild(deleteBtn);\n\n  cell.appendChild(header);\n\n  // Widget content (non-interactive in design mode)\n  const contentWrap = document.createElement('div');\n  contentWrap.style.cssText = 'pointer-events: none; opacity: 0.85; flex: 1; overflow: hidden;';\n  contentWrap.appendChild(widgetElement);\n  cell.appendChild(contentWrap);\n\n  // Resize handle at bottom-right\n  const resizeHandle = document.createElement('div');\n  resizeHandle.style.cssText = `\n    position: absolute; bottom: 0; right: 0; width: 14px; height: 14px;\n    cursor: nwse-resize; background: var(--color-primary, #7c3aed);\n    clip-path: polygon(100% 0, 100% 100%, 0 100%); border-radius: 0 0 var(--border-radius, 4px) 0;\n  `;\n  resizeHandle.title = 'Drag to resize';\n  cell.appendChild(resizeHandle);\n\n  // --- Drag to reposition ---\n  attachDragToReposition(dragHandle, cell, pageItem, childId, callbacks);\n\n  // --- Resize interaction ---\n  attachResizeHandle(resizeHandle, cell, pageItem, childId, callbacks, posLabel);\n\n  return cell;\n}\n\n/**\n * Renders semi-transparent column overlay lines behind the grid.\n * @param {HTMLElement} gridEl - The grid container\n * @param {number} columns - Number of columns\n */\nexport function renderColumnOverlay(gridEl, columns) {\n  const overlay = document.createElement('div');\n  overlay.dataset.columnOverlay = 'true';\n  overlay.style.cssText = `\n    display: grid; grid-template-columns: repeat(${columns}, 1fr);\n    position: absolute; inset: 0; pointer-events: none; z-index: 0;\n  `;\n\n  for (let i = 0; i < columns; i++) {\n    const col = document.createElement('div');\n    col.style.cssText = `\n      border-right: 1px solid var(--color-border-light, rgba(255,255,255,0.06));\n      ${i % 2 === 0 ? 'background: rgba(124, 58, 237, 0.03);' : ''}\n    `;\n    overlay.appendChild(col);\n  }\n\n  return overlay;\n}\n\n/**\n * Shows a two-tab modal picker: \"Attach Existing\" (item search) or \"Create New\" (tag-filtered types).\n * @param {Object} api - Hobson API\n * @returns {Promise<{mode:'create',typeId:string}|{mode:'attach',item:Object}|null>}\n */\nexport async function showWidgetPicker(api) {\n  const PAGE_WIDGET_TAG = 'c0c0c0c0-0071-0000-0000-000000000000';\n  const modalLib = await api.require('modal-lib');\n\n  return new Promise((resolve) => {\n    let resolved = false;\n    modalLib.showModal({\n      title: 'Add Widget',\n      width: '480px',\n      onClose: () => { if (!resolved) resolve(null); },\n      content: ({ close: closeModal }) => {\n        const container = document.createElement('div');\n\n        // --- Tab bar ---\n        const tabBar = document.createElement('div');\n        tabBar.style.cssText = 'display: flex; gap: 0; margin-bottom: 12px; border-bottom: 1px solid var(--color-border, #444);';\n\n        const tabs = ['Attach Existing', 'Create New'];\n        const tabBtns = [];\n        const panels = [];\n        let activeTab = 0;\n\n        const tabBtnStyle = (active) => `\n          padding: 8px 16px; cursor: pointer; border: none; border-bottom: 2px solid ${active ? 'var(--color-primary, #7c3aed)' : 'transparent'};\n          background: transparent; color: ${active ? 'var(--color-text, #ccc)' : 'var(--color-text-secondary, #888)'};\n          font-size: 0.8125rem; font-weight: ${active ? '600' : '400'};\n        `;\n\n        function switchTab(idx) {\n          activeTab = idx;\n          tabBtns.forEach((btn, i) => btn.style.cssText = tabBtnStyle(i === idx));\n          panels.forEach((p, i) => p.style.display = i === idx ? 'block' : 'none');\n        }\n\n        for (let i = 0; i < tabs.length; i++) {\n          const btn = document.createElement('button');\n          btn.textContent = tabs[i];\n          btn.style.cssText = tabBtnStyle(i === 0);\n          btn.onclick = () => switchTab(i);\n          tabBtns.push(btn);\n          tabBar.appendChild(btn);\n        }\n        container.appendChild(tabBar);\n\n        // --- Attach Existing panel ---\n        const attachPanel = document.createElement('div');\n        attachPanel.style.cssText = 'min-height: 200px;';\n        panels.push(attachPanel);\n\n        // Load item-search-lib asynchronously\n        (async () => {\n          try {\n            const searchLib = await api.require('item-search-lib');\n            searchLib.createSearchUI(attachPanel, (item) => {\n              resolved = true;\n              closeModal();\n              resolve({ mode: 'attach', item });\n            }, api, { placeholder: 'Search items...', autoFocus: true });\n          } catch (e) {\n            attachPanel.textContent = 'Failed to load search: ' + e.message;\n          }\n        })();\n\n        container.appendChild(attachPanel);\n\n        // --- Create New panel ---\n        const createPanel = document.createElement('div');\n        createPanel.style.display = 'none';\n        createPanel.style.minHeight = '200px';\n        panels.push(createPanel);\n\n        // Load tagged type-defs asynchronously\n        (async () => {\n          const TYPE_DEF = '11111111-0000-0000-0000-000000000000';\n          const allTypeDefs = await api.query({ type: TYPE_DEF });\n          const widgetTypes = allTypeDefs.filter(td => (td.content?.tags || []).includes(PAGE_WIDGET_TAG));\n\n          if (widgetTypes.length === 0) {\n            const empty = document.createElement('p');\n            empty.textContent = 'No widget types found. Tag a type-def with \"page-widget\" to make it available here.';\n            empty.style.cssText = 'color: var(--color-text-secondary); font-size: 0.8125rem;';\n            createPanel.appendChild(empty);\n            return;\n          }\n\n          const list = document.createElement('div');\n          list.style.cssText = 'display: flex; flex-direction: column; gap: 4px;';\n\n          for (const wt of widgetTypes.sort((a, b) => (a.name || '').localeCompare(b.name || ''))) {\n            const btn = document.createElement('button');\n            btn.style.cssText = `\n              display: block; width: 100%; text-align: left; padding: 10px 14px;\n              border: 1px solid var(--color-border, #444); background: var(--color-bg-surface, #2a2a3e);\n              color: var(--color-text, #ccc); border-radius: var(--border-radius, 4px);\n              cursor: pointer; font-size: 0.8125rem;\n            `;\n            btn.onmouseenter = () => { btn.style.background = 'var(--color-bg-hover, #333)'; };\n            btn.onmouseleave = () => { btn.style.background = 'var(--color-bg-surface, #2a2a3e)'; };\n\n            const nameSpan = document.createElement('strong');\n            nameSpan.textContent = wt.name;\n            btn.appendChild(nameSpan);\n\n            if (wt.content?.description) {\n              const desc = document.createElement('div');\n              desc.textContent = wt.content.description.split('\\n')[0].slice(0, 80);\n              desc.style.cssText = 'font-size: 0.6875rem; color: var(--color-text-secondary, #888); margin-top: 2px;';\n              btn.appendChild(desc);\n            }\n\n            btn.onclick = () => {\n              resolved = true;\n              closeModal();\n              resolve({ mode: 'create', typeId: wt.id });\n            };\n            list.appendChild(btn);\n          }\n\n          createPanel.appendChild(list);\n        })();\n\n        container.appendChild(createPanel);\n\n        return container;\n      }\n    });\n  });\n}\n\n// --- Internal: drag to reposition ---\nfunction attachDragToReposition(handle, cell, pageItem, childId, callbacks) {\n  const columns = pageItem.content?.columns || 12;\n  const gap = pageItem.content?.gap || 8;\n  const rowHeight = pageItem.content?.rowHeight || 40;\n\n  handle.addEventListener('mousedown', (e) => {\n    e.preventDefault();\n    e.stopPropagation();\n\n    const grid = cell.parentElement;\n    if (!grid) return;\n    const gridRect = grid.getBoundingClientRect();\n    const gridPaddingTop = parseFloat(getComputedStyle(grid).paddingTop) || 0;\n    const colWidth = (gridRect.width - gap * (columns - 1)) / columns + gap;\n    const currentColSpan = parseInt(cell.style.gridColumn?.match(/span (\\d+)/)?.[1]) || columns;\n\n    // Fade source cell (no in-grid preview — avoids layout reflow)\n    cell.style.opacity = '0.3';\n\n    // Floating position label near cursor\n    const label = document.createElement('div');\n    label.style.cssText = `\n      position: fixed; pointer-events: none; z-index: 999999;\n      padding: 3px 8px; background: var(--color-primary, #7c3aed); color: white;\n      border-radius: var(--border-radius, 4px); font-size: 0.6875rem; font-weight: 500;\n      white-space: nowrap;\n    `;\n    document.body.appendChild(label);\n\n    let targetCol = 1;\n    let targetRow = 1;\n\n    const onMouseMove = (me) => {\n      // Column from X\n      const relX = me.clientX - gridRect.left;\n      targetCol = Math.min(columns - currentColSpan + 1, Math.max(1, Math.floor(relX / colWidth) + 1));\n\n      // Row from Y — calculate directly from fixed row height\n      const relY = me.clientY - gridRect.top - gridPaddingTop;\n      targetRow = Math.max(1, Math.floor(relY / rowHeight) + 1);\n\n      // Update label\n      label.style.left = (me.clientX + 14) + 'px';\n      label.style.top = (me.clientY - 12) + 'px';\n      label.textContent = `col ${targetCol}, row ${targetRow}`;\n    };\n\n    const onMouseUp = () => {\n      document.removeEventListener('mousemove', onMouseMove);\n      document.removeEventListener('mouseup', onMouseUp);\n      cell.style.opacity = '';\n      label.remove();\n\n      callbacks.onMove(childId, { col: targetCol, row: targetRow });\n    };\n\n    document.addEventListener('mousemove', onMouseMove);\n    document.addEventListener('mouseup', onMouseUp);\n  });\n}\n\n// --- Internal: resize handle ---\nfunction attachResizeHandle(handle, cell, pageItem, childId, callbacks, posLabel) {\n  const columns = pageItem.content?.columns || 12;\n  const gap = pageItem.content?.gap || 8;\n  const rowHeight = pageItem.content?.rowHeight || 40;\n\n  handle.addEventListener('mousedown', (e) => {\n    e.preventDefault();\n    e.stopPropagation();\n\n    const grid = cell.parentElement;\n    if (!grid) return;\n    const gridRect = grid.getBoundingClientRect();\n    const colWidth = (gridRect.width - gap * (columns - 1)) / columns + gap;\n\n    const startX = e.clientX;\n    const startY = e.clientY;\n    const cellRect = cell.getBoundingClientRect();\n    const startColSpan = parseInt(cell.style.gridColumn?.match(/span (\\d+)/)?.[1]) || columns;\n    const startRowSpan = parseInt(cell.style.gridRow?.match(/span (\\d+)/)?.[1]) || 1;\n\n    let newColSpan = startColSpan;\n    let newRowSpan = startRowSpan;\n\n    const onMouseMove = (me) => {\n      const deltaX = me.clientX - startX;\n      const deltaY = me.clientY - startY;\n      newColSpan = Math.max(1, Math.min(columns, Math.round((cellRect.width + deltaX) / colWidth)));\n      newRowSpan = Math.max(1, Math.round((cellRect.height + deltaY) / rowHeight));\n\n      // Live preview — columns\n      const currentCol = cell.style.gridColumn?.match(/^(\\d+)/)?.[1] || '1';\n      const maxSpan = columns - parseInt(currentCol) + 1;\n      newColSpan = Math.min(newColSpan, maxSpan);\n      cell.style.gridColumn = `${currentCol} / span ${newColSpan}`;\n\n      // Live preview — rows\n      const currentRow = cell.style.gridRow?.match(/^(\\d+)/)?.[1] || '1';\n      cell.style.gridRow = `${currentRow} / span ${newRowSpan}`;\n\n      // Update position label live\n      if (posLabel) {\n        posLabel.textContent = `c${currentCol} r${currentRow} ${newColSpan}\\u00d7${newRowSpan}`;\n      }\n    };\n\n    const onMouseUp = () => {\n      document.removeEventListener('mousemove', onMouseMove);\n      document.removeEventListener('mouseup', onMouseUp);\n\n      callbacks.onResize(childId, { colSpan: newColSpan, rowSpan: newRowSpan });\n    };\n\n    document.addEventListener('mousemove', onMouseMove);\n    document.addEventListener('mouseup', onMouseUp);\n  });\n}\n",
+    "_symbols": {
+      "renderToolbar": {
+        "name": "renderToolbar",
+        "line": 10,
+        "col": 7,
+        "endLine": 57,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(pageItem, api, callbacks)",
+        "description": "Renders the design toolbar above the grid.",
+        "params": [
+          {
+            "name": "pageItem",
+            "type": "Object",
+            "description": "The app-page item"
+          },
+          {
+            "name": "api",
+            "type": "Object",
+            "description": "Hobson API"
+          },
+          {
+            "name": "callbacks",
+            "type": "Object",
+            "description": "{ onToggle, onAddWidget }"
+          }
+        ],
+        "returns": {
+          "type": "HTMLElement"
+        }
+      },
+      "renderToolbar.toolbar": {
+        "name": "toolbar",
+        "line": 11,
+        "col": 8,
+        "endLine": 11,
+        "endCol": 47,
+        "kind": "variable",
+        "scope": "renderToolbar"
+      },
+      "renderToolbar.toggleBtn": {
+        "name": "toggleBtn",
+        "line": 20,
+        "col": 8,
+        "endLine": 20,
+        "endCol": 52,
+        "kind": "variable",
+        "scope": "renderToolbar"
+      },
+      "renderToolbar.addBtn": {
+        "name": "addBtn",
+        "line": 32,
+        "col": 8,
+        "endLine": 32,
+        "endCol": 49,
+        "kind": "variable",
+        "scope": "renderToolbar"
+      },
+      "renderToolbar.columns": {
+        "name": "columns",
+        "line": 48,
+        "col": 8,
+        "endLine": 48,
+        "endCol": 49,
+        "kind": "variable",
+        "scope": "renderToolbar"
+      },
+      "renderToolbar.gap": {
+        "name": "gap",
+        "line": 49,
+        "col": 8,
+        "endLine": 49,
+        "endCol": 40,
+        "kind": "variable",
+        "scope": "renderToolbar"
+      },
+      "renderToolbar.rowHeight": {
+        "name": "rowHeight",
+        "line": 50,
+        "col": 8,
+        "endLine": 50,
+        "endCol": 53,
+        "kind": "variable",
+        "scope": "renderToolbar"
+      },
+      "renderToolbar.info": {
+        "name": "info",
+        "line": 51,
+        "col": 8,
+        "endLine": 51,
+        "endCol": 45,
+        "kind": "variable",
+        "scope": "renderToolbar"
+      },
+      "wrapWidgetForDesign": {
+        "name": "wrapWidgetForDesign",
+        "line": 69,
+        "col": 7,
+        "endLine": 189,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(widgetElement, childSpec, childItem, pageItem, api, callbacks)",
+        "description": "Wraps a rendered widget cell with a design overlay.",
+        "params": [
+          {
+            "name": "widgetElement",
+            "type": "HTMLElement",
+            "description": "The rendered widget DOM"
+          },
+          {
+            "name": "childSpec",
+            "type": "Object",
+            "description": "The attachment spec { id, view }"
+          },
+          {
+            "name": "childItem",
+            "type": "Object",
+            "description": "The loaded child item"
+          },
+          {
+            "name": "pageItem",
+            "type": "Object",
+            "description": "The parent app-page item"
+          },
+          {
+            "name": "api",
+            "type": "Object",
+            "description": "Hobson API"
+          },
+          {
+            "name": "callbacks",
+            "type": "Object",
+            "description": "{ onSelect, onMove, onResize, onDelete, onEdit }"
+          }
+        ],
+        "returns": {
+          "type": "HTMLElement"
+        }
+      },
+      "wrapWidgetForDesign.columns": {
+        "name": "columns",
+        "line": 70,
+        "col": 8,
+        "endLine": 70,
+        "endCol": 49,
+        "kind": "variable",
+        "scope": "wrapWidgetForDesign"
+      },
+      "wrapWidgetForDesign.childId": {
+        "name": "childId",
+        "line": 71,
+        "col": 8,
+        "endLine": 71,
+        "endCol": 74,
+        "kind": "variable",
+        "scope": "wrapWidgetForDesign"
+      },
+      "wrapWidgetForDesign.viewConfig": {
+        "name": "viewConfig",
+        "line": 72,
+        "col": 8,
+        "endLine": 72,
+        "endCol": 82,
+        "kind": "variable",
+        "scope": "wrapWidgetForDesign"
+      },
+      "wrapWidgetForDesign.col": {
+        "name": "col",
+        "line": 74,
+        "col": 8,
+        "endLine": 74,
+        "endCol": 33,
+        "kind": "variable",
+        "scope": "wrapWidgetForDesign"
+      },
+      "wrapWidgetForDesign.row": {
+        "name": "row",
+        "line": 75,
+        "col": 8,
+        "endLine": 75,
+        "endCol": 38,
+        "kind": "variable",
+        "scope": "wrapWidgetForDesign"
+      },
+      "wrapWidgetForDesign.colSpan": {
+        "name": "colSpan",
+        "line": 76,
+        "col": 8,
+        "endLine": 76,
+        "endCol": 47,
+        "kind": "variable",
+        "scope": "wrapWidgetForDesign"
+      },
+      "wrapWidgetForDesign.rowSpan": {
+        "name": "rowSpan",
+        "line": 77,
+        "col": 8,
+        "endLine": 77,
+        "endCol": 41,
+        "kind": "variable",
+        "scope": "wrapWidgetForDesign"
+      },
+      "wrapWidgetForDesign.cell": {
+        "name": "cell",
+        "line": 80,
+        "col": 8,
+        "endLine": 80,
+        "endCol": 44,
+        "kind": "variable",
+        "scope": "wrapWidgetForDesign"
+      },
+      "wrapWidgetForDesign.grid": {
+        "name": "grid",
+        "line": 95,
+        "col": 10,
+        "endLine": 95,
+        "endCol": 35,
+        "kind": "variable",
+        "scope": "wrapWidgetForDesign"
+      },
+      "wrapWidgetForDesign.header": {
+        "name": "header",
+        "line": 116,
+        "col": 8,
+        "endLine": 116,
+        "endCol": 46,
+        "kind": "variable",
+        "scope": "wrapWidgetForDesign"
+      },
+      "wrapWidgetForDesign.dragHandle": {
+        "name": "dragHandle",
+        "line": 124,
+        "col": 8,
+        "endLine": 124,
+        "endCol": 51,
+        "kind": "variable",
+        "scope": "wrapWidgetForDesign"
+      },
+      "wrapWidgetForDesign.nameEl": {
+        "name": "nameEl",
+        "line": 131,
+        "col": 8,
+        "endLine": 131,
+        "endCol": 47,
+        "kind": "variable",
+        "scope": "wrapWidgetForDesign"
+      },
+      "wrapWidgetForDesign.posLabel": {
+        "name": "posLabel",
+        "line": 137,
+        "col": 8,
+        "endLine": 137,
+        "endCol": 49,
+        "kind": "variable",
+        "scope": "wrapWidgetForDesign"
+      },
+      "wrapWidgetForDesign.editBtn": {
+        "name": "editBtn",
+        "line": 143,
+        "col": 8,
+        "endLine": 143,
+        "endCol": 50,
+        "kind": "variable",
+        "scope": "wrapWidgetForDesign"
+      },
+      "wrapWidgetForDesign.deleteBtn": {
+        "name": "deleteBtn",
+        "line": 154,
+        "col": 8,
+        "endLine": 154,
+        "endCol": 52,
+        "kind": "variable",
+        "scope": "wrapWidgetForDesign"
+      },
+      "wrapWidgetForDesign.contentWrap": {
+        "name": "contentWrap",
+        "line": 167,
+        "col": 8,
+        "endLine": 167,
+        "endCol": 51,
+        "kind": "variable",
+        "scope": "wrapWidgetForDesign"
+      },
+      "wrapWidgetForDesign.resizeHandle": {
+        "name": "resizeHandle",
+        "line": 173,
+        "col": 8,
+        "endLine": 173,
+        "endCol": 52,
+        "kind": "variable",
+        "scope": "wrapWidgetForDesign"
+      },
+      "renderColumnOverlay": {
+        "name": "renderColumnOverlay",
+        "line": 196,
+        "col": 7,
+        "endLine": 214,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(gridEl, columns)",
+        "description": "Renders semi-transparent column overlay lines behind the grid.",
+        "params": [
+          {
+            "name": "gridEl",
+            "type": "HTMLElement",
+            "description": "The grid container"
+          },
+          {
+            "name": "columns",
+            "type": "number",
+            "description": "Number of columns"
+          }
+        ]
+      },
+      "renderColumnOverlay.overlay": {
+        "name": "overlay",
+        "line": 197,
+        "col": 8,
+        "endLine": 197,
+        "endCol": 47,
+        "kind": "variable",
+        "scope": "renderColumnOverlay"
+      },
+      "renderColumnOverlay.i": {
+        "name": "i",
+        "line": 204,
+        "col": 11,
+        "endLine": 204,
+        "endCol": 16,
+        "kind": "variable",
+        "scope": "renderColumnOverlay"
+      },
+      "renderColumnOverlay.col": {
+        "name": "col",
+        "line": 205,
+        "col": 10,
+        "endLine": 205,
+        "endCol": 45,
+        "kind": "variable",
+        "scope": "renderColumnOverlay"
+      },
+      "showWidgetPicker": {
+        "name": "showWidgetPicker",
+        "line": 221,
+        "col": 7,
+        "endLine": 348,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(api)",
+        "description": "Shows a two-tab modal picker: \"Attach Existing\" (item search) or \"Create New\" (tag-filtered types).",
+        "params": [
+          {
+            "name": "api",
+            "type": "Object",
+            "description": "Hobson API"
+          }
+        ],
+        "returns": {
+          "type": "Promise<{mode:'create',typeId:string",
+          "description": "|{mode:'attach',item:Object}|null>}"
+        }
+      },
+      "showWidgetPicker.PAGE_WIDGET_TAG": {
+        "name": "PAGE_WIDGET_TAG",
+        "line": 222,
+        "col": 8,
+        "endLine": 222,
+        "endCol": 64,
+        "kind": "variable",
+        "scope": "showWidgetPicker"
+      },
+      "showWidgetPicker.modalLib": {
+        "name": "modalLib",
+        "line": 223,
+        "col": 8,
+        "endLine": 223,
+        "endCol": 49,
+        "kind": "variable",
+        "scope": "showWidgetPicker"
+      },
+      "showWidgetPicker.resolved": {
+        "name": "resolved",
+        "line": 226,
+        "col": 8,
+        "endLine": 226,
+        "endCol": 24,
+        "kind": "variable",
+        "scope": "showWidgetPicker"
+      },
+      "showWidgetPicker.title": {
+        "name": "title",
+        "line": 228,
+        "col": 6,
+        "endLine": 228,
+        "endCol": 25,
+        "kind": "property",
+        "scope": "showWidgetPicker"
+      },
+      "showWidgetPicker.width": {
+        "name": "width",
+        "line": 229,
+        "col": 6,
+        "endLine": 229,
+        "endCol": 20,
+        "kind": "property",
+        "scope": "showWidgetPicker"
+      },
+      "showWidgetPicker.onClose": {
+        "name": "onClose",
+        "line": 230,
+        "col": 6,
+        "endLine": 230,
+        "endCol": 54,
+        "kind": "property-function",
+        "scope": "showWidgetPicker",
+        "signature": "()"
+      },
+      "showWidgetPicker.content": {
+        "name": "content",
+        "line": 231,
+        "col": 6,
+        "endLine": 345,
+        "endCol": 7,
+        "kind": "property-function",
+        "scope": "showWidgetPicker",
+        "signature": "({ ... })"
+      },
+      "showWidgetPicker.content.container": {
+        "name": "container",
+        "line": 232,
+        "col": 14,
+        "endLine": 232,
+        "endCol": 55,
+        "kind": "variable",
+        "scope": "showWidgetPicker.content"
+      },
+      "showWidgetPicker.content.tabBar": {
+        "name": "tabBar",
+        "line": 235,
+        "col": 14,
+        "endLine": 235,
+        "endCol": 52,
+        "kind": "variable",
+        "scope": "showWidgetPicker.content"
+      },
+      "showWidgetPicker.content.tabs": {
+        "name": "tabs",
+        "line": 238,
+        "col": 14,
+        "endLine": 238,
+        "endCol": 54,
+        "kind": "variable",
+        "scope": "showWidgetPicker.content"
+      },
+      "showWidgetPicker.content.tabBtns": {
+        "name": "tabBtns",
+        "line": 239,
+        "col": 14,
+        "endLine": 239,
+        "endCol": 26,
+        "kind": "variable",
+        "scope": "showWidgetPicker.content"
+      },
+      "showWidgetPicker.content.panels": {
+        "name": "panels",
+        "line": 240,
+        "col": 14,
+        "endLine": 240,
+        "endCol": 25,
+        "kind": "variable",
+        "scope": "showWidgetPicker.content"
+      },
+      "showWidgetPicker.content.activeTab": {
+        "name": "activeTab",
+        "line": 241,
+        "col": 12,
+        "endLine": 241,
+        "endCol": 25,
+        "kind": "variable",
+        "scope": "showWidgetPicker.content"
+      },
+      "showWidgetPicker.content.tabBtnStyle": {
+        "name": "tabBtnStyle",
+        "line": 243,
+        "col": 14,
+        "endLine": 247,
+        "endCol": 9,
+        "kind": "function",
+        "scope": "showWidgetPicker.content",
+        "signature": "(active)"
+      },
+      "showWidgetPicker.content.switchTab": {
+        "name": "switchTab",
+        "line": 249,
+        "col": 8,
+        "endLine": 253,
+        "endCol": 9,
+        "kind": "function",
+        "scope": "showWidgetPicker.content",
+        "signature": "(idx)"
+      },
+      "showWidgetPicker.content.i": {
+        "name": "i",
+        "line": 255,
+        "col": 17,
+        "endLine": 255,
+        "endCol": 22,
+        "kind": "variable",
+        "scope": "showWidgetPicker.content"
+      },
+      "showWidgetPicker.content.btn": {
+        "name": "btn",
+        "line": 310,
+        "col": 18,
+        "endLine": 310,
+        "endCol": 56,
+        "kind": "variable",
+        "scope": "showWidgetPicker.content"
+      },
+      "showWidgetPicker.content.attachPanel": {
+        "name": "attachPanel",
+        "line": 266,
+        "col": 14,
+        "endLine": 266,
+        "endCol": 57,
+        "kind": "variable",
+        "scope": "showWidgetPicker.content"
+      },
+      "showWidgetPicker.content.searchLib": {
+        "name": "searchLib",
+        "line": 273,
+        "col": 18,
+        "endLine": 273,
+        "endCol": 66,
+        "kind": "variable",
+        "scope": "showWidgetPicker.content"
+      },
+      "showWidgetPicker.content.mode": {
+        "name": "mode",
+        "line": 334,
+        "col": 24,
+        "endLine": 334,
+        "endCol": 38,
+        "kind": "property",
+        "scope": "showWidgetPicker.content"
+      },
+      "showWidgetPicker.content.item": {
+        "name": "item",
+        "line": 277,
+        "col": 40,
+        "endLine": 277,
+        "endCol": 44,
+        "kind": "property",
+        "scope": "showWidgetPicker.content"
+      },
+      "showWidgetPicker.content.placeholder": {
+        "name": "placeholder",
+        "line": 278,
+        "col": 22,
+        "endLine": 278,
+        "endCol": 52,
+        "kind": "property",
+        "scope": "showWidgetPicker.content"
+      },
+      "showWidgetPicker.content.autoFocus": {
+        "name": "autoFocus",
+        "line": 278,
+        "col": 54,
+        "endLine": 278,
+        "endCol": 69,
+        "kind": "property",
+        "scope": "showWidgetPicker.content"
+      },
+      "showWidgetPicker.content.createPanel": {
+        "name": "createPanel",
+        "line": 287,
+        "col": 14,
+        "endLine": 287,
+        "endCol": 57,
+        "kind": "variable",
+        "scope": "showWidgetPicker.content"
+      },
+      "showWidgetPicker.content.TYPE_DEF": {
+        "name": "TYPE_DEF",
+        "line": 294,
+        "col": 16,
+        "endLine": 294,
+        "endCol": 65,
+        "kind": "variable",
+        "scope": "showWidgetPicker.content"
+      },
+      "showWidgetPicker.content.allTypeDefs": {
+        "name": "allTypeDefs",
+        "line": 295,
+        "col": 16,
+        "endLine": 295,
+        "endCol": 65,
+        "kind": "variable",
+        "scope": "showWidgetPicker.content"
+      },
+      "showWidgetPicker.content.widgetTypes": {
+        "name": "widgetTypes",
+        "line": 296,
+        "col": 16,
+        "endLine": 296,
+        "endCol": 106,
+        "kind": "variable",
+        "scope": "showWidgetPicker.content"
+      },
+      "showWidgetPicker.content.empty": {
+        "name": "empty",
+        "line": 299,
+        "col": 18,
+        "endLine": 299,
+        "endCol": 53,
+        "kind": "variable",
+        "scope": "showWidgetPicker.content"
+      },
+      "showWidgetPicker.content.list": {
+        "name": "list",
+        "line": 306,
+        "col": 16,
+        "endLine": 306,
+        "endCol": 52,
+        "kind": "variable",
+        "scope": "showWidgetPicker.content"
+      },
+      "showWidgetPicker.content.wt": {
+        "name": "wt",
+        "line": 309,
+        "col": 21,
+        "endLine": 309,
+        "endCol": 23,
+        "kind": "variable",
+        "scope": "showWidgetPicker.content"
+      },
+      "showWidgetPicker.content.nameSpan": {
+        "name": "nameSpan",
+        "line": 320,
+        "col": 18,
+        "endLine": 320,
+        "endCol": 61,
+        "kind": "variable",
+        "scope": "showWidgetPicker.content"
+      },
+      "showWidgetPicker.content.desc": {
+        "name": "desc",
+        "line": 325,
+        "col": 20,
+        "endLine": 325,
+        "endCol": 56,
+        "kind": "variable",
+        "scope": "showWidgetPicker.content"
+      },
+      "showWidgetPicker.content.typeId": {
+        "name": "typeId",
+        "line": 334,
+        "col": 40,
+        "endLine": 334,
+        "endCol": 53,
+        "kind": "property",
+        "scope": "showWidgetPicker.content"
+      },
+      "attachDragToReposition": {
+        "name": "attachDragToReposition",
+        "line": 351,
+        "col": 0,
+        "endLine": 410,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(handle, cell, pageItem, childId, callbacks)"
+      },
+      "attachDragToReposition.columns": {
+        "name": "columns",
+        "line": 352,
+        "col": 8,
+        "endLine": 352,
+        "endCol": 49,
+        "kind": "variable",
+        "scope": "attachDragToReposition"
+      },
+      "attachDragToReposition.gap": {
+        "name": "gap",
+        "line": 353,
+        "col": 8,
+        "endLine": 353,
+        "endCol": 40,
+        "kind": "variable",
+        "scope": "attachDragToReposition"
+      },
+      "attachDragToReposition.rowHeight": {
+        "name": "rowHeight",
+        "line": 354,
+        "col": 8,
+        "endLine": 354,
+        "endCol": 53,
+        "kind": "variable",
+        "scope": "attachDragToReposition"
+      },
+      "attachDragToReposition.grid": {
+        "name": "grid",
+        "line": 360,
+        "col": 10,
+        "endLine": 360,
+        "endCol": 35,
+        "kind": "variable",
+        "scope": "attachDragToReposition"
+      },
+      "attachDragToReposition.gridRect": {
+        "name": "gridRect",
+        "line": 362,
+        "col": 10,
+        "endLine": 362,
+        "endCol": 49,
+        "kind": "variable",
+        "scope": "attachDragToReposition"
+      },
+      "attachDragToReposition.gridPaddingTop": {
+        "name": "gridPaddingTop",
+        "line": 363,
+        "col": 10,
+        "endLine": 363,
+        "endCol": 77,
+        "kind": "variable",
+        "scope": "attachDragToReposition"
+      },
+      "attachDragToReposition.colWidth": {
+        "name": "colWidth",
+        "line": 364,
+        "col": 10,
+        "endLine": 364,
+        "endCol": 75,
+        "kind": "variable",
+        "scope": "attachDragToReposition"
+      },
+      "attachDragToReposition.currentColSpan": {
+        "name": "currentColSpan",
+        "line": 365,
+        "col": 10,
+        "endLine": 365,
+        "endCol": 95,
+        "kind": "variable",
+        "scope": "attachDragToReposition"
+      },
+      "attachDragToReposition.label": {
+        "name": "label",
+        "line": 371,
+        "col": 10,
+        "endLine": 371,
+        "endCol": 47,
+        "kind": "variable",
+        "scope": "attachDragToReposition"
+      },
+      "attachDragToReposition.targetCol": {
+        "name": "targetCol",
+        "line": 380,
+        "col": 8,
+        "endLine": 380,
+        "endCol": 21,
+        "kind": "variable",
+        "scope": "attachDragToReposition"
+      },
+      "attachDragToReposition.targetRow": {
+        "name": "targetRow",
+        "line": 381,
+        "col": 8,
+        "endLine": 381,
+        "endCol": 21,
+        "kind": "variable",
+        "scope": "attachDragToReposition"
+      },
+      "attachDragToReposition.onMouseMove": {
+        "name": "onMouseMove",
+        "line": 383,
+        "col": 10,
+        "endLine": 396,
+        "endCol": 5,
+        "kind": "function",
+        "scope": "attachDragToReposition",
+        "signature": "(me)"
+      },
+      "onMouseMove.relX": {
+        "name": "relX",
+        "line": 385,
+        "col": 12,
+        "endLine": 385,
+        "endCol": 45,
+        "kind": "variable",
+        "scope": "onMouseMove"
+      },
+      "onMouseMove.relY": {
+        "name": "relY",
+        "line": 389,
+        "col": 12,
+        "endLine": 389,
+        "endCol": 61,
+        "kind": "variable",
+        "scope": "onMouseMove"
+      },
+      "attachDragToReposition.onMouseUp": {
+        "name": "onMouseUp",
+        "line": 398,
+        "col": 10,
+        "endLine": 405,
+        "endCol": 5,
+        "kind": "function",
+        "scope": "attachDragToReposition",
+        "signature": "()"
+      },
+      "onMouseUp.col": {
+        "name": "col",
+        "line": 404,
+        "col": 34,
+        "endLine": 404,
+        "endCol": 48,
+        "kind": "property",
+        "scope": "onMouseUp"
+      },
+      "onMouseUp.row": {
+        "name": "row",
+        "line": 404,
+        "col": 50,
+        "endLine": 404,
+        "endCol": 64,
+        "kind": "property",
+        "scope": "onMouseUp"
+      },
+      "attachResizeHandle": {
+        "name": "attachResizeHandle",
+        "line": 413,
+        "col": 0,
+        "endLine": 468,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(handle, cell, pageItem, childId, callbacks, posLabel)"
+      },
+      "attachResizeHandle.columns": {
+        "name": "columns",
+        "line": 414,
+        "col": 8,
+        "endLine": 414,
+        "endCol": 49,
+        "kind": "variable",
+        "scope": "attachResizeHandle"
+      },
+      "attachResizeHandle.gap": {
+        "name": "gap",
+        "line": 415,
+        "col": 8,
+        "endLine": 415,
+        "endCol": 40,
+        "kind": "variable",
+        "scope": "attachResizeHandle"
+      },
+      "attachResizeHandle.rowHeight": {
+        "name": "rowHeight",
+        "line": 416,
+        "col": 8,
+        "endLine": 416,
+        "endCol": 53,
+        "kind": "variable",
+        "scope": "attachResizeHandle"
+      },
+      "attachResizeHandle.grid": {
+        "name": "grid",
+        "line": 422,
+        "col": 10,
+        "endLine": 422,
+        "endCol": 35,
+        "kind": "variable",
+        "scope": "attachResizeHandle"
+      },
+      "attachResizeHandle.gridRect": {
+        "name": "gridRect",
+        "line": 424,
+        "col": 10,
+        "endLine": 424,
+        "endCol": 49,
+        "kind": "variable",
+        "scope": "attachResizeHandle"
+      },
+      "attachResizeHandle.colWidth": {
+        "name": "colWidth",
+        "line": 425,
+        "col": 10,
+        "endLine": 425,
+        "endCol": 75,
+        "kind": "variable",
+        "scope": "attachResizeHandle"
+      },
+      "attachResizeHandle.startX": {
+        "name": "startX",
+        "line": 427,
+        "col": 10,
+        "endLine": 427,
+        "endCol": 28,
+        "kind": "variable",
+        "scope": "attachResizeHandle"
+      },
+      "attachResizeHandle.startY": {
+        "name": "startY",
+        "line": 428,
+        "col": 10,
+        "endLine": 428,
+        "endCol": 28,
+        "kind": "variable",
+        "scope": "attachResizeHandle"
+      },
+      "attachResizeHandle.cellRect": {
+        "name": "cellRect",
+        "line": 429,
+        "col": 10,
+        "endLine": 429,
+        "endCol": 49,
+        "kind": "variable",
+        "scope": "attachResizeHandle"
+      },
+      "attachResizeHandle.startColSpan": {
+        "name": "startColSpan",
+        "line": 430,
+        "col": 10,
+        "endLine": 430,
+        "endCol": 93,
+        "kind": "variable",
+        "scope": "attachResizeHandle"
+      },
+      "attachResizeHandle.startRowSpan": {
+        "name": "startRowSpan",
+        "line": 431,
+        "col": 10,
+        "endLine": 431,
+        "endCol": 84,
+        "kind": "variable",
+        "scope": "attachResizeHandle"
+      },
+      "attachResizeHandle.newColSpan": {
+        "name": "newColSpan",
+        "line": 433,
+        "col": 8,
+        "endLine": 433,
+        "endCol": 33,
+        "kind": "variable",
+        "scope": "attachResizeHandle"
+      },
+      "attachResizeHandle.newRowSpan": {
+        "name": "newRowSpan",
+        "line": 434,
+        "col": 8,
+        "endLine": 434,
+        "endCol": 33,
+        "kind": "variable",
+        "scope": "attachResizeHandle"
+      },
+      "attachResizeHandle.onMouseMove": {
+        "name": "onMouseMove",
+        "line": 436,
+        "col": 10,
+        "endLine": 456,
+        "endCol": 5,
+        "kind": "function",
+        "scope": "attachResizeHandle",
+        "signature": "(me)"
+      },
+      "onMouseMove.deltaX": {
+        "name": "deltaX",
+        "line": 437,
+        "col": 12,
+        "endLine": 437,
+        "endCol": 40,
+        "kind": "variable",
+        "scope": "onMouseMove"
+      },
+      "onMouseMove.deltaY": {
+        "name": "deltaY",
+        "line": 438,
+        "col": 12,
+        "endLine": 438,
+        "endCol": 40,
+        "kind": "variable",
+        "scope": "onMouseMove"
+      },
+      "onMouseMove.currentCol": {
+        "name": "currentCol",
+        "line": 443,
+        "col": 12,
+        "endLine": 443,
+        "endCol": 75,
+        "kind": "variable",
+        "scope": "onMouseMove"
+      },
+      "onMouseMove.maxSpan": {
+        "name": "maxSpan",
+        "line": 444,
+        "col": 12,
+        "endLine": 444,
+        "endCol": 56,
+        "kind": "variable",
+        "scope": "onMouseMove"
+      },
+      "onMouseMove.currentRow": {
+        "name": "currentRow",
+        "line": 449,
+        "col": 12,
+        "endLine": 449,
+        "endCol": 72,
+        "kind": "variable",
+        "scope": "onMouseMove"
+      },
+      "attachResizeHandle.onMouseUp": {
+        "name": "onMouseUp",
+        "line": 458,
+        "col": 10,
+        "endLine": 463,
+        "endCol": 5,
+        "kind": "function",
+        "scope": "attachResizeHandle",
+        "signature": "()"
+      },
+      "onMouseUp.colSpan": {
+        "name": "colSpan",
+        "line": 462,
+        "col": 36,
+        "endLine": 462,
+        "endCol": 55,
+        "kind": "property",
+        "scope": "onMouseUp"
+      },
+      "onMouseUp.rowSpan": {
+        "name": "rowSpan",
+        "line": 462,
+        "col": 57,
+        "endLine": 462,
+        "endCol": 76,
+        "kind": "property",
+        "scope": "onMouseUp"
+      }
+    }
   },
   "attachments": []
 }
