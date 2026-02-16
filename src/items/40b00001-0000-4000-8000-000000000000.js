@@ -446,6 +446,9 @@ function read(source) {
 
 // Read multiple top-level expressions
 function readAll(source) {
+  // Support JSON AST arrays (compact format) transparently
+  if (Array.isArray(source)) return source.map(expandCompact);
+
   const trimmed = source.trim();
   if (!trimmed) return [];
   const tokens = tokenize(trimmed);
@@ -518,39 +521,147 @@ function compactifyAll(source) {
 }
 
 // Compact JSON → pretty-printed s-expression text
+// Handles let bindings, body forms, hiccup vectors, and maps idiomatically.
+
+const BODY_FORMS = new Set([
+  'let', 'when', 'if', 'do', 'fn', 'defn', 'for', 'doseq', 'cond',
+  'when-let', 'loop', 'try', 'catch', 'def', 'defmacro', 'plet',
+  '->', '->>', 'as->', 'defmacro', 'quote', 'quasiquote',
+]);
+
+const BINDING_FORMS = new Set(['let', 'loop', 'when-let', 'plet']);
+
+function ppStr(s) {
+  return '"' + s.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n').replace(/\t/g, '\\t') + '"';
+}
+
 function prettyPrint(json, indent = 0) {
   if (json === null) return 'nil';
   if (typeof json === 'number') return String(json);
   if (typeof json === 'boolean') return json ? 'true' : 'false';
-  if (typeof json === 'string') {
-    if (json.startsWith(':')) return json;       // keyword already has ':'
-    if (json.startsWith('@')) return json;       // item-ref already has '@'
-    return json;                                  // symbol
-  }
+  if (typeof json === 'string') return json; // symbol, keyword (:x), item-ref (@x)
   if (typeof json === 'object' && !Array.isArray(json)) {
-    if ('s' in json) {
-      return '"' + json.s.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n').replace(/\t/g, '\\t') + '"';
-    }
-    if ('v' in json) {
-      const inner = json.v.map(el => prettyPrint(el, indent)).join(' ');
-      return '[' + inner + ']';
-    }
-    if ('m' in json) {
-      const pairs = json.m.map(([k, v]) => prettyPrint(k, indent) + ' ' + prettyPrint(v, indent));
-      return '{' + pairs.join(' ') + '}';
-    }
+    if ('s' in json) return ppStr(json.s);
+    if ('v' in json) return ppVec(json.v, indent);
+    if ('m' in json) return ppMap(json.m, indent);
   }
-  if (Array.isArray(json)) {
-    if (json.length === 0) return '()';
-    const parts = json.map(el => prettyPrint(el, indent + 2));
-    const flat = '(' + parts.join(' ') + ')';
-    if (flat.length <= 80 - indent) return flat;
-    // Multi-line: first element on same line, rest indented
-    const head = parts[0];
-    const rest = parts.slice(1).map(p => ' '.repeat(indent + 2) + p);
+  if (Array.isArray(json)) return ppList(json, indent);
+  return String(json);
+}
+
+function ppList(list, indent) {
+  if (list.length === 0) return '()';
+  // Try flat
+  const flat = '(' + list.map(e => prettyPrint(e, 0)).join(' ') + ')';
+  if (flat.length + indent <= 80) return flat;
+
+  const head = typeof list[0] === 'string' ? list[0] : null;
+  const bi = indent + 2; // body indent
+
+  // Binding forms: (let [name val ...]\n  body...)
+  if (head && BINDING_FORMS.has(head) && list.length >= 3 && list[1]?.v) {
+    const bracketCol = indent + 1 + head.length + 1; // position of '['
+    const binds = ppBindings(list[1].v, bracketCol);
+    const body = list.slice(2).map(b => ' '.repeat(bi) + prettyPrint(b, bi));
+    return '(' + head + ' ' + binds + '\n' + body.join('\n') + ')';
+  }
+
+  // fn/defn: keep params on head line
+  if (head === 'fn' && list.length >= 3 && list[1]?.v) {
+    const params = ppVec(list[1].v, indent + 4);
+    const body = list.slice(2).map(b => ' '.repeat(bi) + prettyPrint(b, bi));
+    return '(fn ' + params + '\n' + body.join('\n') + ')';
+  }
+  if (head === 'defn' && list.length >= 4 && list[2]?.v) {
+    const name = prettyPrint(list[1], 0);
+    const params = ppVec(list[2].v, indent + 7 + name.length);
+    const body = list.slice(3).map(b => ' '.repeat(bi) + prettyPrint(b, bi));
+    return '(defn ' + name + ' ' + params + '\n' + body.join('\n') + ')';
+  }
+
+  // for/doseq: keep binding vec on head line
+  if ((head === 'for' || head === 'doseq') && list.length >= 3 && list[1]?.v) {
+    const binds = ppVec(list[1].v, indent + head.length + 2);
+    const body = list.slice(2).map(b => ' '.repeat(bi) + prettyPrint(b, bi));
+    return '(' + head + ' ' + binds + '\n' + body.join('\n') + ')';
+  }
+
+  // Body forms: (head arg1\n  arg2\n  arg3)
+  if (head && BODY_FORMS.has(head)) {
+    const rest = list.slice(1).map(e => ' '.repeat(bi) + prettyPrint(e, bi));
     return '(' + head + '\n' + rest.join('\n') + ')';
   }
-  return String(json);
+
+  // Default: (head arg1\n  arg2\n  arg3)
+  const parts = list.map(e => prettyPrint(e, bi));
+  const rest = parts.slice(1).map(p => ' '.repeat(bi) + p);
+  return '(' + parts[0] + '\n' + rest.join('\n') + ')';
+}
+
+function ppVec(elements, indent) {
+  if (elements.length === 0) return '[]';
+  // Try flat
+  const flat = '[' + elements.map(e => prettyPrint(e, 0)).join(' ') + ']';
+  if (flat.length + indent <= 80) return flat;
+
+  const ci = indent + 2; // child indent
+
+  // Hiccup vector: starts with keyword tag
+  if (typeof elements[0] === 'string' && elements[0].startsWith(':')) {
+    const tag = elements[0];
+    let attrStr = '';
+    let childStart = 1;
+    // Check for attribute map as second element
+    if (elements.length > 1 && elements[1]?.m !== undefined) {
+      attrStr = ' ' + ppMap(elements[1].m, indent + tag.length + 2);
+      childStart = 2;
+    }
+    const headLine = '[' + tag + attrStr;
+    if (childStart >= elements.length) return headLine + ']';
+    const children = elements.slice(childStart).map(c => ' '.repeat(ci) + prettyPrint(c, ci));
+    return headLine + '\n' + children.join('\n') + ']';
+  }
+
+  // Regular vector
+  const parts = elements.map(e => prettyPrint(e, ci));
+  const rest = parts.slice(1).map(p => ' '.repeat(indent + 1) + p);
+  return '[' + parts[0] + '\n' + rest.join('\n') + ']';
+}
+
+function ppMap(entries, indent) {
+  if (entries.length === 0) return '{}';
+  const flat = '{' + entries.map(([k, v]) => prettyPrint(k, 0) + ' ' + prettyPrint(v, 0)).join(' ') + '}';
+  if (flat.length + indent <= 80) return flat;
+  // One entry per line, closing } on last line
+  const ci = indent + 1;
+  const lines = entries.map(([k, v], i) => {
+    const ks = prettyPrint(k, ci);
+    const vs = prettyPrint(v, ci + ks.length + 1);
+    const suffix = i === entries.length - 1 ? '}' : '';
+    return ' '.repeat(ci) + ks + ' ' + vs + suffix;
+  });
+  return '{' + lines[0].trimStart() + '\n' + lines.slice(1).join('\n');
+}
+
+function ppBindings(elems, indent) {
+  if (elems.length === 0) return '[]';
+  // Try flat
+  const flat = '[' + elems.map(e => prettyPrint(e, 0)).join(' ') + ']';
+  if (flat.length + indent <= 80) return flat;
+  // One name-value pair per line
+  const ci = indent + 1;
+  const pairs = [];
+  for (let i = 0; i < elems.length; i += 2) {
+    const name = prettyPrint(elems[i], ci);
+    if (i + 1 < elems.length) {
+      const val = prettyPrint(elems[i + 1], ci + name.length + 1);
+      pairs.push(name + ' ' + val);
+    } else {
+      pairs.push(name);
+    }
+  }
+  const lines = pairs.map(p => ' '.repeat(ci) + p);
+  return '[' + lines[0].trimStart() + '\n' + lines.slice(1).join('\n') + ']';
 }
 
 // Pretty-print an array of top-level compact JSON expressions
