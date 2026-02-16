@@ -1759,7 +1759,7 @@ export async function loadKernel(require, storageBackend) {
           };
           parent.modified = Date.now();
 
-          await kernel.saveItem(parent);
+          await kernel.saveItem(parent, { silent: true });
           return true;
         };
 
