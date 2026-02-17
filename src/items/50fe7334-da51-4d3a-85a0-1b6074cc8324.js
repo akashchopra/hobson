@@ -1,4 +1,4 @@
-// field-view-hob-structural — Structural editor for Hob JSON AST (Phase 1: Navigation + Display)
+// field-view-hob-structural — Structural editor for Hob JSON AST (Phase 2a: Mutation Infrastructure)
 
 // --- Special forms for indentation ---
 const SPECIAL_FORMS = new Set([
@@ -78,6 +78,34 @@ function inflateAll(compactForms) {
   });
 
   return { root, nodeMap, parentMap };
+}
+
+// --- Deflater: editor AST → compact JSON AST (inverse of inflate) ---
+
+function deflate(node) {
+  switch (node.type) {
+    case 'nil': return null;
+    case 'number': return node.value;
+    case 'boolean': return node.value;
+    case 'symbol': return node.value;
+    case 'keyword': return ':' + node.value;
+    case 'item-ref': return '@' + node.value;
+    case 'string': return { s: node.value };
+    case 'list': return node.children.map(deflate);
+    case 'vector': return { v: node.children.map(deflate) };
+    case 'map': {
+      const pairs = [];
+      for (let i = 0; i < node.children.length; i += 2) {
+        pairs.push([deflate(node.children[i]), deflate(node.children[i + 1])]);
+      }
+      return { m: pairs };
+    }
+    default: return null;
+  }
+}
+
+function deflateAll(root) {
+  return root.children.map(deflate);
 }
 
 // --- Flat width calculation ---
@@ -367,6 +395,181 @@ function renderAST(root, state, itemNames, api) {
   return el;
 }
 
+// --- Rerender ---
+
+function clearFlatWidth(node) {
+  delete node._fw;
+  if (node.children) node.children.forEach(clearFlatWidth);
+}
+
+function rerender(state, itemNames, api, statusBar) {
+  // Clear cached flat widths (stale after mutations)
+  clearFlatWidth(state.nodeMap.get(0));
+
+  // Clear domMap
+  state.domMap = new Map();
+
+  // Rebuild DOM children (reuse same editorEl to preserve event listeners)
+  state.editorEl.textContent = '';
+  const root = state.nodeMap.get(0);
+  for (let i = 0; i < root.children.length; i++) {
+    if (i > 0) state.editorEl.appendChild(document.createTextNode('\n\n'));
+    state.editorEl.appendChild(renderNode(root.children[i], state, itemNames, api, 0));
+  }
+
+  // Validate selection still exists
+  if (state.selectedId != null && !state.nodeMap.has(state.selectedId)) {
+    state.selectedId = root.children[0]?.id || null;
+  }
+  state.expansionStack = [];
+
+  updateSelectionVisual(state);
+  updateStatusBar(state, statusBar);
+}
+
+// --- Undo/Redo (snapshot approach) ---
+
+function getNodePath(nodeId, state) {
+  const path = [];
+  let current = state.nodeMap.get(nodeId);
+  if (!current) return null;
+  let parent = state.parentMap.get(nodeId);
+  while (parent) {
+    const idx = parent.children.indexOf(current);
+    if (idx === -1) return null;
+    path.unshift(idx);
+    current = parent;
+    parent = state.parentMap.get(current.id);
+  }
+  return path;
+}
+
+function resolveNodePath(path, root) {
+  let node = root;
+  for (const idx of path) {
+    if (!node.children || idx >= node.children.length) return null;
+    node = node.children[idx];
+  }
+  return node;
+}
+
+function pushUndo(state) {
+  const root = state.nodeMap.get(0);
+  const compact = JSON.stringify(deflateAll(root));
+  const selectionPath = state.selectedId != null ? getNodePath(state.selectedId, state) : null;
+  state.undoStack.push({ compact, selectionPath });
+  if (state.undoStack.length > 100) state.undoStack.shift();
+  state.redoStack = [];
+}
+
+function restoreFromCompact(state, compactForms, selectionPath) {
+  const { root, nodeMap, parentMap } = inflateAll(compactForms);
+  // Replace maps in place so all references stay valid
+  state.nodeMap.clear();
+  for (const [k, v] of nodeMap) state.nodeMap.set(k, v);
+  state.parentMap.clear();
+  for (const [k, v] of parentMap) state.parentMap.set(k, v);
+  // Restore selection
+  if (selectionPath) {
+    const node = resolveNodePath(selectionPath, root);
+    state.selectedId = node ? node.id : (root.children[0]?.id || null);
+  } else {
+    state.selectedId = root.children[0]?.id || null;
+  }
+}
+
+function notifyChange(state) {
+  if (state.onChange) {
+    const root = state.nodeMap.get(0);
+    state.onChange(deflateAll(root));
+  }
+}
+
+function undo(state, itemNames, api, statusBar) {
+  if (state.undoStack.length === 0) return;
+  // Push current state to redo
+  const root = state.nodeMap.get(0);
+  const currentCompact = JSON.stringify(deflateAll(root));
+  const currentPath = state.selectedId != null ? getNodePath(state.selectedId, state) : null;
+  state.redoStack.push({ compact: currentCompact, selectionPath: currentPath });
+  // Pop undo
+  const snapshot = state.undoStack.pop();
+  restoreFromCompact(state, JSON.parse(snapshot.compact), snapshot.selectionPath);
+  rerender(state, itemNames, api, statusBar);
+  notifyChange(state);
+}
+
+function redo(state, itemNames, api, statusBar) {
+  if (state.redoStack.length === 0) return;
+  // Push current state to undo
+  const root = state.nodeMap.get(0);
+  const currentCompact = JSON.stringify(deflateAll(root));
+  const currentPath = state.selectedId != null ? getNodePath(state.selectedId, state) : null;
+  state.undoStack.push({ compact: currentCompact, selectionPath: currentPath });
+  // Pop redo
+  const snapshot = state.redoStack.pop();
+  restoreFromCompact(state, JSON.parse(snapshot.compact), snapshot.selectionPath);
+  rerender(state, itemNames, api, statusBar);
+  notifyChange(state);
+}
+
+// --- Mutation wrapper ---
+
+function applyMutation(state, itemNames, api, statusBar, mutationFn) {
+  pushUndo(state);
+  mutationFn();
+  rerender(state, itemNames, api, statusBar);
+  notifyChange(state);
+}
+
+// --- Delete operation ---
+
+function removeFromMaps(node, state) {
+  state.nodeMap.delete(node.id);
+  state.parentMap.delete(node.id);
+  if (node.children) node.children.forEach(child => removeFromMaps(child, state));
+}
+
+function deleteSelected(state) {
+  const node = state.nodeMap.get(state.selectedId);
+  if (!node) return;
+  const parent = state.parentMap.get(state.selectedId);
+  if (!parent || !parent.children) return;
+
+  // Prevent deleting the last top-level form
+  if (parent.type === 'root' && parent.children.length <= 1) return;
+
+  const idx = parent.children.indexOf(node);
+  if (idx === -1) return;
+
+  if (parent.type === 'map') {
+    // Map special case: delete the entire key-value pair
+    const pairStart = idx % 2 === 0 ? idx : idx - 1;
+    const removed = parent.children.splice(pairStart, 2);
+    removed.forEach(n => removeFromMaps(n, state));
+    // Selection: next pair, or previous pair, or parent
+    if (parent.children.length === 0) {
+      state.selectedId = parent.id;
+    } else if (pairStart < parent.children.length) {
+      state.selectedId = parent.children[pairStart].id;
+    } else {
+      state.selectedId = parent.children[parent.children.length - 2].id; // key of last pair
+    }
+  } else {
+    // Normal case: remove single child
+    parent.children.splice(idx, 1);
+    removeFromMaps(node, state);
+    // Selection: next sibling → previous sibling → parent
+    if (parent.children.length === 0) {
+      state.selectedId = parent.id;
+    } else if (idx < parent.children.length) {
+      state.selectedId = parent.children[idx].id;
+    } else {
+      state.selectedId = parent.children[idx - 1].id;
+    }
+  }
+}
+
 // --- Selection System ---
 
 function updateSelectionVisual(state) {
@@ -410,6 +613,7 @@ function nodeLabel(node) {
 function updateStatusBar(state, statusBar) {
   const breadcrumbsEl = statusBar.querySelector('.hob-breadcrumbs');
   const nodeInfoEl = statusBar.querySelector('.hob-node-info');
+  const modeEl = statusBar.querySelector('.hob-mode');
 
   if (state.selectedId == null) {
     breadcrumbsEl.textContent = '';
@@ -419,6 +623,15 @@ function updateStatusBar(state, statusBar) {
 
   const node = state.nodeMap.get(state.selectedId);
   if (!node) return;
+
+  // Update mode indicator
+  if (state.onChange) {
+    modeEl.textContent = state.mode === 'nav' ? 'NAV' : state.mode.toUpperCase();
+    modeEl.className = 'hob-mode hob-mode-nav';
+  } else {
+    modeEl.textContent = 'VIEW';
+    modeEl.className = 'hob-mode hob-mode-view';
+  }
 
   // Build breadcrumb chain
   const chain = [];
@@ -466,7 +679,8 @@ function siblingIndex(node, parentMap, nodeMap) {
   return parent.children.indexOf(node);
 }
 
-function handleKey(e, state, statusBar) {
+function handleKey(e, ctx) {
+  const { state, statusBar, itemNames, api } = ctx;
   const node = state.nodeMap.get(state.selectedId);
   if (!node) return;
   const parent = state.parentMap.get(state.selectedId);
@@ -572,6 +786,15 @@ function handleKey(e, state, statusBar) {
       state.selectedId = parent.id;
       state.expansionStack = [];
     }
+  } else if ((e.key === 'Backspace' || e.key === 'Delete') && state.onChange) {
+    // Delete selected node (editable mode only)
+    applyMutation(state, itemNames, api, statusBar, () => deleteSelected(state));
+  } else if (e.key === 'z' && (e.ctrlKey || e.metaKey) && !e.shiftKey && state.onChange) {
+    // Undo
+    undo(state, itemNames, api, statusBar);
+  } else if (e.key === 'z' && (e.ctrlKey || e.metaKey) && e.shiftKey && state.onChange) {
+    // Redo
+    redo(state, itemNames, api, statusBar);
   } else {
     handled = false;
   }
@@ -584,7 +807,8 @@ function handleKey(e, state, statusBar) {
   }
 }
 
-function handleClick(e, state, statusBar) {
+function handleClick(e, ctx) {
+  const { state, statusBar } = ctx;
   const target = e.target.closest('[data-node-id]');
   if (!target) return;
   const id = parseInt(target.getAttribute('data-node-id'), 10);
@@ -644,7 +868,11 @@ export async function render(value, options, api) {
     nodeMap,
     parentMap,
     domMap: new Map(),
-    editorEl: null
+    editorEl: null,
+    onChange: options.onChange || null,
+    mode: 'nav',
+    undoStack: [],
+    redoStack: []
   };
 
   // Resolve item references (async, batch)
@@ -672,11 +900,14 @@ export async function render(value, options, api) {
   wrapper.appendChild(editorEl);
   wrapper.appendChild(statusBar);
 
+  // Event context (shared by key and click handlers)
+  const ctx = { state, statusBar, itemNames, api };
+
   // Key handler
-  editorEl.addEventListener('keydown', (e) => handleKey(e, state, statusBar));
+  editorEl.addEventListener('keydown', (e) => handleKey(e, ctx));
 
   // Click handler
-  editorEl.addEventListener('click', (e) => handleClick(e, state, statusBar));
+  editorEl.addEventListener('click', (e) => handleClick(e, ctx));
 
   // Initial selection
   updateSelectionVisual(state);
