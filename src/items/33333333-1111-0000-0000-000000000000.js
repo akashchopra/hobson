@@ -1364,6 +1364,9 @@ export async function loadKernel(require, storageBackend) {
             const selMgr = await kernel.moduleSystem.require('selection-manager');
             selMgr.select(id, context.siblingContainer.id);
           } else {
+            if (containerItem) {
+              console.warn('[openItem] No siblingContainer for', containerItem.name || containerItem.id, '— falling back to navigate for', id);
+            }
             const vpMgr = await kernel.moduleSystem.require('viewport-manager');
             await vpMgr.navigate(id, navigateTo);
           }
