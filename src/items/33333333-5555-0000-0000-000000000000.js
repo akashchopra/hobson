@@ -376,8 +376,11 @@ export class RenderingSystem {
             // After morphdom: oldDom is still in the DOM (patched in place).
             // Clean up the NEW render's registry entries since those DOM nodes
             // were consumed by morphdom (not in document as standalone nodes).
+            // Must call cleanupDOMTree BEFORE unregister so that any on-document!/
+            // on-event! subscriptions registered during the discarded render are released.
             const newNested = newDom.querySelectorAll('[data-render-instance]');
             for (const el of newNested) {
+              cleanupDOMTree(el);
               const nestedId = parseInt(el.getAttribute('data-render-instance'), 10);
               this.registry.unregister(nestedId);
               if (this._depTracker) this._depTracker.clearDeps(nestedId);
