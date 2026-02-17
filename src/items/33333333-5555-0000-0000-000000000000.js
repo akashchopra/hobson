@@ -319,6 +319,15 @@ export class RenderingSystem {
         if (oldDom.parentNode) {
           if (oldDom.__hobView && newDom.__hobView) {
             // === Morphdom path: patch existing DOM in-place ===
+            // Clean up old root's document/event listeners before patching.
+            // morphdom's onNodeDiscarded handles discarded children, but the
+            // root node is never discarded — it's patched in place — so its
+            // __hobsonCleanup (on-document!, on-event!, on-cleanup! handlers)
+            // must be invoked explicitly to avoid accumulation.
+            if (typeof oldDom.__hobsonCleanup === 'function') {
+              try { oldDom.__hobsonCleanup(); } catch (e) { /* ignore */ }
+            }
+
             const morphdom = await this._loadMorphdom();
 
             morphdom(oldDom, newDom, {
@@ -388,6 +397,17 @@ export class RenderingSystem {
 
             // Preserve the __hobView flag on the patched node
             oldDom.__hobView = true;
+
+            // Transfer cleanup from new render to patched old DOM so the
+            // next re-render (or teardown) will clean up the current handlers.
+            if (typeof newDom.__hobsonCleanup === 'function') {
+              oldDom.__hobsonCleanup = newDom.__hobsonCleanup;
+              oldDom.setAttribute('data-hobson-cleanup', '');
+            } else {
+              delete oldDom.__hobsonCleanup;
+              oldDom.removeAttribute('data-hobson-cleanup');
+            }
+
             updated++;
           } else {
             // === Original replaceChild path (JS views, or mixed) ===
