@@ -91,6 +91,16 @@ export async function show(_api) {
 export function hide() {
   const existing = document.getElementById('item-palette-overlay');
   if (existing) {
+    // Clean up any registered handlers (e.g. document event listeners) before removing
+    const cleanables = existing.querySelectorAll('[data-hobson-cleanup]');
+    for (const el of cleanables) {
+      if (typeof el.__hobsonCleanup === 'function') {
+        try { el.__hobsonCleanup(); } catch (e) { /* ignore */ }
+      }
+    }
+    if (typeof existing.__hobsonCleanup === 'function') {
+      try { existing.__hobsonCleanup(); } catch (e) { /* ignore */ }
+    }
     existing.remove();
   }
 }
