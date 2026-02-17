@@ -1,4 +1,4 @@
-// field-view-hob-structural — Structural editor for Hob JSON AST (Phase 2c: Structural Manipulation)
+// field-view-hob-structural — Structural editor for Hob JSON AST (Phase 6: Scope-Aware Autocomplete)
 
 // --- Special forms for indentation ---
 const SPECIAL_FORMS = new Set([
@@ -227,20 +227,22 @@ function renderLeaf(node, state, itemNames, api) {
   return span;
 }
 
-function ws() {
+function ws(insertAfterId) {
   const s = document.createElement('span');
   s.className = 'hob-ws';
   s.textContent = ' ';
+  if (insertAfterId != null) s.setAttribute('data-insert-after', insertAfterId);
   return s;
 }
 
-function newline(indentLevel) {
+function newline(indentLevel, insertAfterId) {
   const nl = document.createElement('span');
   nl.className = 'hob-newline';
   nl.textContent = '\n';
   const ind = document.createElement('span');
   ind.className = 'hob-indent';
   ind.textContent = ' '.repeat(indentLevel);
+  if (insertAfterId != null) ind.setAttribute('data-insert-after', insertAfterId);
   const frag = document.createDocumentFragment();
   frag.appendChild(nl);
   frag.appendChild(ind);
@@ -278,7 +280,7 @@ function renderList(node, state, itemNames, api, indent) {
   if (fw <= MAX_LINE) {
     span.appendChild(delim('('));
     for (let i = 0; i < node.children.length; i++) {
-      if (i > 0) span.appendChild(ws());
+      if (i > 0) span.appendChild(ws(node.children[i - 1].id));
       span.appendChild(renderNode(node.children[i], state, itemNames, api, indent + 2));
     }
     span.appendChild(delim(')'));
@@ -296,10 +298,10 @@ function renderList(node, state, itemNames, api, indent) {
     if (isBinding && node.children.length >= 2) {
       // binding form: (let [bindings...] body...)
       // Head + space + bindings on first line, then body indented
-      span.appendChild(ws());
+      span.appendChild(ws(head.id));
       span.appendChild(renderNode(node.children[1], state, itemNames, api, bodyIndent));
       for (let i = 2; i < node.children.length; i++) {
-        span.appendChild(newline(bodyIndent));
+        span.appendChild(newline(bodyIndent, node.children[i - 1].id));
         span.appendChild(renderNode(node.children[i], state, itemNames, api, bodyIndent));
       }
     } else {
@@ -308,9 +310,9 @@ function renderList(node, state, itemNames, api, indent) {
       const argsOnLine = (headName === 'defn' || headName === 'defmacro') ? 2 : 1;
       for (let i = 1; i < node.children.length; i++) {
         if (i <= argsOnLine) {
-          span.appendChild(ws());
+          span.appendChild(ws(node.children[i - 1].id));
         } else {
-          span.appendChild(newline(bodyIndent));
+          span.appendChild(newline(bodyIndent, node.children[i - 1].id));
         }
         span.appendChild(renderNode(node.children[i], state, itemNames, api, bodyIndent));
       }
@@ -320,7 +322,7 @@ function renderList(node, state, itemNames, api, indent) {
     span.appendChild(renderNode(head, state, itemNames, api, indent + 2));
     const restIndent = indent + 2;
     for (let i = 1; i < node.children.length; i++) {
-      span.appendChild(newline(restIndent));
+      span.appendChild(newline(restIndent, node.children[i - 1].id));
       span.appendChild(renderNode(node.children[i], state, itemNames, api, restIndent));
     }
   }
@@ -346,7 +348,7 @@ function renderCollection(node, open, close, className, state, itemNames, api, i
   if (fw <= MAX_LINE) {
     span.appendChild(delim(open));
     for (let i = 0; i < node.children.length; i++) {
-      if (i > 0) span.appendChild(ws());
+      if (i > 0) span.appendChild(ws(node.children[i - 1].id));
       span.appendChild(renderNode(node.children[i], state, itemNames, api, indent + 1));
     }
     span.appendChild(delim(close));
@@ -355,7 +357,7 @@ function renderCollection(node, open, close, className, state, itemNames, api, i
     span.appendChild(delim(open));
     span.appendChild(renderNode(node.children[0], state, itemNames, api, childIndent));
     for (let i = 1; i < node.children.length; i++) {
-      span.appendChild(newline(childIndent));
+      span.appendChild(newline(childIndent, node.children[i - 1].id));
       span.appendChild(renderNode(node.children[i], state, itemNames, api, childIndent));
     }
     span.appendChild(delim(close));
@@ -381,7 +383,7 @@ function renderMap(node, state, itemNames, api, indent) {
   if (fw <= MAX_LINE) {
     span.appendChild(delim('{'));
     for (let i = 0; i < node.children.length; i++) {
-      if (i > 0) span.appendChild(ws());
+      if (i > 0) span.appendChild(ws(node.children[i - 1].id));
       span.appendChild(renderNode(node.children[i], state, itemNames, api, indent + 1));
     }
     span.appendChild(delim('}'));
@@ -390,10 +392,10 @@ function renderMap(node, state, itemNames, api, indent) {
     span.appendChild(delim('{'));
     // Render as key-value pairs, one pair per line
     for (let i = 0; i < node.children.length; i += 2) {
-      if (i > 0) span.appendChild(newline(childIndent));
+      if (i > 0) span.appendChild(newline(childIndent, node.children[i - 1].id));
       span.appendChild(renderNode(node.children[i], state, itemNames, api, childIndent));
       if (i + 1 < node.children.length) {
-        span.appendChild(ws());
+        span.appendChild(ws(node.children[i].id));
         span.appendChild(renderNode(node.children[i + 1], state, itemNames, api, childIndent));
       }
     }
@@ -894,6 +896,74 @@ function collectSymbols(state) {
   return [...syms].sort();
 }
 
+function collectScopeSymbols(state, holeId) {
+  const scopeSymbols = [];
+  const seen = new Set();
+
+  function addSym(name, detail) {
+    if (!seen.has(name)) {
+      seen.add(name);
+      scopeSymbols.push({ name, detail });
+    }
+  }
+
+  // Walk up from hole through parent chain
+  let currentId = holeId;
+  while (state.parentMap.has(currentId)) {
+    const parent = state.parentMap.get(currentId);
+    if (parent.type === 'list' && parent.children.length > 0 && parent.children[0].type === 'symbol') {
+      const headName = parent.children[0].value;
+
+      if (BINDING_FORMS.has(headName)) {
+        // (let [a 1 b 2] body) — bindings vector is children[1]
+        if (parent.children.length >= 2 && parent.children[1].type === 'vector') {
+          const bindings = parent.children[1].children;
+          for (let i = 0; i < bindings.length; i += 2) {
+            if (bindings[i].type === 'symbol') addSym(bindings[i].value, 'local');
+          }
+        }
+      }
+
+      if (headName === 'fn') {
+        // (fn [x y & rest] body)
+        if (parent.children.length >= 2 && parent.children[1].type === 'vector') {
+          for (const param of parent.children[1].children) {
+            if (param.type === 'symbol' && param.value !== '&') addSym(param.value, 'param');
+          }
+        }
+      }
+
+      if (headName === 'defn' || headName === 'defmacro') {
+        // (defn name [x y] body)
+        if (parent.children.length >= 3 && parent.children[2].type === 'vector') {
+          for (const param of parent.children[2].children) {
+            if (param.type === 'symbol' && param.value !== '&') addSym(param.value, 'param');
+          }
+        }
+      }
+    }
+    currentId = parent.id;
+  }
+
+  // Top-level defs
+  const root = state.nodeMap.get(0);
+  if (root && root.children) {
+    for (const form of root.children) {
+      if (form.type === 'list' && form.children.length >= 2 && form.children[0].type === 'symbol') {
+        const head = form.children[0].value;
+        if (head === 'def' && form.children[1].type === 'symbol') {
+          addSym(form.children[1].value, 'def');
+        }
+        if ((head === 'defn' || head === 'defmacro') && form.children[1].type === 'symbol') {
+          addSym(form.children[1].value, 'defn');
+        }
+      }
+    }
+  }
+
+  return scopeSymbols;
+}
+
 function hideAutocomplete(state) {
   state.acVisible = false;
   state.acItems = [];
@@ -1010,14 +1080,27 @@ function updateAutocomplete(state, ctx) {
     }
   } else if (buf.length >= 2) {
     state.acMode = 'symbol';
-    const allSymbols = collectSymbols(state);
-    const matches = allSymbols.filter(s => s.startsWith(buf) && s !== buf);
-    state.acItems = matches.slice(0, 8).map(s => ({
-      label: s,
-      detail: SPECIAL_FORMS.has(s) ? 'special' : '',
-      value: s,
-      acType: 'symbol'
-    }));
+    const scopeSyms = collectScopeSymbols(state, state.inputHoleId);
+    const astSyms = collectSymbols(state);
+
+    // Build suggestions: scope symbols first (with detail), then remaining AST symbols
+    const seen = new Set();
+    const allItems = [];
+
+    for (const s of scopeSyms) {
+      if (s.name.startsWith(buf) && s.name !== buf && !seen.has(s.name)) {
+        seen.add(s.name);
+        allItems.push({ label: s.name, detail: s.detail, value: s.name, acType: 'symbol' });
+      }
+    }
+    for (const sym of astSyms) {
+      if (sym.startsWith(buf) && sym !== buf && !seen.has(sym)) {
+        seen.add(sym);
+        allItems.push({ label: sym, detail: SPECIAL_FORMS.has(sym) ? 'special' : '', value: sym, acType: 'symbol' });
+      }
+    }
+
+    state.acItems = allItems.slice(0, 8);
     state.acIndex = 0;
     state.acVisible = state.acItems.length > 0;
     renderAutocomplete(state);
@@ -1665,38 +1748,60 @@ function handleKey(e, ctx) {
   }
 }
 
+function commitOrCancelInput(state, itemNames, api, statusBar) {
+  hideAutocomplete(state);
+  if (state.mode === 'nav') return;
+  if (state.inputBuffer && state.mode === 'input') {
+    const newNode = commitToken(state, itemNames, api, statusBar);
+    exitToNav(state, newNode.id);
+  } else if (state.inputBuffer && state.mode === 'string') {
+    const strNode = makeNode(state, 'string', { value: state.inputBuffer });
+    pushUndo(state);
+    replaceNode(state, state.inputHoleId, strNode);
+    notifyChange(state);
+    exitToNav(state, strNode.id);
+  } else {
+    // Empty buffer: remove hole
+    const holeId = state.inputHoleId;
+    if (holeId && state.nodeMap.has(holeId)) {
+      state.selectedId = holeId;
+      pushUndo(state);
+      deleteSelected(state);
+      notifyChange(state);
+    }
+    exitToNav(state, null);
+  }
+  rerender(state, itemNames, api, statusBar);
+}
+
 function handleClick(e, ctx) {
   const { state, statusBar, itemNames, api } = ctx;
+
+  // Check for insert-between-siblings click (editable mode only)
+  if (state.onChange) {
+    const insertTarget = e.target.closest('[data-insert-after]');
+    if (insertTarget) {
+      if (state.mode !== 'nav') commitOrCancelInput(state, itemNames, api, statusBar);
+      const afterId = parseInt(insertTarget.getAttribute('data-insert-after'), 10);
+      if (state.nodeMap.has(afterId)) {
+        const hole = makeNode(state, 'hole', {});
+        applyMutation(state, itemNames, api, statusBar, () => insertAfter(state, afterId, hole));
+        enterInputMode(state, hole.id);
+        rerender(state, itemNames, api, statusBar);
+        updateSelectionVisual(state);
+        updateStatusBar(state, statusBar);
+        return;
+      }
+    }
+  }
+
   const target = e.target.closest('[data-node-id]');
   if (!target) return;
   const id = parseInt(target.getAttribute('data-node-id'), 10);
   if (!state.nodeMap.has(id)) return;
 
   // If in input/string mode, commit or cancel before handling click
-  hideAutocomplete(state);
-  if (state.mode !== 'nav') {
-    if (state.inputBuffer && state.mode === 'input') {
-      const newNode = commitToken(state, itemNames, api, statusBar);
-      exitToNav(state, newNode.id);
-    } else if (state.inputBuffer && state.mode === 'string') {
-      const strNode = makeNode(state, 'string', { value: state.inputBuffer });
-      pushUndo(state);
-      replaceNode(state, state.inputHoleId, strNode);
-      notifyChange(state);
-      exitToNav(state, strNode.id);
-    } else {
-      // Empty buffer: remove hole
-      const holeId = state.inputHoleId;
-      if (holeId && state.nodeMap.has(holeId)) {
-        state.selectedId = holeId;
-        pushUndo(state);
-        deleteSelected(state);
-        notifyChange(state);
-      }
-      exitToNav(state, null);
-    }
-    rerender(state, itemNames, api, statusBar);
-  }
+  if (state.mode !== 'nav') commitOrCancelInput(state, itemNames, api, statusBar);
 
   // Now handle the click target (re-check in case node was removed)
   if (!state.nodeMap.has(id)) return;
@@ -1704,6 +1809,53 @@ function handleClick(e, ctx) {
   state.expansionStack = [];
   updateSelectionVisual(state);
   updateStatusBar(state, statusBar);
+}
+
+function handleDoubleClick(e, ctx) {
+  const { state, statusBar, itemNames, api } = ctx;
+  if (!state.onChange) return;
+
+  // Commit/cancel any active input mode
+  if (state.mode !== 'nav') commitOrCancelInput(state, itemNames, api, statusBar);
+
+  const target = e.target.closest('[data-node-id]');
+  if (!target) return;
+  const id = parseInt(target.getAttribute('data-node-id'), 10);
+  const node = state.nodeMap.get(id);
+  if (!node) return;
+
+  e.preventDefault();
+
+  if (node.type === 'hole') {
+    // Hole not in input mode → enter input mode
+    if (state.mode === 'nav') {
+      enterInputMode(state, node.id);
+      rerender(state, itemNames, api, statusBar);
+      updateSelectionVisual(state);
+      updateStatusBar(state, statusBar);
+    }
+  } else if (node.children) {
+    // Container → append child hole, enter input mode
+    const hole = makeNode(state, 'hole', {});
+    applyMutation(state, itemNames, api, statusBar, () => appendChild(state, node.id, hole));
+    enterInputMode(state, hole.id);
+    rerender(state, itemNames, api, statusBar);
+    updateSelectionVisual(state);
+    updateStatusBar(state, statusBar);
+  } else {
+    // Leaf → replace mode with select-all
+    const prefill = leafText(node);
+    const hole = makeNode(state, 'hole', {});
+    state.replaceOriginal = { nodeSnapshot: JSON.parse(JSON.stringify(node)), parentId: state.parentMap.get(node.id)?.id };
+    applyMutation(state, itemNames, api, statusBar, () => replaceNode(state, node.id, hole));
+    enterInputMode(state, hole.id);
+    state.inputBuffer = prefill;
+    state.inputCursor = prefill.length;
+    state.inputSelectAll = true;
+    rerender(state, itemNames, api, statusBar);
+    updateSelectionVisual(state);
+    updateStatusBar(state, statusBar);
+  }
 }
 
 // --- Status Bar Builder ---
@@ -1798,6 +1950,7 @@ export async function render(value, options, api) {
   // Render AST to DOM
   const editorEl = renderAST(root, state, itemNames, api);
   state.editorEl = editorEl;
+  if (state.onChange) editorEl.classList.add('hob-editable');
 
   // Status bar
   const statusBar = buildStatusBar();
@@ -1815,8 +1968,9 @@ export async function render(value, options, api) {
   // Key handler
   editorEl.addEventListener('keydown', (e) => handleKey(e, ctx));
 
-  // Click handler
+  // Click and double-click handlers
   editorEl.addEventListener('click', (e) => handleClick(e, ctx));
+  editorEl.addEventListener('dblclick', (e) => handleDoubleClick(e, ctx));
 
   // Initial selection
   updateSelectionVisual(state);
