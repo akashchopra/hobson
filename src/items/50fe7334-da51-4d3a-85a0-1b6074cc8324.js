@@ -1542,11 +1542,14 @@ export async function render(value, options, api) {
 
   // Handle empty/missing value
   if (!value || !Array.isArray(value) || value.length === 0) {
-    const empty = api.createElement('div');
-    empty.className = 'hob-empty';
-    empty.textContent = 'No Hob code';
-    empty.style.cssText = 'border: 1px solid var(--color-border); border-radius: var(--border-radius); padding: 24px; text-align: center; color: var(--color-text-tertiary); font-style: italic;';
-    return empty;
+    if (!options.onChange) {
+      const empty = api.createElement('div');
+      empty.className = 'hob-empty';
+      empty.textContent = 'No Hob code';
+      empty.style.cssText = 'border: 1px solid var(--color-border); border-radius: var(--border-radius); padding: 24px; text-align: center; color: var(--color-text-tertiary); font-style: italic;';
+      return empty;
+    }
+    value = [null]; // bootstrap with nil so the user can start editing
   }
 
   // Inflate AST
