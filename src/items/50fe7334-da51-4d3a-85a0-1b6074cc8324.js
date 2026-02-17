@@ -1,4 +1,4 @@
-// field-view-hob-structural — Structural editor for Hob JSON AST (Phase 2b: Holes and Input Mode)
+// field-view-hob-structural — Structural editor for Hob JSON AST (Phase 2c: Structural Manipulation)
 
 // --- Special forms for indentation ---
 const SPECIAL_FORMS = new Set([
@@ -652,6 +652,48 @@ function replaceNode(state, targetId, node) {
   }
 }
 
+function inflateSubtree(compact, state) {
+  if (compact === null) return makeNode(state, 'nil', {});
+  if (typeof compact === 'number') return makeNode(state, 'number', { value: compact });
+  if (typeof compact === 'boolean') return makeNode(state, 'boolean', { value: compact });
+  if (typeof compact === 'string') {
+    if (compact.startsWith(':')) return makeNode(state, 'keyword', { value: compact.slice(1) });
+    if (compact.startsWith('@')) return makeNode(state, 'item-ref', { value: compact.slice(1) });
+    return makeNode(state, 'symbol', { value: compact });
+  }
+  if (Array.isArray(compact)) {
+    const node = makeNode(state, 'list', { children: [] });
+    node.children = compact.map(c => {
+      const child = inflateSubtree(c, state);
+      state.parentMap.set(child.id, node);
+      return child;
+    });
+    return node;
+  }
+  if (compact.s !== undefined) return makeNode(state, 'string', { value: compact.s });
+  if (compact.v) {
+    const node = makeNode(state, 'vector', { children: [] });
+    node.children = compact.v.map(c => {
+      const child = inflateSubtree(c, state);
+      state.parentMap.set(child.id, node);
+      return child;
+    });
+    return node;
+  }
+  if (compact.m) {
+    const node = makeNode(state, 'map', { children: [] });
+    node.children = compact.m.flatMap(([k, v]) => {
+      const kc = inflateSubtree(k, state);
+      const vc = inflateSubtree(v, state);
+      state.parentMap.set(kc.id, node);
+      state.parentMap.set(vc.id, node);
+      return [kc, vc];
+    });
+    return node;
+  }
+  return makeNode(state, 'nil', {});
+}
+
 // --- Token resolution ---
 
 function resolveToken(buffer) {
@@ -849,7 +891,7 @@ function handleNavKey(e, ctx) {
 
   let handled = true;
 
-  if (e.key === 'ArrowLeft' && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
+  if (e.key === 'ArrowLeft' && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey) {
     // Previous sibling
     if (parent && parent.children) {
       const idx = parent.children.indexOf(node);
@@ -858,7 +900,7 @@ function handleNavKey(e, ctx) {
         state.expansionStack = [];
       }
     }
-  } else if (e.key === 'ArrowRight' && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
+  } else if (e.key === 'ArrowRight' && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey) {
     // Next sibling
     if (parent && parent.children) {
       const idx = parent.children.indexOf(node);
@@ -1013,6 +1055,111 @@ function handleNavKey(e, ctx) {
     applyMutation(state, itemNames, api, statusBar, () => insertAfter(state, node.id, container));
     enterInputMode(state, innerHole.id);
     rerender(state, itemNames, api, statusBar);
+  } else if (e.key === 'ArrowLeft' && e.altKey && !e.ctrlKey && !e.metaKey && state.onChange) {
+    // Move left: swap with previous sibling
+    if (parent && parent.children) {
+      const idx = parent.children.indexOf(node);
+      if (idx > 0) {
+        applyMutation(state, itemNames, api, statusBar, () => {
+          parent.children[idx] = parent.children[idx - 1];
+          parent.children[idx - 1] = node;
+        });
+      }
+    }
+  } else if (e.key === 'ArrowRight' && e.altKey && !e.ctrlKey && !e.metaKey && state.onChange) {
+    // Move right: swap with next sibling
+    if (parent && parent.children) {
+      const idx = parent.children.indexOf(node);
+      if (idx >= 0 && idx < parent.children.length - 1) {
+        applyMutation(state, itemNames, api, statusBar, () => {
+          parent.children[idx] = parent.children[idx + 1];
+          parent.children[idx + 1] = node;
+        });
+      }
+    }
+  } else if (e.key === 'w' && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && state.onChange) {
+    // Wrap in list: (· selected) — hole as head, enter input mode
+    if (parent && parent.children) {
+      const hole = makeNode(state, 'hole', {});
+      const wrapper = makeNode(state, 'list', { children: [hole, node] });
+      state.parentMap.set(hole.id, wrapper);
+      pushUndo(state);
+      const idx = parent.children.indexOf(node);
+      parent.children[idx] = wrapper;
+      state.parentMap.set(wrapper.id, parent);
+      state.parentMap.set(node.id, wrapper);
+      notifyChange(state);
+      enterInputMode(state, hole.id);
+      rerender(state, itemNames, api, statusBar);
+    }
+  } else if (e.key === 'W' && !e.ctrlKey && !e.metaKey && !e.altKey && state.onChange) {
+    // Wrap in vector: [selected] — stay in nav, select wrapper
+    if (parent && parent.children) {
+      const wrapper = makeNode(state, 'vector', { children: [node] });
+      applyMutation(state, itemNames, api, statusBar, () => {
+        const idx = parent.children.indexOf(node);
+        parent.children[idx] = wrapper;
+        state.parentMap.set(wrapper.id, parent);
+        state.parentMap.set(node.id, wrapper);
+        state.selectedId = wrapper.id;
+      });
+    }
+  } else if (e.key === 'u' && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && state.onChange) {
+    // Unwrap/splice: replace container with its children
+    if (node.children && parent && parent.children) {
+      applyMutation(state, itemNames, api, statusBar, () => {
+        const idx = parent.children.indexOf(node);
+        const kids = node.children;
+        parent.children.splice(idx, 1, ...kids);
+        kids.forEach(child => state.parentMap.set(child.id, parent));
+        state.nodeMap.delete(node.id);
+        state.parentMap.delete(node.id);
+        state.selectedId = kids[0]?.id ?? parent.id;
+      });
+    }
+  } else if (e.key === 'd' && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && state.onChange) {
+    // Duplicate: clone subtree as next sibling
+    if (parent && parent.children) {
+      const compact = deflate(node);
+      const clone = inflateSubtree(compact, state);
+      applyMutation(state, itemNames, api, statusBar, () => {
+        insertAfter(state, node.id, clone);
+        state.selectedId = clone.id;
+      });
+    }
+  } else if (e.key === '>' && !e.ctrlKey && !e.metaKey && !e.altKey && state.onChange) {
+    // Slurp right: pull next sibling into container as last child
+    if (node.children && parent && parent.children) {
+      const idx = parent.children.indexOf(node);
+      if (idx >= 0 && idx < parent.children.length - 1) {
+        applyMutation(state, itemNames, api, statusBar, () => {
+          const victim = parent.children[idx + 1];
+          parent.children.splice(idx + 1, 1);
+          node.children.push(victim);
+          state.parentMap.set(victim.id, node);
+        });
+      }
+    }
+  } else if (e.key === '<' && !e.ctrlKey && !e.metaKey && !e.altKey && state.onChange) {
+    // Barf right: eject last child as next sibling
+    if (node.children && node.children.length > 0 && parent && parent.children) {
+      applyMutation(state, itemNames, api, statusBar, () => {
+        const idx = parent.children.indexOf(node);
+        const ejected = node.children.pop();
+        parent.children.splice(idx + 1, 0, ejected);
+        state.parentMap.set(ejected.id, parent);
+      });
+    }
+  } else if (e.key === 't' && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && state.onChange) {
+    // Change container type: list → vector → map → list
+    if (node.children) {
+      const cycle = { list: 'vector', vector: 'map', map: 'list' };
+      if (cycle[node.type]) {
+        applyMutation(state, itemNames, api, statusBar, () => {
+          node.type = cycle[node.type];
+        });
+      }
+    }
   } else {
     handled = false;
   }
