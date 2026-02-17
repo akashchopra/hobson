@@ -106,6 +106,9 @@
 
   ;; === HAS ROOT ===
   (let [
+    ;; Save original openItem for restore (before any override in show-context-menu)
+    orig-open-item (dom-get api :openItem)
+
     ;; Selection state
     selected-item-id (atom nil)
     selected-parent-id (atom nil)
@@ -204,10 +207,21 @@
         (dom-set! context-menu :innerHTML "")
         (reset! last-ctx-coords {:x x :y y})
 
-        ;; Note: JS version creates Object.create(api) wrapper for siblingContainer
-        ;; override. Skipped in Hob version — openItem navigates instead of addSibling
-        ;; when right-clicking items inside a spatial canvas. Can be added later.
-        (let [menu-lib (require "context-menu-lib")
+        ;; Override api.openItem so context menu actions add as sibling (not navigate)
+        (let [child-inst (when (deref selected-parent-id)
+                (first (filter
+                  (fn [i] (and (= (dom-get i :parentId) (deref selected-parent-id))
+                               (dom-get i :siblingContainer)))
+                  (invoke (dom-get api :instances) "getAll"))))
+              sc (when child-inst (dom-get child-inst :siblingContainer))
+              _ (if sc
+                  (dom-set! api :openItem
+                    (fn [id opts]
+                      (invoke sc "addSibling" id opts)
+                      (invoke (dom-get api :viewport) "select" id (dom-get sc :id))))
+                  (dom-set! api :openItem orig-open-item))
+
+              menu-lib (require "context-menu-lib")
 
               get-click-coords (fn []
                 (when (deref selected-parent-id)
