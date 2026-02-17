@@ -702,6 +702,7 @@ function resolveToken(buffer) {
   if (buffer === 'false') return { type: 'boolean', value: false };
   if (buffer === 'nil') return { type: 'nil' };
   if (buffer.startsWith(':')) return { type: 'keyword', value: buffer.slice(1) };
+  if (buffer.startsWith('@') && buffer.length > 1) return { type: 'item-ref', value: buffer.slice(1) };
   return { type: 'symbol', value: buffer };
 }
 
@@ -849,6 +850,7 @@ function findHoles(state) {
 }
 
 function enterInputMode(state, holeId) {
+  hideAutocomplete(state);
   state.mode = 'input';
   state.inputHoleId = holeId;
   state.inputBuffer = '';
@@ -859,6 +861,7 @@ function enterInputMode(state, holeId) {
 }
 
 function exitToNav(state, selectId) {
+  hideAutocomplete(state);
   state.mode = 'nav';
   state.inputBuffer = '';
   state.inputCursor = 0;
@@ -879,6 +882,173 @@ function commitToken(state, itemNames, api, statusBar) {
   replaceNode(state, state.inputHoleId, newNode);
   notifyChange(state);
   return newNode;
+}
+
+// --- Autocomplete ---
+
+function collectSymbols(state) {
+  const syms = new Set(SPECIAL_FORMS);
+  for (const node of state.nodeMap.values()) {
+    if (node.type === 'symbol') syms.add(node.value);
+  }
+  return [...syms].sort();
+}
+
+function hideAutocomplete(state) {
+  state.acVisible = false;
+  state.acItems = [];
+  state.acIndex = 0;
+  state.acMode = null;
+  if (state._acTimer) {
+    clearTimeout(state._acTimer);
+    state._acTimer = null;
+  }
+  if (state.acEl && state.acEl.parentNode) {
+    state.acEl.parentNode.removeChild(state.acEl);
+  }
+}
+
+function renderAutocomplete(state) {
+  if (!state.acVisible) {
+    if (state.acEl && state.acEl.parentNode) {
+      state.acEl.parentNode.removeChild(state.acEl);
+    }
+    return;
+  }
+
+  if (!state.acEl) {
+    state.acEl = document.createElement('div');
+    state.acEl.className = 'hob-autocomplete';
+  }
+
+  const holeEl = state.domMap.get(state.inputHoleId);
+  if (holeEl) {
+    const rect = holeEl.getBoundingClientRect();
+    state.acEl.style.position = 'fixed';
+    state.acEl.style.left = rect.left + 'px';
+    state.acEl.style.top = (rect.bottom + 2) + 'px';
+  }
+
+  state.acEl.textContent = '';
+  state.acItems.forEach((item, i) => {
+    const row = document.createElement('div');
+    row.className = 'hob-ac-item' + (i === state.acIndex ? ' hob-ac-selected' : '');
+
+    const label = document.createElement('span');
+    label.textContent = item.label;
+    row.appendChild(label);
+
+    if (item.detail) {
+      const detail = document.createElement('span');
+      detail.className = 'hob-ac-detail';
+      detail.textContent = item.detail;
+      row.appendChild(detail);
+    }
+
+    row.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      selectAutocomplete(state, i, state._ctx);
+    });
+
+    state.acEl.appendChild(row);
+  });
+
+  if (!state.acEl.parentNode) {
+    document.body.appendChild(state.acEl);
+  }
+}
+
+function updateAutocomplete(state, ctx) {
+  const { itemNames, api } = ctx;
+  const buf = state.inputBuffer;
+
+  if (state._acTimer) {
+    clearTimeout(state._acTimer);
+    state._acTimer = null;
+  }
+
+  state._acGeneration = (state._acGeneration || 0) + 1;
+  const gen = state._acGeneration;
+
+  if (buf.startsWith('@')) {
+    state.acMode = 'item';
+    const query = buf.slice(1);
+
+    if (!state._itemSearchLib) {
+      hideAutocomplete(state);
+      return;
+    }
+
+    const doSearch = async () => {
+      try {
+        let results;
+        if (!query) {
+          results = await state._itemSearchLib.getStarredItems(api);
+        } else {
+          results = await state._itemSearchLib.searchItems(query, api);
+        }
+        if (gen !== state._acGeneration) return;
+        state.acItems = results.slice(0, 8).map(item => ({
+          label: item.name || item.id.slice(0, 8),
+          detail: '',
+          value: item.id,
+          acType: 'item-ref'
+        }));
+        state.acIndex = 0;
+        state.acVisible = state.acItems.length > 0;
+        renderAutocomplete(state);
+      } catch {
+        if (gen !== state._acGeneration) return;
+        hideAutocomplete(state);
+      }
+    };
+
+    if (!query) {
+      doSearch();
+    } else {
+      state._acTimer = setTimeout(doSearch, 150);
+    }
+  } else if (buf.length >= 2) {
+    state.acMode = 'symbol';
+    const allSymbols = collectSymbols(state);
+    const matches = allSymbols.filter(s => s.startsWith(buf) && s !== buf);
+    state.acItems = matches.slice(0, 8).map(s => ({
+      label: s,
+      detail: SPECIAL_FORMS.has(s) ? 'special' : '',
+      value: s,
+      acType: 'symbol'
+    }));
+    state.acIndex = 0;
+    state.acVisible = state.acItems.length > 0;
+    renderAutocomplete(state);
+  } else {
+    hideAutocomplete(state);
+  }
+}
+
+function selectAutocomplete(state, index, ctx) {
+  const { statusBar, itemNames, api } = ctx;
+  const item = state.acItems[index];
+  if (!item) return;
+
+  hideAutocomplete(state);
+
+  if (item.acType === 'symbol') {
+    state.inputBuffer = item.value;
+    state.inputCursor = item.value.length;
+    state.inputSelectAll = false;
+    const newNode = commitToken(state, itemNames, api, statusBar);
+    exitToNav(state, newNode.id);
+    rerender(state, itemNames, api, statusBar);
+  } else if (item.acType === 'item-ref') {
+    pushUndo(state);
+    const newNode = makeNode(state, 'item-ref', { value: item.value });
+    replaceNode(state, state.inputHoleId, newNode);
+    itemNames.set(item.value, item.label);
+    notifyChange(state);
+    exitToNav(state, newNode.id);
+    rerender(state, itemNames, api, statusBar);
+  }
 }
 
 // --- Navigation ---
@@ -1171,8 +1341,30 @@ function handleInputKey(e, ctx) {
   const { state, statusBar, itemNames, api } = ctx;
   let handled = true;
 
+  // Autocomplete intercept — when dropdown is visible, capture nav keys
+  if (state.acVisible) {
+    if (e.key === 'ArrowDown') {
+      state.acIndex = (state.acIndex + 1) % state.acItems.length;
+      renderAutocomplete(state);
+      return true;
+    }
+    if (e.key === 'ArrowUp') {
+      state.acIndex = (state.acIndex - 1 + state.acItems.length) % state.acItems.length;
+      renderAutocomplete(state);
+      return true;
+    }
+    if (e.key === 'Enter' || e.key === 'Tab') {
+      selectAutocomplete(state, state.acIndex, ctx);
+      return true;
+    }
+    if (e.key === 'Escape') {
+      hideAutocomplete(state);
+      return true;
+    }
+  }
+
   const isTypable = e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey;
-  const TYPABLE_CHARS = /^[a-zA-Z0-9\-_?!+*=<>\/.:]$/;
+  const TYPABLE_CHARS = /^[a-zA-Z0-9\-_?!+*=<>\/.:@]$/;
 
   if (e.key === 'Escape') {
     // Cancel: restore or remove hole
@@ -1226,10 +1418,12 @@ function handleInputKey(e, ctx) {
       state.inputCursor = 0;
       state.inputSelectAll = false;
       updateHoleDisplay(state);
+      updateAutocomplete(state, ctx);
     } else if (state.inputCursor > 0) {
       state.inputBuffer = state.inputBuffer.slice(0, state.inputCursor - 1) + state.inputBuffer.slice(state.inputCursor);
       state.inputCursor--;
       updateHoleDisplay(state);
+      updateAutocomplete(state, ctx);
     } else if (!state.inputBuffer) {
       // Empty buffer: remove hole, exit to nav
       const holeId = state.inputHoleId;
@@ -1383,6 +1577,7 @@ function handleInputKey(e, ctx) {
       state.inputCursor++;
     }
     updateHoleDisplay(state);
+    updateAutocomplete(state, ctx);
   } else {
     handled = false;
   }
@@ -1478,6 +1673,7 @@ function handleClick(e, ctx) {
   if (!state.nodeMap.has(id)) return;
 
   // If in input/string mode, commit or cancel before handling click
+  hideAutocomplete(state);
   if (state.mode !== 'nav') {
     if (state.inputBuffer && state.mode === 'input') {
       const newNode = commitToken(state, itemNames, api, statusBar);
@@ -1540,6 +1736,10 @@ export async function render(value, options, api) {
   const cssLoader = await api.require('css-loader-lib');
   await cssLoader.loadCSS('hob-structural-css', api);
 
+  // Load item search lib for autocomplete
+  let itemSearchLib = null;
+  try { itemSearchLib = await api.require('item-search-lib'); } catch {}
+
   // Handle empty/missing value
   if (!value || !Array.isArray(value) || value.length === 0) {
     if (!options.onChange) {
@@ -1571,7 +1771,16 @@ export async function render(value, options, api) {
     inputSelectAll: false,
     replaceOriginal: null,
     undoStack: [],
-    redoStack: []
+    redoStack: [],
+    acVisible: false,
+    acItems: [],
+    acIndex: 0,
+    acMode: null,
+    acEl: null,
+    _acTimer: null,
+    _acGeneration: 0,
+    _itemSearchLib: itemSearchLib,
+    _ctx: null
   };
 
   // Resolve item references (async, batch)
@@ -1601,6 +1810,7 @@ export async function render(value, options, api) {
 
   // Event context (shared by key and click handlers)
   const ctx = { state, statusBar, itemNames, api };
+  state._ctx = ctx;
 
   // Key handler
   editorEl.addEventListener('keydown', (e) => handleKey(e, ctx));
@@ -1614,7 +1824,7 @@ export async function render(value, options, api) {
 
   // Cleanup
   wrapper.setAttribute('data-hobson-cleanup', '');
-  wrapper.__hobsonCleanup = () => {};
+  wrapper.__hobsonCleanup = () => { hideAutocomplete(state); };
 
   return wrapper;
 }
