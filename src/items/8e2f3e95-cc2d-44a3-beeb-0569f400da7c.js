@@ -23,7 +23,13 @@ function findRegionStartLine(text, regionName) {
 // Code readonly field view (CodeMirror)
 export async function render(value, options, api) {
   const { label, language = 'javascript', scrollToLines, scrollToRegion, scrollToSymbol } = options;
-  const code = value || '';
+
+  // JSON AST support: if value is a compact JSON AST array, pretty-print to s-expressions.
+  let code = value || '';
+  if (Array.isArray(value)) {
+    const hob = await api.require('40b00001-0000-4000-8000-000000000000');
+    code = hob.prettyPrintAll(value);
+  }
 
   const wrapper = api.createElement('div', { className: 'field-code-readonly' });
   wrapper.style.cssText = 'display: flex; flex-direction: column; gap: 8px;';
