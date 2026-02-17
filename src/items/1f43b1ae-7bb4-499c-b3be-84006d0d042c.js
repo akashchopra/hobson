@@ -1,0 +1,120 @@
+/* hob-structural-css — Syntax coloring, selection, and status bar styles for the Hob structural editor */
+
+/* Container */
+.hob-editor {
+  font-family: "SF Mono", Monaco, "Courier New", monospace;
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  padding: 12px;
+  white-space: pre;
+  overflow: auto;
+  outline: none;
+  cursor: default;
+  flex: 1;
+  min-height: 0;
+}
+
+.hob-editor:focus {
+  outline: none;
+}
+
+/* Syntax coloring */
+.hob-symbol { color: var(--color-text); }
+.hob-special { color: oklch(50% 0.2 300); font-weight: 600; }
+.hob-keyword { color: oklch(50% 0.15 195); }
+.hob-string { color: oklch(50% 0.15 145); }
+.hob-number { color: oklch(50% 0.15 260); }
+.hob-boolean { color: oklch(50% 0.15 195); font-style: italic; }
+.hob-nil { color: oklch(50% 0.15 195); font-style: italic; }
+.hob-delim { color: var(--color-text-tertiary); }
+.hob-comment { color: var(--color-text-tertiary); font-style: italic; }
+
+/* Item references */
+.hob-item-ref {
+  background: var(--color-primary-light, oklch(95% 0.03 250));
+  color: var(--color-primary, #0066cc);
+  padding: 1px 6px;
+  border-radius: 3px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: inherit;
+}
+
+.hob-item-ref:hover {
+  background: var(--color-primary, #0066cc);
+  color: white;
+}
+
+/* Selection */
+.hob-selected {
+  background: oklch(90% 0.05 250);
+  outline: 1px solid oklch(70% 0.1 250);
+  border-radius: 2px;
+}
+
+.hob-ancestor {
+  background: oklch(95% 0.02 250);
+  border-radius: 2px;
+}
+
+/* Status bar */
+.hob-status-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 4px 12px;
+  font-size: 0.75rem;
+  border-top: 1px solid var(--color-border-light, #e0e0e0);
+  color: var(--color-text-secondary, #666);
+  background: var(--color-bg-surface-alt, #f8f8f8);
+  gap: 12px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  flex-shrink: 0;
+}
+
+.hob-breadcrumbs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+
+.hob-breadcrumbs span {
+  cursor: pointer;
+}
+
+.hob-breadcrumbs span:hover {
+  color: var(--color-primary, #0066cc);
+}
+
+.hob-breadcrumb-sep {
+  color: var(--color-text-tertiary, #999);
+  cursor: default !important;
+}
+
+.hob-breadcrumb-sep:hover {
+  color: var(--color-text-tertiary, #999) !important;
+}
+
+.hob-node-info {
+  white-space: nowrap;
+  color: var(--color-text-tertiary, #999);
+}
+
+.hob-mode {
+  font-weight: 600;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+/* Empty state */
+.hob-empty {
+  color: var(--color-text-tertiary, #999);
+  font-style: italic;
+  padding: 24px;
+  text-align: center;
+}
