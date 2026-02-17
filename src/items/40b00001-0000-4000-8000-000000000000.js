@@ -3051,7 +3051,14 @@ export function createInterpreter(api, viewApi, eventApi) {
   // DOM mutation ops (no API dependency — pure DOM operations)
   stdlib.define('dom-on!', Object.assign((el, event, handler) => {
     const eventName = isKeyword(event) ? keywordName(event) : String(event);
+    // Remove previous handler for this event if registered (prevents accumulation)
+    if (el.__hobEvents?.[eventName]) {
+      el.removeEventListener(eventName, el.__hobEvents[eventName]);
+    }
     el.addEventListener(eventName, handler);
+    // Register in __hobEvents so morphdom's onBeforeElUpdated can transfer handlers
+    if (!el.__hobEvents) el.__hobEvents = {};
+    el.__hobEvents[eventName] = handler;
     return null;
   }, { _hobName: 'dom-on!' }));
 
