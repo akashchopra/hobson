@@ -2791,6 +2791,13 @@ function registerViewOps(env, api) {
     return remove;
   }, { _hobName: 'on-document!' }));
 
+  env.define('on-event!', Object.assign((eventId, handler) => {
+    const id = isKeyword(eventId) ? keywordName(eventId) : String(eventId);
+    const unsub = api.events.on(id, handler);
+    api._hobCleanups.push(unsub);
+    return unsub;
+  }, { _hobName: 'on-event!' }));
+
   env.define('get-sibling-container', Object.assign(() => {
     return api.siblingContainer;
   }, { _hobName: 'get-sibling-container' }));

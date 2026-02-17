@@ -3,7 +3,7 @@
   "name": "viewport-view",
   "type": "aaaaaaaa-0000-0000-0000-000000000000",
   "created": 1768506119995,
-  "modified": 1770906811011,
+  "modified": 1771323727913,
   "content": {
     "description": "The viewport's view - renders the navigation chrome around the current root item. This is the top-level container that frames all user interaction with Hobson.\n\n## Responsibilities\n\n- **Root Resolution**: Reads root item from URL (`?root=`) or viewport item's attachments\n- **Title Management**: Updates browser tab title to show current item name\n- **Item Selection**: Tracks selected item for context menu operations\n- **Context Menus**: Right-click menu for View As, Add Child, Delete, Copy ID, etc.\n- **View Settings Modal**: Three-level preference management (context/item/type)\n- **Keyboard Shortcuts**: Cmd+K (search), Esc (clear selection)\n\n## View Preference System\n\nThe viewport manages the full view resolution hierarchy:\n1. Contextual override (stored in parent's child spec or viewport's root view)\n2. Item's `preferredView` field\n3. Type's `preferredView` field\n4. Type chain lookup (via [kernel:rendering](item://33333333-5555-0000-0000-000000000000))\n\n## Item Decorator\n\nApplies `data-item-id` attributes and tooltips to rendered items for:\n- Selection highlighting\n- Context menu targeting\n- Debug mode introspection",
     "for_type": "77777777-0000-0000-0000-000000000000",
@@ -11,751 +11,2437 @@
       "read",
       "write"
     ],
-    "code": "// Item: viewport-view\n// ID: bd74da77-a459-454a-b001-48685d4b536d\n// Type: aaaaaaaa-0000-0000-0000-000000000000\n\nexport async function render(item, api) {\n  // Load dependencies\n  // Note: Libraries under active development should be required where used, not here.\n  // See docs/Hot-Reloading Libraries.md for the pattern.\n  const cssLoader = await api.require('css-loader-lib');\n  await cssLoader.loadCSS('context-menu-css', api);\n\n  // Determine root: URL takes precedence over viewport item\n  // This allows direct linking and avoids flash on initial load\n  const urlParams = new URLSearchParams(window.location.search);\n  const urlRoot = urlParams.get('root');\n  \n  // The viewport item stores rootId in attachments[0]\n  const storedSpec = item.attachments?.[0];\n  const storedRootId = storedSpec?.id || storedSpec;\n  \n  // Use URL root if present and valid, otherwise use stored root\n  let rootId = storedRootId;\n  let rootSpec = storedSpec;\n  \n  if (urlRoot && urlRoot !== storedRootId) {\n    // URL has different root - verify it exists\n    try {\n      await api.get(urlRoot);\n      rootId = urlRoot;\n      rootSpec = { id: urlRoot };  // No view config from URL\n      \n      // Update viewport item to match URL (for consistency on next render)\n      // Silent to avoid triggering watcher dispatch and re-render loop\n      const updatedViewport = { ...item, attachments: [{ id: urlRoot }], modified: Date.now() };\n      await api.set(updatedViewport, { silent: true });\n    } catch {\n      // URL root doesn't exist - fall back to stored root\n      console.warn('[viewport-view] URL root not found:', urlRoot);\n    }\n  }\n  \n  // Read view type from new schema (view.type) or fall back to old flat format\n  const rootViewId = rootSpec?.view?.type || rootSpec?.view || rootSpec?.renderer || null;\n\n  // Update browser tab title\n  const updateBrowserTitle = async (itemId) => {\n    if (!itemId) {\n      document.title = 'Hobson';\n      return;\n    }\n    const rootItem = await api.get(itemId);\n    const itemName = rootItem?.content?.title || rootItem?.name || itemId.slice(0, 8);\n    document.title = itemName + ' - Hobson';\n  };\n  await updateBrowserTitle(rootId);\n\n  // Create main container\n  const container = api.createElement('div', {\n    class: 'viewport-container',\n    style: 'display: flex; flex-direction: column; height: 100%; position: relative;'\n  }, []);\n\n  // Context menu for empty/background state\n  // Append to document.body so it's always above windows (which can have high z-indices)\n  const contextMenu = api.createElement('div', {\n    id: 'context-menu',\n    class: 'context-menu',\n    style: 'display: none;'\n  }, []);\n  document.body.appendChild(contextMenu);\n\n  const hideContextMenu = () => {\n    contextMenu.style.display = 'none';\n    contextMenu.innerHTML = '';\n  };\n\n  const showEmptyContextMenu = async (x, y) => {\n    contextMenu.innerHTML = '';\n\n    const menuLib = await api.require('context-menu-lib');\n    contextMenu.appendChild(menuLib.buildEmptyMenu(api, { onDismiss: hideContextMenu }));\n\n    // Position menu\n    const menuWidth = 180, menuHeight = 100;\n    let menuX = x, menuY = y;\n    if (x + menuWidth > window.innerWidth) menuX = window.innerWidth - menuWidth - 10;\n    if (y + menuHeight > window.innerHeight) menuY = window.innerHeight - menuHeight - 10;\n    contextMenu.style.left = menuX + 'px';\n    contextMenu.style.top = menuY + 'px';\n    contextMenu.style.display = 'block';\n  };\n\n  // If no root, show empty state\n  if (!rootId) {\n    const empty = api.createElement('div', {\n      style: 'padding: 40px; text-align: center; color: var(--color-text-secondary); flex: 1;'\n    }, []);\n    empty.innerHTML = 'No item selected.<br><br><span style=\"font-size: 0.875rem;\">Cmd+K - Search items<br>Ctrl+\\\\ - Open REPL<br>Right-click - Context menu</span>';\n    container.appendChild(empty);\n\n    // Handle right-click on empty state\n    container.addEventListener('contextmenu', (e) => {\n      if (e.shiftKey) return;\n      e.preventDefault();\n      showEmptyContextMenu(e.clientX, e.clientY);\n    });\n\n    container.addEventListener('click', () => hideContextMenu());\n\n    // Keyboard shortcuts for empty state\n    const globalKeyHandler = (e) => {\n      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {\n        e.preventDefault();\n        api.showItemList();\n      }\n    };\n    document.addEventListener('keydown', globalKeyHandler);\n\n    // Register cleanup for when rendering system removes this DOM tree\n    container.setAttribute('data-hobson-cleanup', '');\n    container.__hobsonCleanup = () => {\n      document.removeEventListener('keydown', globalKeyHandler);\n      contextMenu.remove();\n    };\n\n    return container;\n  }\n\n  // Decorator for rendered items - adds data-item-id and tooltip\n  // This is viewport-specific; users can customize by modifying this function\n  const itemDecorator = async (dom, itemId, item) => {\n    dom.setAttribute('data-item-id', itemId);\n    \n    // Add tooltip with item name, type, and tags\n    const itemName = item.name || item.content?.title || itemId.slice(0, 8);\n    let typeName = item.type.slice(0, 8);\n    try {\n      const typeItem = await api.get(item.type);\n      typeName = typeItem.name || typeName;\n    } catch {}\n    \n    let titleText = itemName + ' (' + typeName + ')';\n    \n    // Add tags to tooltip if present\n    if (item.tags?.length) {\n      const tagNames = await Promise.all(item.tags.map(async tagId => {\n        try {\n          const tag = await api.get(tagId);\n          return tag.content?.name || tag.name || tagId.slice(0, 8);\n        } catch {\n          return tagId.slice(0, 8);\n        }\n      }));\n      titleText += '\\nTags: ' + tagNames.join(', ');\n    }\n    \n    dom.setAttribute('title', titleText);\n  };\n\n  // Render the root item with decorator for viewport integration\n  // Pass the full view config object so the renderer can access and update its view state\n  let rootNode;\n  try {\n    rootNode = await api.renderItem(rootId, rootSpec?.view || null, {\n      decorator: itemDecorator,\n      onCycle: async () => {\n        // Root item is already rendered above — show this viewport's own data\n        // Load default-view (Raw JSON) directly to bypass cycle detection\n        try {\n          const defaultView = await api.require('kernel:default-view');\n          return await defaultView.render(item, api);\n        } catch (e) {\n          return api.createElement('div', {\n            style: 'padding: 20px; color: var(--color-text-secondary); font-style: italic; text-align: center;'\n          }, [item.name || item.id.substring(0, 8)]);\n        }\n      }\n    });\n  } catch (error) {\n    rootNode = api.createElement('div', {\n      style: 'padding: 20px; color: var(--color-danger); background: var(--color-danger-light); border: 1px solid var(--color-danger); border-radius: var(--border-radius);'\n    }, ['Error rendering item: ' + error.message]);\n  }\n\n  const contentArea = api.createElement('div', {\n    'data-item-id': rootId,\n    class: 'viewport-content',\n    style: 'flex: 1; overflow: auto; display: flex; flex-direction: column; min-height: 0;'\n  }, [rootNode]);\n\n  container.appendChild(contentArea);\n\n  let selectedItemId = null;\n  let selectedParentId = null;\n  let selectedElement = null;\n  let lastContextMenuCoords = { x: 0, y: 0 };\n\n  const updateSelectionVisual = () => {\n    container.querySelectorAll('[data-item-id].item-selected').forEach(el => el.classList.remove('item-selected'));\n    if (selectedElement) {\n      selectedElement.classList.add('item-selected');\n    }\n  };\n\n  const selectItem = (itemId, itemElement) => {\n    selectedItemId = itemId;\n    selectedParentId = itemElement?.getAttribute('data-parent-id') || null;\n    selectedElement = itemElement;\n    api.viewport.select(itemId, selectedParentId);\n    updateSelectionVisual();\n  };\n\n  const clearSelection = () => {\n    selectedItemId = null;\n    selectedParentId = null;\n    selectedElement = null;\n    api.viewport.clearSelection();\n    updateSelectionVisual();\n  };\n\n  // Listen for programmatic selection changes (e.g. openItem → addSibling)\n  const SELECTION_CHANGED = 'e0e00000-0003-0001-0000-000000000000';\n  const unsubSelection = api.events.on(SELECTION_CHANGED, (event) => {\n    const { itemId, parentId } = event.content?.current || {};\n    if (itemId === selectedItemId) return; // Already in sync\n    selectedItemId = itemId || null;\n    selectedParentId = parentId || null;\n    selectedElement = itemId\n      ? container.querySelector(`[data-item-id=\"${itemId}\"]`)\n      : null;\n    updateSelectionVisual();\n  });\n\n  const showContextMenu = async (x, y, itemId) => {\n    const menuItem = await api.get(itemId);\n    contextMenu.innerHTML = '';\n    lastContextMenuCoords = { x, y };\n\n    // Build an api with the right siblingContainer so openItem works correctly\n    let menuApi = api;\n    if (selectedParentId) {\n      const childInst = api.instances.getAll().find(i => i.parentId === selectedParentId && i.siblingContainer);\n      if (childInst?.siblingContainer) {\n        const sc = childInst.siblingContainer;\n        menuApi = Object.create(api);\n        menuApi.openItem = async (id, opts) => {\n          await sc.addSibling(id, opts);\n          api.viewport.select(id, sc.id);\n        };\n      }\n    }\n\n    const menuLib = await api.require('context-menu-lib');\n\n    const getClickCoords = () => {\n      let clickCoords = null;\n      if (selectedParentId) {\n        const canvas = document.querySelector('[data-parent-id=\"' + selectedParentId + '\"]')?.parentElement;\n        if (canvas) {\n          const rect = canvas.getBoundingClientRect();\n          clickCoords = {\n            x: lastContextMenuCoords.x - rect.left + canvas.scrollLeft,\n            y: lastContextMenuCoords.y - rect.top + canvas.scrollTop\n          };\n        }\n      }\n      return clickCoords;\n    };\n\n    // Add Child submenu\n    contextMenu.appendChild(menuLib.buildAddChildSubmenu(menuApi, itemId, {\n      onDismiss: hideContextMenu, getClickCoords\n    }));\n    contextMenu.appendChild(menuApi.createElement('div', { class: 'context-menu-separator' }, []));\n\n    // View As submenu\n    const { fragment: viewAsFragment, viewState } = await menuLib.buildViewAsSubmenu(menuApi, itemId, {\n      onDismiss: hideContextMenu, parentId: selectedParentId\n    });\n    contextMenu.appendChild(viewAsFragment);\n\n    // View Settings\n    contextMenu.appendChild(menuLib.buildViewSettingsItem(menuApi, itemId, {\n      onDismiss: hideContextMenu, parentId: selectedParentId\n    }));\n    // Edit View\n    contextMenu.appendChild(menuLib.buildEditViewItem(menuApi, itemId, {\n      onDismiss: hideContextMenu, parentId: selectedParentId\n    }, viewState));\n    contextMenu.appendChild(menuApi.createElement('div', { class: 'context-menu-separator' }, []));\n\n    // Simple actions\n    contextMenu.appendChild(await menuLib.buildSimpleActions(menuApi, itemId, {\n      onDismiss: hideContextMenu, parentId: selectedParentId, rootId\n    }));\n    contextMenu.appendChild(menuApi.createElement('div', { class: 'context-menu-separator' }, []));\n\n    // Debug submenu\n    contextMenu.appendChild(await menuLib.buildDebugSubmenu(menuApi, itemId, {\n      onDismiss: hideContextMenu, parentId: selectedParentId, ...viewState\n    }));\n\n    // Position menu\n    const menuWidth = 180, menuHeight = 400, submenuWidth = 160;\n    let menuX = x, menuY = y;\n    if (x + menuWidth > window.innerWidth) menuX = window.innerWidth - menuWidth - 10;\n    if (y + menuHeight > window.innerHeight) menuY = window.innerHeight - menuHeight - 10;\n    contextMenu.style.left = menuX + 'px';\n    contextMenu.style.top = menuY + 'px';\n    contextMenu.style.display = 'block';\n\n    if (menuX + menuWidth + submenuWidth > window.innerWidth) {\n      contextMenu.classList.add('submenu-left');\n    } else {\n      contextMenu.classList.remove('submenu-left');\n    }\n  };\n\n  const findItemElement = (target) => {\n    let element = target.closest('[data-parent-id][data-item-id]');\n    if (!element) element = target.closest('[data-item-id]');\n    return element;\n  };\n\n  container.addEventListener('click', (e) => {\n    hideContextMenu();\n    const itemElement = findItemElement(e.target);\n    if (itemElement) {\n      selectItem(itemElement.getAttribute('data-item-id'), itemElement);\n      e.stopPropagation();\n    } else {\n      clearSelection();\n    }\n  });\n\n  container.addEventListener('contextmenu', (e) => {\n    // Let browser menu through if modifier key held\n    if (e.shiftKey) {\n      return; // Don't preventDefault, let browser handle it\n    }\n    e.preventDefault();\n    const itemElement = findItemElement(e.target);\n    if (itemElement) {\n      const itemId = itemElement.getAttribute('data-item-id');\n      selectItem(itemId, itemElement);\n      showContextMenu(e.clientX, e.clientY, itemId);\n    } else {\n      // Clicked on background - show background context menu\n      clearSelection();\n      showEmptyContextMenu(e.clientX, e.clientY);\n    }\n  });\n\n  // Keyboard shortcuts\n  const handleKeydown = (e) => {\n    // Escape: Hide context menu or clear selection\n    if (e.key === 'Escape') {\n      if (contextMenu.style.display !== 'none') hideContextMenu();\n      else clearSelection();\n    }\n  };\n\n  container.addEventListener('keydown', handleKeydown);\n  \n  // Also listen at document level for Cmd+K (so it works even when container not focused)\n  const globalKeyHandler = (e) => {\n    if ((e.metaKey || e.ctrlKey) && e.key === 'k') {\n      e.preventDefault();\n      api.showItemList();\n    }\n  };\n  document.addEventListener('keydown', globalKeyHandler);\n\n  // Register cleanup for when rendering system removes this DOM tree\n  container.setAttribute('data-hobson-cleanup', '');\n  container.__hobsonCleanup = () => {\n    document.removeEventListener('keydown', globalKeyHandler);\n    unsubSelection();\n    contextMenu.remove();\n  };\n\n  container.setAttribute('tabindex', '0');\n  return container;\n}\n",
-    "_symbols": {
-      "render": {
-        "name": "render",
-        "line": 5,
-        "col": 7,
-        "endLine": 384,
-        "endCol": 1,
-        "kind": "function",
-        "scope": null,
-        "signature": "(item, api)"
-      },
-      "render.cssLoader": {
-        "name": "cssLoader",
-        "line": 9,
-        "col": 8,
-        "endLine": 9,
-        "endCol": 55,
-        "kind": "variable",
-        "scope": "render"
-      },
-      "render.urlParams": {
-        "name": "urlParams",
-        "line": 14,
-        "col": 8,
-        "endLine": 14,
-        "endCol": 63,
-        "kind": "variable",
-        "scope": "render"
-      },
-      "render.urlRoot": {
-        "name": "urlRoot",
-        "line": 15,
-        "col": 8,
-        "endLine": 15,
-        "endCol": 39,
-        "kind": "variable",
-        "scope": "render"
-      },
-      "render.storedSpec": {
-        "name": "storedSpec",
-        "line": 18,
-        "col": 8,
-        "endLine": 18,
-        "endCol": 42,
-        "kind": "variable",
-        "scope": "render"
-      },
-      "render.storedRootId": {
-        "name": "storedRootId",
-        "line": 19,
-        "col": 8,
-        "endLine": 19,
-        "endCol": 51,
-        "kind": "variable",
-        "scope": "render"
-      },
-      "render.rootId": {
-        "name": "rootId",
-        "line": 22,
-        "col": 6,
-        "endLine": 22,
-        "endCol": 27,
-        "kind": "variable",
-        "scope": "render"
-      },
-      "render.rootSpec": {
-        "name": "rootSpec",
-        "line": 23,
-        "col": 6,
-        "endLine": 23,
-        "endCol": 27,
-        "kind": "variable",
-        "scope": "render"
-      },
-      "render.id": {
-        "name": "id",
-        "line": 30,
-        "col": 19,
-        "endLine": 30,
-        "endCol": 30,
-        "kind": "property",
-        "scope": "render"
-      },
-      "render.updatedViewport": {
-        "name": "updatedViewport",
-        "line": 34,
-        "col": 12,
-        "endLine": 34,
-        "endCol": 95,
-        "kind": "variable",
-        "scope": "render"
-      },
-      "updatedViewport.attachments": {
-        "name": "attachments",
-        "line": 34,
-        "col": 41,
-        "endLine": 34,
-        "endCol": 71,
-        "kind": "property",
-        "scope": "updatedViewport"
-      },
-      "updatedViewport.modified": {
-        "name": "modified",
-        "line": 34,
-        "col": 73,
-        "endLine": 34,
-        "endCol": 93,
-        "kind": "property",
-        "scope": "updatedViewport"
-      },
-      "render.silent": {
-        "name": "silent",
-        "line": 35,
-        "col": 39,
-        "endLine": 35,
-        "endCol": 51,
-        "kind": "property",
-        "scope": "render"
-      },
-      "render.rootViewId": {
-        "name": "rootViewId",
-        "line": 43,
-        "col": 8,
-        "endLine": 43,
-        "endCol": 89,
-        "kind": "variable",
-        "scope": "render"
-      },
-      "render.updateBrowserTitle": {
-        "name": "updateBrowserTitle",
-        "line": 46,
-        "col": 8,
-        "endLine": 54,
-        "endCol": 3,
-        "kind": "function",
-        "scope": "render",
-        "signature": "(itemId)"
-      },
-      "updateBrowserTitle.rootItem": {
-        "name": "rootItem",
-        "line": 51,
-        "col": 10,
-        "endLine": 51,
-        "endCol": 42,
-        "kind": "variable",
-        "scope": "updateBrowserTitle"
-      },
-      "updateBrowserTitle.itemName": {
-        "name": "itemName",
-        "line": 52,
-        "col": 10,
-        "endLine": 52,
-        "endCol": 85,
-        "kind": "variable",
-        "scope": "updateBrowserTitle"
-      },
-      "render.container": {
-        "name": "container",
-        "line": 58,
-        "col": 8,
-        "endLine": 61,
-        "endCol": 8,
-        "kind": "variable",
-        "scope": "render"
-      },
-      "render.contextMenu": {
-        "name": "contextMenu",
-        "line": 65,
-        "col": 8,
-        "endLine": 69,
-        "endCol": 8,
-        "kind": "variable",
-        "scope": "render"
-      },
-      "render.hideContextMenu": {
-        "name": "hideContextMenu",
-        "line": 72,
-        "col": 8,
-        "endLine": 75,
-        "endCol": 3,
-        "kind": "function",
-        "scope": "render",
-        "signature": "()"
-      },
-      "render.showEmptyContextMenu": {
-        "name": "showEmptyContextMenu",
-        "line": 77,
-        "col": 8,
-        "endLine": 91,
-        "endCol": 3,
-        "kind": "function",
-        "scope": "render",
-        "signature": "(x, y)"
-      },
-      "showEmptyContextMenu.menuLib": {
-        "name": "menuLib",
-        "line": 80,
-        "col": 10,
-        "endLine": 80,
-        "endCol": 57,
-        "kind": "variable",
-        "scope": "showEmptyContextMenu"
-      },
-      "showEmptyContextMenu.onDismiss": {
-        "name": "onDismiss",
-        "line": 81,
-        "col": 58,
-        "endLine": 81,
-        "endCol": 84,
-        "kind": "property",
-        "scope": "showEmptyContextMenu"
-      },
-      "showEmptyContextMenu.menuWidth": {
-        "name": "menuWidth",
-        "line": 84,
-        "col": 10,
-        "endLine": 84,
-        "endCol": 25,
-        "kind": "variable",
-        "scope": "showEmptyContextMenu"
-      },
-      "showEmptyContextMenu.menuHeight": {
-        "name": "menuHeight",
-        "line": 84,
-        "col": 27,
-        "endLine": 84,
-        "endCol": 43,
-        "kind": "variable",
-        "scope": "showEmptyContextMenu"
-      },
-      "showEmptyContextMenu.menuX": {
-        "name": "menuX",
-        "line": 85,
-        "col": 8,
-        "endLine": 85,
-        "endCol": 17,
-        "kind": "variable",
-        "scope": "showEmptyContextMenu"
-      },
-      "showEmptyContextMenu.menuY": {
-        "name": "menuY",
-        "line": 85,
-        "col": 19,
-        "endLine": 85,
-        "endCol": 28,
-        "kind": "variable",
-        "scope": "showEmptyContextMenu"
-      },
-      "render.empty": {
-        "name": "empty",
-        "line": 95,
-        "col": 10,
-        "endLine": 97,
-        "endCol": 10,
-        "kind": "variable",
-        "scope": "render"
-      },
-      "render.globalKeyHandler": {
-        "name": "globalKeyHandler",
-        "line": 366,
-        "col": 8,
-        "endLine": 371,
-        "endCol": 3,
-        "kind": "function",
-        "scope": "render",
-        "signature": "(e)"
-      },
-      "render.itemDecorator": {
-        "name": "itemDecorator",
-        "line": 131,
-        "col": 8,
-        "endLine": 158,
-        "endCol": 3,
-        "kind": "function",
-        "scope": "render",
-        "signature": "(dom, itemId, item)"
-      },
-      "itemDecorator.itemName": {
-        "name": "itemName",
-        "line": 135,
-        "col": 10,
-        "endLine": 135,
-        "endCol": 75,
-        "kind": "variable",
-        "scope": "itemDecorator"
-      },
-      "itemDecorator.typeName": {
-        "name": "typeName",
-        "line": 136,
-        "col": 8,
-        "endLine": 136,
-        "endCol": 40,
-        "kind": "variable",
-        "scope": "itemDecorator"
-      },
-      "itemDecorator.typeItem": {
-        "name": "typeItem",
-        "line": 138,
-        "col": 12,
-        "endLine": 138,
-        "endCol": 47,
-        "kind": "variable",
-        "scope": "itemDecorator"
-      },
-      "itemDecorator.titleText": {
-        "name": "titleText",
-        "line": 142,
-        "col": 8,
-        "endLine": 142,
-        "endCol": 52,
-        "kind": "variable",
-        "scope": "itemDecorator"
-      },
-      "itemDecorator.tagNames": {
-        "name": "tagNames",
-        "line": 146,
-        "col": 12,
-        "endLine": 153,
-        "endCol": 9,
-        "kind": "variable",
-        "scope": "itemDecorator"
-      },
-      "render.rootNode": {
-        "name": "rootNode",
-        "line": 162,
-        "col": 6,
-        "endLine": 162,
-        "endCol": 14,
-        "kind": "variable",
-        "scope": "render"
-      },
-      "render.decorator": {
-        "name": "decorator",
-        "line": 165,
-        "col": 6,
-        "endLine": 165,
-        "endCol": 30,
-        "kind": "property",
-        "scope": "render"
-      },
-      "render.onCycle": {
-        "name": "onCycle",
-        "line": 166,
-        "col": 6,
-        "endLine": 177,
-        "endCol": 7,
-        "kind": "property-function",
-        "scope": "render",
-        "signature": "()"
-      },
-      "render.onCycle.defaultView": {
-        "name": "defaultView",
-        "line": 170,
-        "col": 16,
-        "endLine": 170,
-        "endCol": 70,
-        "kind": "variable",
-        "scope": "render.onCycle"
-      },
-      "render.onCycle.style": {
-        "name": "style",
-        "line": 174,
-        "col": 12,
-        "endLine": 174,
-        "endCol": 111,
-        "kind": "property",
-        "scope": "render.onCycle"
-      },
-      "render.style": {
-        "name": "style",
-        "line": 181,
-        "col": 6,
-        "endLine": 181,
-        "endCol": 172,
-        "kind": "property",
-        "scope": "render"
-      },
-      "render.contentArea": {
-        "name": "contentArea",
-        "line": 185,
-        "col": 8,
-        "endLine": 189,
-        "endCol": 16,
-        "kind": "variable",
-        "scope": "render"
-      },
-      "render.selectedItemId": {
-        "name": "selectedItemId",
-        "line": 193,
-        "col": 6,
-        "endLine": 193,
-        "endCol": 27,
-        "kind": "variable",
-        "scope": "render"
-      },
-      "render.selectedParentId": {
-        "name": "selectedParentId",
-        "line": 194,
-        "col": 6,
-        "endLine": 194,
-        "endCol": 29,
-        "kind": "variable",
-        "scope": "render"
-      },
-      "render.selectedElement": {
-        "name": "selectedElement",
-        "line": 195,
-        "col": 6,
-        "endLine": 195,
-        "endCol": 28,
-        "kind": "variable",
-        "scope": "render"
-      },
-      "render.lastContextMenuCoords": {
-        "name": "lastContextMenuCoords",
-        "line": 196,
-        "col": 6,
-        "endLine": 196,
-        "endCol": 44,
-        "kind": "variable",
-        "scope": "render"
-      },
-      "lastContextMenuCoords.x": {
-        "name": "x",
-        "line": 196,
-        "col": 32,
-        "endLine": 196,
-        "endCol": 36,
-        "kind": "property",
-        "scope": "lastContextMenuCoords"
-      },
-      "lastContextMenuCoords.y": {
-        "name": "y",
-        "line": 196,
-        "col": 38,
-        "endLine": 196,
-        "endCol": 42,
-        "kind": "property",
-        "scope": "lastContextMenuCoords"
-      },
-      "render.updateSelectionVisual": {
-        "name": "updateSelectionVisual",
-        "line": 198,
-        "col": 8,
-        "endLine": 203,
-        "endCol": 3,
-        "kind": "function",
-        "scope": "render",
-        "signature": "()"
-      },
-      "render.selectItem": {
-        "name": "selectItem",
-        "line": 205,
-        "col": 8,
-        "endLine": 211,
-        "endCol": 3,
-        "kind": "function",
-        "scope": "render",
-        "signature": "(itemId, itemElement)"
-      },
-      "render.clearSelection": {
-        "name": "clearSelection",
-        "line": 213,
-        "col": 8,
-        "endLine": 219,
-        "endCol": 3,
-        "kind": "function",
-        "scope": "render",
-        "signature": "()"
-      },
-      "render.SELECTION_CHANGED": {
-        "name": "SELECTION_CHANGED",
-        "line": 222,
-        "col": 8,
-        "endLine": 222,
-        "endCol": 66,
-        "kind": "variable",
-        "scope": "render"
-      },
-      "render.unsubSelection": {
-        "name": "unsubSelection",
-        "line": 223,
-        "col": 8,
-        "endLine": 232,
-        "endCol": 4,
-        "kind": "variable",
-        "scope": "render"
-      },
-      "render.showContextMenu": {
-        "name": "showContextMenu",
-        "line": 234,
-        "col": 8,
-        "endLine": 317,
-        "endCol": 3,
-        "kind": "function",
-        "scope": "render",
-        "signature": "(x, y, itemId)"
-      },
-      "showContextMenu.menuItem": {
-        "name": "menuItem",
-        "line": 235,
-        "col": 10,
-        "endLine": 235,
-        "endCol": 42,
-        "kind": "variable",
-        "scope": "showContextMenu"
-      },
-      "showContextMenu.x": {
-        "name": "x",
-        "line": 237,
-        "col": 30,
-        "endLine": 237,
-        "endCol": 31,
-        "kind": "property",
-        "scope": "showContextMenu"
-      },
-      "showContextMenu.y": {
-        "name": "y",
-        "line": 237,
-        "col": 33,
-        "endLine": 237,
-        "endCol": 34,
-        "kind": "property",
-        "scope": "showContextMenu"
-      },
-      "showContextMenu.menuApi": {
-        "name": "menuApi",
-        "line": 240,
-        "col": 8,
-        "endLine": 240,
-        "endCol": 21,
-        "kind": "variable",
-        "scope": "showContextMenu"
-      },
-      "showContextMenu.childInst": {
-        "name": "childInst",
-        "line": 242,
-        "col": 12,
-        "endLine": 242,
-        "endCol": 111,
-        "kind": "variable",
-        "scope": "showContextMenu"
-      },
-      "showContextMenu.sc": {
-        "name": "sc",
-        "line": 244,
-        "col": 14,
-        "endLine": 244,
-        "endCol": 45,
-        "kind": "variable",
-        "scope": "showContextMenu"
-      },
-      "showContextMenu.menuLib": {
-        "name": "menuLib",
-        "line": 253,
-        "col": 10,
-        "endLine": 253,
-        "endCol": 57,
-        "kind": "variable",
-        "scope": "showContextMenu"
-      },
-      "showContextMenu.getClickCoords": {
-        "name": "getClickCoords",
-        "line": 272,
-        "col": 34,
-        "endLine": 272,
-        "endCol": 48,
-        "kind": "property",
-        "scope": "showContextMenu"
-      },
-      "getClickCoords.clickCoords": {
-        "name": "clickCoords",
-        "line": 256,
-        "col": 10,
-        "endLine": 256,
-        "endCol": 28,
-        "kind": "variable",
-        "scope": "getClickCoords"
-      },
-      "getClickCoords.canvas": {
-        "name": "canvas",
-        "line": 258,
-        "col": 14,
-        "endLine": 258,
-        "endCol": 107,
-        "kind": "variable",
-        "scope": "getClickCoords"
-      },
-      "getClickCoords.rect": {
-        "name": "rect",
-        "line": 260,
-        "col": 16,
-        "endLine": 260,
-        "endCol": 53,
-        "kind": "variable",
-        "scope": "getClickCoords"
-      },
-      "getClickCoords.x": {
-        "name": "x",
-        "line": 262,
-        "col": 12,
-        "endLine": 262,
-        "endCol": 70,
-        "kind": "property",
-        "scope": "getClickCoords"
-      },
-      "getClickCoords.y": {
-        "name": "y",
-        "line": 263,
-        "col": 12,
-        "endLine": 263,
-        "endCol": 68,
-        "kind": "property",
-        "scope": "getClickCoords"
-      },
-      "showContextMenu.onDismiss": {
-        "name": "onDismiss",
-        "line": 300,
-        "col": 6,
-        "endLine": 300,
-        "endCol": 32,
-        "kind": "property",
-        "scope": "showContextMenu"
-      },
-      "showContextMenu.class": {
-        "name": "class",
-        "line": 296,
-        "col": 59,
-        "endLine": 296,
-        "endCol": 90,
-        "kind": "property",
-        "scope": "showContextMenu"
-      },
-      "showContextMenu.parentId": {
-        "name": "parentId",
-        "line": 300,
-        "col": 34,
-        "endLine": 300,
-        "endCol": 60,
-        "kind": "property",
-        "scope": "showContextMenu"
-      },
-      "showContextMenu.rootId": {
-        "name": "rootId",
-        "line": 294,
-        "col": 62,
-        "endLine": 294,
-        "endCol": 68,
-        "kind": "property",
-        "scope": "showContextMenu"
-      },
-      "showContextMenu.menuWidth": {
-        "name": "menuWidth",
-        "line": 304,
-        "col": 10,
-        "endLine": 304,
-        "endCol": 25,
-        "kind": "variable",
-        "scope": "showContextMenu"
-      },
-      "showContextMenu.menuHeight": {
-        "name": "menuHeight",
-        "line": 304,
-        "col": 27,
-        "endLine": 304,
-        "endCol": 43,
-        "kind": "variable",
-        "scope": "showContextMenu"
-      },
-      "showContextMenu.submenuWidth": {
-        "name": "submenuWidth",
-        "line": 304,
-        "col": 45,
-        "endLine": 304,
-        "endCol": 63,
-        "kind": "variable",
-        "scope": "showContextMenu"
-      },
-      "showContextMenu.menuX": {
-        "name": "menuX",
-        "line": 305,
-        "col": 8,
-        "endLine": 305,
-        "endCol": 17,
-        "kind": "variable",
-        "scope": "showContextMenu"
-      },
-      "showContextMenu.menuY": {
-        "name": "menuY",
-        "line": 305,
-        "col": 19,
-        "endLine": 305,
-        "endCol": 28,
-        "kind": "variable",
-        "scope": "showContextMenu"
-      },
-      "render.findItemElement": {
-        "name": "findItemElement",
-        "line": 319,
-        "col": 8,
-        "endLine": 323,
-        "endCol": 3,
-        "kind": "function",
-        "scope": "render",
-        "signature": "(target)"
-      },
-      "findItemElement.element": {
-        "name": "element",
-        "line": 320,
-        "col": 8,
-        "endLine": 320,
-        "endCol": 66,
-        "kind": "variable",
-        "scope": "findItemElement"
-      },
-      "render.itemElement": {
-        "name": "itemElement",
-        "line": 342,
-        "col": 10,
-        "endLine": 342,
-        "endCol": 49,
-        "kind": "variable",
-        "scope": "render"
-      },
-      "render.itemId": {
-        "name": "itemId",
-        "line": 344,
-        "col": 12,
-        "endLine": 344,
-        "endCol": 61,
-        "kind": "variable",
-        "scope": "render"
-      },
-      "render.handleKeydown": {
-        "name": "handleKeydown",
-        "line": 355,
-        "col": 8,
-        "endLine": 361,
-        "endCol": 3,
-        "kind": "function",
-        "scope": "render",
-        "signature": "(e)"
-      }
-    }
+    "hob": [
+      [
+        "let",
+        {
+          "v": [
+            "css-loader",
+            [
+              "require",
+              {
+                "s": "css-loader-lib"
+              }
+            ],
+            "_",
+            [
+              "invoke",
+              "css-loader",
+              {
+                "s": "loadCSS"
+              },
+              {
+                "s": "context-menu-css"
+              },
+              "api"
+            ],
+            "doc",
+            [
+              "dom-get",
+              [
+                "hiccup->dom",
+                {
+                  "v": [
+                    ":div"
+                  ]
+                }
+              ],
+              ":ownerDocument"
+            ],
+            "win",
+            [
+              "dom-get",
+              "doc",
+              ":defaultView"
+            ],
+            "search-str",
+            [
+              "or",
+              [
+                "dom-get",
+                [
+                  "dom-get",
+                  "win",
+                  ":location"
+                ],
+                ":search"
+              ],
+              {
+                "s": ""
+              }
+            ],
+            "url-root",
+            [
+              "when",
+              [
+                "str/includes?",
+                "search-str",
+                {
+                  "s": "root="
+                }
+              ],
+              [
+                "let",
+                {
+                  "v": [
+                    "pairs",
+                    [
+                      "str/split",
+                      [
+                        "subs",
+                        "search-str",
+                        1
+                      ],
+                      {
+                        "s": "&"
+                      }
+                    ],
+                    "root-pair",
+                    [
+                      "first",
+                      [
+                        "filter",
+                        [
+                          "fn",
+                          {
+                            "v": [
+                              "p"
+                            ]
+                          },
+                          [
+                            "str/includes?",
+                            "p",
+                            {
+                              "s": "root="
+                            }
+                          ]
+                        ],
+                        "pairs"
+                      ]
+                    ]
+                  ]
+                },
+                [
+                  "when",
+                  "root-pair",
+                  [
+                    "let",
+                    {
+                      "v": [
+                        "parts",
+                        [
+                          "str/split",
+                          "root-pair",
+                          {
+                            "s": "="
+                          }
+                        ]
+                      ]
+                    },
+                    [
+                      "when",
+                      [
+                        ">",
+                        [
+                          "count",
+                          "parts"
+                        ],
+                        1
+                      ],
+                      [
+                        "nth",
+                        "parts",
+                        1
+                      ]
+                    ]
+                  ]
+                ]
+              ]
+            ],
+            "stored-spec",
+            [
+              "first",
+              [
+                ":attachments",
+                "item"
+              ]
+            ],
+            "stored-root-id",
+            [
+              "if",
+              [
+                "string?",
+                "stored-spec"
+              ],
+              "stored-spec",
+              [
+                ":id",
+                "stored-spec"
+              ]
+            ],
+            "resolved",
+            [
+              "if",
+              [
+                "and",
+                "url-root",
+                [
+                  "not=",
+                  "url-root",
+                  "stored-root-id"
+                ]
+              ],
+              [
+                "try",
+                [
+                  "do",
+                  [
+                    "get-item",
+                    "url-root"
+                  ],
+                  [
+                    "invoke",
+                    "api",
+                    {
+                      "s": "set"
+                    },
+                    [
+                      "merge",
+                      "item",
+                      {
+                        "m": [
+                          [
+                            ":attachments",
+                            {
+                              "v": [
+                                {
+                                  "m": [
+                                    [
+                                      ":id",
+                                      "url-root"
+                                    ]
+                                  ]
+                                }
+                              ]
+                            }
+                          ],
+                          [
+                            ":modified",
+                            [
+                              "now"
+                            ]
+                          ]
+                        ]
+                      }
+                    ],
+                    {
+                      "m": [
+                        [
+                          ":silent",
+                          true
+                        ]
+                      ]
+                    }
+                  ],
+                  {
+                    "m": [
+                      [
+                        ":root-id",
+                        "url-root"
+                      ],
+                      [
+                        ":root-spec",
+                        {
+                          "m": [
+                            [
+                              ":id",
+                              "url-root"
+                            ]
+                          ]
+                        }
+                      ]
+                    ]
+                  }
+                ],
+                [
+                  "catch",
+                  "_",
+                  [
+                    "do",
+                    [
+                      "log/warn",
+                      {
+                        "s": "[viewport-view] URL root not found:"
+                      },
+                      "url-root"
+                    ],
+                    {
+                      "m": [
+                        [
+                          ":root-id",
+                          "stored-root-id"
+                        ],
+                        [
+                          ":root-spec",
+                          "stored-spec"
+                        ]
+                      ]
+                    }
+                  ]
+                ]
+              ],
+              {
+                "m": [
+                  [
+                    ":root-id",
+                    "stored-root-id"
+                  ],
+                  [
+                    ":root-spec",
+                    "stored-spec"
+                  ]
+                ]
+              }
+            ],
+            "root-id",
+            [
+              ":root-id",
+              "resolved"
+            ],
+            "root-spec",
+            [
+              ":root-spec",
+              "resolved"
+            ],
+            "root-view-id",
+            [
+              "or",
+              [
+                "get-in",
+                "root-spec",
+                {
+                  "v": [
+                    ":view",
+                    ":type"
+                  ]
+                }
+              ],
+              [
+                ":view",
+                "root-spec"
+              ],
+              [
+                ":renderer",
+                "root-spec"
+              ]
+            ],
+            "_",
+            [
+              "if",
+              "root-id",
+              [
+                "let",
+                {
+                  "v": [
+                    "root-item",
+                    [
+                      "get-item",
+                      "root-id"
+                    ],
+                    "iname",
+                    [
+                      "or",
+                      [
+                        "get-in",
+                        "root-item",
+                        {
+                          "v": [
+                            ":content",
+                            ":title"
+                          ]
+                        }
+                      ],
+                      [
+                        ":name",
+                        "root-item"
+                      ],
+                      [
+                        "subs",
+                        "root-id",
+                        0,
+                        8
+                      ]
+                    ]
+                  ]
+                },
+                [
+                  "dom-set!",
+                  "doc",
+                  ":title",
+                  [
+                    "str",
+                    "iname",
+                    {
+                      "s": " - Hobson"
+                    }
+                  ]
+                ]
+              ],
+              [
+                "dom-set!",
+                "doc",
+                ":title",
+                {
+                  "s": "Hobson"
+                }
+              ]
+            ],
+            "context-menu",
+            [
+              "hiccup->dom",
+              {
+                "v": [
+                  ":div#context-menu.context-menu",
+                  {
+                    "m": [
+                      [
+                        ":style",
+                        {
+                          "s": "display:none;"
+                        }
+                      ]
+                    ]
+                  }
+                ]
+              }
+            ],
+            "_",
+            [
+              "invoke",
+              [
+                "dom-get",
+                "doc",
+                ":body"
+              ],
+              {
+                "s": "appendChild"
+              },
+              "context-menu"
+            ],
+            "hide-context-menu",
+            [
+              "fn",
+              {
+                "v": []
+              },
+              [
+                "dom-set!",
+                [
+                  "dom-get",
+                  "context-menu",
+                  ":style"
+                ],
+                ":display",
+                {
+                  "s": "none"
+                }
+              ],
+              [
+                "dom-set!",
+                "context-menu",
+                ":innerHTML",
+                {
+                  "s": ""
+                }
+              ]
+            ],
+            "show-empty-context-menu",
+            [
+              "fn",
+              {
+                "v": [
+                  "x",
+                  "y"
+                ]
+              },
+              [
+                "dom-set!",
+                "context-menu",
+                ":innerHTML",
+                {
+                  "s": ""
+                }
+              ],
+              [
+                "let",
+                {
+                  "v": [
+                    "menu-lib",
+                    [
+                      "require",
+                      {
+                        "s": "context-menu-lib"
+                      }
+                    ]
+                  ]
+                },
+                [
+                  "invoke",
+                  "context-menu",
+                  {
+                    "s": "appendChild"
+                  },
+                  [
+                    "invoke",
+                    "menu-lib",
+                    {
+                      "s": "buildEmptyMenu"
+                    },
+                    "api",
+                    {
+                      "m": [
+                        [
+                          ":onDismiss",
+                          "hide-context-menu"
+                        ]
+                      ]
+                    }
+                  ]
+                ],
+                [
+                  "let",
+                  {
+                    "v": [
+                      "inner-w",
+                      [
+                        "dom-get",
+                        "win",
+                        ":innerWidth"
+                      ],
+                      "inner-h",
+                      [
+                        "dom-get",
+                        "win",
+                        ":innerHeight"
+                      ],
+                      "menu-x",
+                      [
+                        "if",
+                        [
+                          ">",
+                          [
+                            "+",
+                            "x",
+                            180
+                          ],
+                          "inner-w"
+                        ],
+                        [
+                          "-",
+                          "inner-w",
+                          190
+                        ],
+                        "x"
+                      ],
+                      "menu-y",
+                      [
+                        "if",
+                        [
+                          ">",
+                          [
+                            "+",
+                            "y",
+                            100
+                          ],
+                          "inner-h"
+                        ],
+                        [
+                          "-",
+                          "inner-h",
+                          110
+                        ],
+                        "y"
+                      ]
+                    ]
+                  },
+                  [
+                    "dom-set!",
+                    [
+                      "dom-get",
+                      "context-menu",
+                      ":style"
+                    ],
+                    ":left",
+                    [
+                      "str",
+                      "menu-x",
+                      {
+                        "s": "px"
+                      }
+                    ]
+                  ],
+                  [
+                    "dom-set!",
+                    [
+                      "dom-get",
+                      "context-menu",
+                      ":style"
+                    ],
+                    ":top",
+                    [
+                      "str",
+                      "menu-y",
+                      {
+                        "s": "px"
+                      }
+                    ]
+                  ],
+                  [
+                    "dom-set!",
+                    [
+                      "dom-get",
+                      "context-menu",
+                      ":style"
+                    ],
+                    ":display",
+                    {
+                      "s": "block"
+                    }
+                  ]
+                ]
+              ]
+            ],
+            "_",
+            [
+              "on-cleanup!",
+              [
+                "fn",
+                {
+                  "v": []
+                },
+                [
+                  "invoke",
+                  "context-menu",
+                  {
+                    "s": "remove"
+                  }
+                ]
+              ]
+            ]
+          ]
+        },
+        [
+          "if",
+          [
+            "not",
+            "root-id"
+          ],
+          [
+            "let",
+            {
+              "v": [
+                {
+                  "v": [
+                    "container",
+                    "crefs"
+                  ]
+                },
+                [
+                  "hiccup->dom+",
+                  {
+                    "v": [
+                      ":div.viewport-container",
+                      {
+                        "m": [
+                          [
+                            ":style",
+                            {
+                              "s": "display:flex; flex-direction:column; height:100%; position:relative;"
+                            }
+                          ]
+                        ]
+                      },
+                      {
+                        "v": [
+                          ":div",
+                          {
+                            "m": [
+                              [
+                                ":ref",
+                                ":empty"
+                              ],
+                              [
+                                ":style",
+                                {
+                                  "s": "padding:40px; text-align:center; color:var(--color-text-secondary); flex:1;"
+                                }
+                              ]
+                            ]
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ],
+                "empty-el",
+                [
+                  ":empty",
+                  "crefs"
+                ],
+                "_",
+                [
+                  "dom-set!",
+                  "empty-el",
+                  ":innerHTML",
+                  {
+                    "s": "No item selected.<br><br><span style=\"font-size:0.875rem;\">Cmd+K - Search items<br>Ctrl+\\ - Open REPL<br>Right-click - Context menu</span>"
+                  }
+                ],
+                "_",
+                [
+                  "dom-on!",
+                  "container",
+                  ":contextmenu",
+                  [
+                    "fn",
+                    {
+                      "v": [
+                        "e"
+                      ]
+                    },
+                    [
+                      "when",
+                      [
+                        "not",
+                        [
+                          "dom-get",
+                          "e",
+                          ":shiftKey"
+                        ]
+                      ],
+                      [
+                        "prevent-default!",
+                        "e"
+                      ],
+                      [
+                        "show-empty-context-menu",
+                        [
+                          "dom-get",
+                          "e",
+                          ":clientX"
+                        ],
+                        [
+                          "dom-get",
+                          "e",
+                          ":clientY"
+                        ]
+                      ]
+                    ]
+                  ]
+                ],
+                "_",
+                [
+                  "dom-on!",
+                  "container",
+                  ":click",
+                  [
+                    "fn",
+                    {
+                      "v": [
+                        "e"
+                      ]
+                    },
+                    [
+                      "hide-context-menu"
+                    ]
+                  ]
+                ],
+                "_",
+                [
+                  "on-document!",
+                  ":keydown",
+                  [
+                    "fn",
+                    {
+                      "v": [
+                        "e"
+                      ]
+                    },
+                    [
+                      "when",
+                      [
+                        "and",
+                        [
+                          "or",
+                          [
+                            "dom-get",
+                            "e",
+                            ":metaKey"
+                          ],
+                          [
+                            "dom-get",
+                            "e",
+                            ":ctrlKey"
+                          ]
+                        ],
+                        [
+                          "=",
+                          [
+                            "dom-get",
+                            "e",
+                            ":key"
+                          ],
+                          {
+                            "s": "k"
+                          }
+                        ]
+                      ],
+                      [
+                        "prevent-default!",
+                        "e"
+                      ],
+                      [
+                        "invoke",
+                        "api",
+                        {
+                          "s": "showItemList"
+                        }
+                      ]
+                    ]
+                  ]
+                ]
+              ]
+            },
+            "container"
+          ],
+          [
+            "let",
+            {
+              "v": [
+                "selected-item-id",
+                [
+                  "atom",
+                  null
+                ],
+                "selected-parent-id",
+                [
+                  "atom",
+                  null
+                ],
+                "selected-element",
+                [
+                  "atom",
+                  null
+                ],
+                "last-ctx-coords",
+                [
+                  "atom",
+                  {
+                    "m": [
+                      [
+                        ":x",
+                        0
+                      ],
+                      [
+                        ":y",
+                        0
+                      ]
+                    ]
+                  }
+                ],
+                "item-decorator",
+                [
+                  "fn",
+                  {
+                    "v": [
+                      "dom",
+                      "item-id",
+                      "the-item"
+                    ]
+                  },
+                  [
+                    "invoke",
+                    "dom",
+                    {
+                      "s": "setAttribute"
+                    },
+                    {
+                      "s": "data-item-id"
+                    },
+                    "item-id"
+                  ],
+                  [
+                    "let",
+                    {
+                      "v": [
+                        "iname",
+                        [
+                          "or",
+                          [
+                            ":name",
+                            "the-item"
+                          ],
+                          [
+                            "get-in",
+                            "the-item",
+                            {
+                              "v": [
+                                ":content",
+                                ":title"
+                              ]
+                            }
+                          ],
+                          [
+                            "subs",
+                            "item-id",
+                            0,
+                            8
+                          ]
+                        ],
+                        "type-name",
+                        [
+                          "let",
+                          {
+                            "v": [
+                              "ti",
+                              [
+                                "try",
+                                [
+                                  "get-item",
+                                  [
+                                    ":type",
+                                    "the-item"
+                                  ]
+                                ],
+                                [
+                                  "catch",
+                                  "_",
+                                  null
+                                ]
+                              ]
+                            ]
+                          },
+                          [
+                            "or",
+                            [
+                              ":name",
+                              "ti"
+                            ],
+                            [
+                              "subs",
+                              [
+                                ":type",
+                                "the-item"
+                              ],
+                              0,
+                              8
+                            ]
+                          ]
+                        ],
+                        "tags",
+                        [
+                          ":tags",
+                          "the-item"
+                        ],
+                        "tag-str",
+                        [
+                          "when",
+                          [
+                            "and",
+                            "tags",
+                            [
+                              ">",
+                              [
+                                "count",
+                                "tags"
+                              ],
+                              0
+                            ]
+                          ],
+                          [
+                            "let",
+                            {
+                              "v": [
+                                "names",
+                                [
+                                  "pmap",
+                                  [
+                                    "fn",
+                                    {
+                                      "v": [
+                                        "tid"
+                                      ]
+                                    },
+                                    [
+                                      "let",
+                                      {
+                                        "v": [
+                                          "t",
+                                          [
+                                            "try",
+                                            [
+                                              "get-item",
+                                              "tid"
+                                            ],
+                                            [
+                                              "catch",
+                                              "_",
+                                              null
+                                            ]
+                                          ]
+                                        ]
+                                      },
+                                      [
+                                        "or",
+                                        [
+                                          "get-in",
+                                          "t",
+                                          {
+                                            "v": [
+                                              ":content",
+                                              ":name"
+                                            ]
+                                          }
+                                        ],
+                                        [
+                                          ":name",
+                                          "t"
+                                        ],
+                                        [
+                                          "subs",
+                                          "tid",
+                                          0,
+                                          8
+                                        ]
+                                      ]
+                                    ]
+                                  ],
+                                  "tags"
+                                ]
+                              ]
+                            },
+                            [
+                              "str",
+                              {
+                                "s": "\nTags: "
+                              },
+                              [
+                                "str/join",
+                                {
+                                  "s": ", "
+                                },
+                                "names"
+                              ]
+                            ]
+                          ]
+                        ],
+                        "title-text",
+                        [
+                          "str",
+                          "iname",
+                          {
+                            "s": " ("
+                          },
+                          "type-name",
+                          {
+                            "s": ")"
+                          },
+                          [
+                            "or",
+                            "tag-str",
+                            {
+                              "s": ""
+                            }
+                          ]
+                        ]
+                      ]
+                    },
+                    [
+                      "invoke",
+                      "dom",
+                      {
+                        "s": "setAttribute"
+                      },
+                      {
+                        "s": "title"
+                      },
+                      "title-text"
+                    ]
+                  ]
+                ],
+                "root-node",
+                [
+                  "try",
+                  [
+                    "render-item",
+                    "root-id",
+                    {
+                      "m": [
+                        [
+                          ":view",
+                          "root-view-id"
+                        ],
+                        [
+                          ":decorator",
+                          "item-decorator"
+                        ],
+                        [
+                          ":on-cycle",
+                          [
+                            "fn",
+                            {
+                              "v": []
+                            },
+                            [
+                              "try",
+                              [
+                                "let",
+                                {
+                                  "v": [
+                                    "default-view",
+                                    [
+                                      "require",
+                                      {
+                                        "s": "kernel:default-view"
+                                      }
+                                    ]
+                                  ]
+                                },
+                                [
+                                  "invoke",
+                                  "default-view",
+                                  {
+                                    "s": "render"
+                                  },
+                                  "item",
+                                  "api"
+                                ]
+                              ],
+                              [
+                                "catch",
+                                "_",
+                                [
+                                  "hiccup->dom",
+                                  {
+                                    "v": [
+                                      ":div",
+                                      {
+                                        "m": [
+                                          [
+                                            ":style",
+                                            {
+                                              "s": "padding:20px; color:var(--color-text-secondary); font-style:italic; text-align:center;"
+                                            }
+                                          ]
+                                        ]
+                                      },
+                                      [
+                                        "or",
+                                        [
+                                          ":name",
+                                          "item"
+                                        ],
+                                        [
+                                          "subs",
+                                          [
+                                            ":id",
+                                            "item"
+                                          ],
+                                          0,
+                                          8
+                                        ]
+                                      ]
+                                    ]
+                                  }
+                                ]
+                              ]
+                            ]
+                          ]
+                        ]
+                      ]
+                    }
+                  ],
+                  [
+                    "catch",
+                    "err",
+                    [
+                      "hiccup->dom",
+                      {
+                        "v": [
+                          ":div",
+                          {
+                            "m": [
+                              [
+                                ":style",
+                                {
+                                  "s": "padding:20px; color:var(--color-danger); background:var(--color-danger-light); border:1px solid var(--color-danger); border-radius:var(--border-radius);"
+                                }
+                              ]
+                            ]
+                          },
+                          [
+                            "str",
+                            {
+                              "s": "Error rendering item: "
+                            },
+                            "err"
+                          ]
+                        ]
+                      }
+                    ]
+                  ]
+                ],
+                {
+                  "v": [
+                    "container",
+                    "crefs"
+                  ]
+                },
+                [
+                  "hiccup->dom+",
+                  {
+                    "v": [
+                      ":div.viewport-container",
+                      {
+                        "m": [
+                          [
+                            ":ref",
+                            ":container"
+                          ],
+                          [
+                            ":tabindex",
+                            {
+                              "s": "0"
+                            }
+                          ],
+                          [
+                            ":style",
+                            {
+                              "s": "display:flex; flex-direction:column; height:100%; position:relative;"
+                            }
+                          ]
+                        ]
+                      },
+                      {
+                        "v": [
+                          ":div",
+                          {
+                            "m": [
+                              [
+                                ":ref",
+                                ":content"
+                              ],
+                              [
+                                ":class",
+                                {
+                                  "s": "viewport-content"
+                                }
+                              ],
+                              [
+                                ":style",
+                                {
+                                  "s": "flex:1; overflow:auto; display:flex; flex-direction:column; min-height:0;"
+                                }
+                              ]
+                            ]
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ],
+                "content-area",
+                [
+                  ":content",
+                  "crefs"
+                ],
+                "_",
+                [
+                  "invoke",
+                  "content-area",
+                  {
+                    "s": "setAttribute"
+                  },
+                  {
+                    "s": "data-item-id"
+                  },
+                  "root-id"
+                ],
+                "_",
+                [
+                  "invoke",
+                  "content-area",
+                  {
+                    "s": "appendChild"
+                  },
+                  "root-node"
+                ],
+                "update-selection-visual",
+                [
+                  "fn",
+                  {
+                    "v": []
+                  },
+                  [
+                    "invoke",
+                    [
+                      "invoke",
+                      "container",
+                      {
+                        "s": "querySelectorAll"
+                      },
+                      {
+                        "s": "[data-item-id].item-selected"
+                      }
+                    ],
+                    {
+                      "s": "forEach"
+                    },
+                    [
+                      "fn",
+                      {
+                        "v": [
+                          "el"
+                        ]
+                      },
+                      [
+                        "invoke",
+                        [
+                          "dom-get",
+                          "el",
+                          ":classList"
+                        ],
+                        {
+                          "s": "remove"
+                        },
+                        {
+                          "s": "item-selected"
+                        }
+                      ]
+                    ]
+                  ],
+                  [
+                    "when",
+                    [
+                      "deref",
+                      "selected-element"
+                    ],
+                    [
+                      "invoke",
+                      [
+                        "dom-get",
+                        [
+                          "deref",
+                          "selected-element"
+                        ],
+                        ":classList"
+                      ],
+                      {
+                        "s": "add"
+                      },
+                      {
+                        "s": "item-selected"
+                      }
+                    ]
+                  ]
+                ],
+                "select-item",
+                [
+                  "fn",
+                  {
+                    "v": [
+                      "iid",
+                      "el"
+                    ]
+                  },
+                  [
+                    "reset!",
+                    "selected-item-id",
+                    "iid"
+                  ],
+                  [
+                    "reset!",
+                    "selected-parent-id",
+                    [
+                      "when",
+                      "el",
+                      [
+                        "invoke",
+                        "el",
+                        {
+                          "s": "getAttribute"
+                        },
+                        {
+                          "s": "data-parent-id"
+                        }
+                      ]
+                    ]
+                  ],
+                  [
+                    "reset!",
+                    "selected-element",
+                    "el"
+                  ],
+                  [
+                    "invoke",
+                    [
+                      "dom-get",
+                      "api",
+                      ":viewport"
+                    ],
+                    {
+                      "s": "select"
+                    },
+                    "iid",
+                    [
+                      "deref",
+                      "selected-parent-id"
+                    ]
+                  ],
+                  [
+                    "update-selection-visual"
+                  ]
+                ],
+                "clear-selection",
+                [
+                  "fn",
+                  {
+                    "v": []
+                  },
+                  [
+                    "reset!",
+                    "selected-item-id",
+                    null
+                  ],
+                  [
+                    "reset!",
+                    "selected-parent-id",
+                    null
+                  ],
+                  [
+                    "reset!",
+                    "selected-element",
+                    null
+                  ],
+                  [
+                    "invoke",
+                    [
+                      "dom-get",
+                      "api",
+                      ":viewport"
+                    ],
+                    {
+                      "s": "clearSelection"
+                    }
+                  ],
+                  [
+                    "update-selection-visual"
+                  ]
+                ],
+                "_",
+                [
+                  "on-event!",
+                  {
+                    "s": "e0e00000-0003-0001-0000-000000000000"
+                  },
+                  [
+                    "fn",
+                    {
+                      "v": [
+                        "event"
+                      ]
+                    },
+                    [
+                      "let",
+                      {
+                        "v": [
+                          "current",
+                          [
+                            "get-in",
+                            "event",
+                            {
+                              "v": [
+                                ":content",
+                                ":current"
+                              ]
+                            }
+                          ],
+                          "iid",
+                          [
+                            ":itemId",
+                            "current"
+                          ],
+                          "pid",
+                          [
+                            ":parentId",
+                            "current"
+                          ]
+                        ]
+                      },
+                      [
+                        "when",
+                        [
+                          "not=",
+                          "iid",
+                          [
+                            "deref",
+                            "selected-item-id"
+                          ]
+                        ],
+                        [
+                          "reset!",
+                          "selected-item-id",
+                          [
+                            "or",
+                            "iid",
+                            null
+                          ]
+                        ],
+                        [
+                          "reset!",
+                          "selected-parent-id",
+                          [
+                            "or",
+                            "pid",
+                            null
+                          ]
+                        ],
+                        [
+                          "reset!",
+                          "selected-element",
+                          [
+                            "when",
+                            "iid",
+                            [
+                              "invoke",
+                              "container",
+                              {
+                                "s": "querySelector"
+                              },
+                              [
+                                "str",
+                                {
+                                  "s": "[data-item-id=\""
+                                },
+                                "iid",
+                                {
+                                  "s": "\"]"
+                                }
+                              ]
+                            ]
+                          ]
+                        ],
+                        [
+                          "update-selection-visual"
+                        ]
+                      ]
+                    ]
+                  ]
+                ],
+                "show-context-menu",
+                [
+                  "fn",
+                  {
+                    "v": [
+                      "x",
+                      "y",
+                      "iid"
+                    ]
+                  },
+                  [
+                    "let",
+                    {
+                      "v": [
+                        "menu-item",
+                        [
+                          "get-item",
+                          "iid"
+                        ]
+                      ]
+                    },
+                    [
+                      "dom-set!",
+                      "context-menu",
+                      ":innerHTML",
+                      {
+                        "s": ""
+                      }
+                    ],
+                    [
+                      "reset!",
+                      "last-ctx-coords",
+                      {
+                        "m": [
+                          [
+                            ":x",
+                            "x"
+                          ],
+                          [
+                            ":y",
+                            "y"
+                          ]
+                        ]
+                      }
+                    ],
+                    [
+                      "let",
+                      {
+                        "v": [
+                          "menu-lib",
+                          [
+                            "require",
+                            {
+                              "s": "context-menu-lib"
+                            }
+                          ],
+                          "get-click-coords",
+                          [
+                            "fn",
+                            {
+                              "v": []
+                            },
+                            [
+                              "when",
+                              [
+                                "deref",
+                                "selected-parent-id"
+                              ],
+                              [
+                                "let",
+                                {
+                                  "v": [
+                                    "sel",
+                                    [
+                                      "str",
+                                      {
+                                        "s": "[data-parent-id=\""
+                                      },
+                                      [
+                                        "deref",
+                                        "selected-parent-id"
+                                      ],
+                                      {
+                                        "s": "\"]"
+                                      }
+                                    ],
+                                    "canvas-child",
+                                    [
+                                      "invoke",
+                                      "doc",
+                                      {
+                                        "s": "querySelector"
+                                      },
+                                      "sel"
+                                    ],
+                                    "canvas",
+                                    [
+                                      "when",
+                                      "canvas-child",
+                                      [
+                                        "dom-get",
+                                        "canvas-child",
+                                        ":parentElement"
+                                      ]
+                                    ]
+                                  ]
+                                },
+                                [
+                                  "when",
+                                  "canvas",
+                                  [
+                                    "let",
+                                    {
+                                      "v": [
+                                        "rect",
+                                        [
+                                          "invoke",
+                                          "canvas",
+                                          {
+                                            "s": "getBoundingClientRect"
+                                          }
+                                        ],
+                                        "coords",
+                                        [
+                                          "deref",
+                                          "last-ctx-coords"
+                                        ]
+                                      ]
+                                    },
+                                    {
+                                      "m": [
+                                        [
+                                          ":x",
+                                          [
+                                            "+",
+                                            [
+                                              "-",
+                                              [
+                                                ":x",
+                                                "coords"
+                                              ],
+                                              [
+                                                "dom-get",
+                                                "rect",
+                                                ":left"
+                                              ]
+                                            ],
+                                            [
+                                              "dom-get",
+                                              "canvas",
+                                              ":scrollLeft"
+                                            ]
+                                          ]
+                                        ],
+                                        [
+                                          ":y",
+                                          [
+                                            "+",
+                                            [
+                                              "-",
+                                              [
+                                                ":y",
+                                                "coords"
+                                              ],
+                                              [
+                                                "dom-get",
+                                                "rect",
+                                                ":top"
+                                              ]
+                                            ],
+                                            [
+                                              "dom-get",
+                                              "canvas",
+                                              ":scrollTop"
+                                            ]
+                                          ]
+                                        ]
+                                      ]
+                                    }
+                                  ]
+                                ]
+                              ]
+                            ]
+                          ],
+                          "dismiss-opts",
+                          {
+                            "m": [
+                              [
+                                ":onDismiss",
+                                "hide-context-menu"
+                              ]
+                            ]
+                          },
+                          "parent-opts",
+                          [
+                            "merge",
+                            "dismiss-opts",
+                            {
+                              "m": [
+                                [
+                                  ":parentId",
+                                  [
+                                    "deref",
+                                    "selected-parent-id"
+                                  ]
+                                ]
+                              ]
+                            }
+                          ]
+                        ]
+                      },
+                      [
+                        "invoke",
+                        "context-menu",
+                        {
+                          "s": "appendChild"
+                        },
+                        [
+                          "invoke",
+                          "menu-lib",
+                          {
+                            "s": "buildAddChildSubmenu"
+                          },
+                          "api",
+                          "iid",
+                          [
+                            "merge",
+                            "dismiss-opts",
+                            {
+                              "m": [
+                                [
+                                  ":getClickCoords",
+                                  "get-click-coords"
+                                ]
+                              ]
+                            }
+                          ]
+                        ]
+                      ],
+                      [
+                        "invoke",
+                        "context-menu",
+                        {
+                          "s": "appendChild"
+                        },
+                        [
+                          "invoke",
+                          "api",
+                          {
+                            "s": "createElement"
+                          },
+                          {
+                            "s": "div"
+                          },
+                          {
+                            "m": [
+                              [
+                                ":class",
+                                {
+                                  "s": "context-menu-separator"
+                                }
+                              ]
+                            ]
+                          },
+                          {
+                            "v": []
+                          }
+                        ]
+                      ],
+                      [
+                        "let",
+                        {
+                          "v": [
+                            "view-as-result",
+                            [
+                              "invoke",
+                              "menu-lib",
+                              {
+                                "s": "buildViewAsSubmenu"
+                              },
+                              "api",
+                              "iid",
+                              "parent-opts"
+                            ],
+                            "view-state",
+                            [
+                              "dom-get",
+                              "view-as-result",
+                              ":viewState"
+                            ]
+                          ]
+                        },
+                        [
+                          "invoke",
+                          "context-menu",
+                          {
+                            "s": "appendChild"
+                          },
+                          [
+                            "dom-get",
+                            "view-as-result",
+                            ":fragment"
+                          ]
+                        ],
+                        [
+                          "invoke",
+                          "context-menu",
+                          {
+                            "s": "appendChild"
+                          },
+                          [
+                            "invoke",
+                            "menu-lib",
+                            {
+                              "s": "buildViewSettingsItem"
+                            },
+                            "api",
+                            "iid",
+                            "parent-opts"
+                          ]
+                        ],
+                        [
+                          "invoke",
+                          "context-menu",
+                          {
+                            "s": "appendChild"
+                          },
+                          [
+                            "invoke",
+                            "menu-lib",
+                            {
+                              "s": "buildEditViewItem"
+                            },
+                            "api",
+                            "iid",
+                            "parent-opts",
+                            "view-state"
+                          ]
+                        ],
+                        [
+                          "invoke",
+                          "context-menu",
+                          {
+                            "s": "appendChild"
+                          },
+                          [
+                            "invoke",
+                            "api",
+                            {
+                              "s": "createElement"
+                            },
+                            {
+                              "s": "div"
+                            },
+                            {
+                              "m": [
+                                [
+                                  ":class",
+                                  {
+                                    "s": "context-menu-separator"
+                                  }
+                                ]
+                              ]
+                            },
+                            {
+                              "v": []
+                            }
+                          ]
+                        ],
+                        [
+                          "invoke",
+                          "context-menu",
+                          {
+                            "s": "appendChild"
+                          },
+                          [
+                            "invoke",
+                            "menu-lib",
+                            {
+                              "s": "buildSimpleActions"
+                            },
+                            "api",
+                            "iid",
+                            [
+                              "merge",
+                              "parent-opts",
+                              {
+                                "m": [
+                                  [
+                                    ":rootId",
+                                    "root-id"
+                                  ]
+                                ]
+                              }
+                            ]
+                          ]
+                        ],
+                        [
+                          "invoke",
+                          "context-menu",
+                          {
+                            "s": "appendChild"
+                          },
+                          [
+                            "invoke",
+                            "api",
+                            {
+                              "s": "createElement"
+                            },
+                            {
+                              "s": "div"
+                            },
+                            {
+                              "m": [
+                                [
+                                  ":class",
+                                  {
+                                    "s": "context-menu-separator"
+                                  }
+                                ]
+                              ]
+                            },
+                            {
+                              "v": []
+                            }
+                          ]
+                        ],
+                        [
+                          "invoke",
+                          "context-menu",
+                          {
+                            "s": "appendChild"
+                          },
+                          [
+                            "invoke",
+                            "menu-lib",
+                            {
+                              "s": "buildDebugSubmenu"
+                            },
+                            "api",
+                            "iid",
+                            [
+                              "merge",
+                              "parent-opts",
+                              "view-state"
+                            ]
+                          ]
+                        ]
+                      ],
+                      [
+                        "let",
+                        {
+                          "v": [
+                            "inner-w",
+                            [
+                              "dom-get",
+                              "win",
+                              ":innerWidth"
+                            ],
+                            "inner-h",
+                            [
+                              "dom-get",
+                              "win",
+                              ":innerHeight"
+                            ],
+                            "menu-x",
+                            [
+                              "if",
+                              [
+                                ">",
+                                [
+                                  "+",
+                                  "x",
+                                  180
+                                ],
+                                "inner-w"
+                              ],
+                              [
+                                "-",
+                                "inner-w",
+                                190
+                              ],
+                              "x"
+                            ],
+                            "menu-y",
+                            [
+                              "if",
+                              [
+                                ">",
+                                [
+                                  "+",
+                                  "y",
+                                  400
+                                ],
+                                "inner-h"
+                              ],
+                              [
+                                "-",
+                                "inner-h",
+                                410
+                              ],
+                              "y"
+                            ]
+                          ]
+                        },
+                        [
+                          "dom-set!",
+                          [
+                            "dom-get",
+                            "context-menu",
+                            ":style"
+                          ],
+                          ":left",
+                          [
+                            "str",
+                            "menu-x",
+                            {
+                              "s": "px"
+                            }
+                          ]
+                        ],
+                        [
+                          "dom-set!",
+                          [
+                            "dom-get",
+                            "context-menu",
+                            ":style"
+                          ],
+                          ":top",
+                          [
+                            "str",
+                            "menu-y",
+                            {
+                              "s": "px"
+                            }
+                          ]
+                        ],
+                        [
+                          "dom-set!",
+                          [
+                            "dom-get",
+                            "context-menu",
+                            ":style"
+                          ],
+                          ":display",
+                          {
+                            "s": "block"
+                          }
+                        ],
+                        [
+                          "if",
+                          [
+                            ">",
+                            [
+                              "+",
+                              "menu-x",
+                              340
+                            ],
+                            "inner-w"
+                          ],
+                          [
+                            "invoke",
+                            [
+                              "dom-get",
+                              "context-menu",
+                              ":classList"
+                            ],
+                            {
+                              "s": "add"
+                            },
+                            {
+                              "s": "submenu-left"
+                            }
+                          ],
+                          [
+                            "invoke",
+                            [
+                              "dom-get",
+                              "context-menu",
+                              ":classList"
+                            ],
+                            {
+                              "s": "remove"
+                            },
+                            {
+                              "s": "submenu-left"
+                            }
+                          ]
+                        ]
+                      ]
+                    ]
+                  ]
+                ],
+                "find-item-element",
+                [
+                  "fn",
+                  {
+                    "v": [
+                      "target"
+                    ]
+                  },
+                  [
+                    "or",
+                    [
+                      "invoke",
+                      "target",
+                      {
+                        "s": "closest"
+                      },
+                      {
+                        "s": "[data-parent-id][data-item-id]"
+                      }
+                    ],
+                    [
+                      "invoke",
+                      "target",
+                      {
+                        "s": "closest"
+                      },
+                      {
+                        "s": "[data-item-id]"
+                      }
+                    ]
+                  ]
+                ],
+                "_",
+                [
+                  "dom-on!",
+                  "container",
+                  ":click",
+                  [
+                    "fn",
+                    {
+                      "v": [
+                        "e"
+                      ]
+                    },
+                    [
+                      "hide-context-menu"
+                    ],
+                    [
+                      "let",
+                      {
+                        "v": [
+                          "el",
+                          [
+                            "find-item-element",
+                            [
+                              "dom-get",
+                              "e",
+                              ":target"
+                            ]
+                          ]
+                        ]
+                      },
+                      [
+                        "if",
+                        "el",
+                        [
+                          "do",
+                          [
+                            "select-item",
+                            [
+                              "invoke",
+                              "el",
+                              {
+                                "s": "getAttribute"
+                              },
+                              {
+                                "s": "data-item-id"
+                              }
+                            ],
+                            "el"
+                          ],
+                          [
+                            "stop-propagation!",
+                            "e"
+                          ]
+                        ],
+                        [
+                          "clear-selection"
+                        ]
+                      ]
+                    ]
+                  ]
+                ],
+                "_",
+                [
+                  "dom-on!",
+                  "container",
+                  ":contextmenu",
+                  [
+                    "fn",
+                    {
+                      "v": [
+                        "e"
+                      ]
+                    },
+                    [
+                      "when",
+                      [
+                        "not",
+                        [
+                          "dom-get",
+                          "e",
+                          ":shiftKey"
+                        ]
+                      ],
+                      [
+                        "prevent-default!",
+                        "e"
+                      ],
+                      [
+                        "let",
+                        {
+                          "v": [
+                            "el",
+                            [
+                              "find-item-element",
+                              [
+                                "dom-get",
+                                "e",
+                                ":target"
+                              ]
+                            ]
+                          ]
+                        },
+                        [
+                          "if",
+                          "el",
+                          [
+                            "let",
+                            {
+                              "v": [
+                                "iid",
+                                [
+                                  "invoke",
+                                  "el",
+                                  {
+                                    "s": "getAttribute"
+                                  },
+                                  {
+                                    "s": "data-item-id"
+                                  }
+                                ]
+                              ]
+                            },
+                            [
+                              "select-item",
+                              "iid",
+                              "el"
+                            ],
+                            [
+                              "show-context-menu",
+                              [
+                                "dom-get",
+                                "e",
+                                ":clientX"
+                              ],
+                              [
+                                "dom-get",
+                                "e",
+                                ":clientY"
+                              ],
+                              "iid"
+                            ]
+                          ],
+                          [
+                            "do",
+                            [
+                              "clear-selection"
+                            ],
+                            [
+                              "show-empty-context-menu",
+                              [
+                                "dom-get",
+                                "e",
+                                ":clientX"
+                              ],
+                              [
+                                "dom-get",
+                                "e",
+                                ":clientY"
+                              ]
+                            ]
+                          ]
+                        ]
+                      ]
+                    ]
+                  ]
+                ],
+                "_",
+                [
+                  "dom-on!",
+                  "container",
+                  ":keydown",
+                  [
+                    "fn",
+                    {
+                      "v": [
+                        "e"
+                      ]
+                    },
+                    [
+                      "when",
+                      [
+                        "=",
+                        [
+                          "dom-get",
+                          "e",
+                          ":key"
+                        ],
+                        {
+                          "s": "Escape"
+                        }
+                      ],
+                      [
+                        "if",
+                        [
+                          "not=",
+                          [
+                            "dom-get",
+                            [
+                              "dom-get",
+                              "context-menu",
+                              ":style"
+                            ],
+                            ":display"
+                          ],
+                          {
+                            "s": "none"
+                          }
+                        ],
+                        [
+                          "hide-context-menu"
+                        ],
+                        [
+                          "clear-selection"
+                        ]
+                      ]
+                    ]
+                  ]
+                ],
+                "_",
+                [
+                  "on-document!",
+                  ":keydown",
+                  [
+                    "fn",
+                    {
+                      "v": [
+                        "e"
+                      ]
+                    },
+                    [
+                      "when",
+                      [
+                        "and",
+                        [
+                          "or",
+                          [
+                            "dom-get",
+                            "e",
+                            ":metaKey"
+                          ],
+                          [
+                            "dom-get",
+                            "e",
+                            ":ctrlKey"
+                          ]
+                        ],
+                        [
+                          "=",
+                          [
+                            "dom-get",
+                            "e",
+                            ":key"
+                          ],
+                          {
+                            "s": "k"
+                          }
+                        ]
+                      ],
+                      [
+                        "prevent-default!",
+                        "e"
+                      ],
+                      [
+                        "invoke",
+                        "api",
+                        {
+                          "s": "showItemList"
+                        }
+                      ]
+                    ]
+                  ]
+                ]
+              ]
+            },
+            "container"
+          ]
+        ]
+      ]
+    ]
   },
   "attachments": []
 }
