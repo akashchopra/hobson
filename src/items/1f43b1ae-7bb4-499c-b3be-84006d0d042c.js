@@ -151,6 +151,13 @@
   text-align: center;
 }
 
+/* Insert-between hover (editable mode only) */
+.hob-editable [data-insert-after]:hover {
+  background: oklch(85% 0.08 250);
+  border-radius: 1px;
+  cursor: text;
+}
+
 /* Empty state */
 .hob-empty {
   color: var(--color-text-tertiary, #999);
