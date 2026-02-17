@@ -872,6 +872,19 @@ export class RenderingSystem {
     // Flag Hob view DOM nodes so rerenderItem can use morphdom instead of replaceChild
     if (domNode) domNode.__hobView = true;
 
+    // Wire Hob cleanup handlers to the DOM node
+    if (domNode && api._hobCleanups && api._hobCleanups.length > 0) {
+      const cleanups = [...api._hobCleanups];
+      domNode.setAttribute('data-hobson-cleanup', '');
+      const prevCleanup = domNode.__hobsonCleanup;
+      domNode.__hobsonCleanup = () => {
+        for (const fn of cleanups) {
+          try { fn(); } catch (e) { /* ignore */ }
+        }
+        if (prevCleanup) prevCleanup();
+      };
+    }
+
     // Setup sortable containers
     if (domNode) {
       const sortables = domNode.querySelectorAll('[data-hob-sortable]');
