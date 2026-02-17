@@ -328,6 +328,13 @@ export class RenderingSystem {
               try { oldDom.__hobsonCleanup(); } catch (e) { /* ignore */ }
             }
 
+            // Preserve parent-set attributes that the child view doesn't produce.
+            // data-parent-id is set by the parent (e.g. sortable-list-view, spatial-canvas-view)
+            // after rendering the child. Without this, morphdom would strip it from oldDom
+            // because newDom (freshly rendered by the child view) doesn't have it.
+            const oldParentId = oldDom.getAttribute('data-parent-id');
+            if (oldParentId) newDom.setAttribute('data-parent-id', oldParentId);
+
             const morphdom = await this._loadMorphdom();
 
             morphdom(oldDom, newDom, {
