@@ -2758,10 +2758,42 @@ function registerItemOps(env, api) {
 function registerViewOps(env, api) {
   env.define('api', api);
 
-  env.define('render-item', Object.assign(async (itemId, viewId) => {
-    const dom = await api.renderItem(itemId, viewId || null);
+  // Cleanup registry for the current view render.
+  // Handlers pushed here are wired to the DOM by renderHobView after evaluation.
+  if (!api._hobCleanups) api._hobCleanups = [];
+
+  env.define('render-item', Object.assign(async (itemId, viewIdOrOpts) => {
+    if (viewIdOrOpts && typeof viewIdOrOpts === 'object' && !Array.isArray(viewIdOrOpts)) {
+      // Options map — extract keyword keys
+      const opts = hobToJs(viewIdOrOpts);
+      const viewId = opts.view || null;
+      const renderOpts = {};
+      if (opts['on-cycle']) renderOpts.onCycle = opts['on-cycle'];
+      if (opts.decorator) renderOpts.decorator = opts.decorator;
+      if (opts['sibling-container']) renderOpts.siblingContainer = opts['sibling-container'];
+      return await api.renderItem(itemId, viewId, renderOpts);
+    }
+    // String or nil — backward-compatible
+    const dom = await api.renderItem(itemId, viewIdOrOpts || null);
     return dom;
   }, { _hobName: 'render-item' }));
+
+  env.define('on-cleanup!', Object.assign((handler) => {
+    api._hobCleanups.push(handler);
+    return null;
+  }, { _hobName: 'on-cleanup!' }));
+
+  env.define('on-document!', Object.assign((eventName, handler) => {
+    const name = isKeyword(eventName) ? keywordName(eventName) : String(eventName);
+    document.addEventListener(name, handler);
+    const remove = () => document.removeEventListener(name, handler);
+    api._hobCleanups.push(remove);
+    return remove;
+  }, { _hobName: 'on-document!' }));
+
+  env.define('get-sibling-container', Object.assign(() => {
+    return api.siblingContainer;
+  }, { _hobName: 'get-sibling-container' }));
 
   env.define('navigate!', Object.assign((itemId) => {
     api.navigate(itemId);
