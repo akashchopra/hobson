@@ -581,6 +581,7 @@ export class RenderingSystem {
         if (hobResult.domNode) {
           const parentId = context.parentId || null;
           const siblingContainer = context.siblingContainer || null;
+          if (parentId) hobResult.domNode.setAttribute('data-parent-id', parentId);
           this.registry.register(hobResult.domNode, itemId, view.id, parentId, siblingContainer, hobResult.trackingId);
         }
         return hobResult.domNode;
@@ -619,6 +620,7 @@ export class RenderingSystem {
       if (domNode) {
         const parentId = context.parentId || null;
         const siblingContainer = context.siblingContainer || null;
+        if (parentId) domNode.setAttribute('data-parent-id', parentId);
         this.registry.register(domNode, itemId, view.id, parentId, siblingContainer);
       }
 
