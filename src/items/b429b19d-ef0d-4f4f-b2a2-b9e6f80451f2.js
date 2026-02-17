@@ -169,7 +169,8 @@ export async function render(item, api) {
     // Wrap in collapsible <details> if requested
     if (hint.collapsible) {
       const details = api.createElement('details');
-      if (!hint.startCollapsed) details.setAttribute('open', '');
+      const shouldOpen = hint.startCollapsed === 'ifEmpty' ? !!value : !hint.startCollapsed;
+      if (shouldOpen) details.setAttribute('open', '');
       const summary = api.createElement('summary');
       summary.textContent = hint.label || fieldName;
       summary.style.cssText = 'cursor: pointer; font-size: 0.8125rem; font-weight: 500; color: var(--color-text-secondary); user-select: none; padding: 2px 0;';
