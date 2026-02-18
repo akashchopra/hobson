@@ -2767,11 +2767,8 @@ function registerViewOps(env, api) {
 
   const _drHob = new URLSearchParams(window.location.search).has('debug-render');
   env.define('render-item', Object.assign(async (itemId, viewIdOrOpts) => {
-    if (_drHob) console.log(`[hob:render-item] START itemId=${itemId?.slice(0,8)} opts=${typeof viewIdOrOpts}`);
+    if (_drHob) console.log(`[hob:render-item] START itemId=${String(itemId).slice(0,8)} opts=${typeof viewIdOrOpts}`);
     const t0 = _drHob ? performance.now() : 0;
-    // Record dependency on the child item in the parent's tracking context,
-    // so the parent re-renders when the child item changes.
-    if (_currentTrackingContext) _currentTrackingContext.tracker.recordAccess(itemId);
     let dom;
     if (viewIdOrOpts && typeof viewIdOrOpts === 'object' && !Array.isArray(viewIdOrOpts)) {
       // Options map — extract keyword keys
@@ -2786,7 +2783,7 @@ function registerViewOps(env, api) {
       // String or nil — backward-compatible
       dom = await api.renderItem(itemId, viewIdOrOpts || null);
     }
-    if (_drHob) console.log(`[hob:render-item] DONE itemId=${itemId?.slice(0,8)} ${(performance.now()-t0).toFixed(1)}ms hasDOM=${!!dom}`);
+    if (_drHob) console.log(`[hob:render-item] DONE itemId=${String(itemId).slice(0,8)} ${(performance.now()-t0).toFixed(1)}ms hasDOM=${!!dom}`);
     return dom;
   }, { _hobName: 'render-item' }));
 
