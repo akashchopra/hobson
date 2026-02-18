@@ -807,17 +807,8 @@ function updateSelectionVisual(state) {
     parentNode = state.parentMap.get(parentNode.id);
   }
 
-  // Scroll into view within editor only (never scroll ancestor/page)
-  const container = state.editorEl;
-  if (container) {
-    const elRect = el.getBoundingClientRect();
-    const cRect = container.getBoundingClientRect();
-    if (elRect.top < cRect.top) {
-      container.scrollTop -= cRect.top - elRect.top + 8;
-    } else if (elRect.bottom > cRect.bottom) {
-      container.scrollTop += elRect.bottom - cRect.bottom + 8;
-    }
-  }
+  // Scroll selected element into view
+  el.scrollIntoView({ block: 'nearest', inline: 'nearest' });
 }
 
 function nodeLabel(node) {
@@ -1220,34 +1211,42 @@ function handleNavKey(e, ctx) {
   let handled = true;
 
   if (e.key === 'ArrowLeft' && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey) {
-    // Previous sibling
+    // Go to parent (shallower)
+    if (parent && parent.type !== 'root') {
+      state.selectedId = parent.id;
+      state.expansionStack = [];
+    }
+  } else if (e.key === 'ArrowRight' && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    // Enter container (deeper)
+    if (node.children && node.children.length > 0) {
+      state.selectedId = node.children[0].id;
+      state.expansionStack = [];
+    }
+  } else if (e.key === 'ArrowUp' && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
+    // Previous sibling, or parent if at first child
     if (parent && parent.children) {
       const idx = parent.children.indexOf(node);
       if (idx > 0) {
         state.selectedId = parent.children[idx - 1].id;
         state.expansionStack = [];
-      }
-    }
-  } else if (e.key === 'ArrowRight' && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey) {
-    // Next sibling
-    if (parent && parent.children) {
-      const idx = parent.children.indexOf(node);
-      if (idx < parent.children.length - 1) {
-        state.selectedId = parent.children[idx + 1].id;
+      } else if (parent.type !== 'root') {
+        state.selectedId = parent.id;
         state.expansionStack = [];
       }
     }
-  } else if (e.key === 'ArrowUp' && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
-    // Select parent
-    if (parent && parent.type !== 'root') {
-      state.selectedId = parent.id;
-      state.expansionStack = [];
-    }
   } else if (e.key === 'ArrowDown' && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
-    // Select first child
-    if (node.children && node.children.length > 0) {
-      state.selectedId = node.children[0].id;
-      state.expansionStack = [];
+    // Next sibling, or walk up to find ancestor's next sibling
+    let cur = node;
+    let curParent = parent;
+    while (curParent && curParent.type !== 'root') {
+      const idx = curParent.children.indexOf(cur);
+      if (idx < curParent.children.length - 1) {
+        state.selectedId = curParent.children[idx + 1].id;
+        state.expansionStack = [];
+        break;
+      }
+      cur = curParent;
+      curParent = state.parentMap.get(curParent.id);
     }
   } else if (e.key === 'Home' && !e.ctrlKey && !e.metaKey) {
     // First sibling
