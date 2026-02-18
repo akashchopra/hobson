@@ -332,6 +332,9 @@ function renderList(node, state, itemNames, api, indent) {
     }
   }
 
+  // Trailing gap before closing delimiter (clickable insert-after last child)
+  const lastChild = node.children[node.children.length - 1];
+  span.appendChild(newline(indent, lastChild.id));
   span.appendChild(delim(')'));
   return span;
 }
@@ -390,6 +393,9 @@ function renderBindingVector(node, state, itemNames, api, indent) {
     }
   }
 
+  // Trailing gap before closing delimiter
+  const lastKid = kids[kids.length - 1];
+  span.appendChild(newline(indent, lastKid.id));
   span.appendChild(delim(']'));
   return span;
 }
@@ -423,6 +429,9 @@ function renderCollection(node, open, close, className, state, itemNames, api, i
       span.appendChild(newline(childIndent, node.children[i - 1].id));
       span.appendChild(renderNode(node.children[i], state, itemNames, api, childIndent));
     }
+    // Trailing gap before closing delimiter
+    const lastChild = node.children[node.children.length - 1];
+    span.appendChild(newline(indent, lastChild.id));
     span.appendChild(delim(close));
   }
 
@@ -462,6 +471,9 @@ function renderMap(node, state, itemNames, api, indent) {
         span.appendChild(renderNode(node.children[i + 1], state, itemNames, api, childIndent));
       }
     }
+    // Trailing gap before closing delimiter
+    const lastChild = node.children[node.children.length - 1];
+    span.appendChild(newline(indent, lastChild.id));
     span.appendChild(delim('}'));
   }
 
@@ -1334,13 +1346,9 @@ function handleNavKey(e, ctx) {
       state.expansionStack = [];
     } else { handled = false; }
   } else if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey && state.onChange) {
-    // Insert hole: into container as child, or after leaf as sibling
+    // Insert hole after selected node as sibling
     const hole = makeNode(state, 'hole', {});
-    if (node.children) {
-      applyMutation(state, itemNames, api, statusBar, () => appendChild(state, node.id, hole));
-    } else {
-      applyMutation(state, itemNames, api, statusBar, () => insertAfter(state, node.id, hole));
-    }
+    applyMutation(state, itemNames, api, statusBar, () => insertAfter(state, node.id, hole));
     enterInputMode(state, hole.id);
     rerender(state, itemNames, api, statusBar);
   } else if (e.key === 'Enter' && e.shiftKey && !e.ctrlKey && !e.metaKey && state.onChange) {
