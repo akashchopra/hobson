@@ -990,15 +990,18 @@ class DependencyTracker {
   }
 
   startTracking(contextId) {
+    // Save parent context for proper nesting (render-item inside render-item)
+    const prev = _currentTrackingContext;
     this.clearDeps(contextId);
     this.contextDeps.set(contextId, new Set());
     this.contextAtomDeps.set(contextId, new Set());
-    _currentTrackingContext = { trackerId: contextId, tracker: this };
+    _currentTrackingContext = { trackerId: contextId, tracker: this, _prev: prev };
   }
 
   stopTracking() {
     const ctx = _currentTrackingContext;
-    _currentTrackingContext = null;
+    // Restore parent context instead of nulling out
+    _currentTrackingContext = ctx?._prev || null;
     if (!ctx) return { items: new Set(), atoms: new Set() };
     return {
       items: this.contextDeps.get(ctx.trackerId) || new Set(),
@@ -2762,7 +2765,14 @@ function registerViewOps(env, api) {
   // Handlers pushed here are wired to the DOM by renderHobView after evaluation.
   if (!api._hobCleanups) api._hobCleanups = [];
 
+  const _drHob = new URLSearchParams(window.location.search).has('debug-render');
   env.define('render-item', Object.assign(async (itemId, viewIdOrOpts) => {
+    if (_drHob) console.log(`[hob:render-item] START itemId=${itemId?.slice(0,8)} opts=${typeof viewIdOrOpts}`);
+    const t0 = _drHob ? performance.now() : 0;
+    // Record dependency on the child item in the parent's tracking context,
+    // so the parent re-renders when the child item changes.
+    if (_currentTrackingContext) _currentTrackingContext.tracker.recordAccess(itemId);
+    let dom;
     if (viewIdOrOpts && typeof viewIdOrOpts === 'object' && !Array.isArray(viewIdOrOpts)) {
       // Options map — extract keyword keys
       const opts = hobToJs(viewIdOrOpts);
@@ -2771,10 +2781,12 @@ function registerViewOps(env, api) {
       if (opts['on-cycle']) renderOpts.onCycle = opts['on-cycle'];
       if (opts.decorator) renderOpts.decorator = opts.decorator;
       if (opts['sibling-container']) renderOpts.siblingContainer = opts['sibling-container'];
-      return await api.renderItem(itemId, viewId, renderOpts);
+      dom = await api.renderItem(itemId, viewId, renderOpts);
+    } else {
+      // String or nil — backward-compatible
+      dom = await api.renderItem(itemId, viewIdOrOpts || null);
     }
-    // String or nil — backward-compatible
-    const dom = await api.renderItem(itemId, viewIdOrOpts || null);
+    if (_drHob) console.log(`[hob:render-item] DONE itemId=${itemId?.slice(0,8)} ${(performance.now()-t0).toFixed(1)}ms hasDOM=${!!dom}`);
     return dom;
   }, { _hobName: 'render-item' }));
 
