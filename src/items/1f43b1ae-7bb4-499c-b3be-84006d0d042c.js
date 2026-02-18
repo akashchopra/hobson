@@ -26,7 +26,7 @@
 .hob-number { color: oklch(50% 0.15 260); }
 .hob-boolean { color: oklch(50% 0.15 195); font-style: italic; }
 .hob-nil { color: oklch(50% 0.15 195); font-style: italic; }
-.hob-delim { color: var(--color-text-tertiary); }
+.hob-delim { color: var(--color-text-tertiary); padding: 0 1px; }
 .hob-comment { color: var(--color-text-tertiary); font-style: italic; }
 
 /* Item references */
