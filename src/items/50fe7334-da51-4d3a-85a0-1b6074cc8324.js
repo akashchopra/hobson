@@ -299,7 +299,12 @@ function renderList(node, state, itemNames, api, indent) {
       // binding form: (let [bindings...] body...)
       // Head + space + bindings on first line, then body indented
       span.appendChild(ws(head.id));
-      span.appendChild(renderNode(node.children[1], state, itemNames, api, bodyIndent));
+      const bindingsNode = node.children[1];
+      if (bindingsNode.type === 'vector') {
+        span.appendChild(renderBindingVector(bindingsNode, state, itemNames, api, bodyIndent));
+      } else {
+        span.appendChild(renderNode(bindingsNode, state, itemNames, api, bodyIndent));
+      }
       for (let i = 2; i < node.children.length; i++) {
         span.appendChild(newline(bodyIndent, node.children[i - 1].id));
         span.appendChild(renderNode(node.children[i], state, itemNames, api, bodyIndent));
@@ -328,6 +333,64 @@ function renderList(node, state, itemNames, api, indent) {
   }
 
   span.appendChild(delim(')'));
+  return span;
+}
+
+function renderBindingVector(node, state, itemNames, api, indent) {
+  const span = document.createElement('span');
+  span.className = 'hob-vector';
+  span.setAttribute('data-node-id', node.id);
+  state.domMap.set(node.id, span);
+
+  const kids = node.children;
+
+  if (kids.length === 0) {
+    span.appendChild(delim('['));
+    span.appendChild(delim(']'));
+    return span;
+  }
+
+  // Try flat rendering first
+  const fw = flatWidth(node);
+  if (fw <= MAX_LINE) {
+    span.appendChild(delim('['));
+    for (let i = 0; i < kids.length; i++) {
+      if (i > 0) span.appendChild(ws(kids[i - 1].id));
+      span.appendChild(renderNode(kids[i], state, itemNames, api, indent + 1));
+    }
+    span.appendChild(delim(']'));
+    return span;
+  }
+
+  // Multi-line: render as pairs (name value)
+  const childIndent = indent + 1;
+  span.appendChild(delim('['));
+
+  for (let i = 0; i < kids.length; i += 2) {
+    const name = kids[i];
+    const value = kids[i + 1];
+
+    // Newline before each pair (including first, so all pairs align)
+    span.appendChild(newline(childIndent, i > 0 ? kids[i - 1].id : null));
+
+    // Render name
+    span.appendChild(renderNode(name, state, itemNames, api, childIndent));
+
+    if (value) {
+      // Check if name + value fit on the rest of the line
+      const pairWidth = flatWidth(name) + 1 + flatWidth(value);
+      if (childIndent + pairWidth <= MAX_LINE) {
+        span.appendChild(ws(name.id));
+        span.appendChild(renderNode(value, state, itemNames, api, childIndent));
+      } else {
+        // Value on next line with extra indent
+        span.appendChild(newline(childIndent + 2, name.id));
+        span.appendChild(renderNode(value, state, itemNames, api, childIndent + 2));
+      }
+    }
+  }
+
+  span.appendChild(delim(']'));
   return span;
 }
 
