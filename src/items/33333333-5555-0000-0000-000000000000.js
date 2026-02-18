@@ -276,7 +276,7 @@ export class RenderingSystem {
       return { updated: 0, notFound: true };
     }
 
-    if (this._debugRender) console.log(`[rerender] START itemId=${itemId.slice(0,8)} instances=${instances.length}`);
+    if (this._debugRender) console.log(`[rerender] START itemId=${String(itemId).slice(0,8)} instances=${instances.length}`);
     let updated = 0;
     for (const instance of instances) {
       try {
@@ -321,7 +321,7 @@ export class RenderingSystem {
         if (oldDom.parentNode) {
           if (oldDom.__hobView && newDom.__hobView) {
             // === Morphdom path: patch existing DOM in-place ===
-            if (this._debugRender) console.log(`[rerender] MORPHDOM itemId=${itemId.slice(0,8)} view=${instance.viewId?.slice(0,8)}`);
+            if (this._debugRender) console.log(`[rerender] MORPHDOM itemId=${String(itemId).slice(0,8)} view=${instance.viewId?.slice(0,8)}`);
             // Clean up old root's document/event listeners before patching.
             // morphdom's onNodeDiscarded handles discarded children, but the
             // root node is never discarded — it's patched in place — so its
@@ -396,35 +396,15 @@ export class RenderingSystem {
               }
             });
 
-            // After morphdom: oldDom is in the DOM (patched in place), with old
-            // child render-instances still in their original positions (morphdom
-            // skipped them). newDom has freshly rendered child instances with
-            // potentially updated content. Transfer new children into old positions
-            // instead of discarding them, so child updates are visible immediately.
+            // After morphdom: oldDom is still in the DOM (patched in place).
+            // Clean up the NEW render's nested instances — morphdom skipped them
+            // (child render-instances manage their own lifecycle via dep tracking).
             const newNested = newDom.querySelectorAll('[data-render-instance]');
-            for (const newEl of newNested) {
-              const newInstId = parseInt(newEl.getAttribute('data-render-instance'), 10);
-              const newInst = this.registry.get(newInstId);
-              if (!newInst) { cleanupDOMTree(newEl); continue; }
-
-              // Find the old instance for the same item that's still inside oldDom
-              const oldInst = this.registry.getByItemId(newInst.itemId)
-                .find(i => i.instanceId !== newInstId && i.domNode && oldDom.contains(i.domNode));
-
-              if (oldInst && oldInst.domNode.parentNode) {
-                // Swap: replace old child DOM with fresh child DOM
-                cleanupDOMTree(oldInst.domNode);
-                oldInst.domNode.parentNode.replaceChild(newEl, oldInst.domNode);
-                this.registry.unregister(oldInst.instanceId);
-                if (this._depTracker) this._depTracker.clearDeps(oldInst.instanceId);
-                // newEl is now in the DOM — keep its registry entry (newInstId)
-                if (_dr) console.log(`[morphdom] TRANSFER child item=${newInst.itemId.slice(0,8)} old=${oldInst.instanceId} new=${newInstId}`);
-              } else {
-                // JS view or no matching old instance — discard the new one
-                cleanupDOMTree(newEl);
-                this.registry.unregister(newInstId);
-                if (this._depTracker) this._depTracker.clearDeps(newInstId);
-              }
+            for (const el of newNested) {
+              cleanupDOMTree(el);
+              const nestedId = parseInt(el.getAttribute('data-render-instance'), 10);
+              this.registry.unregister(nestedId);
+              if (this._depTracker) this._depTracker.clearDeps(nestedId);
             }
 
             // renderItem registered a new instance pointing to newDom.
@@ -561,7 +541,7 @@ export class RenderingSystem {
     const isRoot = renderPath.length === 0;
     const perfPrefix = isRoot ? 'root' : `child-${renderPath.length}`;
     const _dr = this._debugRender;
-    if (_dr) console.log(`[render] START itemId=${itemId.slice(0,8)} viewId=${viewId?.slice(0,8)||'auto'} depth=${renderPath.length}`);
+    if (_dr) console.log(`[render] START itemId=${String(itemId).slice(0,8)} viewId=${viewId?.slice(0,8)||'auto'} depth=${renderPath.length}`);
 
     // Cycle detection
     if (renderPath.includes(itemId)) {
@@ -610,7 +590,7 @@ export class RenderingSystem {
     // Check for Hob view
     if (view.content?.hob) {
       try {
-        if (_dr) console.log(`[render] HOB view=${view.name} for item=${itemId.slice(0,8)} depth=${renderPath.length}`);
+        if (_dr) console.log(`[render] HOB view=${view.name} for item=${String(itemId).slice(0,8)} depth=${renderPath.length}`);
         const api = this.kernel.createAPI(item, newContext);
         // Propagate pageContext from options (e.g. app-page widgets)
         if (options.pageContext) api.pageContext = options.pageContext;
@@ -621,7 +601,7 @@ export class RenderingSystem {
           if (parentId) hobResult.domNode.setAttribute('data-parent-id', parentId);
           this.registry.register(hobResult.domNode, itemId, view.id, parentId, siblingContainer, hobResult.trackingId);
         }
-        if (_dr) console.log(`[render] DONE itemId=${itemId.slice(0,8)} view=${view.name} hasDOM=${!!hobResult.domNode}`);
+        if (_dr) console.log(`[render] DONE itemId=${String(itemId).slice(0,8)} view=${view.name} hasDOM=${!!hobResult.domNode}`);
         return hobResult.domNode;
       } catch (error) {
         console.error('[Hob Render Error]', error);
@@ -647,19 +627,33 @@ export class RenderingSystem {
 
       const api = this.kernel.createAPI(item, newContext);
 
-      if (isRoot) perf?.mark(`${perfPrefix}-render-exec-start`);
-      const domNode = await viewModule.render(item, api);
-      if (isRoot) {
-        perf?.mark(`${perfPrefix}-render-exec-end`);
-        perf?.measure(`${perfPrefix}-render-exec`, `${perfPrefix}-render-exec-start`, `${perfPrefix}-render-exec-end`);
+      // Track item dependency for JS views (same principle as Hob views).
+      // Every render instance is reactive to its own item — when the item
+      // changes, this instance re-renders independently.
+      const jsTrackingId = this._depTracker ? this.registry.allocateId() : null;
+      if (jsTrackingId != null) {
+        this._depTracker.startTracking(jsTrackingId);
+        this._depTracker.recordAccess(itemId);
       }
 
-      // Register render instance (Phase 2)
+      let domNode;
+      try {
+        if (isRoot) perf?.mark(`${perfPrefix}-render-exec-start`);
+        domNode = await viewModule.render(item, api);
+        if (isRoot) {
+          perf?.mark(`${perfPrefix}-render-exec-end`);
+          perf?.measure(`${perfPrefix}-render-exec`, `${perfPrefix}-render-exec-start`, `${perfPrefix}-render-exec-end`);
+        }
+      } finally {
+        if (jsTrackingId != null) this._depTracker.stopTracking();
+      }
+
+      // Register render instance
       if (domNode) {
         const parentId = context.parentId || null;
         const siblingContainer = context.siblingContainer || null;
         if (parentId) domNode.setAttribute('data-parent-id', parentId);
-        this.registry.register(domNode, itemId, view.id, parentId, siblingContainer);
+        this.registry.register(domNode, itemId, view.id, parentId, siblingContainer, jsTrackingId);
       }
 
       return domNode;
