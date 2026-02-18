@@ -238,6 +238,7 @@ export class RenderingSystem {
     this._reRenderScheduled = false;
     this._reRenderDepth = new Map();
     this._MAX_RERENDER_DEPTH = 3;
+    this._debugRender = new URLSearchParams(window.location.search).has('debug-render');
   }
 
   /** Parse a stack trace to extract source item name and line number.
@@ -275,6 +276,7 @@ export class RenderingSystem {
       return { updated: 0, notFound: true };
     }
 
+    if (this._debugRender) console.log(`[rerender] START itemId=${itemId.slice(0,8)} instances=${instances.length}`);
     let updated = 0;
     for (const instance of instances) {
       try {
@@ -319,6 +321,7 @@ export class RenderingSystem {
         if (oldDom.parentNode) {
           if (oldDom.__hobView && newDom.__hobView) {
             // === Morphdom path: patch existing DOM in-place ===
+            if (this._debugRender) console.log(`[rerender] MORPHDOM itemId=${itemId.slice(0,8)} view=${instance.viewId?.slice(0,8)}`);
             // Clean up old root's document/event listeners before patching.
             // morphdom's onNodeDiscarded handles discarded children, but the
             // root node is never discarded — it's patched in place — so its
@@ -336,6 +339,7 @@ export class RenderingSystem {
             if (oldParentId) newDom.setAttribute('data-parent-id', oldParentId);
 
             const morphdom = await this._loadMorphdom();
+            const _dr = this._debugRender;
 
             morphdom(oldDom, newDom, {
               // Key children by data-sort-key for correct reorder matching.
@@ -348,7 +352,19 @@ export class RenderingSystem {
               onBeforeElUpdated(fromEl, toEl) {
                 // Skip nested render instances — they have their own lifecycle
                 if (fromEl.hasAttribute('data-render-instance') && fromEl !== oldDom) {
+                  if (_dr) console.log(`[morphdom] SKIP render-instance=${fromEl.getAttribute('data-render-instance')} tag=${fromEl.tagName}`);
                   return false;
+                }
+                // Preserve user-entered values in uncontrolled inputs/textareas.
+                // morphdom syncs the value property, which clobbers what the user typed.
+                // For uncontrolled inputs (no value attribute in new DOM), copy the
+                // current DOM value onto toEl so morphdom sees them as equal.
+                const tag = fromEl.tagName;
+                if (tag === 'INPUT' || tag === 'TEXTAREA') {
+                  if (!toEl.hasAttribute('value') && fromEl.value !== '') {
+                    toEl.value = fromEl.value;
+                    if (_dr) console.log(`[morphdom] PRESERVE input value (${fromEl.value.length} chars)`);
+                  }
                 }
                 // Remove old event listeners, add new ones
                 if (fromEl.__hobEvents) {
@@ -380,17 +396,35 @@ export class RenderingSystem {
               }
             });
 
-            // After morphdom: oldDom is still in the DOM (patched in place).
-            // Clean up the NEW render's registry entries since those DOM nodes
-            // were consumed by morphdom (not in document as standalone nodes).
-            // Must call cleanupDOMTree BEFORE unregister so that any on-document!/
-            // on-event! subscriptions registered during the discarded render are released.
+            // After morphdom: oldDom is in the DOM (patched in place), with old
+            // child render-instances still in their original positions (morphdom
+            // skipped them). newDom has freshly rendered child instances with
+            // potentially updated content. Transfer new children into old positions
+            // instead of discarding them, so child updates are visible immediately.
             const newNested = newDom.querySelectorAll('[data-render-instance]');
-            for (const el of newNested) {
-              cleanupDOMTree(el);
-              const nestedId = parseInt(el.getAttribute('data-render-instance'), 10);
-              this.registry.unregister(nestedId);
-              if (this._depTracker) this._depTracker.clearDeps(nestedId);
+            for (const newEl of newNested) {
+              const newInstId = parseInt(newEl.getAttribute('data-render-instance'), 10);
+              const newInst = this.registry.get(newInstId);
+              if (!newInst) { cleanupDOMTree(newEl); continue; }
+
+              // Find the old instance for the same item that's still inside oldDom
+              const oldInst = this.registry.getByItemId(newInst.itemId)
+                .find(i => i.instanceId !== newInstId && i.domNode && oldDom.contains(i.domNode));
+
+              if (oldInst && oldInst.domNode.parentNode) {
+                // Swap: replace old child DOM with fresh child DOM
+                cleanupDOMTree(oldInst.domNode);
+                oldInst.domNode.parentNode.replaceChild(newEl, oldInst.domNode);
+                this.registry.unregister(oldInst.instanceId);
+                if (this._depTracker) this._depTracker.clearDeps(oldInst.instanceId);
+                // newEl is now in the DOM — keep its registry entry (newInstId)
+                if (_dr) console.log(`[morphdom] TRANSFER child item=${newInst.itemId.slice(0,8)} old=${oldInst.instanceId} new=${newInstId}`);
+              } else {
+                // JS view or no matching old instance — discard the new one
+                cleanupDOMTree(newEl);
+                this.registry.unregister(newInstId);
+                if (this._depTracker) this._depTracker.clearDeps(newInstId);
+              }
             }
 
             // renderItem registered a new instance pointing to newDom.
@@ -526,6 +560,8 @@ export class RenderingSystem {
     const perf = window.hobsonPerf;
     const isRoot = renderPath.length === 0;
     const perfPrefix = isRoot ? 'root' : `child-${renderPath.length}`;
+    const _dr = this._debugRender;
+    if (_dr) console.log(`[render] START itemId=${itemId.slice(0,8)} viewId=${viewId?.slice(0,8)||'auto'} depth=${renderPath.length}`);
 
     // Cycle detection
     if (renderPath.includes(itemId)) {
@@ -574,6 +610,7 @@ export class RenderingSystem {
     // Check for Hob view
     if (view.content?.hob) {
       try {
+        if (_dr) console.log(`[render] HOB view=${view.name} for item=${itemId.slice(0,8)} depth=${renderPath.length}`);
         const api = this.kernel.createAPI(item, newContext);
         // Propagate pageContext from options (e.g. app-page widgets)
         if (options.pageContext) api.pageContext = options.pageContext;
@@ -584,6 +621,7 @@ export class RenderingSystem {
           if (parentId) hobResult.domNode.setAttribute('data-parent-id', parentId);
           this.registry.register(hobResult.domNode, itemId, view.id, parentId, siblingContainer, hobResult.trackingId);
         }
+        if (_dr) console.log(`[render] DONE itemId=${itemId.slice(0,8)} view=${view.name} hasDOM=${!!hobResult.domNode}`);
         return hobResult.domNode;
       } catch (error) {
         console.error('[Hob Render Error]', error);
@@ -981,6 +1019,7 @@ export class RenderingSystem {
       const instance = this.registry.get(ctxId);
       if (instance) this._pendingReRenders.add(instance.itemId);
     }
+    if (this._debugRender) console.log(`[reactivity] SCHEDULE contexts=${[...contextIds].join(',')} pending=${[...this._pendingReRenders].map(id=>id.slice(0,8)).join(',')}`);
     if (!this._reRenderScheduled) {
       this._reRenderScheduled = true;
       queueMicrotask(() => this._flushReRenders());
@@ -992,6 +1031,7 @@ export class RenderingSystem {
     this._reRenderScheduled = false;
     const itemIds = [...this._pendingReRenders];
     this._pendingReRenders.clear();
+    if (this._debugRender) console.log(`[reactivity] FLUSH items=[${itemIds.map(id=>id.slice(0,8)).join(',')}]`);
     for (const itemId of itemIds) {
       const instances = this.registry.getByItemId(itemId);
       let blocked = false;
