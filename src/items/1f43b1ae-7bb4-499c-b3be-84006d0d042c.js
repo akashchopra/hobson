@@ -53,7 +53,6 @@
 }
 
 .hob-ancestor {
-  background: oklch(95% 0.02 250);
   border-radius: 2px;
 }
 
