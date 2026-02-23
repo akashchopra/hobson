@@ -1024,9 +1024,11 @@ class DependencyTracker {
     const existing = selMap.get(itemId);
     if (existing === undefined) {
       selMap.set(itemId, selectorInfo);           // first registration
-    } else if (existing !== null && selectorInfo === null) {
-      selMap.set(itemId, null);                   // widen: bare get-item overrides selector
     }
+    // "Selector pins": an explicit selector is an intentional narrowing of
+    // reactivity.  Later bare get-item calls on the same item (e.g. helpers
+    // reading fresh data during render) must not widen it — the selector is
+    // the contract for what triggers a re-render.
   }
 
   getSelectorInfo(contextId, itemId) {
@@ -2813,6 +2815,7 @@ function registerViewOps(env, api) {
       if (opts['on-cycle']) renderOpts.onCycle = opts['on-cycle'];
       if (opts.decorator) renderOpts.decorator = opts.decorator;
       if (opts['sibling-container']) renderOpts.siblingContainer = opts['sibling-container'];
+      if (opts['navigate-to']) renderOpts.navigateTo = opts['navigate-to'];
       dom = await api.renderItem(itemId, viewId, renderOpts);
     } else {
       // String or nil — backward-compatible

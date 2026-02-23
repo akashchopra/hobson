@@ -48,7 +48,7 @@ async function savePanelState() {
       viewport.content = viewport.content || {};
       viewport.content.replPanelState = { ...panelState };
       viewport.modified = Date.now();
-      await api.set(viewport);
+      await api.set(viewport, { silent: true });
     } catch (e) {
       console.warn('[repl-ui] Failed to save panel state:', e);
     }

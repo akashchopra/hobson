@@ -366,20 +366,13 @@ export class RenderingSystem {
                     if (_dr) console.log(`[morphdom] PRESERVE input value (${fromEl.value.length} chars)`);
                   }
                 }
-                // Remove old event listeners, add new ones
-                if (fromEl.__hobEvents) {
-                  for (const [evt, fn] of Object.entries(fromEl.__hobEvents)) {
-                    fromEl.removeEventListener(evt, fn);
-                  }
-                }
-                if (toEl.__hobEvents) {
-                  for (const [evt, fn] of Object.entries(toEl.__hobEvents)) {
-                    fromEl.addEventListener(evt, fn);
-                  }
-                  fromEl.__hobEvents = toEl.__hobEvents;
-                } else {
-                  delete fromEl.__hobEvents;
-                }
+                // Keep old event handlers — they have correct DOM refs to the kept
+                // element (fromEl).  New handlers (on toEl) capture refs to the
+                // discarded DOM tree because morphdom keeps fromEl and discards toEl.
+                // Handler logic is identical across renders (same view code) and
+                // handlers fetch fresh data via get-item at call time, so keeping
+                // old closures is safe.  New elements (no old match) get their
+                // handlers via onNodeAdded, not here.
                 // Transfer sortable config (handler stays, config updates)
                 if (toEl.__hobSortable) {
                   fromEl.__hobSortable = toEl.__hobSortable;
@@ -911,13 +904,21 @@ export class RenderingSystem {
 
     // Wrap evaluation in tracking context
     if (trackingId != null) this._depTracker.startTracking(trackingId);
-    // Register the item itself as a dependency so Hob views don't need (get-item (:id item))
-    if (trackingId != null) this._depTracker.recordAccess(item.id);
 
     let result = null;
     try {
       for (const ast of asts) {
         result = await this._hobModule.evaluate(ast, childEnv, []);
+      }
+      // Fallback: if the view didn't register its own dep on item.id, add a bare dep.
+      // This preserves backward-compat for views that use `item` directly without get-item.
+      // Views that use (get-item (:id item) :select ...) already registered a selector-based
+      // dep during eval, so the fallback won't fire and the selector controls re-rendering.
+      if (trackingId != null) {
+        const deps = this._depTracker.contextDeps.get(trackingId);
+        if (!deps || !deps.has(item.id)) {
+          this._depTracker.recordAccess(item.id);
+        }
       }
     } finally {
       if (trackingId != null) this._depTracker.stopTracking();
