@@ -234,7 +234,7 @@ export class RenderingSystem {
     this.kernel = kernel;
     this.registry = new RenderInstanceRegistry();
     this._depTracker = null;
-    this._pendingReRenders = new Set();
+    this._pendingReRenders = new Map(); // ctxId -> Set<changedItemId>
     this._reRenderScheduled = false;
     this._reRenderDepth = new Map();
     this._MAX_RERENDER_DEPTH = 3;
@@ -988,45 +988,88 @@ export class RenderingSystem {
       const itemId = event.content?.id;
       if (!itemId || !this._depTracker) return;
       const dependents = this._depTracker.getDependents(itemId);
-      if (dependents.size > 0) this._scheduleReRenders(dependents);
+      if (dependents.size > 0) this._scheduleReRenders(dependents, itemId);
     });
     // item:deleted → same
     this.kernel.events.on(EVENT_IDS.ITEM_DELETED, (event) => {
       const itemId = event.content?.id;
       if (!itemId || !this._depTracker) return;
       const dependents = this._depTracker.getDependents(itemId);
-      if (dependents.size > 0) this._scheduleReRenders(dependents);
+      if (dependents.size > 0) this._scheduleReRenders(dependents, itemId);
     });
-    // Atom mutation callback
+    // Atom mutation callback — no item changed, always re-render
     hob.setAtomMutationCallback((atom) => {
       if (!this._depTracker) return;
       const dependents = this._depTracker.getAtomDependents(atom);
-      if (dependents.size > 0) this._scheduleReRenders(dependents);
+      if (dependents.size > 0) this._scheduleReRenders(dependents, null);
     });
   }
 
   /** Schedule re-renders for contexts whose dependencies changed (microtask batched).
    * @param {Set<number>} contextIds - Set of tracking context IDs
+   * @param {string|null} changedItemId - The item that changed (null for atom-triggered)
    */
-  _scheduleReRenders(contextIds) {
+  _scheduleReRenders(contextIds, changedItemId = null) {
     for (const ctxId of contextIds) {
       const instance = this.registry.get(ctxId);
-      if (instance) this._pendingReRenders.add(instance.itemId);
+      if (!instance) continue;
+      if (!this._pendingReRenders.has(ctxId)) {
+        this._pendingReRenders.set(ctxId, new Set());
+      }
+      if (changedItemId) this._pendingReRenders.get(ctxId).add(changedItemId);
     }
-    if (this._debugRender) console.log(`[reactivity] SCHEDULE contexts=${[...contextIds].join(',')} pending=${[...this._pendingReRenders].map(id=>id.slice(0,8)).join(',')}`);
+    if (this._debugRender) console.log(`[reactivity] SCHEDULE contexts=${[...contextIds].join(',')} pending=${[...this._pendingReRenders.keys()].join(',')}`);
     if (!this._reRenderScheduled) {
       this._reRenderScheduled = true;
       queueMicrotask(() => this._flushReRenders());
     }
   }
 
-  /** Flush all pending re-renders with cycle detection. */
+  /** Flush all pending re-renders with selector filtering and cycle detection. */
   async _flushReRenders() {
     this._reRenderScheduled = false;
-    const itemIds = [...this._pendingReRenders];
+    const pending = new Map(this._pendingReRenders);
     this._pendingReRenders.clear();
-    if (this._debugRender) console.log(`[reactivity] FLUSH items=[${itemIds.map(id=>id.slice(0,8)).join(',')}]`);
-    for (const itemId of itemIds) {
+
+    // Determine which item IDs actually need re-rendering after selector checks
+    const itemsToReRender = new Set();
+
+    for (const [ctxId, changedItemIds] of pending) {
+      const instance = this.registry.get(ctxId);
+      if (!instance) continue;
+
+      let needsReRender = false;
+      if (changedItemIds.size === 0) {
+        needsReRender = true;                       // atom-triggered, no filtering
+      } else {
+        for (const changedId of changedItemIds) {
+          const selInfo = this._depTracker?.getSelectorInfo(ctxId, changedId);
+          if (selInfo === undefined || selInfo === null) {
+            needsReRender = true; break;            // no selector → always re-render
+          }
+          try {
+            const currentItem = await this.kernel.storage.get(changedId);
+            let currentValue = selInfo.selector(currentItem);
+            if (currentValue && typeof currentValue.then === 'function') currentValue = await currentValue;
+            if (!this._hobModule.deepEquals(selInfo.lastValue, currentValue)) {
+              needsReRender = true;
+              selInfo.lastValue = currentValue;     // update for next comparison
+              break;
+            }
+          } catch {
+            needsReRender = true; break;            // error → safe fallback
+          }
+        }
+      }
+      if (needsReRender) {
+        itemsToReRender.add(instance.itemId);
+      } else if (this._debugRender) {
+        console.log(`[reactivity] SKIP ctx=${ctxId} item=${instance.itemId.slice(0,8)} (selector unchanged)`);
+      }
+    }
+
+    if (this._debugRender) console.log(`[reactivity] FLUSH items=[${[...itemsToReRender].map(id=>id.slice(0,8)).join(',')}]`);
+    for (const itemId of itemsToReRender) {
       const instances = this.registry.getByItemId(itemId);
       let blocked = false;
       for (const inst of instances) {
