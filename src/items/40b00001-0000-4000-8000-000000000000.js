@@ -987,6 +987,7 @@ class DependencyTracker {
     this.contextAtomDeps = new Map();  // contextId -> Set<atom>
     this.itemDependents = new Map();   // itemId -> Set<contextId>  (reverse index)
     this.atomDependents = new Map();   // atom -> Set<contextId>    (reverse index)
+    this.contextSelectors = new Map(); // contextId -> Map<itemId, {selector,lastValue}|null>
   }
 
   startTracking(contextId) {
@@ -1009,13 +1010,29 @@ class DependencyTracker {
     };
   }
 
-  recordAccess(itemId) {
+  recordAccess(itemId, selectorInfo = null) {
     if (!_currentTrackingContext) return;
     const ctxId = _currentTrackingContext.trackerId;
     const deps = this.contextDeps.get(ctxId);
     if (deps) deps.add(itemId);
     if (!this.itemDependents.has(itemId)) this.itemDependents.set(itemId, new Set());
     this.itemDependents.get(itemId).add(ctxId);
+
+    // Selector tracking for fine-grained reactivity
+    if (!this.contextSelectors.has(ctxId)) this.contextSelectors.set(ctxId, new Map());
+    const selMap = this.contextSelectors.get(ctxId);
+    const existing = selMap.get(itemId);
+    if (existing === undefined) {
+      selMap.set(itemId, selectorInfo);           // first registration
+    } else if (existing !== null && selectorInfo === null) {
+      selMap.set(itemId, null);                   // widen: bare get-item overrides selector
+    }
+  }
+
+  getSelectorInfo(contextId, itemId) {
+    const selMap = this.contextSelectors.get(contextId);
+    if (!selMap) return undefined;
+    return selMap.has(itemId) ? selMap.get(itemId) : undefined;
   }
 
   recordAtomAccess(atom) {
@@ -1055,6 +1072,7 @@ class DependencyTracker {
       }
       this.contextAtomDeps.delete(contextId);
     }
+    this.contextSelectors.delete(contextId);
   }
 
   static isTracking() { return _currentTrackingContext !== null; }
@@ -2718,9 +2736,26 @@ function deepEquals(a, b) {
 function registerItemOps(env, api) {
   const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-  env.define('get-item', Object.assign(async (id) => {
-    if (_currentTrackingContext) _currentTrackingContext.tracker.recordAccess(id);
-    try { return await api.get(id); } catch { return null; }
+  env.define('get-item', Object.assign(async (id, ...rest) => {
+    let selectorFn = null;
+    for (let i = 0; i < rest.length - 1; i++) {
+      if (isKeyword(rest[i]) && keywordName(rest[i]) === 'select') {
+        selectorFn = rest[i + 1];
+        i++;
+      }
+    }
+    let item;
+    try { item = await api.get(id); } catch { item = null; }
+    if (_currentTrackingContext) {
+      if (selectorFn && item !== null) {
+        let lastValue = selectorFn(item);
+        if (lastValue && typeof lastValue.then === 'function') lastValue = await lastValue;
+        _currentTrackingContext.tracker.recordAccess(id, { selector: selectorFn, lastValue });
+      } else {
+        _currentTrackingContext.tracker.recordAccess(id, null);
+      }
+    }
+    return item;
   }, { _hobName: 'get-item' }));
 
   env.define('set-item!', Object.assign(async (item) => {
@@ -2936,7 +2971,7 @@ export { read, readAll, evaluate, prStr, Environment, HobError, tokenize, parse,
          keyword, isKeyword, valueToAst, astToValue, hiccupToDOM, hiccupToDOMWithRefs, parseTag,
          registerViewOps, registerItemOps, registerEventOps, hobToJs,
          DependencyTracker, setAtomMutationCallback, setupSortable,
-         compactify, compactifyAll, prettyPrint, prettyPrintAll };
+         compactify, compactifyAll, prettyPrint, prettyPrintAll, deepEquals };
 
 // ============================================================
 // Standard Macros (loaded at interpreter creation time)
