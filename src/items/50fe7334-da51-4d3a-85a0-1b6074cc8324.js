@@ -8,6 +8,9 @@ const SPECIAL_FORMS = new Set([
 ]);
 const BINDING_FORMS = new Set(['let', 'loop', 'binding', 'for', 'doseq']);
 
+// --- Internal clipboard (shared across editor instances in the same session) ---
+let _clipboard = null;  // compact JSON AST subtree
+
 // --- Inflater: compact JSON AST → editor AST ---
 
 function inflateAll(compactForms) {
@@ -108,7 +111,26 @@ function deflate(node) {
 }
 
 function deflateAll(root) {
-  return root.children.map(deflate);
+  return root.children.filter(c => c.type !== 'hole').map(deflate);
+}
+
+// --- S-expression serializer (for system clipboard text) ---
+
+function nodeToSexp(node) {
+  switch (node.type) {
+    case 'nil':      return 'nil';
+    case 'number':   return String(node.value);
+    case 'boolean':  return String(node.value);
+    case 'symbol':   return node.value;
+    case 'keyword':  return ':' + node.value;
+    case 'item-ref': return '@' + node.value;
+    case 'string':   return '"' + node.value.replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
+    case 'hole':     return '·';
+    case 'list':     return '(' + node.children.map(nodeToSexp).join(' ') + ')';
+    case 'vector':   return '[' + node.children.map(nodeToSexp).join(' ') + ']';
+    case 'map':      return '{' + node.children.map(nodeToSexp).join(' ') + '}';
+    default:         return '';
+  }
 }
 
 // --- Flat width calculation ---
@@ -1554,6 +1576,24 @@ function handleNavKey(e, ctx) {
         });
       }
     }
+  } else if (e.key === 'c' && (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey) {
+    // Copy: store compact JSON, write s-expression to system clipboard
+    _clipboard = deflate(node);
+    navigator.clipboard?.writeText(nodeToSexp(node));
+  } else if (e.key === 'x' && (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && state.onChange) {
+    // Cut: copy then delete
+    _clipboard = deflate(node);
+    navigator.clipboard?.writeText(nodeToSexp(node));
+    applyMutation(state, itemNames, api, statusBar, () => deleteSelected(state));
+  } else if (e.key === 'v' && (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && state.onChange) {
+    // Paste: insert internal clipboard as sibling after selection
+    if (_clipboard !== null) {
+      const pasted = inflateSubtree(_clipboard, state);
+      applyMutation(state, itemNames, api, statusBar, () => {
+        insertAfter(state, node.id, pasted);
+        state.selectedId = pasted.id;
+      });
+    } else { handled = false; }
   } else {
     handled = false;
   }
