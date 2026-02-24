@@ -2264,7 +2264,7 @@ export async function render(value, options, api) {
 
   // Wrapper
   const wrapper = api.createElement('div');
-  wrapper.style.cssText = 'position: relative; display: flex; flex-direction: column; border: 1px solid var(--color-border); border-radius: var(--border-radius); overflow: hidden; min-height: 200px;';
+  wrapper.style.cssText = 'display: flex; flex-direction: column; border: 1px solid var(--color-border); border-radius: var(--border-radius); overflow: hidden; min-height: 200px;';
   wrapper.appendChild(editorEl);
   wrapper.appendChild(statusBar);
 
