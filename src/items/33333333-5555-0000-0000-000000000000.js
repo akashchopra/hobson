@@ -236,7 +236,9 @@ export class RenderingSystem {
     this._depTracker = null;
     this._pendingReRenders = new Map(); // ctxId -> Set<changedItemId>
     this._reRenderScheduled = false;
-    this._reRenderDepth = new Map();
+    this._flushInProgress = false;
+    this._reRenderDepth = new Map(); // itemId -> count (tracks by itemId, not instanceId)
+    this._depthClearTimeout = null;
     this._MAX_RERENDER_DEPTH = 3;
     this._debugRender = new URLSearchParams(window.location.search).has('debug-render');
   }
@@ -286,6 +288,7 @@ export class RenderingSystem {
         const oldDom = instance.domNode;
         if (!oldDom || !oldDom.parentNode) {
           this.registry.unregister(instance.instanceId);
+          if (this._depTracker) this._depTracker.clearDeps(instance.instanceId);
           continue;
         }
 
@@ -340,6 +343,8 @@ export class RenderingSystem {
 
             const morphdom = await this._loadMorphdom();
             const _dr = this._debugRender;
+            const _registry = this.registry;
+            const _depTracker = this._depTracker;
 
             morphdom(oldDom, newDom, {
               // Key children by data-sort-key for correct reorder matching.
@@ -385,6 +390,23 @@ export class RenderingSystem {
               onNodeDiscarded(node) {
                 if (node.nodeType === 1) {
                   cleanupDOMTree(node);
+                  // Unregister render instances in the discarded subtree.
+                  // Without this, stale instances accumulate in the registry
+                  // and dep tracker on each add/remove cycle, causing
+                  // progressively more wasted work on subsequent re-renders.
+                  const nested = node.querySelectorAll?.('[data-render-instance]');
+                  if (nested) {
+                    for (const el of nested) {
+                      const nestedId = parseInt(el.getAttribute('data-render-instance'), 10);
+                      _registry.unregister(nestedId);
+                      if (_depTracker) _depTracker.clearDeps(nestedId);
+                    }
+                  }
+                  if (node.hasAttribute?.('data-render-instance')) {
+                    const id = parseInt(node.getAttribute('data-render-instance'), 10);
+                    _registry.unregister(id);
+                    if (_depTracker) _depTracker.clearDeps(id);
+                  }
                 }
               }
             });
@@ -1028,66 +1050,85 @@ export class RenderingSystem {
 
   /** Flush all pending re-renders with selector filtering and cycle detection. */
   async _flushReRenders() {
+    // Serialize flushes — prevent overlapping async re-renders from creating
+    // duplicate render instances and race conditions.
+    if (this._flushInProgress) {
+      // Items are in _pendingReRenders; the post-flush check below will pick them up.
+      return;
+    }
+    this._flushInProgress = true;
     this._reRenderScheduled = false;
-    const pending = new Map(this._pendingReRenders);
-    this._pendingReRenders.clear();
 
-    // Determine which item IDs actually need re-rendering after selector checks
-    const itemsToReRender = new Set();
+    try {
+      const pending = new Map(this._pendingReRenders);
+      this._pendingReRenders.clear();
 
-    for (const [ctxId, changedItemIds] of pending) {
-      const instance = this.registry.get(ctxId);
-      if (!instance) continue;
+      // Determine which item IDs actually need re-rendering after selector checks
+      const itemsToReRender = new Set();
 
-      let needsReRender = false;
-      if (changedItemIds.size === 0) {
-        needsReRender = true;                       // atom-triggered, no filtering
-      } else {
-        for (const changedId of changedItemIds) {
-          const selInfo = this._depTracker?.getSelectorInfo(ctxId, changedId);
-          if (selInfo === undefined || selInfo === null) {
-            needsReRender = true; break;            // no selector → always re-render
-          }
-          try {
-            const currentItem = await this.kernel.storage.get(changedId);
-            let currentValue = selInfo.selector(currentItem);
-            if (currentValue && typeof currentValue.then === 'function') currentValue = await currentValue;
-            if (!this._hobModule.deepEquals(selInfo.lastValue, currentValue)) {
-              needsReRender = true;
-              selInfo.lastValue = currentValue;     // update for next comparison
-              break;
+      for (const [ctxId, changedItemIds] of pending) {
+        const instance = this.registry.get(ctxId);
+        if (!instance) continue;
+
+        let needsReRender = false;
+        if (changedItemIds.size === 0) {
+          needsReRender = true;                       // atom-triggered, no filtering
+        } else {
+          for (const changedId of changedItemIds) {
+            const selInfo = this._depTracker?.getSelectorInfo(ctxId, changedId);
+            if (selInfo === undefined || selInfo === null) {
+              needsReRender = true; break;            // no selector → always re-render
             }
-          } catch {
-            needsReRender = true; break;            // error → safe fallback
+            try {
+              const currentItem = await this.kernel.storage.get(changedId);
+              let currentValue = selInfo.selector(currentItem);
+              if (currentValue && typeof currentValue.then === 'function') currentValue = await currentValue;
+              if (!this._hobModule.deepEquals(selInfo.lastValue, currentValue)) {
+                needsReRender = true;
+                selInfo.lastValue = currentValue;     // update for next comparison
+                break;
+              }
+            } catch {
+              needsReRender = true; break;            // error → safe fallback
+            }
           }
         }
+        if (needsReRender) {
+          itemsToReRender.add(instance.itemId);
+        } else if (this._debugRender) {
+          console.log(`[reactivity] SKIP ctx=${ctxId} item=${instance.itemId.slice(0,8)} (selector unchanged)`);
+        }
       }
-      if (needsReRender) {
-        itemsToReRender.add(instance.itemId);
-      } else if (this._debugRender) {
-        console.log(`[reactivity] SKIP ctx=${ctxId} item=${instance.itemId.slice(0,8)} (selector unchanged)`);
-      }
-    }
 
-    if (this._debugRender) console.log(`[reactivity] FLUSH items=[${[...itemsToReRender].map(id=>id.slice(0,8)).join(',')}]`);
-    for (const itemId of itemsToReRender) {
-      const instances = this.registry.getByItemId(itemId);
-      let blocked = false;
-      for (const inst of instances) {
-        const depth = this._reRenderDepth.get(inst.instanceId) || 0;
+      if (this._debugRender) console.log(`[reactivity] FLUSH items=[${[...itemsToReRender].map(id=>id.slice(0,8)).join(',')}]`);
+      for (const itemId of itemsToReRender) {
+        // Cycle detection by itemId (not instanceId) — survives morphdom instance transfer
+        const depth = this._reRenderDepth.get(itemId) || 0;
         if (depth >= this._MAX_RERENDER_DEPTH) {
           console.warn(`[Reactivity] Cycle detected for item ${itemId}, breaking.`);
-          blocked = true;
-          break;
+          continue;
         }
-        this._reRenderDepth.set(inst.instanceId, depth + 1);
-      }
-      if (!blocked) {
+        this._reRenderDepth.set(itemId, depth + 1);
         try { await this.rerenderItem(itemId); }
         catch (e) { console.error(`[Reactivity] Re-render error for ${itemId}:`, e); }
       }
+
+      // Clear depth counters after a delay — allows cross-flush cycle detection
+      // within a 500ms window, then resets for fresh changes.
+      clearTimeout(this._depthClearTimeout);
+      this._depthClearTimeout = setTimeout(() => this._reRenderDepth.clear(), 500);
+    } finally {
+      this._flushInProgress = false;
+      // If new items were queued during this flush, schedule another pass.
+      // This handles the race where _scheduleReRenders queued a microtask
+      // that found _flushInProgress=true and returned without processing.
+      if (this._pendingReRenders.size > 0) {
+        this._reRenderScheduled = true;
+        queueMicrotask(() => this._flushReRenders());
+      } else {
+        this._reRenderScheduled = false;
+      }
     }
-    this._reRenderDepth.clear();
   }
 
   /** Create a DOM element showing a render error with an edit button.
