@@ -805,14 +805,14 @@ function hiccupToDOM(hiccup, sourceCtx, _refs) {
             const throttleMs = v[keyword('throttle')] || v['throttle'];
             handler = rawHandler;
             if (debounceMs) {
-              const orig = handler;
+              const orig = wrapEventHandler(handler);
               handler = function(e) {
                 if (el.__hobTimers?.[eventName]) clearTimeout(el.__hobTimers[eventName]);
                 if (!el.__hobTimers) el.__hobTimers = {};
                 el.__hobTimers[eventName] = setTimeout(() => orig(e), debounceMs);
               };
             } else if (throttleMs) {
-              const orig = handler;
+              const orig = wrapEventHandler(handler);
               handler = function(e) {
                 if (el.__hobTimers?.[eventName]) return;
                 if (!el.__hobTimers) el.__hobTimers = {};
@@ -822,9 +822,10 @@ function hiccupToDOM(hiccup, sourceCtx, _refs) {
             }
           }
           if (typeof handler === 'function') {
-            el.addEventListener(eventName, handler);
+            const wrapped = wrapEventHandler(handler);
+            el.addEventListener(eventName, wrapped);
             if (!el.__hobEvents) el.__hobEvents = {};
-            el.__hobEvents[eventName] = handler;
+            el.__hobEvents[eventName] = wrapped;
           }
         } else if (attrName === 'style' && typeof v === 'object' && v !== null) {
           for (const [sp, sv] of Object.entries(v)) {
@@ -1081,6 +1082,24 @@ class DependencyTracker {
 }
 
 function setAtomMutationCallback(cb) { _atomMutationCallback = cb; }
+
+/** Wrap a Hob function for use as an event handler.
+ * Saves and nulls _currentTrackingContext so the handler doesn't
+ * contaminate any in-progress render's dependency tracking.
+ * Without this, event handlers that fire during async render gaps
+ * record spurious deps on the render context, causing cascading re-renders.
+ */
+function wrapEventHandler(handler) {
+  return function(...args) {
+    const saved = _currentTrackingContext;
+    _currentTrackingContext = null;
+    try {
+      return handler.apply(this, args);
+    } finally {
+      _currentTrackingContext = saved;
+    }
+  };
+}
 
 // ============================================================
 // Keyword helpers
@@ -2761,11 +2780,20 @@ function createStdlib() {
   // --- Concurrency ---
   env.define('pmap', Object.assign(async (fn, coll) => {
     if (coll === null) return [];
-    return Promise.all(coll.map(item => {
-      let result = fn(item);
-      if (result && typeof result.then === 'function') return result;
-      return result;
-    }));
+    // Suspend parent tracking context during concurrent children.
+    // Without this, all children share the global _currentTrackingContext,
+    // recording deps on the parent context and corrupting each other's stacks.
+    const savedCtx = _currentTrackingContext;
+    _currentTrackingContext = null;
+    try {
+      return await Promise.all(coll.map(item => {
+        let result = fn(item);
+        if (result && typeof result.then === 'function') return result;
+        return result;
+      }));
+    } finally {
+      _currentTrackingContext = savedCtx;
+    }
   }, { _hobName: 'pmap' }));
 
   // --- JS Interop ---
@@ -2895,15 +2923,17 @@ function registerViewOps(env, api) {
 
   env.define('on-document!', Object.assign((eventName, handler) => {
     const name = isKeyword(eventName) ? keywordName(eventName) : String(eventName);
-    document.addEventListener(name, handler);
-    const remove = () => document.removeEventListener(name, handler);
+    const wrapped = wrapEventHandler(handler);
+    document.addEventListener(name, wrapped);
+    const remove = () => document.removeEventListener(name, wrapped);
     api._hobCleanups.push(remove);
     return remove;
   }, { _hobName: 'on-document!' }));
 
   env.define('on-event!', Object.assign((eventId, handler) => {
     const id = isKeyword(eventId) ? keywordName(eventId) : String(eventId);
-    const unsub = api.events.on(id, handler);
+    const wrapped = wrapEventHandler(handler);
+    const unsub = api.events.on(id, wrapped);
     api._hobCleanups.push(unsub);
     return unsub;
   }, { _hobName: 'on-event!' }));
@@ -3159,10 +3189,11 @@ export function createInterpreter(api, viewApi, eventApi) {
     if (el.__hobEvents?.[eventName]) {
       el.removeEventListener(eventName, el.__hobEvents[eventName]);
     }
-    el.addEventListener(eventName, handler);
+    const wrapped = wrapEventHandler(handler);
+    el.addEventListener(eventName, wrapped);
     // Register in __hobEvents so morphdom's onBeforeElUpdated can transfer handlers
     if (!el.__hobEvents) el.__hobEvents = {};
-    el.__hobEvents[eventName] = handler;
+    el.__hobEvents[eventName] = wrapped;
     return null;
   }, { _hobName: 'dom-on!' }));
 
