@@ -164,3 +164,36 @@
   padding: 24px;
   text-align: center;
 }
+
+/* Indentation guides — faint vertical line at each 2-space level (from level 2 onward) */
+.hob-guide {
+  box-shadow: inset 1px 0 0 0 oklch(88% 0.01 250);
+}
+
+/* Binding pairs in let vectors */
+.hob-binding-pair { display: inline; }
+
+/* Side-effect bindings (_ name) — faint amber tint */
+.hob-binding-effect {
+  background: oklch(97% 0.02 60);
+  border-radius: 2px;
+}
+
+/* Fold toggle triangle */
+.hob-fold-toggle {
+  color: var(--color-text-tertiary, #999);
+  cursor: pointer;
+  user-select: none;
+  font-size: 0.6rem;
+  padding-right: 2px;
+  vertical-align: middle;
+}
+.hob-fold-toggle:hover {
+  color: var(--color-text, #333);
+}
+
+/* Collapsed list summary */
+.hob-collapsed-summary {
+  color: var(--color-text-secondary, #666);
+  font-style: italic;
+}
