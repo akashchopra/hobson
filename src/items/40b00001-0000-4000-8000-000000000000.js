@@ -1104,7 +1104,7 @@ function keywordName(val) {
 
 const BUILT_IN_SPECIAL_FORMS = new Set([
   'def', 'fn', 'let', 'if', 'do', 'quote', 'quasiquote',
-  'loop', 'recur', 'try', 'throw', 'defmacro', 'plet', 'and', 'or'
+  'loop', 'recur', 'try', 'throw', 'defmacro', 'plet', 'and', 'or', 'for'
 ]);
 
 // ============================================================
@@ -1216,6 +1216,7 @@ async function evaluate(ast, env, callStack) {
         case 'try': return evalTry(ast, env, callStack);
         case 'defmacro': return evalDefmacro(ast, env, callStack);
         case 'plet': return evalPlet(ast, env, callStack);
+        case 'for': return evalFor(ast, env, callStack);
       }
     }
 
@@ -1792,6 +1793,68 @@ async function evalPlet(ast, env, callStack) {
     result = await evaluate(ast[i], pletEnv, callStack);
   }
   return result;
+}
+
+// ---- for special form (auto-keyed) ----
+
+async function evalFor(ast, env, callStack) {
+  if (ast.length < 3) throw hobError('for requires bindings and body', null, callStack);
+  const bindings = ast[1];
+  if (!isVec(bindings) || bindings.v.length < 2)
+    throw hobError('for requires [sym coll] bindings', null, callStack);
+
+  const symNode = bindings.v[0];
+  const collExpr = bindings.v[1];
+  const bodyForms = ast.slice(2);
+
+  const coll = await evaluate(collExpr, env, callStack);
+  if (!Array.isArray(coll)) return [];
+
+  const results = [];
+  for (const elem of coll) {
+    const loopEnv = new Environment(env);
+    loopEnv.define(symNode, elem);
+    let result;
+    for (const form of bodyForms) {
+      result = await evaluate(form, loopEnv, callStack);
+    }
+
+    // Auto-key: extract identity from iteration value
+    const sortKey = extractSortKey(elem);
+    if (sortKey && result && Array.isArray(result) && result.length > 0
+        && isKeyword(result[0])) {
+      injectSortKey(result, sortKey);
+    }
+
+    results.push(result);
+  }
+  Object.defineProperty(results, '_isHobVector', { value: true });
+  return results;
+}
+
+function extractSortKey(elem) {
+  if (typeof elem === 'string') return elem;  // plain ID string
+  if (elem && typeof elem === 'object') {
+    // Check both keyword key (Ꞟid) and plain string key ("id")
+    // Storage round-trips via hobToJs strip keyword prefixes
+    const id = elem[keyword('id')] ?? elem['id'];
+    if (typeof id === 'string') return id;    // map with :id
+  }
+  return null;
+}
+
+function injectSortKey(hiccup, key) {
+  // Check if position [1] is an attribute map (object, not array, not keyword, not DOM node)
+  if (hiccup.length > 1 && hiccup[1] && typeof hiccup[1] === 'object'
+      && !Array.isArray(hiccup[1]) && !hiccup[1].nodeType && !isKeyword(hiccup[1])) {
+    // Has attr map — inject only if not already set
+    if (!(keyword('data-sort-key') in hiccup[1]) && !('data-sort-key' in hiccup[1])) {
+      hiccup[1][keyword('data-sort-key')] = key;
+    }
+  } else {
+    // No attr map — splice one in at position 1
+    hiccup.splice(1, 0, { [keyword('data-sort-key')]: key });
+  }
 }
 
 // ---- Destructuring ----
@@ -3037,12 +3100,6 @@ const STANDARD_MACROS = `
                      (concat form (list x))
                      (list form x))]
       \`(->> ~threaded ~@remaining))))
-
-;; for — (for [x coll] body) => (vec (map (fn [x] body) coll))
-(defmacro for [bindings body]
-  (let [sym (first bindings)
-        coll (first (rest bindings))]
-    \`(vec (map (fn [~sym] ~body) ~coll))))
 
 ;; doseq — (doseq [x coll] body...) => run body for side effects, return nil
 (defmacro doseq [bindings & body]
