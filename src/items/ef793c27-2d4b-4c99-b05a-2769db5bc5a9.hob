@@ -323,11 +323,19 @@
                       (navigate! (invoke api "getCurrentRoot")))))
                 (invoke btn-container "appendChild" anchor-btn)))
 
-          ;; Minimize button (not for anchored)
+          ;; Window control buttons (minimize, maximize, close) — floating only
+          ;; Consolidated into one when block so appends are strictly sequential
           _ (when (and (not is-anchored) (not effective-anchor))
               (let [min-btn (hiccup->dom
-                [:button {:style "width:18px; height:18px; padding:0; border:none; background:transparent; cursor:pointer; font-size:0.875rem; font-weight:bold; color:var(--color-text-secondary); display:flex; align-items:center; justify-content:center;"
-                          :title "Minimize"} "−"])]
+                      [:button {:style "width:18px; height:18px; padding:0; border:none; background:transparent; cursor:pointer; font-size:0.875rem; font-weight:bold; color:var(--color-text-secondary); display:flex; align-items:center; justify-content:center;"
+                                :title "Minimize"} "−"])
+                    max-btn (hiccup->dom
+                      [:button {:style "width:18px; height:18px; padding:0; border:none; background:transparent; cursor:pointer; font-size:0.75rem; color:var(--color-text-secondary); display:flex; align-items:center; justify-content:center;"
+                                :title (if is-maximized "Restore" "Maximize")}
+                        (if is-maximized "❏" "□")])
+                    close-btn (hiccup->dom
+                      [:button {:style "width:18px; height:18px; padding:0; border:none; background:transparent; cursor:pointer; font-size:0.875rem; font-weight:bold; color:var(--color-text-secondary); display:flex; align-items:center; justify-content:center;"
+                                :title "Close"} "×"])]
                 (dom-on! min-btn :click
                   (fn [click-e]
                     (invoke click-e "stopPropagation")
@@ -340,14 +348,6 @@
                           (dom-set! opts :onRestore handle-restore)
                           opts)))
                     (update-child child-id {:minimized true :maximized false})))
-                (invoke btn-container "appendChild" min-btn)))
-
-          ;; Maximize/Restore button (not for anchored)
-          _ (when (and (not is-anchored) (not effective-anchor))
-              (let [max-btn (hiccup->dom
-                [:button {:style "width:18px; height:18px; padding:0; border:none; background:transparent; cursor:pointer; font-size:0.75rem; color:var(--color-text-secondary); display:flex; align-items:center; justify-content:center;"
-                          :title (if is-maximized "Restore" "Maximize")}
-                  (if is-maximized "❏" "□")])]
                 (dom-on! max-btn :click
                   (fn [click-e]
                     (invoke click-e "stopPropagation")
@@ -377,13 +377,6 @@
                           (dom-set! max-btn :textContent "❏")
                           (dom-set! max-btn :title "Restore")
                           (update-child child-id {:maximized true}))))))
-                (invoke btn-container "appendChild" max-btn)))
-
-          ;; Close button (floating only)
-          _ (when (and (not is-anchored) (not effective-anchor))
-              (let [close-btn (hiccup->dom
-                [:button {:style "width:18px; height:18px; padding:0; border:none; background:transparent; cursor:pointer; font-size:0.875rem; font-weight:bold; color:var(--color-text-secondary); display:flex; align-items:center; justify-content:center;"
-                          :title "Close"} "×"])]
                 (dom-on! close-btn :click
                   (fn [click-e]
                     (invoke click-e "stopPropagation")
@@ -391,6 +384,8 @@
                           updated-atts (vec (filter (fn [c] (not= (:id c) child-id))
                                                     (or (:attachments fresh) [])))]
                       (set-item! (assoc fresh :attachments updated-atts :modified (now))))))
+                (invoke btn-container "appendChild" min-btn)
+                (invoke btn-container "appendChild" max-btn)
                 (invoke btn-container "appendChild" close-btn)))
 
           _ (invoke titlebar "appendChild" btn-container)
