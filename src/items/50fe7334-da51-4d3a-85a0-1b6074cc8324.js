@@ -1594,6 +1594,9 @@ function handleNavKey(e, ctx) {
         state.selectedId = pasted.id;
       });
     } else { handled = false; }
+  } else if (e.key === '?' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    // Toggle keyboard help overlay
+    state.helpVisible ? hideHelp(state) : showHelp(state, ctx.wrapper);
   } else {
     handled = false;
   }
@@ -1912,6 +1915,15 @@ function handleStringKey(e, ctx) {
 
 function handleKey(e, ctx) {
   const { state, statusBar } = ctx;
+
+  // Help overlay is modal — swallow all keys; ? and Escape dismiss it
+  if (state.helpVisible) {
+    if (e.key === '?' || e.key === 'Escape') hideHelp(state);
+    e.preventDefault();
+    e.stopPropagation();
+    return;
+  }
+
   let handled;
   if (state.mode === 'string') {
     handled = handleStringKey(e, ctx);
@@ -2062,6 +2074,117 @@ function buildStatusBar() {
   return bar;
 }
 
+// --- Help overlay ---
+
+const HELP_SECTIONS = [
+  { title: 'Navigate', rows: [
+    ['← / →',       'Go to parent / first child'],
+    ['↑ / ↓',       'Prev / next sibling'],
+    ['Home / End',   'First / last sibling'],
+    ['Ctrl+↑',       'Select top-level form'],
+    ['Ctrl+← / →',  'Prev / next top-level'],
+    ['Tab / ⇧Tab',  'Next / prev hole'],
+    ['⇧↑ / ⇧↓',    'Expand / contract selection'],
+    ['Escape',       'Select parent'],
+  ]},
+  { title: 'Edit', rows: [
+    ['Enter',        'Insert hole after'],
+    ['⇧Enter',       'Insert hole before'],
+    ['Backspace',    'Delete node'],
+    ['r',            'Replace node'],
+    ['d',            'Duplicate'],
+  ]},
+  { title: 'Structure', rows: [
+    ['w (',          'Wrap in list'],
+    ['W',            'Wrap in vector'],
+    ['u',            'Unwrap / splice'],
+    ['Alt+← / →',   'Move left / right'],
+    ['>',            'Slurp right'],
+    ['<',            'Barf right'],
+    ['t',            'Change container type'],
+  ]},
+  { title: 'Copy & History', rows: [
+    ['Ctrl+C',       'Copy'],
+    ['Ctrl+X',       'Cut'],
+    ['Ctrl+V',       'Paste'],
+    ['Ctrl+Z',       'Undo'],
+    ['Ctrl+⇧Z',      'Redo'],
+  ]},
+  { title: 'In a Hole', rows: [
+    ['Space',        'Commit + new sibling'],
+    ['Enter',        'Commit'],
+    ['Escape',       'Cancel'],
+    ['"',            'String mode'],
+    ['@',            'Item reference mode'],
+    ['( [ {',        'Create container'],
+    ['↑ / ↓',        'Autocomplete'],
+    ['Tab',          'Accept autocomplete'],
+  ]},
+];
+
+function buildHelpOverlay() {
+  const overlay = document.createElement('div');
+  overlay.className = 'hob-help-overlay';
+
+  const panel = document.createElement('div');
+  panel.className = 'hob-help-panel';
+
+  const header = document.createElement('div');
+  header.className = 'hob-help-header';
+  header.textContent = 'Keyboard Shortcuts';
+  panel.appendChild(header);
+
+  const grid = document.createElement('div');
+  grid.className = 'hob-help-grid';
+
+  for (const section of HELP_SECTIONS) {
+    const sec = document.createElement('div');
+    sec.className = 'hob-help-section';
+
+    const title = document.createElement('div');
+    title.className = 'hob-help-section-title';
+    title.textContent = section.title;
+    sec.appendChild(title);
+
+    for (const [key, desc] of section.rows) {
+      const keyEl = document.createElement('span');
+      keyEl.className = 'hob-help-key';
+      keyEl.textContent = key;
+      const descEl = document.createElement('span');
+      descEl.className = 'hob-help-desc';
+      descEl.textContent = desc;
+      sec.appendChild(keyEl);
+      sec.appendChild(descEl);
+    }
+    grid.appendChild(sec);
+  }
+  panel.appendChild(grid);
+
+  const footer = document.createElement('div');
+  footer.className = 'hob-help-footer';
+  footer.textContent = '? or Escape to close';
+  panel.appendChild(footer);
+
+  overlay.appendChild(panel);
+  return overlay;
+}
+
+function showHelp(state, wrapper) {
+  if (state.helpVisible) return;
+  const overlay = buildHelpOverlay();
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) hideHelp(state); });
+  wrapper.appendChild(overlay);
+  state.helpEl = overlay;
+  state.helpVisible = true;
+}
+
+function hideHelp(state) {
+  if (!state.helpVisible) return;
+  state.helpEl?.remove();
+  state.helpEl = null;
+  state.helpVisible = false;
+}
+
 // --- Main render entry point ---
 
 export async function render(value, options, api) {
@@ -2114,7 +2237,9 @@ export async function render(value, options, api) {
     _acTimer: null,
     _acGeneration: 0,
     _itemSearchLib: itemSearchLib,
-    _ctx: null
+    _ctx: null,
+    helpVisible: false,
+    helpEl: null
   };
 
   // Resolve item references (async, batch)
@@ -2139,12 +2264,12 @@ export async function render(value, options, api) {
 
   // Wrapper
   const wrapper = api.createElement('div');
-  wrapper.style.cssText = 'display: flex; flex-direction: column; border: 1px solid var(--color-border); border-radius: var(--border-radius); overflow: hidden; min-height: 200px;';
+  wrapper.style.cssText = 'position: relative; display: flex; flex-direction: column; border: 1px solid var(--color-border); border-radius: var(--border-radius); overflow: hidden; min-height: 200px;';
   wrapper.appendChild(editorEl);
   wrapper.appendChild(statusBar);
 
   // Event context (shared by key and click handlers)
-  const ctx = { state, statusBar, itemNames, api };
+  const ctx = { state, statusBar, itemNames, api, wrapper };
   state._ctx = ctx;
 
   // Key handler
@@ -2160,7 +2285,7 @@ export async function render(value, options, api) {
 
   // Cleanup
   wrapper.setAttribute('data-hobson-cleanup', '');
-  wrapper.__hobsonCleanup = () => { hideAutocomplete(state); };
+  wrapper.__hobsonCleanup = () => { hideAutocomplete(state); hideHelp(state); };
 
   return wrapper;
 }
