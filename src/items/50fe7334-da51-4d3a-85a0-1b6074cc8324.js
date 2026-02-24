@@ -239,13 +239,28 @@ function newline(indentLevel, insertAfterId) {
   const nl = document.createElement('span');
   nl.className = 'hob-newline';
   nl.textContent = '\n';
-  const ind = document.createElement('span');
-  ind.className = 'hob-indent';
-  ind.textContent = ' '.repeat(indentLevel);
-  if (insertAfterId != null) ind.setAttribute('data-insert-after', insertAfterId);
   const frag = document.createDocumentFragment();
   frag.appendChild(nl);
-  frag.appendChild(ind);
+  if (indentLevel > 0) {
+    const numGuides = Math.floor(indentLevel / 2);
+    const remainder = indentLevel % 2;
+    for (let i = 0; i < numGuides; i++) {
+      const guide = document.createElement('span');
+      // First 2-space block is plain indent (no guide at col 0); subsequent blocks show guide lines
+      guide.className = i === 0 ? 'hob-indent' : 'hob-guide';
+      guide.textContent = '  ';
+      const isLast = (i === numGuides - 1) && remainder === 0;
+      if (isLast && insertAfterId != null) guide.setAttribute('data-insert-after', insertAfterId);
+      frag.appendChild(guide);
+    }
+    if (remainder > 0) {
+      const rem = document.createElement('span');
+      rem.className = 'hob-indent';
+      rem.textContent = ' ';
+      if (insertAfterId != null) rem.setAttribute('data-insert-after', insertAfterId);
+      frag.appendChild(rem);
+    }
+  }
   return frag;
 }
 
@@ -254,6 +269,29 @@ function delim(text) {
   s.className = 'hob-delim';
   s.textContent = text;
   return s;
+}
+
+function collapsedSummary(node) {
+  if (!node.children || node.children.length === 0) return '(…)';
+  const head = node.children[0];
+  const headText = head.type === 'symbol' ? head.value :
+                   head.type === 'keyword' ? (':' + head.value) : '…';
+  if (headText === 'fn' && node.children.length >= 2) {
+    const params = node.children[1];
+    if (params && params.type === 'vector') {
+      const paramText = params.children.map(p => p.type === 'symbol' ? p.value : '…').join(' ');
+      return '(fn [' + paramText + '] …)';
+    }
+  }
+  if (headText === 'defn' && node.children.length >= 3) {
+    const name = node.children[1];
+    const params = node.children[2];
+    if (name && name.type === 'symbol' && params && params.type === 'vector') {
+      const paramText = params.children.map(p => p.type === 'symbol' ? p.value : '…').join(' ');
+      return '(defn ' + name.value + ' [' + paramText + '] …)';
+    }
+  }
+  return '(' + headText + ' …)';
 }
 
 function renderList(node, state, itemNames, api, indent) {
@@ -288,6 +326,32 @@ function renderList(node, state, itemNames, api, indent) {
   }
 
   // Multi-line rendering
+  const isCollapsed = state.collapsedIds && state.collapsedIds.has(node.id);
+  const toggleSpan = document.createElement('span');
+  toggleSpan.className = 'hob-fold-toggle';
+  toggleSpan.textContent = isCollapsed ? '▸' : '▾';
+  toggleSpan.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (!state.collapsedIds) state.collapsedIds = new Set();
+    if (state.collapsedIds.has(node.id)) {
+      state.collapsedIds.delete(node.id);
+    } else {
+      state.collapsedIds.add(node.id);
+    }
+    state.selectedId = node.id;
+    const ctx = state._ctx;
+    if (ctx) rerender(state, ctx.itemNames, ctx.api, ctx.statusBar);
+  });
+  span.appendChild(toggleSpan);
+
+  if (isCollapsed) {
+    const summary = document.createElement('span');
+    summary.className = 'hob-collapsed-summary';
+    summary.textContent = collapsedSummary(node);
+    span.appendChild(summary);
+    return span;
+  }
+
   span.appendChild(delim('('));
 
   if (isSpecial) {
@@ -373,24 +437,31 @@ function renderBindingVector(node, state, itemNames, api, indent) {
     const name = kids[i];
     const value = kids[i + 1];
 
-    // Newline before each pair (including first, so all pairs align)
+    // Newline before each pair (outside the pair wrapper)
     span.appendChild(newline(childIndent, i > 0 ? kids[i - 1].id : null));
 
+    // Wrap pair in a span; highlight _ (side-effect) bindings
+    const isEffect = name.type === 'symbol' && name.value === '_';
+    const pairSpan = document.createElement('span');
+    pairSpan.className = isEffect ? 'hob-binding-pair hob-binding-effect' : 'hob-binding-pair';
+
     // Render name
-    span.appendChild(renderNode(name, state, itemNames, api, childIndent));
+    pairSpan.appendChild(renderNode(name, state, itemNames, api, childIndent));
 
     if (value) {
       // Check if name + value fit on the rest of the line
       const pairWidth = flatWidth(name) + 1 + flatWidth(value);
       if (childIndent + pairWidth <= MAX_LINE) {
-        span.appendChild(ws(name.id));
-        span.appendChild(renderNode(value, state, itemNames, api, childIndent));
+        pairSpan.appendChild(ws(name.id));
+        pairSpan.appendChild(renderNode(value, state, itemNames, api, childIndent));
       } else {
         // Value on next line with extra indent
-        span.appendChild(newline(childIndent + 2, name.id));
-        span.appendChild(renderNode(value, state, itemNames, api, childIndent + 2));
+        pairSpan.appendChild(newline(childIndent + 2, name.id));
+        pairSpan.appendChild(renderNode(value, state, itemNames, api, childIndent + 2));
       }
     }
+
+    span.appendChild(pairSpan);
   }
 
   // Trailing gap before closing delimiter
@@ -1994,6 +2065,7 @@ export async function render(value, options, api) {
     replaceOriginal: null,
     undoStack: [],
     redoStack: [],
+    collapsedIds: new Set(),
     acVisible: false,
     acItems: [],
     acIndex: 0,
