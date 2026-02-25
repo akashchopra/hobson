@@ -1335,7 +1335,7 @@ function updateStringAutocomplete(state, ctx) {
     }
   }
   state.acMode = 'require';
-  state.acItems = items.slice(0, 10);
+  state.acItems = items.slice(0, 50);
   state.acIndex = 0;
   state.acVisible = state.acItems.length > 0;
   if (state.acVisible) renderAutocomplete(state); else hideAutocomplete(state);
