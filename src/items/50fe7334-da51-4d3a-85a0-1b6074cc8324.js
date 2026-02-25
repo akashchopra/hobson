@@ -1397,7 +1397,7 @@ function updateAutocomplete(state, ctx) {
     const seen = new Set();
     const allItems = [];
 
-    // 1. Scope symbols (always shown when in scope, filtered by buf if present)
+    // 1. Scope symbols
     for (const s of scopeSyms) {
       if (!buf || (s.name.startsWith(buf) && s.name !== buf)) {
         if (!seen.has(s.name)) {
@@ -1407,32 +1407,30 @@ function updateAutocomplete(state, ctx) {
       }
     }
 
-    if (!buf) {
-      // Empty hole: show starter special forms as a prompt
-      for (const name of ['defn', 'def', 'def-view', 'def-watch', 'fn', 'let', 'if', 'when', 'do', 'cond']) {
-        if (!seen.has(name)) {
-          seen.add(name);
-          allItems.push({ label: name, detail: 'special', value: name, acType: 'symbol' });
-        }
-      }
-    } else {
-      // 2. AST symbols from current item (names already used here)
+    // 2. AST symbols from current item (only when filtering)
+    if (buf) {
       for (const sym of collectSymbols(state)) {
         if (sym.startsWith(buf) && sym !== buf && !seen.has(sym)) {
           seen.add(sym);
           allItems.push({ label: sym, detail: '', value: sym, acType: 'symbol' });
         }
       }
-      // 3. STDLIB (special forms, domain ops, core)
-      for (const s of STDLIB) {
-        if (s.n.startsWith(buf) && s.n !== buf && !seen.has(s.n)) {
+    }
+
+    // 3. STDLIB (always shown on empty hole; filtered by prefix when typing)
+    for (const s of STDLIB) {
+      if (!buf || (s.n.startsWith(buf) && s.n !== buf)) {
+        if (!seen.has(s.n)) {
           seen.add(s.n);
           allItems.push({ label: s.n, detail: s.d, value: s.n, acType: 'symbol' });
         }
       }
-      // 4. System index (cross-item symbols, shown last)
-      for (const s of _symbolIndex.flat) {
-        if (s.name.startsWith(buf) && s.name !== buf && !seen.has(s.name)) {
+    }
+
+    // 4. System index (cross-item symbols, shown last)
+    for (const s of _symbolIndex.flat) {
+      if (!buf || (s.name.startsWith(buf) && s.name !== buf)) {
+        if (!seen.has(s.name)) {
           seen.add(s.name);
           allItems.push({ label: s.name, detail: s.detail, value: s.name, acType: 'system' });
         }
