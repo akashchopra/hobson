@@ -82,10 +82,24 @@ const STDLIB = [
 ];
 
 // --- System symbol index (module-level, shared across editor instances) ---
-const _CODE_TYPE    = '22222222-0000-0000-0000-000000000000';
-const _LIBRARY_TYPE = '66666666-0000-0000-0000-000000000000';
+const _TYPE_DEF_TYPE = '11111111-0000-0000-0000-000000000000';
+const _CODE_TYPE_ID  = '22222222-0000-0000-0000-000000000000';
 const _HOB_DEF_FORMS = new Set(['defn', 'def', 'def-view', 'def-watch', 'defmacro']);
-let _symbolIndex = { byItem: new Map(), flat: [], libraries: new Map(), subscribed: false };
+let _symbolIndex  = { byItem: new Map(), flat: [], libraries: new Map(), subscribed: false };
+let _codeTypeIds  = null;  // Set of all type IDs that extend kernel:code; null until built
+
+async function _resolveCodeTypeIds(api) {
+  const typeDefs = await api.query({ type: _TYPE_DEF_TYPE });
+  const ids = new Set([_CODE_TYPE_ID]);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const t of typeDefs) {
+      if (!ids.has(t.id) && ids.has(t.extends)) { ids.add(t.id); changed = true; }
+    }
+  }
+  return ids;
+}
 
 function _extractItemSymbols(item) {
   const source = item.name || item.id.slice(0, 8);
@@ -113,27 +127,22 @@ function _rebuildFlatIndex() {
 
 async function _buildSymbolIndex(api) {
   try {
-    const [codeItems, libItems] = await Promise.all([
-      api.query({ type: _CODE_TYPE }),
-      api.query({ type: _LIBRARY_TYPE }),
-    ]);
-    for (const item of codeItems) {
+    _codeTypeIds = await _resolveCodeTypeIds(api);
+    const allItems = await api.query({});
+    for (const item of allItems) {
+      if (!_codeTypeIds.has(item.type)) continue;
+      if (item.name) _symbolIndex.libraries.set(item.id, item.name);
       const syms = _extractItemSymbols(item);
       if (syms.length) _symbolIndex.byItem.set(item.id, syms);
-    }
-    for (const item of libItems) {
-      if (item.name) _symbolIndex.libraries.set(item.id, item.name);
     }
     _rebuildFlatIndex();
   } catch {}
 }
 
 function _patchSymbolIndex(item) {
-  if (item.type === _LIBRARY_TYPE) {
-    if (item.name) _symbolIndex.libraries.set(item.id, item.name);
-    else _symbolIndex.libraries.delete(item.id);
-    return;
-  }
+  if (!_codeTypeIds?.has(item.type)) return;
+  if (item.name) _symbolIndex.libraries.set(item.id, item.name);
+  else _symbolIndex.libraries.delete(item.id);
   const syms = _extractItemSymbols(item);
   if (syms.length) _symbolIndex.byItem.set(item.id, syms);
   else _symbolIndex.byItem.delete(item.id);
