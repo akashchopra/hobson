@@ -1948,6 +1948,7 @@ function handleInputKey(e, ctx) {
       state.mode = 'string';
       state.inputBuffer = '';
       updateHoleDisplay(state);
+      updateStringAutocomplete(state, ctx);
     } else {
       // Commit current, then create new hole in string mode
       const newNode = commitToken(state, itemNames, api, statusBar);
@@ -1961,6 +1962,7 @@ function handleInputKey(e, ctx) {
       state.selectedId = nextHole.id;
       state.expansionStack = [];
       rerender(state, itemNames, api, statusBar);
+      updateStringAutocomplete(state, ctx);
     }
   } else if (e.key === 'Tab' && !e.shiftKey) {
     // Jump to next hole
