@@ -82,24 +82,10 @@ const STDLIB = [
 ];
 
 // --- System symbol index (module-level, shared across editor instances) ---
-const _TYPE_DEF_TYPE = '11111111-0000-0000-0000-000000000000';
 const _CODE_TYPE_ID  = '22222222-0000-0000-0000-000000000000';
 const _HOB_DEF_FORMS = new Set(['defn', 'def', 'def-view', 'def-watch', 'defmacro']);
 let _symbolIndex  = { byItem: new Map(), flat: [], libraries: new Map(), subscribed: false };
 let _codeTypeIds  = null;  // Set of all type IDs that extend kernel:code; null until built
-
-async function _resolveCodeTypeIds(api) {
-  const typeDefs = await api.query({ type: _TYPE_DEF_TYPE });
-  const ids = new Set([_CODE_TYPE_ID]);
-  let changed = true;
-  while (changed) {
-    changed = false;
-    for (const t of typeDefs) {
-      if (!ids.has(t.id) && ids.has(t.extends)) { ids.add(t.id); changed = true; }
-    }
-  }
-  return ids;
-}
 
 function _extractItemSymbols(item) {
   const source = item.name || item.id.slice(0, 8);
@@ -127,8 +113,11 @@ function _rebuildFlatIndex() {
 
 async function _buildSymbolIndex(api) {
   try {
-    _codeTypeIds = await _resolveCodeTypeIds(api);
     const allItems = await api.query({});
+    // Resolve unique type IDs against the code type chain using the kernel's built-in
+    const uniqueTypes = [...new Set(allItems.map(i => i.type).filter(Boolean))];
+    const results = await Promise.all(uniqueTypes.map(t => api.typeChainIncludes(t, _CODE_TYPE_ID)));
+    _codeTypeIds = new Set(uniqueTypes.filter((_, i) => results[i]));
     for (const item of allItems) {
       if (!_codeTypeIds.has(item.type)) continue;
       if (item.name) _symbolIndex.libraries.set(item.id, item.name);
