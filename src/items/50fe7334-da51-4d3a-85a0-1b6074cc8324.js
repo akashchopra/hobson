@@ -1270,9 +1270,19 @@ function renderAutocomplete(state) {
   const holeEl = state.domMap.get(state.inputHoleId);
   if (holeEl) {
     const rect = holeEl.getBoundingClientRect();
+    const spaceBelow = window.innerHeight - rect.bottom - 4;
+    const spaceAbove = rect.top - 4;
     state.acEl.style.position = 'fixed';
     state.acEl.style.left = rect.left + 'px';
-    state.acEl.style.top = (rect.bottom + 2) + 'px';
+    if (spaceBelow >= 120 || spaceBelow >= spaceAbove) {
+      state.acEl.style.top = (rect.bottom + 2) + 'px';
+      state.acEl.style.bottom = '';
+      state.acEl.style.maxHeight = Math.max(80, spaceBelow) + 'px';
+    } else {
+      state.acEl.style.top = '';
+      state.acEl.style.bottom = (window.innerHeight - rect.top + 2) + 'px';
+      state.acEl.style.maxHeight = Math.max(80, spaceAbove) + 'px';
+    }
   }
 
   state.acEl.textContent = '';
