@@ -11,6 +11,123 @@ const BINDING_FORMS = new Set(['let', 'loop', 'binding', 'for', 'doseq']);
 // --- Internal clipboard (shared across editor instances in the same session) ---
 let _clipboard = null;  // compact JSON AST subtree
 
+// --- Hob stdlib catalog (for autocomplete) ---
+const STDLIB = [
+  // Special forms
+  { n: 'def',        d: 'special' }, { n: 'defn',              d: 'special' },
+  { n: 'fn',         d: 'special' }, { n: 'let',               d: 'special' },
+  { n: 'if',         d: 'special' }, { n: 'when',              d: 'special' },
+  { n: 'do',         d: 'special' }, { n: 'cond',              d: 'special' },
+  { n: 'loop',       d: 'special' }, { n: 'recur',             d: 'special' },
+  { n: 'try',        d: 'special' }, { n: 'throw',             d: 'special' },
+  { n: 'and',        d: 'special' }, { n: 'or',                d: 'special' },
+  { n: 'for',        d: 'special' }, { n: 'doseq',             d: 'special' },
+  { n: 'defmacro',   d: 'special' }, { n: 'def-view',          d: 'special' },
+  { n: 'def-watch',  d: 'special' }, { n: 'on-event!',         d: 'special' },
+  { n: 'match',      d: 'special' }, { n: 'case',              d: 'special' },
+  { n: 'binding',    d: 'special' }, { n: '->',                d: 'special' },
+  { n: '->>',        d: 'special' }, { n: 'plet',              d: 'special' },
+  { n: 'require',    d: 'special' }, { n: 'invoke',            d: 'special' },
+  { n: 'quote',      d: 'special' },
+  // Domain ops
+  { n: 'get-item',              d: 'domain' }, { n: 'set-item!',            d: 'domain' },
+  { n: 'delete-item!',          d: 'domain' }, { n: 'get-field',            d: 'domain' },
+  { n: 'set-field!',            d: 'domain' }, { n: 'navigate!',            d: 'domain' },
+  { n: 'open-item!',            d: 'domain' }, { n: 'render-item',          d: 'domain' },
+  { n: 'get-view-config',       d: 'domain' }, { n: 'update-view-config!',  d: 'domain' },
+  { n: 'on-document!',          d: 'domain' }, { n: 'on-cleanup!',          d: 'domain' },
+  { n: 'get-sibling-container', d: 'domain' }, { n: 'pmap',                 d: 'domain' },
+  { n: 'find-items',            d: 'domain' }, { n: 'get-all',              d: 'domain' },
+  { n: 'resolve-ref',           d: 'domain' }, { n: 'rerender!',            d: 'domain' },
+  { n: 'emit!',                 d: 'domain' }, { n: 'search-items!',        d: 'domain' },
+  { n: 'get-starred-items!',    d: 'domain' }, { n: 'get-selection!',       d: 'domain' },
+  { n: 'get-related!',          d: 'domain' }, { n: 'get-viewport-root',    d: 'domain' },
+  { n: 'clear-selection!',      d: 'domain' }, { n: 'copy-to-clipboard!',   d: 'domain' },
+  { n: 'detach!',               d: 'domain' }, { n: 'reorder-attachments!', d: 'domain' },
+  { n: 'render-markdown',       d: 'domain' }, { n: 'type-of',              d: 'domain' },
+  // DOM
+  { n: 'hiccup->dom',       d: 'dom' }, { n: 'hiccup->dom+',     d: 'dom' },
+  { n: 'dom-on!',           d: 'dom' }, { n: 'dom-set!',         d: 'dom' },
+  { n: 'dom-get',           d: 'dom' }, { n: 'dom-set-content!', d: 'dom' },
+  { n: 'stop-propagation!', d: 'dom' }, { n: 'prevent-default!', d: 'dom' },
+  // Core
+  { n: 'map',        d: 'core' }, { n: 'filter',     d: 'core' }, { n: 'reduce',    d: 'core' },
+  { n: 'mapcat',     d: 'core' }, { n: 'some',       d: 'core' }, { n: 'every?',    d: 'core' },
+  { n: 'apply',      d: 'core' }, { n: 'partial',    d: 'core' }, { n: 'comp',      d: 'core' },
+  { n: 'identity',   d: 'core' }, { n: 'constantly', d: 'core' }, { n: 'first',     d: 'core' },
+  { n: 'rest',       d: 'core' }, { n: 'last',       d: 'core' }, { n: 'nth',       d: 'core' },
+  { n: 'count',      d: 'core' }, { n: 'conj',       d: 'core' }, { n: 'cons',      d: 'core' },
+  { n: 'concat',     d: 'core' }, { n: 'seq',        d: 'core' }, { n: 'vec',       d: 'core' },
+  { n: 'into',       d: 'core' }, { n: 'take',       d: 'core' }, { n: 'reverse',   d: 'core' },
+  { n: 'distinct',   d: 'core' }, { n: 'sort',       d: 'core' }, { n: 'sort-by',   d: 'core' },
+  { n: 'get',        d: 'core' }, { n: 'assoc',      d: 'core' }, { n: 'dissoc',    d: 'core' },
+  { n: 'update',     d: 'core' }, { n: 'get-in',     d: 'core' }, { n: 'assoc-in',  d: 'core' },
+  { n: 'update-in',  d: 'core' }, { n: 'keys',       d: 'core' }, { n: 'vals',      d: 'core' },
+  { n: 'merge',      d: 'core' }, { n: 'contains?',  d: 'core' }, { n: 'str',       d: 'core' },
+  { n: 'pr-str',     d: 'core' }, { n: 'subs',       d: 'core' }, { n: 'name',      d: 'core' },
+  { n: 'list',       d: 'core' }, { n: 'atom',       d: 'core' }, { n: 'deref',     d: 'core' },
+  { n: 'swap!',      d: 'core' }, { n: 'reset!',     d: 'core' }, { n: 'nil?',      d: 'core' },
+  { n: 'number?',    d: 'core' }, { n: 'string?',    d: 'core' }, { n: 'keyword?',  d: 'core' },
+  { n: 'symbol?',    d: 'core' }, { n: 'list?',      d: 'core' }, { n: 'vector?',   d: 'core' },
+  { n: 'sequential?',d: 'core' }, { n: 'map?',       d: 'core' }, { n: 'fn?',       d: 'core' },
+  { n: 'boolean?',   d: 'core' }, { n: 'item-ref?',  d: 'core' }, { n: 'atom?',     d: 'core' },
+  { n: 'empty?',     d: 'core' }, { n: 'not',        d: 'core' }, { n: 'inc',       d: 'core' },
+  { n: 'dec',        d: 'core' }, { n: 'mod',        d: 'core' }, { n: 'max',       d: 'core' },
+  { n: 'min',        d: 'core' }, { n: 'gensym',     d: 'core' }, { n: 'symbol',    d: 'core' },
+  { n: 'keyword',    d: 'core' }, { n: 'log',        d: 'core' }, { n: 'now',       d: 'core' },
+  { n: 'format-date',d: 'core' }, { n: 'set-timeout!',d: 'core'},{ n: 'clear-timeout!', d: 'core' },
+  { n: 'str/upper-case', d: 'core' }, { n: 'str/lower-case', d: 'core' },
+  { n: 'str/trim',   d: 'core' }, { n: 'str/split',  d: 'core' }, { n: 'str/join', d: 'core' },
+  { n: 'str/includes?', d: 'core' }, { n: 'str/replace', d: 'core' },
+];
+
+// --- System symbol index (module-level, shared across editor instances) ---
+const _CODE_TYPE = '22222222-0000-0000-0000-000000000000';
+const _HOB_DEF_FORMS = new Set(['defn', 'def', 'def-view', 'def-watch', 'defmacro']);
+let _symbolIndex = { byItem: new Map(), flat: [], subscribed: false };
+
+function _extractItemSymbols(item) {
+  const source = item.name || item.id.slice(0, 8);
+  const syms = [];
+  if (Array.isArray(item.content?.hob)) {
+    for (const form of item.content.hob) {
+      if (!Array.isArray(form) || form.length < 2 || !_HOB_DEF_FORMS.has(form[0])) continue;
+      const n = form[1];
+      if (typeof n === 'string' && !n.startsWith(':') && !n.startsWith('@'))
+        syms.push({ name: n, detail: source, acType: 'system' });
+    }
+  }
+  if (item.content?._symbols) {
+    for (const key of Object.keys(item.content._symbols))
+      if (!key.includes('.')) syms.push({ name: key, detail: source, acType: 'system' });
+  }
+  return syms;
+}
+
+function _rebuildFlatIndex() {
+  const all = [];
+  for (const syms of _symbolIndex.byItem.values()) all.push(...syms);
+  _symbolIndex.flat = all;
+}
+
+async function _buildSymbolIndex(api) {
+  try {
+    const items = await api.query({ type: _CODE_TYPE });
+    for (const item of items) {
+      const syms = _extractItemSymbols(item);
+      if (syms.length) _symbolIndex.byItem.set(item.id, syms);
+    }
+    _rebuildFlatIndex();
+  } catch {}
+}
+
+function _patchSymbolIndex(item) {
+  const syms = _extractItemSymbols(item);
+  if (syms.length) _symbolIndex.byItem.set(item.id, syms);
+  else _symbolIndex.byItem.delete(item.id);
+  _rebuildFlatIndex();
+}
+
 // --- Inflater: compact JSON AST → editor AST ---
 
 function inflateAll(compactForms) {
@@ -1161,7 +1278,7 @@ function renderAutocomplete(state) {
   state.acEl.textContent = '';
   state.acItems.forEach((item, i) => {
     const row = document.createElement('div');
-    row.className = 'hob-ac-item' + (i === state.acIndex ? ' hob-ac-selected' : '');
+    row.className = 'hob-ac-item' + (i === state.acIndex ? ' hob-ac-selected' : '') + (item.acType === 'system' ? ' hob-ac-system' : '');
 
     const label = document.createElement('span');
     label.textContent = item.label;
@@ -1185,6 +1302,33 @@ function renderAutocomplete(state) {
   if (!state.acEl.parentNode) {
     document.body.appendChild(state.acEl);
   }
+}
+
+function isInRequireContext(state, holeId) {
+  const parent = state.parentMap.get(holeId);
+  if (!parent || parent.type !== 'list') return false;
+  const head = parent.children?.[0];
+  return head?.type === 'symbol' && head.value === 'require';
+}
+
+function updateStringAutocomplete(state, ctx) {
+  if (!isInRequireContext(state, state.inputHoleId)) { hideAutocomplete(state); return; }
+  const buf = state.inputBuffer;
+  const seen = new Set();
+  const items = [];
+  for (const syms of _symbolIndex.byItem.values()) {
+    if (!syms.length) continue;
+    const source = syms[0].detail;
+    if (!seen.has(source) && source.includes(buf)) {
+      seen.add(source);
+      items.push({ label: source, detail: 'library', value: source, acType: 'require' });
+    }
+  }
+  state.acMode = 'require';
+  state.acItems = items.slice(0, 10);
+  state.acIndex = 0;
+  state.acVisible = state.acItems.length > 0;
+  if (state.acVisible) renderAutocomplete(state); else hideAutocomplete(state);
 }
 
 function updateAutocomplete(state, ctx) {
@@ -1237,34 +1381,58 @@ function updateAutocomplete(state, ctx) {
     } else {
       state._acTimer = setTimeout(doSearch, 150);
     }
-  } else if (buf.length >= 2) {
+  } else {
     state.acMode = 'symbol';
     const scopeSyms = collectScopeSymbols(state, state.inputHoleId);
-    const astSyms = collectSymbols(state);
-
-    // Build suggestions: scope symbols first (with detail), then remaining AST symbols
     const seen = new Set();
     const allItems = [];
 
+    // 1. Scope symbols (always shown when in scope, filtered by buf if present)
     for (const s of scopeSyms) {
-      if (s.name.startsWith(buf) && s.name !== buf && !seen.has(s.name)) {
-        seen.add(s.name);
-        allItems.push({ label: s.name, detail: s.detail, value: s.name, acType: 'symbol' });
-      }
-    }
-    for (const sym of astSyms) {
-      if (sym.startsWith(buf) && sym !== buf && !seen.has(sym)) {
-        seen.add(sym);
-        allItems.push({ label: sym, detail: SPECIAL_FORMS.has(sym) ? 'special' : '', value: sym, acType: 'symbol' });
+      if (!buf || (s.name.startsWith(buf) && s.name !== buf)) {
+        if (!seen.has(s.name)) {
+          seen.add(s.name);
+          allItems.push({ label: s.name, detail: s.detail, value: s.name, acType: 'symbol' });
+        }
       }
     }
 
-    state.acItems = allItems.slice(0, 8);
+    if (!buf) {
+      // Empty hole: show starter special forms as a prompt
+      for (const name of ['defn', 'def', 'def-view', 'def-watch', 'fn', 'let', 'if', 'when', 'do', 'cond']) {
+        if (!seen.has(name)) {
+          seen.add(name);
+          allItems.push({ label: name, detail: 'special', value: name, acType: 'symbol' });
+        }
+      }
+    } else {
+      // 2. AST symbols from current item (names already used here)
+      for (const sym of collectSymbols(state)) {
+        if (sym.startsWith(buf) && sym !== buf && !seen.has(sym)) {
+          seen.add(sym);
+          allItems.push({ label: sym, detail: '', value: sym, acType: 'symbol' });
+        }
+      }
+      // 3. STDLIB (special forms, domain ops, core)
+      for (const s of STDLIB) {
+        if (s.n.startsWith(buf) && s.n !== buf && !seen.has(s.n)) {
+          seen.add(s.n);
+          allItems.push({ label: s.n, detail: s.d, value: s.n, acType: 'symbol' });
+        }
+      }
+      // 4. System index (cross-item symbols, shown last)
+      for (const s of _symbolIndex.flat) {
+        if (s.name.startsWith(buf) && s.name !== buf && !seen.has(s.name)) {
+          seen.add(s.name);
+          allItems.push({ label: s.name, detail: s.detail, value: s.name, acType: 'system' });
+        }
+      }
+    }
+
+    state.acItems = allItems.slice(0, 10);
     state.acIndex = 0;
     state.acVisible = state.acItems.length > 0;
-    renderAutocomplete(state);
-  } else {
-    hideAutocomplete(state);
+    if (state.acVisible) renderAutocomplete(state); else hideAutocomplete(state);
   }
 }
 
@@ -1856,6 +2024,24 @@ function handleStringKey(e, ctx) {
   const { state, statusBar, itemNames, api } = ctx;
   let handled = true;
 
+  // Autocomplete intercept (require-context string completion)
+  if (state.acVisible) {
+    if (e.key === 'ArrowDown') {
+      state.acIndex = (state.acIndex + 1) % state.acItems.length;
+      renderAutocomplete(state); return true;
+    }
+    if (e.key === 'ArrowUp') {
+      state.acIndex = (state.acIndex - 1 + state.acItems.length) % state.acItems.length;
+      renderAutocomplete(state); return true;
+    }
+    if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) {
+      const sel = state.acItems[state.acIndex];
+      if (sel) { state.inputBuffer = sel.value; state.inputCursor = sel.value.length; updateHoleDisplay(state); }
+      hideAutocomplete(state); return true;
+    }
+    if (e.key === 'Escape') { hideAutocomplete(state); return true; }
+  }
+
   if (e.key === 'Escape') {
     // Cancel string
     if (state.replaceOriginal) {
@@ -1887,6 +2073,7 @@ function handleStringKey(e, ctx) {
       state.inputBuffer = state.inputBuffer.slice(0, state.inputCursor - 1) + state.inputBuffer.slice(state.inputCursor);
       state.inputCursor--;
       updateHoleDisplay(state);
+      updateStringAutocomplete(state, ctx);
     }
     // Don't delete hole on empty backspace in string mode — stay in mode
   } else if (e.key === 'ArrowLeft' && !e.ctrlKey && !e.metaKey) {
@@ -1906,6 +2093,7 @@ function handleStringKey(e, ctx) {
     state.inputBuffer = state.inputBuffer.slice(0, state.inputCursor) + e.key + state.inputBuffer.slice(state.inputCursor);
     state.inputCursor++;
     updateHoleDisplay(state);
+    updateStringAutocomplete(state, ctx);
   } else {
     handled = false;
   }
@@ -1938,6 +2126,10 @@ function handleKey(e, ctx) {
     e.stopPropagation();
     updateSelectionVisual(state);
     updateStatusBar(state, statusBar);
+    // Show starter suggestions when freshly entering a hole
+    if (state.mode === 'input' && !state.inputBuffer && !state.acVisible) {
+      updateAutocomplete(state, ctx);
+    }
   }
 }
 
@@ -2282,6 +2474,18 @@ export async function render(value, options, api) {
   // Initial selection
   updateSelectionVisual(state);
   updateStatusBar(state, statusBar);
+
+  // Build system symbol index once per session, subscribe to updates
+  if (!_symbolIndex.subscribed) {
+    _symbolIndex.subscribed = true;
+    _buildSymbolIndex(api);
+    try {
+      api.events.on('item:updated', (ev) => {
+        const item = ev?.detail ?? ev;
+        if (item?.id && item?.content) _patchSymbolIndex(item);
+      });
+    } catch {}
+  }
 
   // Cleanup
   wrapper.setAttribute('data-hobson-cleanup', '');
