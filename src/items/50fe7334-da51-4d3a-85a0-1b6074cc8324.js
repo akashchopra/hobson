@@ -82,9 +82,10 @@ const STDLIB = [
 ];
 
 // --- System symbol index (module-level, shared across editor instances) ---
-const _CODE_TYPE = '22222222-0000-0000-0000-000000000000';
+const _CODE_TYPE    = '22222222-0000-0000-0000-000000000000';
+const _LIBRARY_TYPE = '66666666-0000-0000-0000-000000000000';
 const _HOB_DEF_FORMS = new Set(['defn', 'def', 'def-view', 'def-watch', 'defmacro']);
-let _symbolIndex = { byItem: new Map(), flat: [], subscribed: false };
+let _symbolIndex = { byItem: new Map(), flat: [], libraries: new Map(), subscribed: false };
 
 function _extractItemSymbols(item) {
   const source = item.name || item.id.slice(0, 8);
@@ -112,16 +113,27 @@ function _rebuildFlatIndex() {
 
 async function _buildSymbolIndex(api) {
   try {
-    const items = await api.query({ type: _CODE_TYPE });
-    for (const item of items) {
+    const [codeItems, libItems] = await Promise.all([
+      api.query({ type: _CODE_TYPE }),
+      api.query({ type: _LIBRARY_TYPE }),
+    ]);
+    for (const item of codeItems) {
       const syms = _extractItemSymbols(item);
       if (syms.length) _symbolIndex.byItem.set(item.id, syms);
+    }
+    for (const item of libItems) {
+      if (item.name) _symbolIndex.libraries.set(item.id, item.name);
     }
     _rebuildFlatIndex();
   } catch {}
 }
 
 function _patchSymbolIndex(item) {
+  if (item.type === _LIBRARY_TYPE) {
+    if (item.name) _symbolIndex.libraries.set(item.id, item.name);
+    else _symbolIndex.libraries.delete(item.id);
+    return;
+  }
   const syms = _extractItemSymbols(item);
   if (syms.length) _symbolIndex.byItem.set(item.id, syms);
   else _symbolIndex.byItem.delete(item.id);
@@ -1324,16 +1336,12 @@ function isInRequireContext(state, holeId) {
 function updateStringAutocomplete(state, ctx) {
   if (!isInRequireContext(state, state.inputHoleId)) { hideAutocomplete(state); return; }
   const buf = state.inputBuffer;
-  const seen = new Set();
   const items = [];
-  for (const syms of _symbolIndex.byItem.values()) {
-    if (!syms.length) continue;
-    const source = syms[0].detail;
-    if (!seen.has(source) && source.includes(buf)) {
-      seen.add(source);
-      items.push({ label: source, detail: 'library', value: source, acType: 'require' });
-    }
+  for (const name of _symbolIndex.libraries.values()) {
+    if (!buf || name.includes(buf))
+      items.push({ label: name, detail: 'library', value: name, acType: 'require' });
   }
+  items.sort((a, b) => a.label.localeCompare(b.label));
   state.acMode = 'require';
   state.acItems = items.slice(0, 50);
   state.acIndex = 0;
