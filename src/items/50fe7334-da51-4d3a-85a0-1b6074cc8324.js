@@ -1439,7 +1439,7 @@ function updateAutocomplete(state, ctx) {
       }
     }
 
-    state.acItems = allItems.slice(0, 10);
+    state.acItems = allItems.slice(0, 50);
     state.acIndex = 0;
     state.acVisible = state.acItems.length > 0;
     if (state.acVisible) renderAutocomplete(state); else hideAutocomplete(state);
