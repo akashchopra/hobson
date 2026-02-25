@@ -2974,6 +2974,28 @@ function registerViewOps(env, api) {
   }, { _hobName: 'update-view-config!' }));
 
   env.define('require', Object.assign(async (name) => {
+    if (typeof name !== 'string') throw new Error('require: argument must be a string');
+    // Look up item by name (or UUID)
+    let item = null;
+    try {
+      const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if (UUID_RE.test(name)) {
+        item = await api.get(name);
+      } else {
+        const items = await api.query({ name });
+        // Prefer Hob items; fall back to first match
+        item = items.find(i => Array.isArray(i.content?.hob)) || items[0] || null;
+      }
+    } catch {}
+    if (item && Array.isArray(item.content?.hob)) {
+      // Hob library: evaluate top-level forms directly into the current render env.
+      // defn/def forms call env.define(), landing symbols in the render scope.
+      for (const form of item.content.hob) {
+        await evaluate(form, env, []);
+      }
+      return null;
+    }
+    // JS library (or not found as Hob): delegate to kernel module loader
     return await api.require(name);
   }, { _hobName: 'require' }));
 
