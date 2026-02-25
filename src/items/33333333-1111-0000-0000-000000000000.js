@@ -2333,9 +2333,10 @@ export async function loadKernel(require, storageBackend) {
         await this._hobInterp.macrosReady;
       }
 
-      // Create child env with event ops
+      // Create child env with event ops and full Hob ops (including require)
       const childEnv = this._hobInterp.createEnvironment();
       this._hobModule.registerEventOps(childEnv, { emit: e => this.events.emit(e) });
+      this._hobModule.registerViewOps(childEnv, this.createAPI());
 
       // Parse Hob code (cached by id + modified)
       const cacheKey = `${watcherItem.id}:${watcherItem.modified}`;
