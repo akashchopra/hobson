@@ -385,8 +385,11 @@ function morphdomFactory(morphAttrs) {
             fromNodesLookup[key] = curChild;
           }
 
-          // Walk recursively
-          indexTree(curChild);
+          // Skip nested render instances — they manage their own lifecycle
+          // and their keyed elements must not be reused by the parent's morphdom pass.
+          if (!curChild.hasAttribute || !curChild.hasAttribute('data-render-instance')) {
+            indexTree(curChild);
+          }
 
           curChild = curChild.nextSibling;
         }
