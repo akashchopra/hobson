@@ -160,6 +160,38 @@
     _ (invoke content-area "setAttribute" "data-item-id" root-id)
     _ (invoke content-area "appendChild" root-node)
 
+    ;; --- Overlay attachments (rendered as modal overlays) ---
+    overlay-specs (rest (:attachments item))
+    _ (for [spec overlay-specs]
+        (let [oid (if (string? spec) spec (:id spec))
+              [wrapper wrefs] (hiccup->dom+
+                [:div {:ref :overlay
+                       :style "position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0, 0, 0, 0.5); display: flex; align-items: flex-start; justify-content: center; padding-top: 10vh; z-index: 10000000;"}
+                  [:div {:ref :modal
+                         :style "background: var(--color-bg-surface); border-radius: 8px; width: 600px; min-width: 600px; max-width: 90vw; max-height: 70vh; display: flex; flex-direction: column; box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3); overflow: auto;"}]])
+              overlay-el (:overlay wrefs)
+              modal-el (:modal wrefs)
+              close-overlay (fn []
+                (detach! (get-viewport-id) oid))
+              _ (on-document! :keydown
+                  (fn [e]
+                    (when (= (dom-get e :key) "Escape")
+                      (close-overlay))))
+              _ (dom-on! overlay-el :click
+                  (fn [e]
+                    (when (= (dom-get e :target) overlay-el)
+                      (close-overlay))))
+              onode (try (render-item oid) (catch err
+                (hiccup->dom [:div {:style "padding:20px; color:var(--color-danger);"}
+                  (str "Overlay error: " err)])))
+              _ (invoke modal-el "appendChild" onode)
+              _ (set-timeout!
+                  (fn []
+                    (let [input (invoke modal-el "querySelector" "input")]
+                      (when input (invoke input "focus"))))
+                  0)]
+          (invoke container "appendChild" wrapper)))
+
     ;; --- Selection management ---
     update-selection-visual (fn []
       (invoke (invoke container "querySelectorAll" "[data-item-id].item-selected")

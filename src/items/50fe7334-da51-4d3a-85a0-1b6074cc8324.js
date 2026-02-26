@@ -43,6 +43,7 @@ const STDLIB = [
   { n: 'emit!',                 d: 'domain' }, { n: 'search-items!',        d: 'domain' },
   { n: 'get-starred-items!',    d: 'domain' }, { n: 'get-selection!',       d: 'domain' },
   { n: 'get-related!',          d: 'domain' }, { n: 'get-viewport-root',    d: 'domain' },
+  { n: 'get-viewport-id',       d: 'domain' },
   { n: 'clear-selection!',      d: 'domain' }, { n: 'copy-to-clipboard!',   d: 'domain' },
   { n: 'detach!',               d: 'domain' }, { n: 'reorder-attachments!', d: 'domain' },
   { n: 'render-markdown',       d: 'domain' }, { n: 'type-of',              d: 'domain' },
