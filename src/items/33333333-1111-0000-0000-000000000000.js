@@ -1913,8 +1913,8 @@ export async function loadKernel(require, storageBackend) {
         ...parent,
         attachments: parent.attachments.filter(c => c.id !== itemId)
       };
-      // Save silently without triggering re-render (consistent with attach)
-      await this.saveItem(updated, { silent: true });
+      updated.modified = Date.now();
+      await this.saveItem(updated); // Non-silent — triggers re-render (consistent with attach)
     }
 
     /** Set the view type for an attachment, preserving previous view for undo.

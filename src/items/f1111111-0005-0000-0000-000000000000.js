@@ -1,8 +1,7 @@
 let api = null;
 let cachedSearchItemId = null;
 
-const MODAL_FRAME_ID = 'b0b0b0b0-0002-0000-0000-000000000000';
-const MODAL_FRAME_VIEW_ID = 'b0b0b0b0-0001-0000-0000-000000000000';
+const VIEWPORT_ID = '88888888-0000-0000-0000-000000000000';
 const ITEM_SEARCH_TYPE_ID = '7ac3cf17-2c10-454a-bc06-24db64e440c4';
 
 export async function onKernelBootComplete({ safeMode }, _api) {
@@ -35,11 +34,8 @@ export async function show(_api) {
     cachedSearchItemId = searchItems[0].id;
   }
 
-  // Fetch search item and frame in parallel
-  const [searchItem, frame] = await Promise.all([
-    api.get(cachedSearchItemId),
-    api.get(MODAL_FRAME_ID)
-  ]);
+  // Fetch search item
+  const searchItem = await api.get(cachedSearchItemId);
 
   // Pre-fetch starred items so the first render has data immediately
   const searchLib = await api.require('item-search-lib');
@@ -50,32 +46,15 @@ export async function show(_api) {
   searchItem.content = { ...searchItem.content, currentQuery: '' };
   searchItem.attachments = starredAtts;
   searchItem.modified = Date.now();
-  frame.attachments = [{ id: searchItem.id }];
-  frame.modified = Date.now();
+  await api.set(searchItem);
 
-  // Save both in parallel
-  await Promise.all([api.set(searchItem), api.set(frame)]);
-
-  // Render the frame with modal-frame-view and append directly to body
-  const overlayNode = await api.renderItem(MODAL_FRAME_ID, MODAL_FRAME_VIEW_ID);
-  overlayNode.id = 'item-palette-overlay';
-  document.body.appendChild(overlayNode);
+  // Attach search item to viewport as overlay
+  await api.attach(VIEWPORT_ID, { id: cachedSearchItemId });
 }
 // [END:show]
 
-export function hide() {
-  const existing = document.getElementById('item-palette-overlay');
-  if (existing) {
-    // Clean up any registered handlers (e.g. document event listeners) before removing
-    const cleanables = existing.querySelectorAll('[data-hobson-cleanup]');
-    for (const el of cleanables) {
-      if (typeof el.__hobsonCleanup === 'function') {
-        try { el.__hobsonCleanup(); } catch (e) { /* ignore */ }
-      }
-    }
-    if (typeof existing.__hobsonCleanup === 'function') {
-      try { existing.__hobsonCleanup(); } catch (e) { /* ignore */ }
-    }
-    existing.remove();
+export async function hide() {
+  if (cachedSearchItemId) {
+    await api.detach(VIEWPORT_ID, cachedSearchItemId);
   }
 }

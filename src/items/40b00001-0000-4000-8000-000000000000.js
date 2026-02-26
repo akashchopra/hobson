@@ -3009,8 +3009,12 @@ function registerViewOps(env, api) {
     return null;
   }, { _hobName: 'copy-to-clipboard!' }));
 
-  env.define('detach!', Object.assign(async (childId) => {
-    await api.detach(childId);
+  env.define('detach!', Object.assign(async (...args) => {
+    if (args.length === 2) {
+      await api.detach(args[0], args[1]);
+    } else {
+      await api.detach(args[0]);
+    }
     return null;
   }, { _hobName: 'detach!' }));
 
@@ -3074,6 +3078,10 @@ function registerViewOps(env, api) {
   env.define('get-viewport-root', Object.assign(() => {
     return api.viewport.getRoot();
   }, { _hobName: 'get-viewport-root' }));
+
+  env.define('get-viewport-id', Object.assign(() => {
+    return '88888888-0000-0000-0000-000000000000';
+  }, { _hobName: 'get-viewport-id' }));
 }
 
 // ============================================================
