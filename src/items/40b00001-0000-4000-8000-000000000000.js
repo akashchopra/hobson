@@ -1032,6 +1032,24 @@ class DependencyTracker {
     // the contract for what triggers a re-render.
   }
 
+  /** Record a dependency for an explicit context ID (bypasses global _currentTrackingContext).
+   * Used by renderHobView's fallback dep to guarantee correct registration even when
+   * concurrent pmap children have corrupted the global tracking context.
+   */
+  recordAccessFor(ctxId, itemId, selectorInfo = null) {
+    const deps = this.contextDeps.get(ctxId);
+    if (deps) deps.add(itemId);
+    if (!this.itemDependents.has(itemId)) this.itemDependents.set(itemId, new Set());
+    this.itemDependents.get(itemId).add(ctxId);
+
+    if (!this.contextSelectors.has(ctxId)) this.contextSelectors.set(ctxId, new Map());
+    const selMap = this.contextSelectors.get(ctxId);
+    const existing = selMap.get(itemId);
+    if (existing === undefined) {
+      selMap.set(itemId, selectorInfo);
+    }
+  }
+
   getSelectorInfo(contextId, itemId) {
     const selMap = this.contextSelectors.get(contextId);
     if (!selMap) return undefined;
@@ -2901,12 +2919,27 @@ function registerViewOps(env, api) {
     if (viewIdOrOpts && typeof viewIdOrOpts === 'object' && !Array.isArray(viewIdOrOpts)) {
       // Options map — extract keyword keys
       const opts = hobToJs(viewIdOrOpts);
-      const viewId = opts.view || null;
       const renderOpts = {};
       if (opts['on-cycle']) renderOpts.onCycle = opts['on-cycle'];
       if (opts.decorator) renderOpts.decorator = opts.decorator;
       if (opts['navigate-to']) renderOpts.navigateTo = opts['navigate-to'];
-      dom = await api.renderItem(itemId, viewId, renderOpts);
+      // Separate render options from view config
+      // Non-render keys become view config (passed through to api.renderItem as object-form)
+      const renderKeys = new Set(['view', 'on-cycle', 'decorator', 'navigate-to']);
+      const viewConfig = {};
+      if (opts.view) {
+        if (typeof opts.view === 'string') {
+          viewConfig.type = opts.view;
+        } else if (typeof opts.view === 'object') {
+          // Already a view config object (e.g. {:type "guid"}) — merge it
+          Object.assign(viewConfig, opts.view);
+        }
+      }
+      for (const [k, v] of Object.entries(opts)) {
+        if (!renderKeys.has(k)) viewConfig[k] = v;
+      }
+      const viewArg = Object.keys(viewConfig).length > 0 ? viewConfig : null;
+      dom = await api.renderItem(itemId, viewArg, renderOpts);
     } else {
       // String or nil — backward-compatible
       dom = await api.renderItem(itemId, viewIdOrOpts || null);
