@@ -931,10 +931,15 @@ export class RenderingSystem {
       // This preserves backward-compat for views that use `item` directly without get-item.
       // Views that use (get-item (:id item) :select ...) already registered a selector-based
       // dep during eval, so the fallback won't fire and the selector controls re-rendering.
+      //
+      // Uses recordAccessFor (context-explicit) instead of recordAccess (global-context)
+      // because concurrent pmap children can corrupt _currentTrackingContext at await points,
+      // causing the fallback to register in the wrong context. This guarantees the bare dep
+      // lands in this render's tracking context.
       if (trackingId != null) {
         const deps = this._depTracker.contextDeps.get(trackingId);
         if (!deps || !deps.has(item.id)) {
-          this._depTracker.recordAccess(item.id);
+          this._depTracker.recordAccessFor(trackingId, item.id);
         }
       }
     } finally {
