@@ -188,7 +188,15 @@ export async function render(markdown, api, options = {}) {
           api.navigate(parsed.itemId, hasNavigation ? navigateTo : undefined);
         } else {
           // Plain click: open as sibling (or navigate if no container)
-          api.openItem(parsed.itemId, hasNavigation ? navigateTo : null);
+          const parentId = api.getParentId();
+          if (parentId) {
+            const attachment = hasNavigation
+              ? { id: parsed.itemId, view: { navigateTo } }
+              : parsed.itemId;
+            api.attach(parentId, attachment);
+          } else {
+            api.navigate(parsed.itemId, hasNavigation ? navigateTo : undefined);
+          }
         }
       };
       // Let browser show native context menu (with "Copy link") instead of Hobson's
@@ -239,7 +247,15 @@ export async function render(markdown, api, options = {}) {
         navLink.textContent = '↗';
         navLink.title = 'Open ' + (transcludedItem.name || transcludedItem.id);
         navLink.style.cssText = 'color: var(--color-primary); cursor: pointer;';
-        navLink.onclick = (e) => { e.preventDefault(); e.stopPropagation(); api.openItem(parsed.itemId, { symbol: fnName }); };
+        navLink.onclick = (e) => {
+          e.preventDefault(); e.stopPropagation();
+          const parentId = api.getParentId();
+          if (parentId) {
+            api.attach(parentId, { id: parsed.itemId, view: { navigateTo: { symbol: fnName } } });
+          } else {
+            api.navigate(parsed.itemId, { symbol: fnName });
+          }
+        };
         header.appendChild(navLink);
         wrapperDiv.appendChild(header);
 
@@ -309,7 +325,15 @@ export async function render(markdown, api, options = {}) {
         navLink.textContent = '↗';
         navLink.title = 'Open ' + (transcludedItem.name || transcludedItem.id);
         navLink.style.cssText = 'color: var(--color-primary); cursor: pointer;';
-        navLink.onclick = (e) => { e.preventDefault(); e.stopPropagation(); api.openItem(parsed.itemId); };
+        navLink.onclick = (e) => {
+          e.preventDefault(); e.stopPropagation();
+          const parentId = api.getParentId();
+          if (parentId) {
+            api.attach(parentId, parsed.itemId);
+          } else {
+            api.navigate(parsed.itemId);
+          }
+        };
         header.appendChild(navLink);
         wrapperDiv.appendChild(header);
 
@@ -440,7 +464,15 @@ export async function render(markdown, api, options = {}) {
               if (e.altKey) {
                 api.navigate(parsed.itemId, hasNavigation ? navigateTo : undefined);
               } else {
-                api.openItem(parsed.itemId, hasNavigation ? navigateTo : null);
+                const parentId = api.getParentId();
+                if (parentId) {
+                  const attachment = hasNavigation
+                    ? { id: parsed.itemId, view: { navigateTo } }
+                    : parsed.itemId;
+                  api.attach(parentId, attachment);
+                } else {
+                  api.navigate(parsed.itemId, hasNavigation ? navigateTo : undefined);
+                }
               }
             };
             link.addEventListener('contextmenu', (e) => { e.stopPropagation(); });
@@ -462,7 +494,12 @@ export async function render(markdown, api, options = {}) {
             link.title = 'From: ' + itemName;
             link.onclick = (e) => {
               e.preventDefault();
-              api.openItem(itemId);
+              const parentId = api.getParentId();
+              if (parentId) {
+                api.attach(parentId, itemId);
+              } else {
+                api.navigate(itemId);
+              }
             };
           }
         }
@@ -485,7 +522,15 @@ export async function render(markdown, api, options = {}) {
           navLink.textContent = '↗';
           navLink.title = 'Open ' + itemName;
           navLink.style.cssText = 'color: var(--color-primary); cursor: pointer;';
-          navLink.onclick = (e) => { e.preventDefault(); e.stopPropagation(); api.openItem(itemId); };
+          navLink.onclick = (e) => {
+            e.preventDefault(); e.stopPropagation();
+            const parentId = api.getParentId();
+            if (parentId) {
+              api.attach(parentId, itemId);
+            } else {
+              api.navigate(itemId);
+            }
+          };
           header.appendChild(navLink);
           wrapperDiv.appendChild(header);
 

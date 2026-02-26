@@ -40,7 +40,12 @@ export async function create(api, options = {}) {
     attachments: []
   }, { silent: true });
 
-  await api.openItem(id);
+  const parentId = api.getParentId();
+  if (parentId) {
+    await api.attach(parentId, id);
+  } else {
+    api.navigate(id);
+  }
 
   // Build and return the handle
   return {
