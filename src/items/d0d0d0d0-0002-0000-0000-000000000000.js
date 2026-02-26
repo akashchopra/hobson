@@ -731,7 +731,12 @@ export async function render(workshop, api) {
         };
         await api.set(instance);
         msg += ' Opened new instance.';
-        api.openItem(instance.id);
+        const parentId = api.getParentId();
+        if (parentId) {
+          await api.attach(parentId, instance.id);
+        } else {
+          api.navigate(instance.id);
+        }
       }
 
       showStatus(msg, false);

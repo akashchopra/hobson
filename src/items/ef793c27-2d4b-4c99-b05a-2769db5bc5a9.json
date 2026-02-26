@@ -5,7 +5,7 @@
   "created": 1768340933093,
   "modified": 1771961971654,
   "content": {
-    "description": "A 2D spatial windowing environment that renders attachments as draggable, resizable windows. The primary container view for organizing multiple items visually. Position data lives in each child\u2019s [attachment](item://c0c0c0c0-0005-0000-0000-000000000000) `view` object \u2014 single source of truth, no separate layout table.\n\n## Window Types\n\n### Floating Windows\n- Freely positioned via drag handle, corners to resize\n- Click brings to front; window controls: minimize, maximize, close\n\n### Pinned Windows (Corner-Anchored)\n- Fixed to viewport corner (`top-right`, `bottom-left`, `bottom-right`)\n- Stays in place relative to chosen corner on container resize\n\n### Docked Windows (Edge-Anchored)\n- Snapped to edge (`left`, `right`, `top`, `bottom`), fills perpendicular axis\n- Single-axis resize on the non-docked edge\n\n## Child Specification\n\nEach child in `item.attachments` has a `view` object:\n\n| Field | Type | Purpose |\n|-------|------|---------|\n| `x`, `y` | Number | Position in pixels (from anchor) |\n| `width`, `height` | Number | Window dimensions |\n| `z` | Number | Stored z-index (higher = front) |\n| `anchor` | String/null | Positioning mode (see below) |\n| `minimized` | Boolean | Minimized to pill bar |\n| `maximized` | Boolean | Fills entire canvas |\n| `type` | String/null | Optional view ID override |\n\n### Position Interpretation\n\nThe meaning of `x` and `y` depends on the `anchor`:\n\n| Anchor | x means | y means |\n|--------|---------|----------|\n| `null` / `top-left` | Distance from left edge | Distance from top edge |\n| `top-right` | Distance from right edge | Distance from top edge |\n| `bottom-left` | Distance from left edge | Distance from bottom edge |\n| `bottom-right` | Distance from right edge | Distance from bottom edge |\n| `left` / `right` | Distance from edge | (ignored - fills height) |\n| `top` / `bottom` | (ignored - fills width) | Distance from edge |\n\n## Window Chrome\n\n```\n\u250c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510\n\u2502 \u2261 \u2502  Item Title             \u2502 \u2212 \u25a1 \u00d7 \u2502\n\u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518\n  \u2502    \u2514\u2500\u2500 Drag handle           \u2514\u2500\u2500 Window controls\n  \u2514\u2500\u2500 Menu button (pin/dock/unpin options)\n```\n\n- **Menu (\u2261)**: Pin, Dock Left/Right/Top/Bottom, Unpin/Undock\n- **Minimize (\u2212)**: Collapses to pill at bottom; **Maximize (\u25a1)**: Fills canvas\n- **Close (\u00d7)**: Detaches child (floating only)\n- **Pin indicator (\ud83d\udccc)**: Shown on anchored windows; click to unpin/undock\n\n## Z-Index Layering\n\nThe container uses two overlay layers without explicit z-index, so all children compete in the same stacking context:\n\n| Layer | Z-Index | Contents |\n|-------|---------|----------|\n| Background | 0 | Inner view (in scrollArea) |\n| Docked/pinned windows | 1 (ANCHOR_Z) | In dockOverlay (non-scrolling, pointer-events: none on container, auto on children) |\n| Floating windows | 2+ (storedZ + baseZ) | In scrollArea (scrollable) |\n| Maximized window | 1000000 | Covers everything |\n| Minimized pills | 10000 | Direct children of container |\n| Context menus | 100000 | Appended to document.body |\n\nZ-index is DB-authoritative: `bringToFront` and `normalizeZIndices` read from the database only, never the DOM.\n\n## Background Layer\n\nRenders an optional inner view as full-bleed background beneath windows. The inner view bypasses cycle detection (deliberate composition, not a true cycle) and receives its own `getViewConfig()` scope. Change via View As > Spatial Canvas submenu.\n\n## Sibling Container Protocol\n\nProvides `siblingContainer.addSibling(itemId, navigateTo)` to child views:\n- **New item**: Creates window at offset from last, brings to front\n- **Existing item**: Brings to front, restores if minimized\n- **navigateTo**: Optional anchor/line to scroll to after opening\n\nEnables item links to open as new windows instead of navigating away.\n\n## Scroll Preservation\n\nSaves `scrollTop`/`scrollLeft` from all `.window-content` elements before re-render, restores after via double-`requestAnimationFrame`.\n\n## Architecture\n\nDecomposed into 5 focused libraries:\n- [window-anchor-lib](item://2319aaaa-d991-43dc-8c04-724156f1ac18) \u2014 pure anchor positioning calculations\n- [window-zindex-lib](item://bc80bdc2-f6b3-49df-a72d-1cecf866ddcf) \u2014 DB-authoritative z-index management\n- [window-drag-resize-lib](item://9b319a24-ec36-4e5d-bf94-e7453febb380) \u2014 drag and resize handlers\n- [window-minimize-lib](item://6dd254a8-dc94-4300-8a2e-19ce4165e22e) \u2014 single-path minimize/restore\n- [window-menu-lib](item://f2bf33dc-3b41-4c9a-b0e5-62011eff239c) \u2014 window context menu\n\n## Programmatic Examples\n\n```javascript\\n// Add a child window\\nconst ws = await api.get('workspace-id');\\nws.attachments.push({ id: 'item-id', view: { x: 100, y: 100, width: 600, height: 400, z: 10 } });\\nawait api.update(ws);\\n\\n// Dock to left edge\\nchild.view.anchor = 'left';\\nchild.view.width = 300;\\nawait api.update(ws);\\n```\n\n## Design Rationale\n\n### Why Spatial Over Hierarchical?\n\n| Approach | Pros | Cons |\n|----------|------|------|\n| **Spatial** | Multiple items visible, persistent layout, direct manipulation | More complex, position persistence needed |\n| **Hierarchical** | Simpler, familiar tree navigation | Context switching, single focus, no spatial memory |\n\nSpatial organization matches how people naturally arrange information. The complexity cost is worth the UX benefit for desktop workflows.\n\n### Why Positioned Objects Over Separate Layout?\n\nPosition data could live in a separate layout table, but that creates synchronization issues (child removed but layout entry remains). Embedding position in the attachment `view` object is a single source of truth.\n\n### Why Three Window Modes?\n\nWindows support **floating** (freely positioned), **pinned** (corner-anchored), and **docked** (edge-anchored) modes. Floating covers general use. Pinned keeps reference panels visible during scrolling. Docked creates IDE-like panel layouts. All three use the same `anchor` field \u2014 null/unset for floating, corner string for pinned, edge string for docked.\n\n### Why DB-Authoritative Z-Index?\n\nEarlier versions read z-indices from both DOM and database, causing divergence and unbounded growth. The current design treats the database as the single source of truth \u2014 z-index functions read fresh attachments from the DB, never from DOM queries. This eliminates an entire class of stacking bugs.\n\n### Mobile Strategy\n\nThe 2D canvas is desktop-focused. Mobile should use a different container view (e.g., linear list with swipe navigation). Different containers for different contexts is simpler than responsive design.\n\n## Implementation Patterns\n\nSpatial windowing relies on three critical patterns:\n\n- ![Silent Update Pattern](item://c0c0c0c0-0010-0000-0000-000000000000) \u2014 saves position without re-rendering\n- ![Stale Closure Prevention](item://c0c0c0c0-0011-0000-0000-000000000000) \u2014 reads fresh data in handlers\n- ![Scroll State Preservation](item://c0c0c0c0-0012-0000-0000-000000000000) \u2014 restores scroll across re-renders\n\nAlso see [Common Code Gotchas](item://c0c0c0c0-0016-0000-0000-000000000000) for parseInt zero trap and other pitfalls discovered during spatial windowing development.\n\n## See Also\n\n- [Attachments](item://c0c0c0c0-0005-0000-0000-000000000000) \u2014 The underlying data model\n- [Content Field Conventions](item://c0c0c0c0-0024-0000-0000-000000000000) \u2014 Spatial field reference\n- [Navigation](item://c0c0c0c0-0003-0000-0000-000000000000) \u2014 How links work in spatial context\n- [kernel:rendering-system](item://33333333-5555-0000-0000-000000000000) \u2014 View dispatch and rendering",
+    "description": "A 2D spatial windowing environment that renders attachments as draggable, resizable windows. The primary container view for organizing multiple items visually. Position data lives in each child’s [attachment](item://c0c0c0c0-0005-0000-0000-000000000000) `view` object — single source of truth, no separate layout table.\n\n## Window Types\n\n### Floating Windows\n- Freely positioned via drag handle, corners to resize\n- Click brings to front; window controls: minimize, maximize, close\n\n### Pinned Windows (Corner-Anchored)\n- Fixed to viewport corner (`top-right`, `bottom-left`, `bottom-right`)\n- Stays in place relative to chosen corner on container resize\n\n### Docked Windows (Edge-Anchored)\n- Snapped to edge (`left`, `right`, `top`, `bottom`), fills perpendicular axis\n- Single-axis resize on the non-docked edge\n\n## Child Specification\n\nEach child in `item.attachments` has a `view` object:\n\n| Field | Type | Purpose |\n|-------|------|---------|\n| `x`, `y` | Number | Position in pixels (from anchor) |\n| `width`, `height` | Number | Window dimensions |\n| `z` | Number | Stored z-index (higher = front) |\n| `anchor` | String/null | Positioning mode (see below) |\n| `minimized` | Boolean | Minimized to pill bar |\n| `maximized` | Boolean | Fills entire canvas |\n| `type` | String/null | Optional view ID override |\n\n### Position Interpretation\n\nThe meaning of `x` and `y` depends on the `anchor`:\n\n| Anchor | x means | y means |\n|--------|---------|----------|\n| `null` / `top-left` | Distance from left edge | Distance from top edge |\n| `top-right` | Distance from right edge | Distance from top edge |\n| `bottom-left` | Distance from left edge | Distance from bottom edge |\n| `bottom-right` | Distance from right edge | Distance from bottom edge |\n| `left` / `right` | Distance from edge | (ignored - fills height) |\n| `top` / `bottom` | (ignored - fills width) | Distance from edge |\n\n## Window Chrome\n\n```\n┌──────────────────────────────────────────┐\n│ ≡ │  Item Title             │ − □ × │\n└──────────────────────────────────────────┘\n  │    └── Drag handle           └── Window controls\n  └── Menu button (pin/dock/unpin options)\n```\n\n- **Menu (≡)**: Pin, Dock Left/Right/Top/Bottom, Unpin/Undock\n- **Minimize (−)**: Collapses to pill at bottom; **Maximize (□)**: Fills canvas\n- **Close (×)**: Detaches child (floating only)\n- **Pin indicator (📌)**: Shown on anchored windows; click to unpin/undock\n\n## Z-Index Layering\n\nThe container uses two overlay layers without explicit z-index, so all children compete in the same stacking context:\n\n| Layer | Z-Index | Contents |\n|-------|---------|----------|\n| Background | 0 | Inner view (in scrollArea) |\n| Docked/pinned windows | 1 (ANCHOR_Z) | In dockOverlay (non-scrolling, pointer-events: none on container, auto on children) |\n| Floating windows | 2+ (storedZ + baseZ) | In scrollArea (scrollable) |\n| Maximized window | 1000000 | Covers everything |\n| Minimized pills | 10000 | Direct children of container |\n| Context menus | 100000 | Appended to document.body |\n\nZ-index is DB-authoritative: `bringToFront` and `normalizeZIndices` read from the database only, never the DOM.\n\n## Background Layer\n\nRenders an optional inner view as full-bleed background beneath windows. The inner view bypasses cycle detection (deliberate composition, not a true cycle) and receives its own `getViewConfig()` scope. Change via View As > Spatial Canvas submenu.\n\n## Sibling Container Protocol\n\nProvides `siblingContainer.addSibling(itemId, navigateTo)` to child views:\n- **New item**: Creates window at offset from last, brings to front\n- **Existing item**: Brings to front, restores if minimized\n- **navigateTo**: Optional anchor/line to scroll to after opening\n\nEnables item links to open as new windows instead of navigating away.\n\n## Scroll Preservation\n\nSaves `scrollTop`/`scrollLeft` from all `.window-content` elements before re-render, restores after via double-`requestAnimationFrame`.\n\n## Architecture\n\nDecomposed into 5 focused libraries:\n- [window-anchor-lib](item://2319aaaa-d991-43dc-8c04-724156f1ac18) — pure anchor positioning calculations\n- [window-zindex-lib](item://bc80bdc2-f6b3-49df-a72d-1cecf866ddcf) — DB-authoritative z-index management\n- [window-drag-resize-lib](item://9b319a24-ec36-4e5d-bf94-e7453febb380) — drag and resize handlers\n- [window-minimize-lib](item://6dd254a8-dc94-4300-8a2e-19ce4165e22e) — single-path minimize/restore\n- [window-menu-lib](item://f2bf33dc-3b41-4c9a-b0e5-62011eff239c) — window context menu\n\n## Programmatic Examples\n\n```javascript\\n// Add a child window\\nconst ws = await api.get('workspace-id');\\nws.attachments.push({ id: 'item-id', view: { x: 100, y: 100, width: 600, height: 400, z: 10 } });\\nawait api.update(ws);\\n\\n// Dock to left edge\\nchild.view.anchor = 'left';\\nchild.view.width = 300;\\nawait api.update(ws);\\n```\n\n## Design Rationale\n\n### Why Spatial Over Hierarchical?\n\n| Approach | Pros | Cons |\n|----------|------|------|\n| **Spatial** | Multiple items visible, persistent layout, direct manipulation | More complex, position persistence needed |\n| **Hierarchical** | Simpler, familiar tree navigation | Context switching, single focus, no spatial memory |\n\nSpatial organization matches how people naturally arrange information. The complexity cost is worth the UX benefit for desktop workflows.\n\n### Why Positioned Objects Over Separate Layout?\n\nPosition data could live in a separate layout table, but that creates synchronization issues (child removed but layout entry remains). Embedding position in the attachment `view` object is a single source of truth.\n\n### Why Three Window Modes?\n\nWindows support **floating** (freely positioned), **pinned** (corner-anchored), and **docked** (edge-anchored) modes. Floating covers general use. Pinned keeps reference panels visible during scrolling. Docked creates IDE-like panel layouts. All three use the same `anchor` field — null/unset for floating, corner string for pinned, edge string for docked.\n\n### Why DB-Authoritative Z-Index?\n\nEarlier versions read z-indices from both DOM and database, causing divergence and unbounded growth. The current design treats the database as the single source of truth — z-index functions read fresh attachments from the DB, never from DOM queries. This eliminates an entire class of stacking bugs.\n\n### Mobile Strategy\n\nThe 2D canvas is desktop-focused. Mobile should use a different container view (e.g., linear list with swipe navigation). Different containers for different contexts is simpler than responsive design.\n\n## Implementation Patterns\n\nSpatial windowing relies on three critical patterns:\n\n- ![Silent Update Pattern](item://c0c0c0c0-0010-0000-0000-000000000000) — saves position without re-rendering\n- ![Stale Closure Prevention](item://c0c0c0c0-0011-0000-0000-000000000000) — reads fresh data in handlers\n- ![Scroll State Preservation](item://c0c0c0c0-0012-0000-0000-000000000000) — restores scroll across re-renders\n\nAlso see [Common Code Gotchas](item://c0c0c0c0-0016-0000-0000-000000000000) for parseInt zero trap and other pitfalls discovered during spatial windowing development.\n\n## See Also\n\n- [Attachments](item://c0c0c0c0-0005-0000-0000-000000000000) — The underlying data model\n- [Content Field Conventions](item://c0c0c0c0-0024-0000-0000-000000000000) — Spatial field reference\n- [Navigation](item://c0c0c0c0-0003-0000-0000-000000000000) — How links work in spatial context\n- [kernel:rendering-system](item://33333333-5555-0000-0000-000000000000) — View dispatch and rendering",
     "for_type": "00000000-0000-0000-0000-000000000000",
     "displayName": "Spatial Canvas",
     "capabilities": [
@@ -796,7 +796,7 @@
                     [
                       "str",
                       {
-                        "s": "\u21bb "
+                        "s": "↻ "
                       },
                       [
                         "or",
@@ -893,487 +893,6 @@
                   "rerender!"
                 ]
               ]
-            ],
-            "sibling-container",
-            [
-              "let",
-              {
-                "v": [
-                  "sc",
-                  [
-                    "invoke",
-                    [
-                      "dom-get",
-                      "win",
-                      ":Object"
-                    ],
-                    {
-                      "s": "create"
-                    },
-                    null
-                  ]
-                ]
-              },
-              [
-                "dom-set!",
-                "sc",
-                ":id",
-                [
-                  ":id",
-                  "item"
-                ]
-              ],
-              [
-                "dom-set!",
-                "sc",
-                ":addSibling",
-                [
-                  "fn",
-                  {
-                    "v": [
-                      "child-id",
-                      "nav-to"
-                    ]
-                  },
-                  [
-                    "let",
-                    {
-                      "v": [
-                        "fresh",
-                        [
-                          "get-item",
-                          [
-                            ":id",
-                            "item"
-                          ]
-                        ],
-                        "fresh-children",
-                        [
-                          "or",
-                          [
-                            ":attachments",
-                            "fresh"
-                          ],
-                          {
-                            "v": []
-                          }
-                        ],
-                        "existing",
-                        [
-                          "first",
-                          [
-                            "filter",
-                            [
-                              "fn",
-                              {
-                                "v": [
-                                  "c"
-                                ]
-                              },
-                              [
-                                "=",
-                                [
-                                  ":id",
-                                  "c"
-                                ],
-                                "child-id"
-                              ]
-                            ],
-                            "fresh-children"
-                          ]
-                        ]
-                      ]
-                    },
-                    [
-                      "if",
-                      "existing",
-                      [
-                        "let",
-                        {
-                          "v": [
-                            "was-min",
-                            [
-                              "get-in",
-                              "existing",
-                              {
-                                "v": [
-                                  ":view",
-                                  ":minimized"
-                                ]
-                              }
-                            ]
-                          ]
-                        },
-                        [
-                          "when",
-                          "was-min",
-                          [
-                            "update-child",
-                            "child-id",
-                            {
-                              "m": [
-                                [
-                                  ":minimized",
-                                  false
-                                ]
-                              ]
-                            }
-                          ]
-                        ],
-                        [
-                          "when",
-                          [
-                            "not",
-                            [
-                              "invoke",
-                              "anchor-lib",
-                              {
-                                "s": "isAnchored"
-                              },
-                              [
-                                "get-in",
-                                "existing",
-                                {
-                                  "v": [
-                                    ":view",
-                                    ":anchor"
-                                  ]
-                                }
-                              ]
-                            ]
-                          ],
-                          [
-                            "let",
-                            {
-                              "v": [
-                                "new-z",
-                                [
-                                  "bring-to-front",
-                                  "child-id"
-                                ]
-                              ]
-                            },
-                            [
-                              "when",
-                              "new-z",
-                              [
-                                "let",
-                                {
-                                  "v": [
-                                    "w",
-                                    [
-                                      "invoke",
-                                      "doc",
-                                      {
-                                        "s": "querySelector"
-                                      },
-                                      [
-                                        "str",
-                                        {
-                                          "s": "[data-parent-id=\""
-                                        },
-                                        [
-                                          ":id",
-                                          "item"
-                                        ],
-                                        {
-                                          "s": "\"][data-item-id=\""
-                                        },
-                                        "child-id",
-                                        {
-                                          "s": "\"]"
-                                        }
-                                      ]
-                                    ]
-                                  ]
-                                },
-                                [
-                                  "when",
-                                  "w",
-                                  [
-                                    "dom-set!",
-                                    [
-                                      "dom-get",
-                                      "w",
-                                      ":style"
-                                    ],
-                                    ":zIndex",
-                                    "new-z"
-                                  ]
-                                ]
-                              ]
-                            ]
-                          ]
-                        ],
-                        [
-                          "when",
-                          "was-min",
-                          [
-                            "navigate!",
-                            [
-                              "invoke",
-                              "api",
-                              {
-                                "s": "getCurrentRoot"
-                              }
-                            ]
-                          ]
-                        ]
-                      ],
-                      [
-                        "do",
-                        [
-                          "invoke",
-                          "api",
-                          {
-                            "s": "attach"
-                          },
-                          "child-id"
-                        ],
-                        [
-                          "let",
-                          {
-                            "v": [
-                              "existing-wrappers",
-                              [
-                                "invoke",
-                                "doc",
-                                {
-                                  "s": "querySelectorAll"
-                                },
-                                [
-                                  "str",
-                                  {
-                                    "s": "[data-parent-id=\""
-                                  },
-                                  [
-                                    ":id",
-                                    "item"
-                                  ],
-                                  {
-                                    "s": "\"]"
-                                  }
-                                ]
-                              ],
-                              "wrapper-count",
-                              [
-                                "dom-get",
-                                "existing-wrappers",
-                                ":length"
-                              ],
-                              "last-w",
-                              [
-                                "when",
-                                [
-                                  ">",
-                                  "wrapper-count",
-                                  0
-                                ],
-                                [
-                                  "invoke",
-                                  "existing-wrappers",
-                                  {
-                                    "s": "item"
-                                  },
-                                  [
-                                    "-",
-                                    "wrapper-count",
-                                    1
-                                  ]
-                                ]
-                              ],
-                              "new-x",
-                              [
-                                "if",
-                                "last-w",
-                                [
-                                  "+",
-                                  [
-                                    "or",
-                                    [
-                                      "invoke",
-                                      "win",
-                                      {
-                                        "s": "parseInt"
-                                      },
-                                      [
-                                        "dom-get",
-                                        [
-                                          "dom-get",
-                                          "last-w",
-                                          ":style"
-                                        ],
-                                        ":left"
-                                      ]
-                                    ],
-                                    0
-                                  ],
-                                  30
-                                ],
-                                50
-                              ],
-                              "new-y",
-                              [
-                                "if",
-                                "last-w",
-                                [
-                                  "+",
-                                  [
-                                    "or",
-                                    [
-                                      "invoke",
-                                      "win",
-                                      {
-                                        "s": "parseInt"
-                                      },
-                                      [
-                                        "dom-get",
-                                        [
-                                          "dom-get",
-                                          "last-w",
-                                          ":style"
-                                        ],
-                                        ":top"
-                                      ]
-                                    ],
-                                    0
-                                  ],
-                                  30
-                                ],
-                                50
-                              ],
-                              "max-z",
-                              [
-                                "get-max-z"
-                              ],
-                              "new-z",
-                              [
-                                "+",
-                                "max-z",
-                                1
-                              ]
-                            ]
-                          },
-                          [
-                            "update-child",
-                            "child-id",
-                            {
-                              "m": [
-                                [
-                                  ":x",
-                                  "new-x"
-                                ],
-                                [
-                                  ":y",
-                                  "new-y"
-                                ],
-                                [
-                                  ":z",
-                                  [
-                                    "-",
-                                    "new-z",
-                                    "base-z"
-                                  ]
-                                ]
-                              ]
-                            }
-                          ],
-                          [
-                            "let",
-                            {
-                              "v": [
-                                "w",
-                                [
-                                  "create-window",
-                                  "child-id",
-                                  {
-                                    "m": [
-                                      [
-                                        ":x",
-                                        "new-x"
-                                      ],
-                                      [
-                                        ":y",
-                                        "new-y"
-                                      ],
-                                      [
-                                        ":width",
-                                        "DEFAULT-W"
-                                      ],
-                                      [
-                                        ":height",
-                                        "DEFAULT-H"
-                                      ],
-                                      [
-                                        ":z",
-                                        [
-                                          "-",
-                                          "new-z",
-                                          "base-z"
-                                        ]
-                                      ]
-                                    ]
-                                  },
-                                  "nav-to"
-                                ],
-                                "container-el",
-                                [
-                                  "invoke",
-                                  "doc",
-                                  {
-                                    "s": "querySelector"
-                                  },
-                                  [
-                                    "str",
-                                    {
-                                      "s": "[data-container-id=\""
-                                    },
-                                    [
-                                      ":id",
-                                      "item"
-                                    ],
-                                    {
-                                      "s": "\"]"
-                                    }
-                                  ]
-                                ],
-                                "scroll-el",
-                                [
-                                  "when",
-                                  "container-el",
-                                  [
-                                    "invoke",
-                                    "container-el",
-                                    {
-                                      "s": "querySelector"
-                                    },
-                                    {
-                                      "s": "[data-scroll-area]"
-                                    }
-                                  ]
-                                ]
-                              ]
-                            },
-                            [
-                              "when",
-                              "scroll-el",
-                              [
-                                "invoke",
-                                "scroll-el",
-                                {
-                                  "s": "appendChild"
-                                },
-                                "w"
-                              ]
-                            ]
-                          ]
-                        ]
-                      ]
-                    ]
-                  ]
-                ]
-              ],
-              "sc"
             ],
             "create-window",
             [
@@ -1570,18 +1089,71 @@
                       "effective-anchor",
                       "effective-view"
                     ],
+                    "needs-position",
+                    [
+                      "and",
+                      [
+                        "not",
+                        "inset-style"
+                      ],
+                      [
+                        "nil?",
+                        [
+                          ":x",
+                          "effective-view"
+                        ]
+                      ]
+                    ],
+                    "cascade-n",
+                    [
+                      "count",
+                      [
+                        "filter",
+                        [
+                          "fn",
+                          {
+                            "v": [
+                              "c"
+                            ]
+                          },
+                          [
+                            "not",
+                            [
+                              "get-in",
+                              "c",
+                              {
+                                "v": [
+                                  ":view",
+                                  ":minimized"
+                                ]
+                              }
+                            ]
+                          ]
+                        ],
+                        "children"
+                      ]
+                    ],
                     "x",
                     [
                       "if",
                       "inset-style",
                       0,
                       [
-                        "or",
+                        "if",
+                        "needs-position",
+                        [
+                          "+",
+                          50,
+                          [
+                            "*",
+                            30,
+                            "cascade-n"
+                          ]
+                        ],
                         [
                           ":x",
                           "effective-view"
-                        ],
-                        0
+                        ]
                       ]
                     ],
                     "y",
@@ -1590,12 +1162,21 @@
                       "inset-style",
                       0,
                       [
-                        "or",
+                        "if",
+                        "needs-position",
+                        [
+                          "+",
+                          50,
+                          [
+                            "*",
+                            30,
+                            "cascade-n"
+                          ]
+                        ],
                         [
                           ":y",
                           "effective-view"
-                        ],
-                        0
+                        ]
                       ]
                     ],
                     "width",
@@ -1661,6 +1242,35 @@
                       ],
                       false
                     ],
+                    "_",
+                    [
+                      "when",
+                      "needs-position",
+                      [
+                        "update-child",
+                        "child-id",
+                        {
+                          "m": [
+                            [
+                              ":x",
+                              "x"
+                            ],
+                            [
+                              ":y",
+                              "y"
+                            ],
+                            [
+                              ":z",
+                              [
+                                "-",
+                                "z",
+                                "base-z"
+                              ]
+                            ]
+                          ]
+                        }
+                      ]
+                    ],
                     "child-item",
                     [
                       "get-item",
@@ -1675,10 +1285,6 @@
                           [
                             ":on-cycle",
                             "on-cycle"
-                          ],
-                          [
-                            ":sibling-container",
-                            "sibling-container"
                           ],
                           [
                             ":navigate-to",
@@ -2055,7 +1661,7 @@
                             ]
                           },
                           {
-                            "s": "\u2261"
+                            "s": "≡"
                           }
                         ]
                       }
@@ -2923,7 +2529,7 @@
                                     ]
                                   },
                                   {
-                                    "s": "\ud83d\udccc"
+                                    "s": "📌"
                                   }
                                 ]
                               }
@@ -3172,7 +2778,7 @@
                                     ]
                                   },
                                   {
-                                    "s": "\u2212"
+                                    "s": "−"
                                   }
                                 ]
                               }
@@ -3210,10 +2816,10 @@
                                     "if",
                                     "is-maximized",
                                     {
-                                      "s": "\u274f"
+                                      "s": "❏"
                                     },
                                     {
-                                      "s": "\u25a1"
+                                      "s": "□"
                                     }
                                   ]
                                 ]
@@ -3242,7 +2848,7 @@
                                     ]
                                   },
                                   {
-                                    "s": "\u00d7"
+                                    "s": "×"
                                   }
                                 ]
                               }
@@ -3580,7 +3186,7 @@
                                     "max-btn",
                                     ":textContent",
                                     {
-                                      "s": "\u25a1"
+                                      "s": "□"
                                     }
                                   ],
                                   [
@@ -3707,7 +3313,7 @@
                                     "max-btn",
                                     ":textContent",
                                     {
-                                      "s": "\u274f"
+                                      "s": "❏"
                                     }
                                   ],
                                   [

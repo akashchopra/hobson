@@ -331,7 +331,12 @@ export async function render(pageItem, api) {
               renderPage();
             },
             onEdit: async (id) => {
-              api.openItem(id);
+              const parentId = api.getParentId();
+              if (parentId) {
+                api.attach(parentId, id);
+              } else {
+                api.navigate(id);
+              }
             }
           });
           grid.appendChild(designCell);

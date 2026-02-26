@@ -1104,7 +1104,7 @@ export async function loadKernel(require, storageBackend) {
         /** Render an item as a DOM element using a specific view.
          * @param {string} itemId - Item GUID to render
          * @param {string|Object|null} [viewIdOrConfig] - View GUID, config object {type, ...}, or null for default
-         * @param {Object} [options] - Render options (decorator, siblingContainer, navigateTo, onCycle)
+         * @param {Object} [options] - Render options (decorator, navigateTo, onCycle)
          * @returns {Promise<HTMLElement>}
          */
         renderItem: async (itemId, viewIdOrConfig, options) => {
@@ -1120,9 +1120,6 @@ export async function loadKernel(require, storageBackend) {
 
           // Merge decorator and viewConfig into context for propagation
           const decorator = options?.decorator || context.decorator;
-          const siblingContainer = options?.siblingContainer !== undefined
-            ? options.siblingContainer
-            : context.siblingContainer;
           const navigateTo = options?.navigateTo !== undefined
             ? options.navigateTo
             : context.navigateTo;
@@ -1131,7 +1128,6 @@ export async function loadKernel(require, storageBackend) {
             decorator,
             viewConfig,
             parentId: containerItem ? containerItem.id : null,
-            siblingContainer,
             navigateTo
           };
 
@@ -1358,19 +1354,6 @@ export async function loadKernel(require, storageBackend) {
          * @param {string} id - Item GUID to open
          * @param {Object} [navigateTo] - Scroll target hint (field, symbol, line, region)
          */
-        openItem: async (id, navigateTo) => {
-          if (context.siblingContainer) {
-            await context.siblingContainer.addSibling(id, navigateTo);
-            const selMgr = await kernel.moduleSystem.require('selection-manager');
-            selMgr.select(id, context.siblingContainer.id);
-          } else {
-            if (containerItem) {
-              console.warn('[openItem] No siblingContainer for', containerItem.name || containerItem.id, '— falling back to navigate for', id);
-            }
-            const vpMgr = await kernel.moduleSystem.require('viewport-manager');
-            await vpMgr.navigate(id, navigateTo);
-          }
-        },
         /** Get the current viewport root item ID.
          * @returns {string|null} Root item GUID, or null
          */
@@ -1786,10 +1769,6 @@ export async function loadKernel(require, storageBackend) {
          */
         api.getCurrentItem = () => containerItem;
 
-        Object.defineProperty(api, 'siblingContainer', {
-          get: () => context.siblingContainer || null
-        });
-
         /** Create a new item, optionally attaching it as a child of the current item.
          * @param {Object} item - Item data (id auto-generated if missing)
          * @param {boolean} [addAsChild=false] - If true, attach to current item
@@ -1894,29 +1873,34 @@ export async function loadKernel(require, storageBackend) {
 
     /** Attach a child item to a parent's attachments array.
      * @param {string} parentId - Parent item GUID
-     * @param {string} itemId - Child item GUID to attach
+     * @param {string|Object} childIdOrObj - Child GUID string, or attachment object { id, view? }
      */
-    async attach(parentId, itemId) {
-      // Note: Cycles are now allowed in the item graph.
-      // Cycle detection happens at render time, not at data modification time.
-      // Use wouldCreateCycle() if you want to check/warn before adding.
+    async attach(parentId, childIdOrObj) {
+      const attachment = typeof childIdOrObj === 'string'
+        ? { id: childIdOrObj }
+        : childIdOrObj;
+      const childId = attachment.id;
 
       const parent = await this.storage.get(parentId);
       if (!parent.attachments) parent.attachments = [];
 
-      // Check if child already exists
-      if (parent.attachments.some(c => c.id === itemId)) {
-        return; // Already a child
+      const existingIdx = parent.attachments.findIndex(c => c.id === childId);
+      if (existingIdx >= 0) {
+        // Merge new view data into existing attachment
+        if (attachment.view) {
+          parent.attachments[existingIdx] = {
+            ...parent.attachments[existingIdx],
+            view: { ...parent.attachments[existingIdx].view, ...attachment.view }
+          };
+        } else {
+          return; // Already attached, no new data
+        }
+      } else {
+        parent.attachments.push(attachment);
       }
 
-      // Append minimal child object - views add layout properties as needed
-      const updated = {
-        ...parent,
-        attachments: [...parent.attachments, { id: itemId }]
-      };
-
-      // Save silently without triggering re-render
-      await this.saveItem(updated, { silent: true });
+      parent.modified = Date.now();
+      await this.saveItem(parent); // Non-silent — triggers re-render
     }
 
     /** Detach a child item from a parent's attachments array.

@@ -183,23 +183,8 @@ async function showRelatedItemsModal(api, targetItemId) {
   frame.modified = Date.now();
   await api.set(frame);
 
-  // Build siblingContainer for the modal (same pattern as item-palette)
-  const rootId = api.getCurrentRoot();
-  const hasSpatialCanvas = !!document.querySelector(`[data-container-id="${rootId}"]`);
-  const siblingContainer = {
-    id: rootId,
-    addSibling: async (childId) => {
-      if (hasSpatialCanvas) {
-        await api.attach(rootId, childId);
-        await api.rerenderItem(rootId);
-      } else {
-        api.navigate(childId);
-      }
-    }
-  };
-
   // Render and append to body
-  const overlayNode = await api.renderItem(MODAL_FRAME_ID, MODAL_FRAME_VIEW_ID, { siblingContainer });
+  const overlayNode = await api.renderItem(MODAL_FRAME_ID, MODAL_FRAME_VIEW_ID);
   overlayNode.id = 'related-items-modal-overlay';
   document.body.appendChild(overlayNode);
 }
@@ -306,7 +291,12 @@ export async function buildSimpleActions(api, itemId, context) {
         content: newContent
       };
       await api.set(duplicate);
-      await api.openItem(duplicate.id);
+      const parentId = api.getParentId();
+      if (parentId) {
+        await api.attach(parentId, duplicate.id);
+      } else {
+        api.navigate(duplicate.id);
+      }
     };
   }
   frag.appendChild(duplicateEl);
@@ -826,7 +816,12 @@ export function buildEditViewItem(api, itemId, context, viewState) {
     el.onclick = async () => {
       context.onDismiss();
       const editView = await findEditableView(api, CODE_TYPE);
-      await api.openItem(activeViewId);
+      const parentId = api.getParentId();
+      if (parentId) {
+        await api.attach(parentId, activeViewId);
+      } else {
+        api.navigate(activeViewId);
+      }
       if (editView && context.parentId) {
         await api.setAttachmentView(context.parentId, activeViewId, editView.id);
       } else if (editView) {

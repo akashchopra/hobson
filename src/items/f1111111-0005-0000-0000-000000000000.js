@@ -56,33 +56,8 @@ export async function show(_api) {
   // Save both in parallel
   await Promise.all([api.set(searchItem), api.set(frame)]);
 
-  // Build a siblingContainer appropriate for the current root view.
-  // Spatial canvas: attach + rerender (opens as a window).
-  // Anything else: navigate (siblingContainer protocol not available outside render path).
-  const rootId = api.getCurrentRoot();
-  const hasSpatialCanvas = !!document.querySelector(`[data-container-id="${rootId}"]`);
-  const siblingContainer = {
-    id: rootId,
-    addSibling: async (childId) => {
-      if (hasSpatialCanvas) {
-        const root = await api.get(rootId);
-        const existing = (root.attachments || []).find(c => c.id === childId);
-        if (existing?.view?.minimized) {
-          existing.view.minimized = false;
-          root.modified = Date.now();
-          await api.set(root);
-        } else if (!existing) {
-          await api.attach(rootId, childId);
-        }
-        await api.rerenderItem(rootId);
-      } else {
-        api.navigate(childId);
-      }
-    }
-  };
-
   // Render the frame with modal-frame-view and append directly to body
-  const overlayNode = await api.renderItem(MODAL_FRAME_ID, MODAL_FRAME_VIEW_ID, { siblingContainer });
+  const overlayNode = await api.renderItem(MODAL_FRAME_ID, MODAL_FRAME_VIEW_ID);
   overlayNode.id = 'item-palette-overlay';
   document.body.appendChild(overlayNode);
 }

@@ -42,11 +42,10 @@ class RenderInstanceRegistry {
    * @param {string} itemId - Item GUID
    * @param {string} viewId - View GUID used to render
    * @param {string|null} parentId - Parent item GUID (null for root)
-   * @param {HTMLElement|null} [siblingContainer] - Sibling container element
    * @param {number|null} [forceId] - Pre-allocated instance ID (from allocateId)
    * @returns {number} The new instance ID
    */
-  register(domNode, itemId, viewId, parentId, siblingContainer = null, forceId = null) {
+  register(domNode, itemId, viewId, parentId, forceId = null) {
     const instanceId = forceId !== null ? forceId : this.nextId++;
     if (forceId !== null && forceId >= this.nextId) this.nextId = forceId + 1;
 
@@ -56,7 +55,6 @@ class RenderInstanceRegistry {
       itemId,
       viewId,
       parentId,
-      siblingContainer,
       timestamp: Date.now()
     };
 
@@ -316,7 +314,6 @@ export class RenderingSystem {
         // Pass viewConfig in context so views can access innerView, etc.
         const newDom = await this.renderItem(itemId, currentViewId, {}, {
           parentId: instance.parentId,
-          siblingContainer: instance.siblingContainer,
           viewConfig: viewConfig
         });
 
@@ -612,9 +609,8 @@ export class RenderingSystem {
         const hobResult = await this.renderHobView(view, item, api, newContext);
         if (hobResult.domNode) {
           const parentId = context.parentId || null;
-          const siblingContainer = context.siblingContainer || null;
           if (parentId) hobResult.domNode.setAttribute('data-parent-id', parentId);
-          this.registry.register(hobResult.domNode, itemId, view.id, parentId, siblingContainer, hobResult.trackingId);
+          this.registry.register(hobResult.domNode, itemId, view.id, parentId, hobResult.trackingId);
         }
         if (_dr) console.log(`[render] DONE itemId=${String(itemId).slice(0,8)} view=${view.name} hasDOM=${!!hobResult.domNode}`);
         return hobResult.domNode;
@@ -666,9 +662,8 @@ export class RenderingSystem {
       // Register render instance
       if (domNode) {
         const parentId = context.parentId || null;
-        const siblingContainer = context.siblingContainer || null;
         if (parentId) domNode.setAttribute('data-parent-id', parentId);
-        this.registry.register(domNode, itemId, view.id, parentId, siblingContainer, jsTrackingId);
+        this.registry.register(domNode, itemId, view.id, parentId, jsTrackingId);
       }
 
       return domNode;
