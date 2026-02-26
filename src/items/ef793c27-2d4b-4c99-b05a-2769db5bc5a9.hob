@@ -118,46 +118,7 @@
       (set-item! (assoc fresh :attachments updated-children :modified (now)))
       (rerender!)))
 
-  ;; 13. Sibling container (plain JS object)
-  sibling-container (let [sc (invoke (dom-get win :Object) "create" nil)]
-    (dom-set! sc :id (:id item))
-    (dom-set! sc :addSibling
-      (fn [child-id nav-to]
-        (let [fresh (get-item (:id item))
-              fresh-children (or (:attachments fresh) [])
-              existing (first (filter (fn [c] (= (:id c) child-id)) fresh-children))]
-          (if existing
-            ;; Existing child — bring to front, restore if minimized
-            (let [was-min (get-in existing [:view :minimized])]
-              (when was-min (update-child child-id {:minimized false}))
-              (when (not (invoke anchor-lib "isAnchored" (get-in existing [:view :anchor])))
-                (let [new-z (bring-to-front child-id)]
-                  (when new-z
-                    (let [w (invoke doc "querySelector"
-                              (str "[data-parent-id=\"" (:id item) "\"][data-item-id=\"" child-id "\"]"))]
-                      (when w (dom-set! (dom-get w :style) :zIndex new-z))))))
-              (when was-min (navigate! (invoke api "getCurrentRoot"))))
-            ;; New child — attach, position, create window
-            (do
-              (invoke api "attach" child-id)
-              (let [existing-wrappers (invoke doc "querySelectorAll"
-                                        (str "[data-parent-id=\"" (:id item) "\"]"))
-                    wrapper-count (dom-get existing-wrappers :length)
-                    last-w (when (> wrapper-count 0)
-                             (invoke existing-wrappers "item" (- wrapper-count 1)))
-                    new-x (if last-w (+ (or (invoke win "parseInt" (dom-get (dom-get last-w :style) :left)) 0) 30) 50)
-                    new-y (if last-w (+ (or (invoke win "parseInt" (dom-get (dom-get last-w :style) :top)) 0) 30) 50)
-                    max-z (get-max-z)
-                    new-z (+ max-z 1)]
-                (update-child child-id {:x new-x :y new-y :z (- new-z base-z)})
-                (let [w (create-window child-id {:x new-x :y new-y :width DEFAULT-W :height DEFAULT-H :z (- new-z base-z)} nav-to)
-                      container-el (invoke doc "querySelector"
-                                     (str "[data-container-id=\"" (:id item) "\"]"))
-                      scroll-el (when container-el (invoke container-el "querySelector" "[data-scroll-area]"))]
-                  (when scroll-el (invoke scroll-el "appendChild" w)))))))))
-    sc)
-
-  ;; 14. create-window function
+  ;; 13. create-window function
   create-window (fn [child-id child-view nav-to]
     (let [c-rect (invoke container "getBoundingClientRect")
           c-width  (or (dom-get c-rect :width) 1000)
@@ -178,8 +139,12 @@
           effective-anchor (:anchor effective-view)
           inset-style (invoke anchor-lib "generateInsetStyle" effective-anchor effective-view)
 
-          x (if inset-style 0 (or (:x effective-view) 0))
-          y (if inset-style 0 (or (:y effective-view) 0))
+          needs-position (and (not inset-style) (nil? (:x effective-view)))
+          cascade-n (count (filter (fn [c] (not (get-in c [:view :minimized]))) children))
+          x (if inset-style 0
+              (if needs-position (+ 50 (* 30 cascade-n)) (:x effective-view)))
+          y (if inset-style 0
+              (if needs-position (+ 50 (* 30 cascade-n)) (:y effective-view)))
           width  (or (:width effective-view) DEFAULT-W)
           height (or (:height effective-view) DEFAULT-H)
 
@@ -190,10 +155,12 @@
                 (+ (get-max-z) 1)))
           is-maximized (or (:maximized effective-view) false)
 
+          _ (when needs-position
+              (update-child child-id {:x x :y y :z (- z base-z)}))
+
           child-item (get-item child-id)
           child-node (render-item child-id
             {:on-cycle on-cycle
-             :sibling-container sibling-container
              :navigate-to nav-to
              :view (when (:type effective-view) effective-view)})
 

@@ -2905,7 +2905,6 @@ function registerViewOps(env, api) {
       const renderOpts = {};
       if (opts['on-cycle']) renderOpts.onCycle = opts['on-cycle'];
       if (opts.decorator) renderOpts.decorator = opts.decorator;
-      if (opts['sibling-container']) renderOpts.siblingContainer = opts['sibling-container'];
       if (opts['navigate-to']) renderOpts.navigateTo = opts['navigate-to'];
       dom = await api.renderItem(itemId, viewId, renderOpts);
     } else {
@@ -2938,19 +2937,10 @@ function registerViewOps(env, api) {
     return unsub;
   }, { _hobName: 'on-event!' }));
 
-  env.define('get-sibling-container', Object.assign(() => {
-    return api.siblingContainer;
-  }, { _hobName: 'get-sibling-container' }));
-
   env.define('navigate!', Object.assign((itemId) => {
     api.navigate(itemId);
     return null;
   }, { _hobName: 'navigate!' }));
-
-  env.define('open-item!', Object.assign((itemId, options) => {
-    api.openItem(itemId, options ? hobToJs(options) : undefined);
-    return null;
-  }, { _hobName: 'open-item!' }));
 
   env.define('clear-selection!', Object.assign(async () => {
     if (api.viewport?.clearSelection) await api.viewport.clearSelection();
@@ -3023,6 +3013,22 @@ function registerViewOps(env, api) {
     await api.detach(childId);
     return null;
   }, { _hobName: 'detach!' }));
+
+  env.define('attach!', Object.assign(async (parentId, childIdOrObj) => {
+    const attachment = typeof childIdOrObj === 'string' || (childIdOrObj && childIdOrObj.s)
+      ? (childIdOrObj.s || childIdOrObj)
+      : hobToJs(childIdOrObj);
+    await api.attach(parentId, attachment);
+    return null;
+  }, { _hobName: 'attach!' }));
+
+  env.define('get-parent-id', Object.assign(() => {
+    return api.getParentId();
+  }, { _hobName: 'get-parent-id' }));
+
+  env.define('get-current-root', Object.assign(() => {
+    return api.getCurrentRoot();
+  }, { _hobName: 'get-current-root' }));
 
   env.define('reorder-attachments!', Object.assign(async (fromIndex, toIndex) => {
     const itemId = api.getCurrentItem().id;

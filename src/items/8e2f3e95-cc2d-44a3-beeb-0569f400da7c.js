@@ -117,7 +117,16 @@ export async function render(value, options, api) {
               if (params.has('symbol')) navigateTo.symbol = params.get('symbol');
             }
           }
-          api.openItem(itemId, navigateTo);
+          const parentId = api.getParentId();
+          const hasNav = Object.keys(navigateTo).length > 0;
+          if (parentId) {
+            const attachment = hasNav
+              ? { id: itemId, view: { navigateTo } }
+              : itemId;
+            api.attach(parentId, attachment);
+          } else {
+            api.navigate(itemId, hasNav ? navigateTo : undefined);
+          }
         };
         parts.push(link);
         

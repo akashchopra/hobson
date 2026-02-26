@@ -263,7 +263,12 @@ function createTestRow(testItem, api) {
           e.preventDefault();
           const params = { field: 'code' };
           if (r.symbol) params.symbol = r.symbol;
-          api.openItem(testItem.id, params);
+          const parentId = api.getParentId();
+          if (parentId) {
+            api.attach(parentId, { id: testItem.id, view: { navigateTo: params } });
+          } else {
+            api.navigate(testItem.id, params);
+          }
         };
 
         line.appendChild(nameEl);
