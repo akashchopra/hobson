@@ -2970,8 +2970,8 @@ function registerViewOps(env, api) {
     return unsub;
   }, { _hobName: 'on-event!' }));
 
-  env.define('navigate!', Object.assign((itemId) => {
-    api.navigate(itemId);
+  env.define('navigate!', Object.assign(async (itemId) => {
+    await api.navigate(itemId);
     return null;
   }, { _hobName: 'navigate!' }));
 
