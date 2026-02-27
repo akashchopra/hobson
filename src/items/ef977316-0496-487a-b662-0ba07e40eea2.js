@@ -195,6 +195,7 @@ export async function render(pageItem, api) {
     }
 
     // --- Render Each Child Widget ---
+    const openIn = api.getParentId();
     const children = currentPageItem.attachments || [];
 
     for (const childSpec of children) {
@@ -226,13 +227,15 @@ export async function render(pageItem, api) {
           if (viewItem.content?.hob && !viewItem.content?.code) {
             // Hob view: render through the rendering system (handles AST caching etc.)
             // Pass pageContext via options so the rendering system can attach it to the api
-            widgetElement = await api.renderItem(childId, viewItem.id, { pageContext });
+            widgetElement = await api.renderItem(childId, { type: viewItem.id, openIn }, { pageContext });
           } else {
             // JS view: load module and call render directly (supports pageContext injection)
             const viewModule = await api.require(viewItem.id);
             const widgetApi = Object.create(api);
             widgetApi.pageContext = pageContext;
             widgetApi.getViewId = () => viewItem.id;
+            const parentViewConfig = await api.getViewConfig?.() || {};
+            widgetApi.getViewConfig = async () => ({ ...parentViewConfig, openIn });
             widgetElement = await viewModule.render(childItem, widgetApi);
           }
         } catch (err) {

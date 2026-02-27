@@ -100,6 +100,10 @@ export async function render(markdown, api, options = {}) {
   const perfId = ++_perfCounter;
   const md = markdown || '';
 
+  // Resolve openIn target: view config override, then parent, then null (= navigate)
+  const viewConfig = api.getViewConfig ? await api.getViewConfig() : null;
+  const openTarget = viewConfig?.openIn || (api.getParentId ? api.getParentId() : null);
+
   // Load markdown-it (reuse if passed from parent render)
   let markdownit = options.markdownit;
   if (!markdownit) {
@@ -187,13 +191,12 @@ export async function render(markdown, api, options = {}) {
           // Alt+Click: open as root (navigate viewport)
           api.navigate(parsed.itemId, hasNavigation ? navigateTo : undefined);
         } else {
-          // Plain click: open as sibling (or navigate if no container)
-          const parentId = api.getParentId();
-          if (parentId) {
+          // Plain click: open in openTarget (or navigate if no container)
+          if (openTarget) {
             const attachment = hasNavigation
               ? { id: parsed.itemId, view: { navigateTo } }
               : parsed.itemId;
-            api.attach(parentId, attachment);
+            api.attach(openTarget, attachment);
           } else {
             api.navigate(parsed.itemId, hasNavigation ? navigateTo : undefined);
           }
@@ -249,9 +252,8 @@ export async function render(markdown, api, options = {}) {
         navLink.style.cssText = 'color: var(--color-primary); cursor: pointer;';
         navLink.onclick = (e) => {
           e.preventDefault(); e.stopPropagation();
-          const parentId = api.getParentId();
-          if (parentId) {
-            api.attach(parentId, { id: parsed.itemId, view: { navigateTo: { symbol: fnName } } });
+          if (openTarget) {
+            api.attach(openTarget, { id: parsed.itemId, view: { navigateTo: { symbol: fnName } } });
           } else {
             api.navigate(parsed.itemId, { symbol: fnName });
           }
@@ -327,9 +329,8 @@ export async function render(markdown, api, options = {}) {
         navLink.style.cssText = 'color: var(--color-primary); cursor: pointer;';
         navLink.onclick = (e) => {
           e.preventDefault(); e.stopPropagation();
-          const parentId = api.getParentId();
-          if (parentId) {
-            api.attach(parentId, parsed.itemId);
+          if (openTarget) {
+            api.attach(openTarget, parsed.itemId);
           } else {
             api.navigate(parsed.itemId);
           }
@@ -464,12 +465,11 @@ export async function render(markdown, api, options = {}) {
               if (e.altKey) {
                 api.navigate(parsed.itemId, hasNavigation ? navigateTo : undefined);
               } else {
-                const parentId = api.getParentId();
-                if (parentId) {
+                if (openTarget) {
                   const attachment = hasNavigation
                     ? { id: parsed.itemId, view: { navigateTo } }
                     : parsed.itemId;
-                  api.attach(parentId, attachment);
+                  api.attach(openTarget, attachment);
                 } else {
                   api.navigate(parsed.itemId, hasNavigation ? navigateTo : undefined);
                 }
@@ -494,9 +494,8 @@ export async function render(markdown, api, options = {}) {
             link.title = 'From: ' + itemName;
             link.onclick = (e) => {
               e.preventDefault();
-              const parentId = api.getParentId();
-              if (parentId) {
-                api.attach(parentId, itemId);
+              if (openTarget) {
+                api.attach(openTarget, itemId);
               } else {
                 api.navigate(itemId);
               }
@@ -524,9 +523,8 @@ export async function render(markdown, api, options = {}) {
           navLink.style.cssText = 'color: var(--color-primary); cursor: pointer;';
           navLink.onclick = (e) => {
             e.preventDefault(); e.stopPropagation();
-            const parentId = api.getParentId();
-            if (parentId) {
-              api.attach(parentId, itemId);
+            if (openTarget) {
+              api.attach(openTarget, itemId);
             } else {
               api.navigate(itemId);
             }
