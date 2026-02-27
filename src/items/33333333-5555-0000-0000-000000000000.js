@@ -319,148 +319,130 @@ export class RenderingSystem {
 
         // Replace content in existing container (re-check parentNode — async work above may have changed it)
         if (oldDom.parentNode) {
-          if (oldDom.__hobView && newDom.__hobView) {
-            // === Morphdom path: patch existing DOM in-place ===
-            if (this._debugRender) console.log(`[rerender] MORPHDOM itemId=${String(itemId).slice(0,8)} view=${instance.viewId?.slice(0,8)}`);
-            // Clean up old root's document/event listeners before patching.
-            // morphdom's onNodeDiscarded handles discarded children, but the
-            // root node is never discarded — it's patched in place — so its
-            // __hobsonCleanup (on-document!, on-event!, on-cleanup! handlers)
-            // must be invoked explicitly to avoid accumulation.
-            if (typeof oldDom.__hobsonCleanup === 'function') {
-              try { oldDom.__hobsonCleanup(); } catch (e) { /* ignore */ }
-            }
+          // === Morphdom path: patch existing DOM in-place ===
+          if (this._debugRender) console.log(`[rerender] MORPHDOM itemId=${String(itemId).slice(0,8)} view=${instance.viewId?.slice(0,8)}`);
+          // Clean up old root's document/event listeners before patching.
+          // morphdom's onNodeDiscarded handles discarded children, but the
+          // root node is never discarded — it's patched in place — so its
+          // __hobsonCleanup (on-document!, on-event!, on-cleanup! handlers)
+          // must be invoked explicitly to avoid accumulation.
+          if (typeof oldDom.__hobsonCleanup === 'function') {
+            try { oldDom.__hobsonCleanup(); } catch (e) { /* ignore */ }
+          }
 
-            // Preserve parent-set attributes that the child view doesn't produce.
-            // data-parent-id is set by the parent (e.g. sortable-list-view, spatial-canvas-view)
-            // after rendering the child. Without this, morphdom would strip it from oldDom
-            // because newDom (freshly rendered by the child view) doesn't have it.
-            const oldParentId = oldDom.getAttribute('data-parent-id');
-            if (oldParentId) newDom.setAttribute('data-parent-id', oldParentId);
+          // Preserve parent-set attributes that the child view doesn't produce.
+          // data-parent-id is set by the parent (e.g. sortable-list-view, spatial-canvas-view)
+          // after rendering the child. Without this, morphdom would strip it from oldDom
+          // because newDom (freshly rendered by the child view) doesn't have it.
+          const oldParentId = oldDom.getAttribute('data-parent-id');
+          if (oldParentId) newDom.setAttribute('data-parent-id', oldParentId);
 
-            const morphdom = await this._loadMorphdom();
-            const _dr = this._debugRender;
-            const _registry = this.registry;
-            const _depTracker = this._depTracker;
+          const morphdom = await this._loadMorphdom();
+          const _dr = this._debugRender;
+          const _registry = this.registry;
+          const _depTracker = this._depTracker;
 
-            morphdom(oldDom, newDom, {
-              // Key children by data-sort-key for correct reorder matching.
-              // Uses a dedicated attribute to avoid collisions with data-item-id
-              // on elements deep inside rendered items (indexTree walks recursively).
-              getNodeKey(el) {
-                return el.getAttribute?.('data-sort-key') || el.id;
-              },
-              // Transfer Hob event handlers from new element to old
-              onBeforeElUpdated(fromEl, toEl) {
-                // Skip nested render instances — they have their own lifecycle
-                if (fromEl.hasAttribute('data-render-instance') && fromEl !== oldDom) {
-                  if (_dr) console.log(`[morphdom] SKIP render-instance=${fromEl.getAttribute('data-render-instance')} tag=${fromEl.tagName}`);
-                  return false;
-                }
-                // Preserve user-entered values in uncontrolled inputs/textareas.
-                // morphdom syncs the value property, which clobbers what the user typed.
-                // For uncontrolled inputs (no value attribute in new DOM), copy the
-                // current DOM value onto toEl so morphdom sees them as equal.
-                const tag = fromEl.tagName;
-                if (tag === 'INPUT' || tag === 'TEXTAREA') {
-                  if (!toEl.hasAttribute('value') && fromEl.value !== '') {
-                    toEl.value = fromEl.value;
-                    if (_dr) console.log(`[morphdom] PRESERVE input value (${fromEl.value.length} chars)`);
-                  }
-                }
-                // Keep old event handlers — they have correct DOM refs to the kept
-                // element (fromEl).  New handlers (on toEl) capture refs to the
-                // discarded DOM tree because morphdom keeps fromEl and discards toEl.
-                // Handler logic is identical across renders (same view code) and
-                // handlers fetch fresh data via get-item at call time, so keeping
-                // old closures is safe.  New elements (no old match) get their
-                // handlers via onNodeAdded, not here.
-                // Transfer sortable config (handler stays, config updates)
-                if (toEl.__hobSortable) {
-                  fromEl.__hobSortable = toEl.__hobSortable;
-                } else if (fromEl.__hobSortable) {
-                  delete fromEl.__hobSortable;
-                }
-                return true;
-              },
-
-              onNodeDiscarded(node) {
-                if (node.nodeType === 1) {
-                  cleanupDOMTree(node);
-                  // Unregister render instances in the discarded subtree.
-                  // Without this, stale instances accumulate in the registry
-                  // and dep tracker on each add/remove cycle, causing
-                  // progressively more wasted work on subsequent re-renders.
-                  const nested = node.querySelectorAll?.('[data-render-instance]');
-                  if (nested) {
-                    for (const el of nested) {
-                      const nestedId = parseInt(el.getAttribute('data-render-instance'), 10);
-                      _registry.unregister(nestedId);
-                      if (_depTracker) _depTracker.clearDeps(nestedId);
-                    }
-                  }
-                  if (node.hasAttribute?.('data-render-instance')) {
-                    const id = parseInt(node.getAttribute('data-render-instance'), 10);
-                    _registry.unregister(id);
-                    if (_depTracker) _depTracker.clearDeps(id);
-                  }
+          morphdom(oldDom, newDom, {
+            // Key children by data-sort-key for correct reorder matching.
+            // Uses a dedicated attribute to avoid collisions with data-item-id
+            // on elements deep inside rendered items (indexTree walks recursively).
+            getNodeKey(el) {
+              return el.getAttribute?.('data-sort-key') || el.id;
+            },
+            onBeforeElUpdated(fromEl, toEl) {
+              // Skip nested render instances — they have their own lifecycle
+              if (fromEl.hasAttribute('data-render-instance') && fromEl !== oldDom) {
+                if (_dr) console.log(`[morphdom] SKIP render-instance=${fromEl.getAttribute('data-render-instance')} tag=${fromEl.tagName}`);
+                return false;
+              }
+              // Preserve user-entered values in uncontrolled inputs/textareas.
+              // morphdom syncs the value property, which clobbers what the user typed.
+              // For uncontrolled inputs (no value attribute in new DOM), copy the
+              // current DOM value onto toEl so morphdom sees them as equal.
+              const tag = fromEl.tagName;
+              if (tag === 'INPUT' || tag === 'TEXTAREA') {
+                if (!toEl.hasAttribute('value') && fromEl.value !== '') {
+                  toEl.value = fromEl.value;
+                  if (_dr) console.log(`[morphdom] PRESERVE input value (${fromEl.value.length} chars)`);
                 }
               }
-            });
+              // Keep old event handlers — they have correct DOM refs to the kept
+              // element (fromEl).  New handlers (on toEl) capture refs to the
+              // discarded DOM tree because morphdom keeps fromEl and discards toEl.
+              // Handler logic is identical across renders (same view code) and
+              // handlers fetch fresh data via get-item at call time, so keeping
+              // old closures is safe.  New elements (no old match) get their
+              // handlers via onNodeAdded, not here.
+              // Transfer sortable config (handler stays, config updates)
+              if (toEl.__hobSortable) {
+                fromEl.__hobSortable = toEl.__hobSortable;
+              } else if (fromEl.__hobSortable) {
+                delete fromEl.__hobSortable;
+              }
+              return true;
+            },
 
-            // After morphdom: oldDom is still in the DOM (patched in place).
-            // Clean up the NEW render's nested instances — morphdom skipped them
-            // (child render-instances manage their own lifecycle via dep tracking).
-            const newNested = newDom.querySelectorAll('[data-render-instance]');
-            for (const el of newNested) {
-              cleanupDOMTree(el);
-              const nestedId = parseInt(el.getAttribute('data-render-instance'), 10);
-              this.registry.unregister(nestedId);
-              if (this._depTracker) this._depTracker.clearDeps(nestedId);
+            onNodeDiscarded(node) {
+              if (node.nodeType === 1) {
+                cleanupDOMTree(node);
+                // Unregister render instances in the discarded subtree.
+                // Without this, stale instances accumulate in the registry
+                // and dep tracker on each add/remove cycle, causing
+                // progressively more wasted work on subsequent re-renders.
+                const nested = node.querySelectorAll?.('[data-render-instance]');
+                if (nested) {
+                  for (const el of nested) {
+                    const nestedId = parseInt(el.getAttribute('data-render-instance'), 10);
+                    _registry.unregister(nestedId);
+                    if (_depTracker) _depTracker.clearDeps(nestedId);
+                  }
+                }
+                if (node.hasAttribute?.('data-render-instance')) {
+                  const id = parseInt(node.getAttribute('data-render-instance'), 10);
+                  _registry.unregister(id);
+                  if (_depTracker) _depTracker.clearDeps(id);
+                }
+              }
             }
+          });
 
-            // renderItem registered a new instance pointing to newDom.
-            // Find it and update it to point to oldDom (which is still in the document).
-            const newInstance = this.registry.getByItemId(itemId)
-              .find(i => i.domNode === newDom);
-            if (newInstance) {
-              // Unregister old instance, transfer new instance to oldDom
-              this.registry.unregister(instance.instanceId);
-              if (this._depTracker) this._depTracker.clearDeps(instance.instanceId);
-              newInstance.domNode = oldDom;
-              oldDom.setAttribute('data-render-instance', newInstance.instanceId);
-            }
+          // After morphdom: oldDom is still in the DOM (patched in place).
+          // Clean up the NEW render's nested instances — morphdom skipped them
+          // (child render-instances manage their own lifecycle via dep tracking).
+          const newNested = newDom.querySelectorAll('[data-render-instance]');
+          for (const el of newNested) {
+            cleanupDOMTree(el);
+            const nestedId = parseInt(el.getAttribute('data-render-instance'), 10);
+            this.registry.unregister(nestedId);
+            if (this._depTracker) this._depTracker.clearDeps(nestedId);
+          }
 
-            // Preserve the __hobView flag on the patched node
-            oldDom.__hobView = true;
-
-            // Transfer cleanup from new render to patched old DOM so the
-            // next re-render (or teardown) will clean up the current handlers.
-            if (typeof newDom.__hobsonCleanup === 'function') {
-              oldDom.__hobsonCleanup = newDom.__hobsonCleanup;
-              oldDom.setAttribute('data-hobson-cleanup', '');
-            } else {
-              delete oldDom.__hobsonCleanup;
-              oldDom.removeAttribute('data-hobson-cleanup');
-            }
-
-            updated++;
-          } else {
-            // === Original replaceChild path (JS views, or mixed) ===
-            cleanupDOMTree(oldDom);
-
-            const nestedInstances = oldDom.querySelectorAll('[data-render-instance]');
-            for (const el of nestedInstances) {
-              const nestedId = parseInt(el.dataset.renderInstance, 10);
-              this.registry.unregister(nestedId);
-              if (this._depTracker) this._depTracker.clearDeps(nestedId);
-            }
+          // renderItem registered a new instance pointing to newDom.
+          // Find it and update it to point to oldDom (which is still in the document).
+          const newInstance = this.registry.getByItemId(itemId)
+            .find(i => i.domNode === newDom);
+          if (newInstance) {
+            // Unregister old instance, transfer new instance to oldDom
             this.registry.unregister(instance.instanceId);
             if (this._depTracker) this._depTracker.clearDeps(instance.instanceId);
-
-            oldDom.parentNode.replaceChild(newDom, oldDom);
-            updated++;
+            newInstance.domNode = oldDom;
+            oldDom.setAttribute('data-render-instance', newInstance.instanceId);
           }
+
+          // Preserve the __morphdom flag on the patched node
+          oldDom.__morphdom = true;
+
+          // Transfer cleanup from new render to patched old DOM so the
+          // next re-render (or teardown) will clean up the current handlers.
+          if (typeof newDom.__hobsonCleanup === 'function') {
+            oldDom.__hobsonCleanup = newDom.__hobsonCleanup;
+            oldDom.setAttribute('data-hobson-cleanup', '');
+          } else {
+            delete oldDom.__hobsonCleanup;
+            oldDom.removeAttribute('data-hobson-cleanup');
+          }
+
+          updated++;
         } else {
           // DOM was detached during async rendering — clean up the new render's side effects
           cleanupDOMTree(newDom);
@@ -661,6 +643,7 @@ export class RenderingSystem {
 
       // Register render instance
       if (domNode) {
+        domNode.__morphdom = true;
         const parentId = context.parentId || null;
         if (parentId) domNode.setAttribute('data-parent-id', parentId);
         this.registry.register(domNode, itemId, view.id, parentId, jsTrackingId);
@@ -956,8 +939,7 @@ export class RenderingSystem {
       domNode = result;
     }
 
-    // Flag Hob view DOM nodes so rerenderItem can use morphdom instead of replaceChild
-    if (domNode) domNode.__hobView = true;
+    if (domNode) domNode.__morphdom = true;
 
     // Wire Hob cleanup handlers to the DOM node
     if (domNode && api._hobCleanups && api._hobCleanups.length > 0) {
