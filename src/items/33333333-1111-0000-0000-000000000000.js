@@ -168,6 +168,64 @@ export async function loadKernel(require, storageBackend) {
   const { RenderingSystem } = await require(IDS.KERNEL_RENDERING_SYSTEM);
   const { SafeMode } = await require(IDS.KERNEL_SAFE_MODE);
 
+  /** Create a DOM element with JSX-like syntax.
+   * @param {string} tag - HTML tag name
+   * @param {Object} [props] - Attributes, event handlers (onXxx), class, style
+   * @param {Array} [children] - Child nodes, strings, or [tag, props, children] arrays
+   * @param {Object} [debugCtx] - Debug attribution context {containerItem, context, debugMode, parseSourceLocation}
+   * @returns {HTMLElement}
+   */
+  function createElement(tag, props = {}, children = [], debugCtx = null) {
+    const element = document.createElement(tag);
+
+    // Debug attribution
+    if (debugCtx?.containerItem) {
+      const debugActive = debugCtx.context?.debug || debugCtx.debugMode;
+      if (debugActive) {
+        if (debugCtx.context?.viewId) {
+          element.setAttribute('data-view-id', debugCtx.context.viewId);
+        }
+        element.setAttribute('data-for-item', debugCtx.containerItem.id);
+        try {
+          const stack = new Error().stack;
+          const location = debugCtx.parseSourceLocation(stack);
+          if (location) {
+            element.setAttribute('data-source', location.itemName);
+            element.setAttribute('data-source-line', String(location.line));
+          }
+        } catch (e) { /* ignore */ }
+      }
+    }
+
+    for (const [key, value] of Object.entries(props)) {
+      if (key.startsWith("on") && typeof value === "function") {
+        const eventName = key.substring(2).toLowerCase();
+        element.addEventListener(eventName, value);
+      } else if (key === "class") {
+        element.className = value;
+      } else if (key === "style" && typeof value === "string") {
+        element.style.cssText = value;
+      } else {
+        element.setAttribute(key, value);
+      }
+    }
+
+    for (const child of children) {
+      if (typeof child === "string") {
+        element.appendChild(document.createTextNode(child));
+      } else if (child instanceof Node) {
+        element.appendChild(child);
+      } else if (Array.isArray(child)) {
+        // Handle array shorthand: [tag, props, children]
+        const [childTag, childProps = {}, childChildren = []] = child;
+        const childElement = createElement(childTag, childProps, childChildren, debugCtx);
+        element.appendChild(childElement);
+      }
+    }
+
+    return element;
+  }
+
   /** Sort items in dependency order for import (types before their instances).
    * Uses topological sort based on type and extends fields.
    * @param {Object[]} items - Items to sort
@@ -243,6 +301,125 @@ export async function loadKernel(require, storageBackend) {
     }
 
     return result;
+  }
+
+  /** Get the view config for an item from its render context (attachment spec or viewport).
+   * @param {Object} kernel - Kernel instance
+   * @param {Object} containerItem - The item being rendered
+   * @param {Object} context - Render context
+   * @returns {Promise<Object|null>} View config object or null
+   */
+  async function getViewConfig(kernel, containerItem, context) {
+    if (context.viewConfig) {
+      return context.viewConfig;
+    }
+    if (context.parentId === IDS.VIEWPORT) {
+      const vpMgr = await kernel.moduleSystem.require('viewport-manager');
+      if (vpMgr.getRoot() === containerItem.id) {
+        return await vpMgr.getRootViewConfig();
+      }
+    }
+    return null;
+  }
+
+  /** Update the view config for an item (merges into parent's attachment spec or viewport).
+   * @param {Object} kernel - Kernel instance
+   * @param {Object} containerItem - The item being rendered
+   * @param {Object} context - Render context
+   * @param {Object} updates - Key-value pairs to merge into the config
+   * @returns {Promise<boolean>} True if update succeeded
+   */
+  async function updateViewConfig(kernel, containerItem, context, updates) {
+    const parentId = context.parentId;
+
+    if (parentId === IDS.VIEWPORT) {
+      const vpMgr = await kernel.moduleSystem.require('viewport-manager');
+      if (vpMgr.getRoot() === containerItem.id) {
+        await vpMgr.updateRootViewConfig(updates);
+        return true;
+      }
+    }
+
+    if (!parentId) {
+      console.warn('updateViewConfig: no parent ID in context');
+      return false;
+    }
+
+    const parent = await kernel.storage.get(parentId);
+    const childIndex = parent.attachments?.findIndex(c => c.id === containerItem.id);
+    if (childIndex < 0) {
+      console.warn('updateViewConfig: item not found in parent attachments');
+      return false;
+    }
+
+    const currentChild = parent.attachments[childIndex];
+    parent.attachments[childIndex] = {
+      ...currentChild,
+      view: { ...(currentChild.view || {}), ...updates }
+    };
+    parent.modified = Date.now();
+
+    await kernel.saveItem(parent, { silent: true });
+    return true;
+  }
+
+  /** Restore the previous view for an item (undo setAttachmentView or setRootView).
+   * @param {Object} kernel - Kernel instance
+   * @param {Object} context - Render context (parentId)
+   * @param {string} itemId - Item GUID to restore
+   * @returns {Promise<boolean>} True if a previous view was restored
+   */
+  async function restorePreviousView(kernel, context, itemId) {
+    const vpMgr = kernel.moduleSystem.getCached('viewport-manager');
+    const isViewportRoot = vpMgr && vpMgr.getRoot() === itemId;
+
+    if (isViewportRoot) {
+      if (vpMgr.restorePreviousRootView) {
+        const restored = await vpMgr.restorePreviousRootView();
+        if (restored) {
+          await kernel.renderViewport();
+          return true;
+        }
+      }
+      if (await vpMgr.getRootView()) {
+        await vpMgr.setRootView(null, false);
+        await kernel.renderViewport();
+        return true;
+      }
+      return false;
+    }
+
+    const renderingParentId = context.parentId;
+    const parent = renderingParentId
+      ? await kernel.storage.get(renderingParentId)
+      : await kernel.findContainerOf(itemId);
+    if (!parent) {
+      return false;
+    }
+
+    const childIndex = parent.attachments.findIndex(c => c.id === itemId);
+    if (childIndex < 0) return false;
+
+    const childSpec = parent.attachments[childIndex];
+    if (childSpec.previousView) {
+      parent.attachments[childIndex] = {
+        ...childSpec,
+        view: { ...childSpec.previousView },
+        previousView: undefined
+      };
+    } else if (childSpec.view && 'type' in childSpec.view) {
+      const { type, ...viewWithoutType } = childSpec.view;
+      parent.attachments[childIndex] = {
+        ...childSpec,
+        view: Object.keys(viewWithoutType).length > 0 ? viewWithoutType : undefined,
+        previousView: undefined
+      };
+    } else {
+      return false;
+    }
+    await kernel.saveItem(parent);
+    await kernel.renderViewport();
+    return true;
   }
 
   /** Core kernel — manages storage, events, rendering, and the unified API. */
@@ -954,6 +1131,11 @@ export async function loadKernel(require, storageBackend) {
       const kernel = this;
       const rendering = this.rendering;
 
+      const debugCtx = containerItem ? {
+        containerItem, context, debugMode: kernel.debugMode,
+        parseSourceLocation: rendering.parseSourceLocation.bind(rendering)
+      } : null;
+
       const api = {
         /** Create a DOM element with JSX-like syntax.
          * @param {string} tag - HTML tag name
@@ -961,56 +1143,7 @@ export async function loadKernel(require, storageBackend) {
          * @param {Array} [children] - Child nodes, strings, or [tag, props, children] arrays
          * @returns {HTMLElement}
          */
-        createElement(tag, props = {}, children = []) {
-          const element = document.createElement(tag);
-
-          // Debug attribution (only when containerItem present)
-          if (containerItem) {
-            const debugActive = context.debug || kernel.debugMode;
-            if (debugActive) {
-              if (context.viewId) {
-                element.setAttribute('data-view-id', context.viewId);
-              }
-              element.setAttribute('data-for-item', containerItem.id);
-              try {
-                const stack = new Error().stack;
-                const location = rendering.parseSourceLocation(stack);
-                if (location) {
-                  element.setAttribute('data-source', location.itemName);
-                  element.setAttribute('data-source-line', String(location.line));
-                }
-              } catch (e) { /* ignore */ }
-            }
-          }
-
-          for (const [key, value] of Object.entries(props)) {
-            if (key.startsWith("on") && typeof value === "function") {
-              const eventName = key.substring(2).toLowerCase();
-              element.addEventListener(eventName, value);
-            } else if (key === "class") {
-              element.className = value;
-            } else if (key === "style" && typeof value === "string") {
-              element.style.cssText = value;
-            } else {
-              element.setAttribute(key, value);
-            }
-          }
-
-          for (const child of children) {
-            if (typeof child === "string") {
-              element.appendChild(document.createTextNode(child));
-            } else if (child instanceof Node) {
-              element.appendChild(child);
-            } else if (Array.isArray(child)) {
-              // Handle array shorthand: [tag, props, children]
-              const [childTag, childProps = {}, childChildren = []] = child;
-              const childElement = api.createElement(childTag, childProps, childChildren);
-              element.appendChild(childElement);
-            }
-          }
-
-          return element;
-        },
+        createElement: (tag, props, children) => createElement(tag, props, children, debugCtx),
 
         // --- Storage operations ---
 
@@ -1107,43 +1240,8 @@ export async function loadKernel(require, storageBackend) {
          * @param {Object} [options] - Render options (decorator, navigateTo, onCycle)
          * @returns {Promise<HTMLElement>}
          */
-        renderItem: async (itemId, viewIdOrConfig, options) => {
-          // Extract view ID and config from the parameter
-          let viewId = null;
-          let viewConfig = null;
-          if (typeof viewIdOrConfig === 'string') {
-            viewId = viewIdOrConfig;
-          } else if (viewIdOrConfig && typeof viewIdOrConfig === 'object') {
-            viewId = viewIdOrConfig.type || null;
-            viewConfig = viewIdOrConfig;
-          }
-
-          // Merge decorator and viewConfig into context for propagation
-          const decorator = options?.decorator || context.decorator;
-          const navigateTo = options?.navigateTo !== undefined
-            ? options.navigateTo
-            : context.navigateTo;
-          const mergedContext = {
-            ...context,
-            decorator,
-            viewConfig,
-            parentId: containerItem ? containerItem.id : null,
-            navigateTo
-          };
-
-          const domNode = await rendering.renderItem(itemId, viewId, options || {}, mergedContext);
-
-          // Apply decorator if present (from options or inherited context)
-          if (domNode && decorator) {
-            try {
-              const item = await kernel.storage.get(itemId);
-              await decorator(domNode, itemId, item);
-            } catch (e) {
-              console.warn('Decorator error:', e);
-            }
-          }
-          return domNode;
-        },
+        renderItem: (itemId, viewIdOrConfig, options) =>
+          rendering.renderItemInContext(itemId, viewIdOrConfig, options, context, containerItem),
 
         /** Re-render all visible instances of an item in place.
          * @param {string} itemId - Item GUID to re-render
@@ -1194,30 +1292,13 @@ export async function loadKernel(require, storageBackend) {
          * @param {string} parentId - Parent item GUID
          * @returns {Promise<string|null>} View GUID from parent's attachment config, or null
          */
-        getContextualView: async (itemId, parentId) => {
-          if (!parentId) return null;
-          try {
-            const parent = await kernel.storage.get(parentId);
-            const childSpec = parent.attachments?.find(c =>
-              (typeof c === 'string' ? c : c.id) === itemId
-            );
-            if (childSpec && typeof childSpec === 'object' && childSpec.view?.type) {
-              return childSpec.view.type;
-            }
-          } catch (e) {
-            // Parent not found
-          }
-          return null;
-        },
+        getContextualView: (itemId, parentId) => rendering.getContextualView(itemId, parentId),
+
         /** Get the human-readable type name for an item.
          * @param {string} itemId - Item GUID
          * @returns {Promise<string>} Type name or truncated GUID
          */
-        getTypeName: async (itemId) => {
-          const item = await kernel.storage.get(itemId);
-          const typeItem = await kernel.storage.get(item.type);
-          return typeItem.name || typeItem.id.slice(0, 8);
-        },
+        getTypeName: (itemId) => rendering.getTypeName(itemId),
 
         // --- Preferred view management ---
 
@@ -1225,23 +1306,7 @@ export async function loadKernel(require, storageBackend) {
          * @param {string} itemId - Item GUID
          * @param {string|null} viewId - View GUID, or null to clear
          */
-        setPreferredView: async (itemId, viewId) => {
-          const item = await kernel.storage.get(itemId);
-          if (viewId) {
-            item.preferredView = viewId;
-          } else {
-            delete item.preferredView;
-          }
-          item.modified = Date.now();
-          await kernel.saveItem(item);
-
-          // If this is a type definition, re-render all items of this type
-          if (item.type === IDS.TYPE_DEFINITION) {
-            await rendering.rerenderByType(itemId);
-          } else {
-            await rendering.rerenderItem(itemId);
-          }
-        },
+        setPreferredView: (itemId, viewId) => rendering.setPreferredView(itemId, viewId),
         /** Get an item's preferred view.
          * @param {string} itemId - Item GUID
          * @returns {Promise<string|null>} View GUID or null
@@ -1255,18 +1320,7 @@ export async function loadKernel(require, storageBackend) {
          * @param {string} itemId - Any item of the type to update
          * @param {string|null} viewId - View GUID, or null to clear
          */
-        setTypePreferredView: async (itemId, viewId) => {
-          const item = await kernel.storage.get(itemId);
-          const typeItem = await kernel.storage.get(item.type);
-          if (viewId) {
-            typeItem.preferredView = viewId;
-          } else {
-            delete typeItem.preferredView;
-          }
-          typeItem.modified = Date.now();
-          await kernel.saveItem(typeItem);
-          await rendering.rerenderByType(item.type);
-        },
+        setTypePreferredView: (itemId, viewId) => rendering.setTypePreferredView(itemId, viewId),
         /** Get the preferred view for an item's type.
          * @param {string} itemId - Any item of the type to query
          * @returns {Promise<string|null>} View GUID or null
@@ -1284,43 +1338,25 @@ export async function loadKernel(require, storageBackend) {
          * 2-arg form: attach(parentId, itemId).
          * @param {...string} args - (itemId) or (parentId, itemId)
          */
-        attach: async (...args) => {
-          if (args.length === 1 && containerItem) {
-            // 1-param: attach(itemId) — uses containerItem
-            await kernel.attach(containerItem.id, args[0]);
-          } else {
-            // 2-param: attach(parentId, itemId) — explicit
-            await kernel.attach(args[0], args[1]);
-          }
-        },
+        attach: (...args) => args.length === 1 && containerItem
+          ? kernel.attach(containerItem.id, args[0])
+          : kernel.attach(args[0], args[1]),
         /** Detach a child from a parent.
          * 1-arg form (in view context): detach(itemId) — uses containerItem as parent.
          * 2-arg form: detach(parentId, itemId).
          * @param {...string} args - (itemId) or (parentId, itemId)
          */
-        detach: async (...args) => {
-          if (args.length === 1 && containerItem) {
-            // 1-param: detach(itemId) — uses containerItem
-            await kernel.detach(containerItem.id, args[0]);
-          } else {
-            // 2-param: detach(parentId, itemId) — explicit
-            await kernel.detach(args[0], args[1]);
-          }
-        },
+        detach: (...args) => args.length === 1 && containerItem
+          ? kernel.detach(containerItem.id, args[0])
+          : kernel.detach(args[0], args[1]),
         /** Set the view config for an attachment.
          * 2-arg form (in view context): setAttachmentView(itemId, viewId).
          * 3-arg form: setAttachmentView(parentId, itemId, viewId).
          * @param {...string} args - (itemId, viewId) or (parentId, itemId, viewId)
          */
-        setAttachmentView: async (...args) => {
-          if (args.length === 2 && containerItem) {
-            // 2-param: setAttachmentView(itemId, viewId) — uses containerItem
-            await kernel.setAttachmentView(containerItem.id, args[0], args[1]);
-          } else {
-            // 3-param: setAttachmentView(parentId, itemId, viewId)
-            await kernel.setAttachmentView(args[0], args[1], args[2]);
-          }
-        },
+        setAttachmentView: (...args) => args.length === 2 && containerItem
+          ? kernel.setAttachmentView(containerItem.id, args[0], args[1])
+          : kernel.setAttachmentView(args[0], args[1], args[2]),
         /** Find the parent item that contains a given item in its attachments.
          * @param {string} itemId - Child item GUID
          * @returns {Promise<Object|null>} The parent item, or null if not attached
@@ -1399,91 +1435,7 @@ export async function loadKernel(require, storageBackend) {
                   items = items.concat(fileItems);
                 }
 
-                // Sort items in dependency order (types/extends before their dependents)
-                items = sortItemsForImport(items);
-
-                let created = 0;
-                let updated = 0;
-                let skipped = 0;
-
-                for (const item of items) {
-                  if (!item.id) {
-                    item.id = crypto.randomUUID();
-                  }
-
-                  try {
-                    const exists = await kernel.storage.exists(item.id);
-
-                    // Ensure created timestamp for new items
-                    if (!exists && !item.created) item.created = Date.now();
-
-                    await kernel.saveItem(item);
-
-                    // Clear module cache if it's a code item
-                    if (await kernel.isCodeItem(item)) {
-                      kernel.moduleSystem.clearCache();
-                    }
-
-                    if (exists) {
-                      updated++;
-                    } else {
-                      created++;
-                    }
-                  } catch (error) {
-                    console.warn(`Failed to import item ${item.id}: ${error.message}`);
-                    skipped++;
-                  }
-                }
-
-                // Smart refresh based on what was imported
-                const result = { created, updated, skipped };
-
-                // Check for kernel modules - requires full reload
-                const hasKernelModule = items.some(i => i.type === IDS.KERNEL_MODULE);
-                if (hasKernelModule) {
-                  result.action = 'reload';
-                  resolve(result);
-                  kernel.reloadKernel();
-                  return;
-                }
-
-                // Check for styles - hot-reload CSS
-                const hasStyles = items.some(i => i.id === IDS.KERNEL_STYLES);
-                if (hasStyles) {
-                  await kernel.applyStyles();
-                }
-
-                // Check for libraries - requires full re-render (dependencies not tracked)
-                const hasLibrary = items.some(i => i.type === IDS.LIBRARY);
-                if (hasLibrary) {
-                  result.action = 'full-rerender';
-                  await kernel.renderViewport();
-                  resolve(result);
-                  return;
-                }
-
-                // Check for views - partial re-render for each
-                const viewItems = items.filter(i => i.type === IDS.VIEW);
-                for (const viewItem of viewItems) {
-                  await kernel.rendering.rerenderByView(viewItem.id);
-                }
-
-                // For data items, re-render if currently visible
-                const codeTypes = [IDS.VIEW, IDS.LIBRARY, IDS.KERNEL_MODULE];
-                const dataItems = items.filter(i =>
-                  !codeTypes.includes(i.type) && i.id !== IDS.KERNEL_STYLES
-                );
-                for (const item of dataItems) {
-                  const instances = kernel.rendering.registry.getByItemId(item.id);
-                  if (instances.length > 0) {
-                    await kernel.rendering.rerenderItem(item.id);
-                  }
-                }
-
-                result.action = viewItems.length > 0 || dataItems.length > 0
-                  ? 'partial-rerender'
-                  : (hasStyles ? 'styles-only' : 'none');
-                resolve(result);
+                resolve(await kernel.importItems(items));
               } catch (error) {
                 reject(error);
               }
@@ -1698,56 +1650,13 @@ export async function loadKernel(require, storageBackend) {
         /** Get the view config for this item (from parent's attachment spec or viewport).
          * @returns {Promise<Object|null>} View config object or null
          */
-        api.getViewConfig = async () => {
-          if (context.viewConfig) {
-            return context.viewConfig;
-          }
-          if (context.parentId === IDS.VIEWPORT) {
-            const vpMgr = await kernel.moduleSystem.require('viewport-manager');
-            if (vpMgr.getRoot() === containerItem.id) {
-              return await vpMgr.getRootViewConfig();
-            }
-          }
-          return null;
-        };
+        api.getViewConfig = () => getViewConfig(kernel, containerItem, context);
 
         /** Update the view config for this item (merges into parent's attachment spec).
          * @param {Object} updates - Key-value pairs to merge into the config
          * @returns {Promise<boolean>} True if update succeeded
          */
-        api.updateViewConfig = async (updates) => {
-          const parentId = context.parentId;
-
-          if (parentId === IDS.VIEWPORT) {
-            const vpMgr = await kernel.moduleSystem.require('viewport-manager');
-            if (vpMgr.getRoot() === containerItem.id) {
-              await vpMgr.updateRootViewConfig(updates);
-              return true;
-            }
-          }
-
-          if (!parentId) {
-            console.warn('updateViewConfig: no parent ID in context');
-            return false;
-          }
-
-          const parent = await kernel.storage.get(parentId);
-          const childIndex = parent.attachments?.findIndex(c => c.id === containerItem.id);
-          if (childIndex < 0) {
-            console.warn('updateViewConfig: item not found in parent attachments');
-            return false;
-          }
-
-          const currentChild = parent.attachments[childIndex];
-          parent.attachments[childIndex] = {
-            ...currentChild,
-            view: { ...(currentChild.view || {}), ...updates }
-          };
-          parent.modified = Date.now();
-
-          await kernel.saveItem(parent, { silent: true });
-          return true;
-        };
+        api.updateViewConfig = (updates) => updateViewConfig(kernel, containerItem, context, updates);
 
         /** Get the parent item ID in the current render context.
          * @returns {string|null}
@@ -1810,58 +1719,7 @@ export async function loadKernel(require, storageBackend) {
          * @param {string} itemId - Item GUID to restore
          * @returns {Promise<boolean>} True if a previous view was restored
          */
-        api.restorePreviousView = async (itemId) => {
-          const vpMgr = kernel.moduleSystem.getCached('viewport-manager');
-          const isViewportRoot = vpMgr && vpMgr.getRoot() === itemId;
-
-          if (isViewportRoot) {
-            if (vpMgr.restorePreviousRootView) {
-              const restored = await vpMgr.restorePreviousRootView();
-              if (restored) {
-                await kernel.renderViewport();
-                return true;
-              }
-            }
-            if (await vpMgr.getRootView()) {
-              await vpMgr.setRootView(null, false);
-              await kernel.renderViewport();
-              return true;
-            }
-            return false;
-          }
-
-          const renderingParentId = context.parentId;
-          const parent = renderingParentId
-            ? await kernel.storage.get(renderingParentId)
-            : await kernel.findContainerOf(itemId);
-          if (!parent) {
-            return false;
-          }
-
-          const childIndex = parent.attachments.findIndex(c => c.id === itemId);
-          if (childIndex < 0) return false;
-
-          const childSpec = parent.attachments[childIndex];
-          if (childSpec.previousView) {
-            parent.attachments[childIndex] = {
-              ...childSpec,
-              view: { ...childSpec.previousView },
-              previousView: undefined
-            };
-          } else if (childSpec.view && 'type' in childSpec.view) {
-            const { type, ...viewWithoutType } = childSpec.view;
-            parent.attachments[childIndex] = {
-              ...childSpec,
-              view: Object.keys(viewWithoutType).length > 0 ? viewWithoutType : undefined,
-              previousView: undefined
-            };
-          } else {
-            return false;
-          }
-          await kernel.saveItem(parent);
-          await kernel.renderViewport();
-          return true;
-        };
+        api.restorePreviousView = (itemId) => restorePreviousView(kernel, context, itemId);
       }
 
       return api;
@@ -2030,6 +1888,96 @@ export async function loadKernel(require, storageBackend) {
       };
 
       return await detectCycle(itemId);
+    }
+
+    /** Import items with dependency-order sorting and smart refresh.
+     * @param {Object[]} items - Array of item objects to import
+     * @returns {Promise<{created: number, updated: number, skipped: number, action: string}>}
+     */
+    async importItems(items) {
+      // Sort items in dependency order (types/extends before their dependents)
+      items = sortItemsForImport(items);
+
+      let created = 0;
+      let updated = 0;
+      let skipped = 0;
+
+      for (const item of items) {
+        if (!item.id) {
+          item.id = crypto.randomUUID();
+        }
+
+        try {
+          const exists = await this.storage.exists(item.id);
+
+          // Ensure created timestamp for new items
+          if (!exists && !item.created) item.created = Date.now();
+
+          await this.saveItem(item);
+
+          // Clear module cache if it's a code item
+          if (await this.isCodeItem(item)) {
+            this.moduleSystem.clearCache();
+          }
+
+          if (exists) {
+            updated++;
+          } else {
+            created++;
+          }
+        } catch (error) {
+          console.warn(`Failed to import item ${item.id}: ${error.message}`);
+          skipped++;
+        }
+      }
+
+      // Smart refresh based on what was imported
+      const result = { created, updated, skipped };
+
+      // Check for kernel modules - requires full reload
+      const hasKernelModule = items.some(i => i.type === IDS.KERNEL_MODULE);
+      if (hasKernelModule) {
+        result.action = 'reload';
+        this.reloadKernel();
+        return result;
+      }
+
+      // Check for styles - hot-reload CSS
+      const hasStyles = items.some(i => i.id === IDS.KERNEL_STYLES);
+      if (hasStyles) {
+        await this.applyStyles();
+      }
+
+      // Check for libraries - requires full re-render (dependencies not tracked)
+      const hasLibrary = items.some(i => i.type === IDS.LIBRARY);
+      if (hasLibrary) {
+        result.action = 'full-rerender';
+        await this.renderViewport();
+        return result;
+      }
+
+      // Check for views - partial re-render for each
+      const viewItems = items.filter(i => i.type === IDS.VIEW);
+      for (const viewItem of viewItems) {
+        await this.rendering.rerenderByView(viewItem.id);
+      }
+
+      // For data items, re-render if currently visible
+      const codeTypes = [IDS.VIEW, IDS.LIBRARY, IDS.KERNEL_MODULE];
+      const dataItems = items.filter(i =>
+        !codeTypes.includes(i.type) && i.id !== IDS.KERNEL_STYLES
+      );
+      for (const item of dataItems) {
+        const instances = this.rendering.registry.getByItemId(item.id);
+        if (instances.length > 0) {
+          await this.rendering.rerenderItem(item.id);
+        }
+      }
+
+      result.action = viewItems.length > 0 || dataItems.length > 0
+        ? 'partial-rerender'
+        : (hasStyles ? 'styles-only' : 'none');
+      return result;
     }
 
     /** Delete an item: detach from all parents, remove from storage, emit item:deleted.

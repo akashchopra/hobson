@@ -21,6 +21,19 @@ function parseSourceLocation(stack) {
   return null;
 }
 
+/** Extract view ID and config from a viewIdOrConfig parameter.
+ * @param {string|Object|null} viewIdOrConfig - View GUID, config object {type, ...}, or null
+ * @returns {{viewId: string|null, viewConfig: Object|null}}
+ */
+function extractViewConfig(viewIdOrConfig) {
+  if (typeof viewIdOrConfig === 'string') {
+    return { viewId: viewIdOrConfig, viewConfig: null };
+  } else if (viewIdOrConfig && typeof viewIdOrConfig === 'object') {
+    return { viewId: viewIdOrConfig.type || null, viewConfig: viewIdOrConfig };
+  }
+  return { viewId: null, viewConfig: null };
+}
+
 /** Render Instance Registry — tracks what's currently rendered on screen.
  * Indexes instances by itemId, viewId, and parentId for efficient lookup. */
 class RenderInstanceRegistry {
@@ -666,6 +679,45 @@ export class RenderingSystem {
     }
   }
 
+  /** Render an item for a parent context: extracts view config, merges context, applies decorator.
+   * Called by api.renderItem — the API-level entry point for rendering a child item.
+   * @param {string} itemId - Item GUID to render
+   * @param {string|Object|null} viewIdOrConfig - View GUID, config object {type, ...}, or null
+   * @param {Object} options - Render options (decorator, navigateTo, onCycle)
+   * @param {Object} parentContext - Parent's render context
+   * @param {Object|null} containerItem - The parent item (for parentId)
+   * @returns {Promise<HTMLElement>}
+   */
+  async renderItemInContext(itemId, viewIdOrConfig, options = {}, parentContext = {}, containerItem = null) {
+    const { viewId, viewConfig } = extractViewConfig(viewIdOrConfig);
+
+    // Merge decorator and viewConfig into context for propagation
+    const decorator = options?.decorator || parentContext.decorator;
+    const navigateTo = options?.navigateTo !== undefined
+      ? options.navigateTo
+      : parentContext.navigateTo;
+    const mergedContext = {
+      ...parentContext,
+      decorator,
+      viewConfig,
+      parentId: containerItem ? containerItem.id : null,
+      navigateTo
+    };
+
+    const domNode = await this.renderItem(itemId, viewId, options || {}, mergedContext);
+
+    // Apply decorator if present (from options or inherited context)
+    if (domNode && decorator) {
+      try {
+        const item = await this.kernel.storage.get(itemId);
+        await decorator(domNode, itemId, item);
+      } catch (e) {
+        console.warn('Decorator error:', e);
+      }
+    }
+    return domNode;
+  }
+
   /** Resolve a view using the preference hierarchy: item.preferredView → type.preferredView → type chain.
    * @param {Object} item - The item to find a view for
    * @returns {Promise<Object>} The resolved view item
@@ -853,6 +905,77 @@ export class RenderingSystem {
       // Fall through
     }
     return await this.findView(typeId);
+  }
+
+  /** Set an item's preferred view and re-render. Pass null to clear.
+   * @param {string} itemId - Item GUID
+   * @param {string|null} viewId - View GUID, or null to clear
+   */
+  async setPreferredView(itemId, viewId) {
+    const IDS = this.kernel.IDS;
+    const item = await this.kernel.storage.get(itemId);
+    if (viewId) {
+      item.preferredView = viewId;
+    } else {
+      delete item.preferredView;
+    }
+    item.modified = Date.now();
+    await this.kernel.saveItem(item);
+
+    // If this is a type definition, re-render all items of this type
+    if (item.type === IDS.TYPE_DEFINITION) {
+      await this.rerenderByType(itemId);
+    } else {
+      await this.rerenderItem(itemId);
+    }
+  }
+
+  /** Set the preferred view for an item's type. Affects all items of that type.
+   * @param {string} itemId - Any item of the type to update
+   * @param {string|null} viewId - View GUID, or null to clear
+   */
+  async setTypePreferredView(itemId, viewId) {
+    const item = await this.kernel.storage.get(itemId);
+    const typeItem = await this.kernel.storage.get(item.type);
+    if (viewId) {
+      typeItem.preferredView = viewId;
+    } else {
+      delete typeItem.preferredView;
+    }
+    typeItem.modified = Date.now();
+    await this.kernel.saveItem(typeItem);
+    await this.rerenderByType(item.type);
+  }
+
+  /** Get the view configured by a parent's attachment spec for a child item.
+   * @param {string} itemId - Child item GUID
+   * @param {string} parentId - Parent item GUID
+   * @returns {Promise<string|null>} View GUID from parent's attachment config, or null
+   */
+  async getContextualView(itemId, parentId) {
+    if (!parentId) return null;
+    try {
+      const parent = await this.kernel.storage.get(parentId);
+      const childSpec = parent.attachments?.find(c =>
+        (typeof c === 'string' ? c : c.id) === itemId
+      );
+      if (childSpec && typeof childSpec === 'object' && childSpec.view?.type) {
+        return childSpec.view.type;
+      }
+    } catch (e) {
+      // Parent not found
+    }
+    return null;
+  }
+
+  /** Get the human-readable type name for an item.
+   * @param {string} itemId - Item GUID
+   * @returns {Promise<string>} Type name or truncated GUID
+   */
+  async getTypeName(itemId) {
+    const item = await this.kernel.storage.get(itemId);
+    const typeItem = await this.kernel.storage.get(item.type);
+    return typeItem.name || typeItem.id.slice(0, 8);
   }
 
   /** Render a Hob-language view.
