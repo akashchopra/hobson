@@ -144,6 +144,63 @@ function parseSourceLocation(stack) {
   return null;
 }
 
+/** Create a DOM element with JSX-like syntax.
+ * @param {string} tag - HTML tag name
+ * @param {Object} [props] - Attributes, event handlers (onXxx), class, style
+ * @param {Array} [children] - Child nodes, strings, or [tag, props, children] arrays
+ * @param {Object} [debugCtx] - Debug attribution context {containerItem, context, debugMode, parseSourceLocation}
+ * @returns {HTMLElement}
+ */
+function createElement(tag, props = {}, children = [], debugCtx = null) {
+  const element = document.createElement(tag);
+
+  // Debug attribution
+  if (debugCtx?.containerItem) {
+    const debugActive = debugCtx.context?.debug || debugCtx.debugMode;
+    if (debugActive) {
+      if (debugCtx.context?.viewId) {
+        element.setAttribute('data-view-id', debugCtx.context.viewId);
+      }
+      element.setAttribute('data-for-item', debugCtx.containerItem.id);
+      try {
+        const stack = new Error().stack;
+        const location = debugCtx.parseSourceLocation(stack);
+        if (location) {
+          element.setAttribute('data-source', location.itemName);
+          element.setAttribute('data-source-line', String(location.line));
+        }
+      } catch (e) { /* ignore */ }
+    }
+  }
+
+  for (const [key, value] of Object.entries(props)) {
+    if (key.startsWith("on") && typeof value === "function") {
+      const eventName = key.substring(2).toLowerCase();
+      element.addEventListener(eventName, value);
+    } else if (key === "class") {
+      element.className = value;
+    } else if (key === "style" && typeof value === "string") {
+      element.style.cssText = value;
+    } else {
+      element.setAttribute(key, value);
+    }
+  }
+
+  for (const child of children) {
+    if (typeof child === "string") {
+      element.appendChild(document.createTextNode(child));
+    } else if (child instanceof Node) {
+      element.appendChild(child);
+    } else if (Array.isArray(child)) {
+      const [childTag, childProps = {}, childChildren = []] = child;
+      const childElement = createElement(childTag, childProps, childChildren, debugCtx);
+      element.appendChild(childElement);
+    }
+  }
+
+  return element;
+}
+
 /** Extract view ID and config from a viewIdOrConfig parameter.
  * @param {string|Object|null} viewIdOrConfig - View GUID, config object {type, ...}, or null
  * @returns {{viewId: string|null, viewConfig: Object|null}}
@@ -424,6 +481,14 @@ export class RenderingSystem {
   enrichAPI(api, context, containerItem) {
     const rendering = this;
 
+    // DOM creation
+    const debugCtx = containerItem ? {
+      containerItem, context,
+      get debugMode() { return rendering.kernel.debugMode; },
+      parseSourceLocation
+    } : null;
+    api.createElement = (tag, props, children) => createElement(tag, props, children, debugCtx);
+
     // Rendering operations
     api.renderItem = (itemId, viewIdOrConfig, options) =>
       rendering.renderItemInContext(itemId, viewIdOrConfig, options, context, containerItem);
@@ -525,6 +590,119 @@ export class RenderingSystem {
         rendering.kernel, context, itemId, () => rendering.renderViewport()
       );
     }
+
+    // Attachment view management (arity-detecting like attach/detach)
+    api.setAttachmentView = async (...args) => {
+      const [parentId, itemId, viewId] = args.length === 2 && containerItem
+        ? [containerItem.id, args[0], args[1]]
+        : [args[0], args[1], args[2]];
+
+      const parent = await rendering.kernel.storage.get(parentId);
+      const childIndex = parent.attachments.findIndex(c => c.id === itemId);
+
+      if (childIndex < 0) {
+        throw new Error(`Item ${itemId} not found in container ${parentId}`);
+      }
+
+      const updatedAttachments = [...parent.attachments];
+      const currentChild = updatedAttachments[childIndex];
+      const currentView = currentChild.view;
+
+      updatedAttachments[childIndex] = {
+        ...currentChild,
+        previousView: currentView ? { ...currentView } : null,
+        view: { ...(currentView || {}), type: viewId }
+      };
+
+      await rendering.kernel.saveItem({
+        ...parent,
+        attachments: updatedAttachments
+      });
+    };
+
+    // --- UI operations (moved from kernel) ---
+
+    /** Show the searchable item palette (delegates to item-palette library). */
+    api.showItemList = async () => {
+      const palette = await rendering.kernel.moduleSystem.require('item-palette');
+      await palette.show(api);
+    };
+
+    /** Open an inline or full-page raw JSON editor for an item.
+     * @param {string} itemId - Item GUID to edit
+     */
+    api.editRaw = async (itemId) => {
+      const kernel = rendering.kernel;
+      const item = await kernel.storage.get(itemId);
+      const json = JSON.stringify(item, null, 2);
+
+      // Try inline editing first
+      const itemElement = document.querySelector(`[data-item-id="${itemId}"]`);
+      const isInline = !!itemElement;
+
+      // Create editor UI
+      const container = document.createElement("div");
+      container.className = "raw-editor";
+      container.style.cssText = isInline
+        ? "height: 100%; display: flex; flex-direction: column;"
+        : "max-width: 800px; margin: 20px auto; padding: 20px; display: flex; flex-direction: column;";
+
+      const heading = document.createElement("h2");
+      heading.textContent = `Editing: ${item.name || item.id}`;
+      heading.style.cssText = "margin: 0 0 10px 0; font-size: 1rem;";
+      container.appendChild(heading);
+
+      const textarea = document.createElement("textarea");
+      textarea.id = "raw-json";
+      textarea.value = json;
+      textarea.style.cssText = "flex: 1; min-height: 300px; font-family: monospace; font-size: 0.8125rem; padding: 10px; border: 1px solid #ccc; border-radius: 4px; resize: vertical;";
+      container.appendChild(textarea);
+
+      const actions = document.createElement("div");
+      actions.className = "actions";
+      actions.style.cssText = "display: flex; gap: 10px; margin-top: 10px;";
+
+      const saveBtn = document.createElement("button");
+      saveBtn.textContent = "Save";
+      saveBtn.style.cssText = "padding: 8px 16px; cursor: pointer;";
+      saveBtn.onclick = async () => {
+        try {
+          const updated = JSON.parse(textarea.value);
+          await kernel.saveItem(updated);
+
+          // Clear cache if code item
+          if (await kernel.isCodeItem(updated)) {
+            kernel.moduleSystem.clearCache();
+          }
+        } catch (error) {
+          alert(`Error: ${error.message}`);
+        }
+      };
+      actions.appendChild(saveBtn);
+
+      const cancelBtn = document.createElement("button");
+      cancelBtn.textContent = "Cancel";
+      cancelBtn.style.cssText = "padding: 8px 16px; cursor: pointer;";
+      cancelBtn.onclick = () => {
+        window.location.reload();
+      };
+      actions.appendChild(cancelBtn);
+
+      container.appendChild(actions);
+
+      if (isInline) {
+        const originalStyles = itemElement.style.cssText;
+        itemElement.innerHTML = "";
+        itemElement.style.cssText = originalStyles + " padding: 15px; overflow: auto;";
+        itemElement.appendChild(container);
+      } else {
+        const mainView = rendering.rootElement?.querySelector('#main-view');
+        if (mainView) {
+          mainView.innerHTML = "";
+          mainView.appendChild(container);
+        }
+      }
+    };
   }
 
   /** Parse a stack trace to extract source item name and line number.
