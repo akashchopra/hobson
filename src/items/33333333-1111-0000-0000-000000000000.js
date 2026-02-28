@@ -379,10 +379,14 @@ export async function loadKernel(require, storageBackend) {
         document.addEventListener('keydown', window._safeModeShortcut);
       }
 
+      // Always render safe mode as the default screen.
+      // In normal boot, viewport-manager replaces it after boot-complete.
+      // If no userland is present, safe mode stays visible for recovery.
+      await this.applyStyles();
+      this.safeMode.render(this.rootElement.querySelector('#main-view'));
+
       if (this._safeMode) {
-        // In safe mode, apply styles directly (userland libraries don't run)
-        await this.applyStyles();
-        this.safeMode.render(this.rootElement.querySelector('#main-view'));
+        // Explicit safe mode — skip userland entirely
       } else {
         // REPL container is now created by userland repl-ui library via kernel:boot-complete
 
