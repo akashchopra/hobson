@@ -166,84 +166,7 @@ export async function loadKernel(require, storageBackend) {
   const { ModuleSystem } = await require(IDS.KERNEL_MODULE_SYSTEM);
   const { SafeMode } = await require(IDS.KERNEL_SAFE_MODE);
 
-  /** Parse a stack trace to extract the source item name and line number.
-   * Used by createElement for debug attribution.
-   * @param {string} stack - Error stack trace string
-   * @returns {{itemName: string, line: number}|null}
-   */
-  function parseSourceLocation(stack) {
-    const lines = stack.split('\n');
-    for (const line of lines) {
-      const match = line.match(/\((.+?):(\d+):\d+\)/) ||  // Chrome
-                    line.match(/@(.+?):(\d+):\d+/);        // Firefox/Safari
-      if (match) {
-        const [, itemName, lineNum] = match;
-        const cleanName = itemName.replace(/\.js$/, '');
-        if (cleanName !== 'viewport-rendering' && cleanName !== 'kernel:core') {
-          return { itemName: cleanName, line: parseInt(lineNum, 10) - 1 };
-        }
-      }
-    }
-    return null;
-  }
-
-  /** Create a DOM element with JSX-like syntax.
-   * @param {string} tag - HTML tag name
-   * @param {Object} [props] - Attributes, event handlers (onXxx), class, style
-   * @param {Array} [children] - Child nodes, strings, or [tag, props, children] arrays
-   * @param {Object} [debugCtx] - Debug attribution context {containerItem, context, debugMode, parseSourceLocation}
-   * @returns {HTMLElement}
-   */
-  function createElement(tag, props = {}, children = [], debugCtx = null) {
-    const element = document.createElement(tag);
-
-    // Debug attribution
-    if (debugCtx?.containerItem) {
-      const debugActive = debugCtx.context?.debug || debugCtx.debugMode;
-      if (debugActive) {
-        if (debugCtx.context?.viewId) {
-          element.setAttribute('data-view-id', debugCtx.context.viewId);
-        }
-        element.setAttribute('data-for-item', debugCtx.containerItem.id);
-        try {
-          const stack = new Error().stack;
-          const location = debugCtx.parseSourceLocation(stack);
-          if (location) {
-            element.setAttribute('data-source', location.itemName);
-            element.setAttribute('data-source-line', String(location.line));
-          }
-        } catch (e) { /* ignore */ }
-      }
-    }
-
-    for (const [key, value] of Object.entries(props)) {
-      if (key.startsWith("on") && typeof value === "function") {
-        const eventName = key.substring(2).toLowerCase();
-        element.addEventListener(eventName, value);
-      } else if (key === "class") {
-        element.className = value;
-      } else if (key === "style" && typeof value === "string") {
-        element.style.cssText = value;
-      } else {
-        element.setAttribute(key, value);
-      }
-    }
-
-    for (const child of children) {
-      if (typeof child === "string") {
-        element.appendChild(document.createTextNode(child));
-      } else if (child instanceof Node) {
-        element.appendChild(child);
-      } else if (Array.isArray(child)) {
-        // Handle array shorthand: [tag, props, children]
-        const [childTag, childProps = {}, childChildren = []] = child;
-        const childElement = createElement(childTag, childProps, childChildren, debugCtx);
-        element.appendChild(childElement);
-      }
-    }
-
-    return element;
-  }
+  // parseSourceLocation, createElement — moved to viewport-rendering enrichAPI
 
   /** Sort items in dependency order for import (types before their instances).
    * Uses topological sort based on type and extends fields.
@@ -620,316 +543,9 @@ export async function loadKernel(require, storageBackend) {
     // navigateToItem() removed - use userland viewport-manager.navigate()
     // renderViewport() removed - owned by viewport-rendering library
 
-    // -------------------------------------------------------------------------
-    // Item List and Raw Editor
-    // -------------------------------------------------------------------------
-
-    /** Show the searchable item palette (delegates to userland item-palette if available). */
-    async showItemList() {
-      // Try userland library first
-      try {
-        const itemPalette = await this.moduleSystem.require('item-palette');
-        if (itemPalette?.show) {
-          await itemPalette.show(this.createAPI());
-          return;
-        }
-      } catch {
-        // Fall back to kernel implementation
-      }
-
-      // Kernel fallback implementation
-      this.hideItemList();
-
-      const kernel = this;
-
-      const overlay = document.createElement("div");
-      overlay.id = "item-list-overlay";
-      overlay.style.cssText = `
-        position: fixed;
-        top: 0;
-        left: 0;
-        right: 0;
-        bottom: 0;
-        background: rgba(0, 0, 0, 0.5);
-        display: flex;
-        align-items: flex-start;
-        justify-content: center;
-        padding-top: 10vh;
-        z-index: 10000000;
-      `;
-
-      const modal = document.createElement("div");
-      modal.style.cssText = `
-        background: white;
-        border-radius: 8px;
-        width: 600px;
-        max-width: 90vw;
-        max-height: 70vh;
-        display: flex;
-        flex-direction: column;
-        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
-      `;
-
-      // Search input
-      const searchContainer = document.createElement("div");
-      searchContainer.style.cssText = "padding: 16px; border-bottom: 1px solid #ddd;";
-
-      const searchInput = document.createElement("input");
-      searchInput.type = "text";
-      searchInput.placeholder = "Search items...";
-      searchInput.style.cssText = "width: 100%; padding: 8px 12px; font-size: 1rem; border: 1px solid #ddd; border-radius: 4px; outline: none;";
-      searchContainer.appendChild(searchInput);
-      modal.appendChild(searchContainer);
-
-      // Item list container
-      const listContainer = document.createElement("div");
-      listContainer.style.cssText = "flex: 1; overflow: auto; padding: 8px;";
-      modal.appendChild(listContainer);
-
-      const items = await this.storage.getAll();
-      items.sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id));
-
-      const renderList = (filter = "") => {
-        listContainer.innerHTML = "";
-        const filtered = filter
-          ? items.filter(i => (i.name || i.id).toLowerCase().includes(filter.toLowerCase()))
-          : items;
-
-        for (const item of filtered) {
-          const row = document.createElement("div");
-          row.style.cssText = "padding: 8px 12px; cursor: pointer; border-radius: 4px; display: flex; justify-content: space-between; align-items: center;";
-          row.onmouseenter = () => row.style.background = "#f0f0f0";
-          row.onmouseleave = () => row.style.background = "";
-
-          const info = document.createElement("div");
-          const name = document.createElement("div");
-          name.style.fontWeight = "500";
-          name.textContent = item.name || item.id.slice(0, 8);
-          info.appendChild(name);
-
-          const typeLine = document.createElement("div");
-          typeLine.style.cssText = "font-size: 0.75rem; color: #666;";
-          typeLine.textContent = item.type.slice(0, 8);
-          info.appendChild(typeLine);
-
-          row.appendChild(info);
-
-          // Click to navigate (direct URL manipulation — no userland dependency)
-          row.onclick = () => {
-            kernel.hideItemList();
-            const url = new URL(window.location);
-            url.searchParams.set('root', item.id);
-            window.location.href = url.href;
-          };
-
-          listContainer.appendChild(row);
-        }
-
-        if (filtered.length === 0) {
-          const empty = document.createElement("div");
-          empty.style.cssText = "padding: 20px; text-align: center; color: #666;";
-          empty.textContent = "No items found";
-          listContainer.appendChild(empty);
-        }
-      };
-
-      renderList();
-
-      searchInput.oninput = () => renderList(searchInput.value);
-
-      overlay.appendChild(modal);
-
-      // Close on overlay click
-      overlay.onclick = (e) => {
-        if (e.target === overlay) {
-          kernel.hideItemList();
-        }
-      };
-
-      // Close on Escape, focus search on open
-      const escHandler = (e) => {
-        if (e.key === "Escape") {
-          kernel.hideItemList();
-          document.removeEventListener("keydown", escHandler);
-        }
-      };
-      document.addEventListener("keydown", escHandler);
-
-      document.body.appendChild(overlay);
-      searchInput.focus();
-      searchInput.select();
-    }
-
-    /** Remove the item list overlay if present. */
-    hideItemList() {
-      const existing = document.getElementById("item-list-overlay");
-      if (existing) {
-        existing.remove();
-      }
-    }
-
-    /** Show the keyboard shortcuts help dialog. */
-    async showHelp() {
-      // Try userland library first
-      try {
-        const helpDialog = await this.moduleSystem.require('help-dialog');
-        if (helpDialog?.show) {
-          helpDialog.show();
-          return;
-        }
-      } catch {
-        // Fall back to kernel implementation
-      }
-
-      // Kernel fallback implementation
-      this.hideHelp();
-
-      const overlay = document.createElement("div");
-      overlay.id = "help-overlay";
-      overlay.style.cssText = `
-        position: fixed;
-        top: 0;
-        left: 0;
-        right: 0;
-        bottom: 0;
-        background: rgba(0, 0, 0, 0.5);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        z-index: 10000000;
-      `;
-
-      const modal = document.createElement("div");
-      modal.style.cssText = `
-        background: white;
-        border-radius: 8px;
-        padding: 24px;
-        max-width: 400px;
-        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
-      `;
-
-      modal.innerHTML = `
-        <h2 style="margin-top: 0; margin-bottom: 16px;">Keyboard Shortcuts</h2>
-        <table style="width: 100%; border-collapse: collapse;">
-          <tr><td style="padding: 8px 16px 8px 0;"><kbd style="background: #f0f0f0; padding: 2px 8px; border-radius: 3px; border: 1px solid #ccc;">Ctrl+\\</kbd></td><td>Toggle REPL</td></tr>
-          <tr><td style="padding: 8px 16px 8px 0;"><kbd style="background: #f0f0f0; padding: 2px 8px; border-radius: 3px; border: 1px solid #ccc;">Cmd+K</kbd></td><td>Search items</td></tr>
-          <tr><td style="padding: 8px 16px 8px 0;"><kbd style="background: #f0f0f0; padding: 2px 8px; border-radius: 3px; border: 1px solid #ccc;">Ctrl+E</kbd></td><td>Edit selected item</td></tr>
-          <tr><td style="padding: 8px 16px 8px 0;"><kbd style="background: #f0f0f0; padding: 2px 8px; border-radius: 3px; border: 1px solid #ccc;">Cmd+?</kbd></td><td>Show this help</td></tr>
-        </table>
-        <h3 style="margin-top: 20px; margin-bottom: 12px;">Mouse</h3>
-        <table style="width: 100%; border-collapse: collapse;">
-          <tr><td style="padding: 8px 16px 8px 0;">Right-click</td><td>Context menu</td></tr>
-          <tr><td style="padding: 8px 16px 8px 0;">Shift+Right-click</td><td>Browser menu</td></tr>
-        </table>
-        <div style="margin-top: 20px; text-align: right;">
-          <button onclick="window.kernel.hideHelp()" style="padding: 8px 16px; cursor: pointer;">Close</button>
-        </div>
-      `;
-
-      overlay.appendChild(modal);
-
-      overlay.onclick = (e) => {
-        if (e.target === overlay) {
-          this.hideHelp();
-        }
-      };
-
-      const escHandler = (e) => {
-        if (e.key === "Escape") {
-          this.hideHelp();
-          document.removeEventListener("keydown", escHandler);
-        }
-      };
-      document.addEventListener("keydown", escHandler);
-
-      document.body.appendChild(overlay);
-    }
-
-    /** Remove the help overlay if present. */
-    hideHelp() {
-      const existing = document.getElementById("help-overlay");
-      if (existing) {
-        existing.remove();
-      }
-    }
-
-    /** Open an inline or full-page raw JSON editor for an item.
-     * @param {string} itemId - Item GUID to edit
-     */
-    async editItemRaw(itemId) {
-      const item = await this.storage.get(itemId);
-      const json = JSON.stringify(item, null, 2);
-
-      // Try inline editing first
-      const itemElement = document.querySelector(`[data-item-id="${itemId}"]`);
-      const isInline = !!itemElement;
-
-      // Create editor UI
-      const container = document.createElement("div");
-      container.className = "raw-editor";
-      container.style.cssText = isInline
-        ? "height: 100%; display: flex; flex-direction: column;"
-        : "max-width: 800px; margin: 20px auto; padding: 20px; display: flex; flex-direction: column;";
-
-      const heading = document.createElement("h2");
-      heading.textContent = `Editing: ${item.name || item.id}`;
-      heading.style.cssText = "margin: 0 0 10px 0; font-size: 1rem;";
-      container.appendChild(heading);
-
-      const textarea = document.createElement("textarea");
-      textarea.id = "raw-json";
-      textarea.value = json;
-      textarea.style.cssText = "flex: 1; min-height: 300px; font-family: monospace; font-size: 0.8125rem; padding: 10px; border: 1px solid #ccc; border-radius: 4px; resize: vertical;";
-      container.appendChild(textarea);
-
-      const actions = document.createElement("div");
-      actions.className = "actions";
-      actions.style.cssText = "display: flex; gap: 10px; margin-top: 10px;";
-
-      const kernel = this;
-
-      const saveBtn = document.createElement("button");
-      saveBtn.textContent = "Save";
-      saveBtn.style.cssText = "padding: 8px 16px; cursor: pointer;";
-      saveBtn.onclick = async () => {
-        try {
-          const updated = JSON.parse(textarea.value);
-          await kernel.saveItem(updated);
-
-          // Clear cache if code item
-          if (await kernel.isCodeItem(updated)) {
-            kernel.moduleSystem.clearCache();
-          }
-        } catch (error) {
-          alert(`Error: ${error.message}`);
-        }
-      };
-      actions.appendChild(saveBtn);
-
-      const cancelBtn = document.createElement("button");
-      cancelBtn.textContent = "Cancel";
-      cancelBtn.style.cssText = "padding: 8px 16px; cursor: pointer;";
-      cancelBtn.onclick = () => {
-        // Reload current page to discard edits (no userland dependency)
-        window.location.reload();
-      };
-      actions.appendChild(cancelBtn);
-
-      container.appendChild(actions);
-
-      if (isInline) {
-        // Inline mode: replace item content
-        const originalStyles = itemElement.style.cssText;
-        itemElement.innerHTML = "";
-        itemElement.style.cssText = originalStyles + " padding: 15px; overflow: auto;";
-        itemElement.appendChild(container);
-      } else {
-        // Full page mode
-        const mainView = this.rootElement.querySelector('#main-view');
-        mainView.innerHTML = "";
-        mainView.appendChild(container);
-      }
-    }
+    // showItemList() removed - use userland item-palette via enrichAPI
+    // showHelp() removed - use userland help-dialog via keyboard-shortcuts
+    // editItemRaw() removed - use enrichAPI editRaw via viewport-rendering
 
     /** Download an object as a JSON file.
      * @param {*} thing - Object to serialize
@@ -976,19 +592,8 @@ export async function loadKernel(require, storageBackend) {
     createAPI(containerItem = null, context = {}) {
       const kernel = this;
 
-      const debugCtx = containerItem ? {
-        containerItem, context, debugMode: kernel.debugMode,
-        parseSourceLocation
-      } : null;
-
       const api = {
-        /** Create a DOM element with JSX-like syntax.
-         * @param {string} tag - HTML tag name
-         * @param {Object} [props] - Attributes, event handlers (onXxx), class, style
-         * @param {Array} [children] - Child nodes, strings, or [tag, props, children] arrays
-         * @returns {HTMLElement}
-         */
-        createElement: (tag, props, children) => createElement(tag, props, children, debugCtx),
+        // createElement — added by viewport-rendering enrichAPI
 
         // --- Storage operations ---
 
@@ -1093,14 +698,7 @@ export async function loadKernel(require, storageBackend) {
         detach: (...args) => args.length === 1 && containerItem
           ? kernel.detach(containerItem.id, args[0])
           : kernel.detach(args[0], args[1]),
-        /** Set the view config for an attachment.
-         * 2-arg form (in view context): setAttachmentView(itemId, viewId).
-         * 3-arg form: setAttachmentView(parentId, itemId, viewId).
-         * @param {...string} args - (itemId, viewId) or (parentId, itemId, viewId)
-         */
-        setAttachmentView: (...args) => args.length === 2 && containerItem
-          ? kernel.setAttachmentView(containerItem.id, args[0], args[1])
-          : kernel.setAttachmentView(args[0], args[1], args[2]),
+        // setAttachmentView — added by viewport-rendering enrichAPI
         /** Find the parent item that contains a given item in its attachments.
          * @param {string} itemId - Child item GUID
          * @returns {Promise<Object|null>} The parent item, or null if not attached
@@ -1192,15 +790,8 @@ export async function loadKernel(require, storageBackend) {
           list: () => kernel.events.getRegisteredEvents()
         },
 
-        // --- UI operations ---
-
-        /** Open the raw JSON editor for an item.
-         * @param {string} itemId - Item GUID to edit
-         */
-        editRaw: (itemId) => kernel.editItemRaw(itemId),
-
-        /** Show the searchable item palette. */
-        showItemList: () => kernel.showItemList(),
+        // editRaw removed - provided by enrichAPI (viewport-rendering)
+        // showItemList removed - provided by enrichAPI (viewport-rendering)
 
         /** Create a context-free API object (for REPL use).
          * @returns {Object} API without containerItem context
@@ -1367,45 +958,7 @@ export async function loadKernel(require, storageBackend) {
       await this.saveItem(updated); // Non-silent — triggers re-render (consistent with attach)
     }
 
-    /** Set the view type for an attachment, preserving previous view for undo.
-     * @param {string} parentId - Parent item GUID
-     * @param {string} itemId - Child item GUID
-     * @param {string} viewId - View GUID to set
-     */
-    async setAttachmentView(parentId, itemId, viewId) {
-      const parent = await this.storage.get(parentId);
-      const childIndex = parent.attachments.findIndex(c => c.id === itemId);
-
-      if (childIndex < 0) {
-        const error = new Error(`Item ${itemId} not found in container ${parentId}`);
-        await this.captureError(error, {
-          operation: 'setAttachmentView',
-          itemId: parentId,
-          itemId: itemId
-        });
-        throw error;
-      }
-
-      // Update the child's view - preserve existing view properties, change type
-      const updatedAttachments = [...parent.attachments];
-      const currentChild = updatedAttachments[childIndex];
-      const currentView = currentChild.view;
-      
-      // Store previous view (complete snapshot)
-      const newChild = {
-        ...currentChild,
-        previousView: currentView ? { ...currentView } : null,
-        view: { ...(currentView || {}), type: viewId }
-      };
-      updatedAttachments[childIndex] = newChild;
-
-      const updated = {
-        ...parent,
-        attachments: updatedAttachments
-      };
-
-      await this.saveItem(updated);
-    }
+    // setAttachmentView — moved to viewport-rendering enrichAPI
 
     /** Find the parent item that contains a given item in its attachments.
      * @param {string} itemId - Child item GUID
