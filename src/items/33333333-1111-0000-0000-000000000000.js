@@ -123,7 +123,6 @@ export async function loadKernel(require, storageBackend) {
     KERNEL_CORE: "33333333-1111-0000-0000-000000000000",
     KERNEL_STORAGE: "33333333-2222-0000-0000-000000000000",
     KERNEL_MODULE_SYSTEM: "33333333-4444-0000-0000-000000000000",
-    KERNEL_RENDERING_SYSTEM: "33333333-5555-0000-0000-000000000000",
     KERNEL_SAFE_MODE: "33333333-7777-0000-0000-000000000000",
     KERNEL_STYLES: "33333333-8888-0000-0000-000000000000",
     // Base type for reusable code modules
@@ -165,8 +164,28 @@ export async function loadKernel(require, storageBackend) {
   const { Storage } = await require(IDS.KERNEL_STORAGE);
   // KERNEL_VIEWPORT removed - viewport state now managed by userland viewport-manager
   const { ModuleSystem } = await require(IDS.KERNEL_MODULE_SYSTEM);
-  const { RenderingSystem } = await require(IDS.KERNEL_RENDERING_SYSTEM);
   const { SafeMode } = await require(IDS.KERNEL_SAFE_MODE);
+
+  /** Parse a stack trace to extract the source item name and line number.
+   * Used by createElement for debug attribution.
+   * @param {string} stack - Error stack trace string
+   * @returns {{itemName: string, line: number}|null}
+   */
+  function parseSourceLocation(stack) {
+    const lines = stack.split('\n');
+    for (const line of lines) {
+      const match = line.match(/\((.+?):(\d+):\d+\)/) ||  // Chrome
+                    line.match(/@(.+?):(\d+):\d+/);        // Firefox/Safari
+      if (match) {
+        const [, itemName, lineNum] = match;
+        const cleanName = itemName.replace(/\.js$/, '');
+        if (cleanName !== 'viewport-rendering' && cleanName !== 'kernel:core') {
+          return { itemName: cleanName, line: parseInt(lineNum, 10) - 1 };
+        }
+      }
+    }
+    return null;
+  }
 
   /** Create a DOM element with JSX-like syntax.
    * @param {string} tag - HTML tag name
@@ -303,126 +322,7 @@ export async function loadKernel(require, storageBackend) {
     return result;
   }
 
-  /** Get the view config for an item from its render context (attachment spec or viewport).
-   * @param {Object} kernel - Kernel instance
-   * @param {Object} containerItem - The item being rendered
-   * @param {Object} context - Render context
-   * @returns {Promise<Object|null>} View config object or null
-   */
-  async function getViewConfig(kernel, containerItem, context) {
-    if (context.viewConfig) {
-      return context.viewConfig;
-    }
-    if (context.parentId === IDS.VIEWPORT) {
-      const vpMgr = await kernel.moduleSystem.require('viewport-manager');
-      if (vpMgr.getRoot() === containerItem.id) {
-        return await vpMgr.getRootViewConfig();
-      }
-    }
-    return null;
-  }
-
-  /** Update the view config for an item (merges into parent's attachment spec or viewport).
-   * @param {Object} kernel - Kernel instance
-   * @param {Object} containerItem - The item being rendered
-   * @param {Object} context - Render context
-   * @param {Object} updates - Key-value pairs to merge into the config
-   * @returns {Promise<boolean>} True if update succeeded
-   */
-  async function updateViewConfig(kernel, containerItem, context, updates) {
-    const parentId = context.parentId;
-
-    if (parentId === IDS.VIEWPORT) {
-      const vpMgr = await kernel.moduleSystem.require('viewport-manager');
-      if (vpMgr.getRoot() === containerItem.id) {
-        await vpMgr.updateRootViewConfig(updates);
-        return true;
-      }
-    }
-
-    if (!parentId) {
-      console.warn('updateViewConfig: no parent ID in context');
-      return false;
-    }
-
-    const parent = await kernel.storage.get(parentId);
-    const childIndex = parent.attachments?.findIndex(c => c.id === containerItem.id);
-    if (childIndex < 0) {
-      console.warn('updateViewConfig: item not found in parent attachments');
-      return false;
-    }
-
-    const currentChild = parent.attachments[childIndex];
-    parent.attachments[childIndex] = {
-      ...currentChild,
-      view: { ...(currentChild.view || {}), ...updates }
-    };
-    parent.modified = Date.now();
-
-    await kernel.saveItem(parent, { silent: true });
-    return true;
-  }
-
-  /** Restore the previous view for an item (undo setAttachmentView or setRootView).
-   * @param {Object} kernel - Kernel instance
-   * @param {Object} context - Render context (parentId)
-   * @param {string} itemId - Item GUID to restore
-   * @returns {Promise<boolean>} True if a previous view was restored
-   */
-  async function restorePreviousView(kernel, context, itemId) {
-    const vpMgr = kernel.moduleSystem.getCached('viewport-manager');
-    const isViewportRoot = vpMgr && vpMgr.getRoot() === itemId;
-
-    if (isViewportRoot) {
-      if (vpMgr.restorePreviousRootView) {
-        const restored = await vpMgr.restorePreviousRootView();
-        if (restored) {
-          await kernel.renderViewport();
-          return true;
-        }
-      }
-      if (await vpMgr.getRootView()) {
-        await vpMgr.setRootView(null, false);
-        await kernel.renderViewport();
-        return true;
-      }
-      return false;
-    }
-
-    const renderingParentId = context.parentId;
-    const parent = renderingParentId
-      ? await kernel.storage.get(renderingParentId)
-      : await kernel.findContainerOf(itemId);
-    if (!parent) {
-      return false;
-    }
-
-    const childIndex = parent.attachments.findIndex(c => c.id === itemId);
-    if (childIndex < 0) return false;
-
-    const childSpec = parent.attachments[childIndex];
-    if (childSpec.previousView) {
-      parent.attachments[childIndex] = {
-        ...childSpec,
-        view: { ...childSpec.previousView },
-        previousView: undefined
-      };
-    } else if (childSpec.view && 'type' in childSpec.view) {
-      const { type, ...viewWithoutType } = childSpec.view;
-      parent.attachments[childIndex] = {
-        ...childSpec,
-        view: Object.keys(viewWithoutType).length > 0 ? viewWithoutType : undefined,
-        previousView: undefined
-      };
-    } else {
-      return false;
-    }
-    await kernel.saveItem(parent);
-    await kernel.renderViewport();
-    return true;
-  }
-
-  /** Core kernel — manages storage, events, rendering, and the unified API. */
+  /** Core kernel — manages storage, events, and the unified API. */
   class Kernel {
     constructor() {
       this.IDS = IDS;
@@ -430,7 +330,6 @@ export async function loadKernel(require, storageBackend) {
       this.storage = new Storage(storageBackend);
       // viewport instance removed - state managed by userland viewport-manager
       this.moduleSystem = new ModuleSystem(this);
-      this.rendering = new RenderingSystem(this);
       this.safeMode = new SafeMode(this);
       this.events = new EventBus(this);
 
@@ -530,26 +429,20 @@ export async function loadKernel(require, storageBackend) {
         perf?.mark('watches-end');
         perf?.measure('watches-setup', 'watches-start', 'watches-end');
 
-        // Emit kernel:boot-complete BEFORE rendering so userland libraries
-        // (especially viewport-manager) are initialized before any code tries
-        // to call navigate() during render
+        // Emit kernel:boot-complete — viewport-manager initializes rendering
+        // and performs the first render during this async emit
         perf?.mark('boot-complete-emit-start');
-        this.events.emit({
+        await this.events.emitAsync({
           type: EVENT_IDS.SYSTEM_BOOT_COMPLETE,
           content: {
             safeMode: this._safeMode,
             debugMode: this.debugMode,
-            lateActivation: false
+            lateActivation: false,
+            rootElement: this.rootElement
           }
         });
         perf?.mark('boot-complete-emit-end');
         perf?.measure('boot-complete-emit', 'boot-complete-emit-start', 'boot-complete-emit-end');
-
-        // Render the viewport - viewport-view handles URL reading and root display
-        perf?.mark('render-viewport-start');
-        await this.renderViewport();
-        perf?.mark('render-viewport-end');
-        perf?.measure('render-viewport', 'render-viewport-start', 'render-viewport-end');
       }
     }
 
@@ -721,52 +614,7 @@ export async function loadKernel(require, storageBackend) {
 
     // getStartingRoot() removed - viewport-view reads URL directly
     // navigateToItem() removed - use userland viewport-manager.navigate()
-
-    /** Render the viewport item into #main-view. Re-entrant safe. */
-    async renderViewport() {
-      const mainView = this.rootElement.querySelector('#main-view');
-      if (!mainView) return;
-
-      // Re-entrancy guard: if already rendering, queue a single re-render
-      if (this._renderingViewport) {
-        this._pendingViewportRender = true;
-        return;
-      }
-
-      this._renderingViewport = true;
-      try {
-        do {
-          this._pendingViewportRender = false;
-
-          try {
-            // Clean up resources in existing DOM tree before removing it
-            this.rendering.cleanupDOMTree(mainView);
-
-            // Clear stale render instances before full re-render
-            this.rendering.registry.clear();
-
-            // Render the viewport item itself
-            // The viewport renderer will show the root or empty state
-            const dom = await this.rendering.renderItem(IDS.VIEWPORT);
-            mainView.innerHTML = '';
-            mainView.appendChild(dom);
-          } catch (error) {
-            mainView.innerHTML = `
-              <div class="render-error">
-                <h3>Render Error</h3>
-                <pre>${error.message}</pre>
-                <pre>${error.stack}</pre>
-              </div>
-            `;
-          }
-        } while (this._pendingViewportRender);
-      } finally {
-        this._renderingViewport = false;
-      }
-    }
-
-    // renderRoot() removed - renderViewport() handles everything
-    // Userland calls api.renderViewport() to trigger re-render
+    // renderViewport() removed - owned by viewport-rendering library
 
     // -------------------------------------------------------------------------
     // Item List and Raw Editor
@@ -1051,9 +899,6 @@ export async function loadKernel(require, storageBackend) {
           if (await kernel.isCodeItem(updated)) {
             kernel.moduleSystem.clearCache();
           }
-
-          // Return to previous view
-          await kernel.renderViewport();
         } catch (error) {
           alert(`Error: ${error.message}`);
         }
@@ -1064,8 +909,10 @@ export async function loadKernel(require, storageBackend) {
       cancelBtn.textContent = "Cancel";
       cancelBtn.style.cssText = "padding: 8px 16px; cursor: pointer;";
       cancelBtn.onclick = async () => {
-        // Return to previous view
-        await kernel.renderViewport();
+        // Navigating away handles the re-render via reactivity
+        const vpMgr = await kernel.moduleSystem.require('viewport-manager');
+        const root = vpMgr.getRoot();
+        if (root) await vpMgr.navigate(root);
       };
       actions.appendChild(cancelBtn);
 
@@ -1129,11 +976,10 @@ export async function loadKernel(require, storageBackend) {
      */
     createAPI(containerItem = null, context = {}) {
       const kernel = this;
-      const rendering = this.rendering;
 
       const debugCtx = containerItem ? {
         containerItem, context, debugMode: kernel.debugMode,
-        parseSourceLocation: rendering.parseSourceLocation.bind(rendering)
+        parseSourceLocation
       } : null;
 
       const api = {
@@ -1163,13 +1009,12 @@ export async function loadKernel(require, storageBackend) {
           await kernel.saveItem(item, options);
           return item.id;
         },
-        /** Save an item and re-render the viewport.
+        /** Save an item (alias for set — reactivity handles re-render).
          * @param {Object} item - The item to save
          * @returns {Promise<string>} The item's id
          */
         update: async (item) => {
           await kernel.saveItem(item);
-          await kernel.renderViewport();
           return item.id;
         },
 
@@ -1197,7 +1042,6 @@ export async function loadKernel(require, storageBackend) {
           const count = await kernel.storage.deleteByPrefix(prefix);
           if (count > 0) {
             kernel.moduleSystem.clearCache();
-            await kernel.renderViewport();
           }
           return count;
         },
@@ -1231,105 +1075,6 @@ export async function loadKernel(require, storageBackend) {
          * @returns {Promise<boolean>}
          */
         typeChainIncludes: (typeId, targetId) => kernel.moduleSystem.typeChainIncludes(typeId, targetId),
-
-        // --- Rendering operations ---
-
-        /** Render an item as a DOM element using a specific view.
-         * @param {string} itemId - Item GUID to render
-         * @param {string|Object|null} [viewIdOrConfig] - View GUID, config object {type, ...}, or null for default
-         * @param {Object} [options] - Render options (decorator, navigateTo, onCycle)
-         * @returns {Promise<HTMLElement>}
-         */
-        renderItem: (itemId, viewIdOrConfig, options) =>
-          rendering.renderItemInContext(itemId, viewIdOrConfig, options, context, containerItem),
-
-        /** Re-render all visible instances of an item in place.
-         * @param {string} itemId - Item GUID to re-render
-         */
-        rerenderItem: (itemId) => rendering.rerenderItem(itemId),
-
-        /** Re-render all items currently using a specific view.
-         * @param {string} viewId - View GUID
-         */
-        rerenderByView: (viewId) => rendering.rerenderByView(viewId),
-
-        /** Re-render all items of a specific type (that don't have their own preferred view).
-         * @param {string} typeId - Type GUID
-         */
-        rerenderByType: (typeId) => rendering.rerenderByType(typeId),
-
-        /** Trigger a full viewport re-render. */
-        renderViewport: () => kernel.renderViewport(),
-
-        // --- View discovery ---
-
-        /** Get all available views for a type (including inherited from extends chain).
-         * @param {string} typeId - Type GUID
-         * @returns {Promise<Array<{view, forType, inherited, isDefault?}>>}
-         */
-        getViews: (typeId) => rendering.getViews(typeId),
-
-        /** Get the first view found for a type.
-         * @param {string} typeId - Type GUID
-         * @returns {Promise<Object|null>} The view item, or null
-         */
-        getDefaultView: (typeId) => rendering.getDefaultView(typeId),
-
-        /** Find a renderable view for a type, walking the extends chain.
-         * @param {string} typeId - Type GUID
-         * @returns {Promise<Object>} The view item (falls back to default-view)
-         */
-        findView: (typeId) => rendering.findView(typeId),
-
-        /** Get the view that would be used for a specific item (respects preferred view hierarchy).
-         * @param {string} itemId - Item GUID
-         * @returns {Promise<Object>} The resolved view item
-         */
-        getEffectiveView: (itemId) => rendering.getEffectiveView(itemId),
-
-        /** Get the view configured by a parent's attachment spec for a child item.
-         * @param {string} itemId - Child item GUID
-         * @param {string} parentId - Parent item GUID
-         * @returns {Promise<string|null>} View GUID from parent's attachment config, or null
-         */
-        getContextualView: (itemId, parentId) => rendering.getContextualView(itemId, parentId),
-
-        /** Get the human-readable type name for an item.
-         * @param {string} itemId - Item GUID
-         * @returns {Promise<string>} Type name or truncated GUID
-         */
-        getTypeName: (itemId) => rendering.getTypeName(itemId),
-
-        // --- Preferred view management ---
-
-        /** Set an item's preferred view. Pass null to clear.
-         * @param {string} itemId - Item GUID
-         * @param {string|null} viewId - View GUID, or null to clear
-         */
-        setPreferredView: (itemId, viewId) => rendering.setPreferredView(itemId, viewId),
-        /** Get an item's preferred view.
-         * @param {string} itemId - Item GUID
-         * @returns {Promise<string|null>} View GUID or null
-         */
-        getPreferredView: async (itemId) => {
-          const item = await kernel.storage.get(itemId);
-          return item.preferredView || null;
-        },
-
-        /** Set the preferred view for an item's type. Affects all items of that type.
-         * @param {string} itemId - Any item of the type to update
-         * @param {string|null} viewId - View GUID, or null to clear
-         */
-        setTypePreferredView: (itemId, viewId) => rendering.setTypePreferredView(itemId, viewId),
-        /** Get the preferred view for an item's type.
-         * @param {string} itemId - Any item of the type to query
-         * @returns {Promise<string|null>} View GUID or null
-         */
-        getTypePreferredView: async (itemId) => {
-          const item = await kernel.storage.get(itemId);
-          const typeItem = await kernel.storage.get(item.type);
-          return typeItem.preferredView || null;
-        },
 
         // --- Parent-child operations (arity-detecting) ---
 
@@ -1468,40 +1213,6 @@ export async function loadKernel(require, storageBackend) {
            * @returns {string[]}
            */
           list: () => kernel.events.getRegisteredEvents()
-        },
-
-        /** Render instance registry — query what's currently rendered on screen. */
-        instances: {
-          /** Get all render instances for an item.
-           * @param {string} itemId - Item GUID
-           * @returns {Array} Instance info objects
-           */
-          getByItemId: (itemId) => rendering.registry.getByItemId(itemId),
-
-          /** Get all render instances using a specific view.
-           * @param {string} viewId - View GUID
-           * @returns {Array} Instance info objects
-           */
-          getByViewId: (viewId) => rendering.registry.getByViewId(viewId),
-
-          /** Get a specific render instance by ID.
-           * @param {number} instanceId - Instance ID
-           * @returns {Object|null} Instance info or null
-           */
-          get: (instanceId) => rendering.registry.get(instanceId),
-
-          /** Get all render instances.
-           * @returns {Array} All instance info objects
-           */
-          getAll: () => rendering.registry.getAll(),
-
-          /** Get a summary of render state (counts of instances, items, views, parents).
-           * @returns {{totalInstances, uniqueItems, uniqueViews, uniqueParents}}
-           */
-          getSummary: () => rendering.registry.getSummary(),
-
-          /** Clear all render instances. */
-          clear: () => rendering.registry.clear()
         },
 
         // --- UI operations ---
@@ -1647,17 +1358,6 @@ export async function loadKernel(require, storageBackend) {
 
       // --- Context layer (only when containerItem provided) ---
       if (containerItem) {
-        /** Get the view config for this item (from parent's attachment spec or viewport).
-         * @returns {Promise<Object|null>} View config object or null
-         */
-        api.getViewConfig = () => getViewConfig(kernel, containerItem, context);
-
-        /** Update the view config for this item (merges into parent's attachment spec).
-         * @param {Object} updates - Key-value pairs to merge into the config
-         * @returns {Promise<boolean>} True if update succeeded
-         */
-        api.updateViewConfig = (updates) => updateViewConfig(kernel, containerItem, context, updates);
-
         /** Get the parent item ID in the current render context.
          * @returns {string|null}
          */
@@ -1699,7 +1399,7 @@ export async function loadKernel(require, storageBackend) {
           return newItem.id;
         };
 
-        /** Create a child item of a given type, attach it, and re-render.
+        /** Create a child item of a given type and attach it.
          * @param {string} type - Type GUID for the new item
          * @param {Object} [content] - Initial content for the new item
          * @returns {Promise<string>} The new item's GUID
@@ -1710,16 +1410,8 @@ export async function loadKernel(require, storageBackend) {
             content,
             attachments: []
           };
-          const id = await api.create(newItem, true);
-          await kernel.renderViewport();
-          return id;
+          return await api.create(newItem, true);
         };
-
-        /** Restore the previous view for an item (undo setAttachmentView or setRootView).
-         * @param {string} itemId - Item GUID to restore
-         * @returns {Promise<boolean>} True if a previous view was restored
-         */
-        api.restorePreviousView = (itemId) => restorePreviousView(kernel, context, itemId);
       }
 
       return api;
@@ -1948,35 +1640,9 @@ export async function loadKernel(require, storageBackend) {
         await this.applyStyles();
       }
 
-      // Check for libraries - requires full re-render (dependencies not tracked)
-      const hasLibrary = items.some(i => i.type === IDS.LIBRARY);
-      if (hasLibrary) {
-        result.action = 'full-rerender';
-        await this.renderViewport();
-        return result;
-      }
-
-      // Check for views - partial re-render for each
-      const viewItems = items.filter(i => i.type === IDS.VIEW);
-      for (const viewItem of viewItems) {
-        await this.rendering.rerenderByView(viewItem.id);
-      }
-
-      // For data items, re-render if currently visible
-      const codeTypes = [IDS.VIEW, IDS.LIBRARY, IDS.KERNEL_MODULE];
-      const dataItems = items.filter(i =>
-        !codeTypes.includes(i.type) && i.id !== IDS.KERNEL_STYLES
-      );
-      for (const item of dataItems) {
-        const instances = this.rendering.registry.getByItemId(item.id);
-        if (instances.length > 0) {
-          await this.rendering.rerenderItem(item.id);
-        }
-      }
-
-      result.action = viewItems.length > 0 || dataItems.length > 0
-        ? 'partial-rerender'
-        : (hasStyles ? 'styles-only' : 'none');
+      // Rendering refresh is handled by reactivity (ITEM_UPDATED events)
+      // Library imports are a known gap — no full re-render triggered
+      result.action = hasStyles ? 'styles-only' : 'none';
       return result;
     }
 
@@ -2020,9 +1686,7 @@ export async function loadKernel(require, storageBackend) {
       if (await this.isCodeItem(item)) {
         this.moduleSystem.clearCache();
       }
-
-      // Re-render viewport (userland will handle navigation if needed)
-      await this.renderViewport();
+      // Reactivity handles re-render via ITEM_DELETED event
     }
 
     /** Check if an item is a code item (its type chain includes CODE).
@@ -2082,10 +1746,10 @@ export async function loadKernel(require, storageBackend) {
             const bootEvent = {
               type: EVENT_IDS.SYSTEM_BOOT_COMPLETE,
               content: {
-                // rootId removed - userland reads from viewport item or URL
                 safeMode: this._safeMode,
                 debugMode: this.debugMode,
-                lateActivation: true
+                lateActivation: true,
+                rootElement: this.rootElement
               },
               timestamp: Date.now()
             };
