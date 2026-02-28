@@ -3011,12 +3011,17 @@ function registerViewOps(env, api) {
       }
     } catch {}
     if (item && Array.isArray(item.content?.hob)) {
-      // Hob library: evaluate top-level forms directly into the current render env.
-      // defn/def forms call env.define(), landing symbols in the render scope.
+      // Hob module: evaluate in a child env, return local def bindings as a map.
+      // def = public, let = private. Caller gets {:name <fn> :other <fn>}.
+      const childEnv = new Environment(env);
       for (const form of item.content.hob) {
-        await evaluate(form, env, []);
+        await evaluate(form, childEnv, []);
       }
-      return null;
+      const result = {};
+      for (const [k, v] of childEnv.bindings) {
+        result[`:${k}`] = v;
+      }
+      return result;
     }
     // JS library (or not found as Hob): delegate to kernel module loader
     return await api.require(name);
