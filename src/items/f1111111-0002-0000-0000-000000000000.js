@@ -3,14 +3,23 @@
 // No module-level caching; sources of truth are URL + viewport item
 
 const VIEWPORT_ID = "88888888-0000-0000-0000-000000000000";
+const VIEWPORT_RENDERING_ID = "f1111111-0008-0000-0000-000000000000";
 const EVENT_IDS = {
   VIEWPORT_ROOT_CHANGED: "e0e00000-0003-0002-0000-000000000000",
   VIEWPORT_SELECTION_CHANGED: "e0e00000-0003-0001-0000-000000000000"
 };
 
+// Module-level rendering system (initialized at boot)
+let rendering = null;
+
 // Called at boot
-export async function onKernelBootComplete({ safeMode }, _api) {
+export async function onKernelBootComplete({ safeMode, rootElement }, _api) {
   if (safeMode) return;
+
+  // Load and initialize viewport-rendering
+  const { RenderingSystem } = await window.kernel.moduleSystem.require(VIEWPORT_RENDERING_ID);
+  rendering = new RenderingSystem(window.kernel);
+  rendering.rootElement = rootElement;
 
   // Register popstate handler for browser back/forward
   // Use window-level guard that survives module re-evaluation after clearCache()
@@ -29,9 +38,11 @@ export async function onKernelBootComplete({ safeMode }, _api) {
     // (URL is authoritative for root)
     if (currentChild?.id !== urlRoot) {
       await persistRootChange(urlRoot, currentChild?.id);
-      await window.kernel.renderViewport();
     }
   }
+
+  // Initial render
+  await rendering.renderViewport();
 }
 
 // Handle browser back/forward
@@ -58,7 +69,7 @@ async function handlePopstate(e) {
       }
     });
 
-    await window.kernel.renderViewport();
+    await rendering.renderViewport();
   }
 }
 
@@ -179,7 +190,7 @@ export async function navigate(itemId, params = {}) {
   });
 
   // Trigger re-render
-  await window.kernel.renderViewport();
+  await rendering.renderViewport();
 }
 
 // Get current root (sync - reads from URL)
