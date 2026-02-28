@@ -714,15 +714,12 @@ export async function loadKernel(require, storageBackend) {
 
           row.appendChild(info);
 
-          // Click to navigate
-          row.onclick = async () => {
+          // Click to navigate (direct URL manipulation — no userland dependency)
+          row.onclick = () => {
             kernel.hideItemList();
-            try {
-              const vpMgr = await kernel.moduleSystem.require('viewport-manager');
-              await vpMgr.navigate(item.id);
-            } catch (e) {
-              console.error('Navigation failed:', e);
-            }
+            const url = new URL(window.location);
+            url.searchParams.set('root', item.id);
+            window.location.href = url.href;
           };
 
           listContainer.appendChild(row);
@@ -912,11 +909,9 @@ export async function loadKernel(require, storageBackend) {
       const cancelBtn = document.createElement("button");
       cancelBtn.textContent = "Cancel";
       cancelBtn.style.cssText = "padding: 8px 16px; cursor: pointer;";
-      cancelBtn.onclick = async () => {
-        // Navigating away handles the re-render via reactivity
-        const vpMgr = await kernel.moduleSystem.require('viewport-manager');
-        const root = vpMgr.getRoot();
-        if (root) await vpMgr.navigate(root);
+      cancelBtn.onclick = () => {
+        // Reload current page to discard edits (no userland dependency)
+        window.location.reload();
       };
       actions.appendChild(cancelBtn);
 
@@ -1125,28 +1120,6 @@ export async function loadKernel(require, storageBackend) {
          */
         hasCycle: (itemId) => kernel.hasCycle(itemId),
 
-        // --- Navigation ---
-
-        /** Navigate to an item, updating the URL and re-rendering the viewport.
-         * @param {string} id - Item GUID to navigate to
-         * @param {Object} [params] - URL parameters to set
-         */
-        navigate: async (id, params) => {
-          const vpMgr = await kernel.moduleSystem.require('viewport-manager');
-          return vpMgr.navigate(id, params);
-        },
-        /** Open an item contextually: as a sibling if inside a container, otherwise navigate.
-         * @param {string} id - Item GUID to open
-         * @param {Object} [navigateTo] - Scroll target hint (field, symbol, line, region)
-         */
-        /** Get the current viewport root item ID.
-         * @returns {string|null} Root item GUID, or null
-         */
-        getCurrentRoot: () => {
-          const vpMgr = kernel.moduleSystem.getCached('viewport-manager');
-          return vpMgr?.getRoot() || null;
-        },
-
         // --- Import/Export ---
 
         /** Export all items as JSON download(s).
@@ -1286,78 +1259,6 @@ export async function loadKernel(require, storageBackend) {
           }
         },
 
-        /** Viewport state — selection, root item, root view management. */
-        viewport: {
-          /** Select an item in the viewport.
-           * @param {string} itemId - Item GUID to select
-           * @param {string} [parentId] - Parent context for the selection
-           */
-          select: async (itemId, parentId) => {
-            const selMgr = await kernel.moduleSystem.require('selection-manager');
-            selMgr.select(itemId, parentId);
-          },
-          /** Clear the current selection. */
-          clearSelection: async () => {
-            const selMgr = await kernel.moduleSystem.require('selection-manager');
-            selMgr.clearSelection();
-          },
-          /** Get the currently selected item ID.
-           * @returns {string|null}
-           */
-          getSelection: () => {
-            const selMgr = kernel.moduleSystem.getCached('selection-manager');
-            return selMgr?.getSelection() || null;
-          },
-          /** Get the parent context of the current selection.
-           * @returns {string|null}
-           */
-          getSelectionParent: () => {
-            const selMgr = kernel.moduleSystem.getCached('selection-manager');
-            return selMgr?.getSelectionParent() || null;
-          },
-          /** Get the current viewport root item ID from the URL.
-           * @returns {string|null}
-           */
-          getRoot: () => {
-            const params = new URLSearchParams(window.location.search);
-            return params.get('root');
-          },
-          /** Get the current root view GUID.
-           * @returns {Promise<string|null>}
-           */
-          getRootView: async () => {
-            const vpMgr = await kernel.moduleSystem.require('viewport-manager');
-            return await vpMgr.getRootView();
-          },
-          /** Set the root view for the current viewport root.
-           * @param {string} viewId - View GUID to set
-           */
-          setRootView: async (viewId) => {
-            const vpMgr = await kernel.moduleSystem.require('viewport-manager');
-            await vpMgr.setRootView(viewId);
-          },
-          /** Get the full view config object for the root item.
-           * @returns {Promise<Object|null>}
-           */
-          getRootViewConfig: async () => {
-            const vpMgr = await kernel.moduleSystem.require('viewport-manager');
-            return await vpMgr.getRootViewConfig();
-          },
-          /** Merge updates into the root view config.
-           * @param {Object} updates - Key-value pairs to merge
-           */
-          updateRootViewConfig: async (updates) => {
-            const vpMgr = await kernel.moduleSystem.require('viewport-manager');
-            await vpMgr.updateRootViewConfig(updates);
-          },
-          /** Restore the previous root view (undo the last setRootView).
-           * @returns {Promise<boolean>} True if a previous view was restored
-           */
-          restorePreviousRootView: async () => {
-            const vpMgr = await kernel.moduleSystem.require('viewport-manager');
-            return await vpMgr.restorePreviousRootView();
-          }
-        }
       };
 
       // --- Context layer (only when containerItem provided) ---
@@ -1876,15 +1777,6 @@ export async function loadKernel(require, storageBackend) {
           return;
         }
 
-        // Hob handler branch: items with content.hob (but no JS code) use the Hob interpreter.
-        // Dual-content items (content.hob + content.code) use JS for watch handlers
-        // since Hob cannot express event handlers.
-        if (watcherItem.content?.hob && !watcherItem.content?.code) {
-          await this.callHobWatchHandler(watcherItem, event, eventName);
-          return;
-        }
-
-        // JS handler (existing code)
         // Convert event name to handler name: "item:deleted" -> "onItemDeleted"
         const handlerName = this.eventToHandlerName(eventName);
 
@@ -1907,66 +1799,6 @@ export async function loadKernel(require, storageBackend) {
       }
     }
 
-    /** Call a Hob-authored watch handler.
-     * Lazy-loads the interpreter, caches ASTs, creates child env per invocation.
-     * @param {Object} watcherItem - Item with content.hob code
-     * @param {Object} event - {type, content, timestamp}
-     * @param {string} eventName - The event name (e.g., "item:updated")
-     */
-    async callHobWatchHandler(watcherItem, event, eventName) {
-      // Lazy-load interpreter (cached on kernel instance)
-      if (!this._hobInterp) {
-        const hob = await this.moduleSystem.require('40b00001-0000-4000-8000-000000000000');
-        this._hobInterp = hob.createInterpreter({
-          get: id => this.storage.get(id),
-          set: item => this.storage.set(item),
-          delete: id => this.storage.delete(id),
-          getAll: () => this.storage.getAll(),
-          query: filter => this.storage.query(filter),
-        });
-        this._hobModule = hob;
-        await this._hobInterp.macrosReady;
-      }
-
-      // Create child env with event ops and full Hob ops (including require)
-      const childEnv = this._hobInterp.createEnvironment();
-      this._hobModule.registerEventOps(childEnv, { emit: e => this.events.emit(e) });
-      this._hobModule.registerViewOps(childEnv, this.createAPI());
-
-      // Parse Hob code (cached by id + modified)
-      const cacheKey = `${watcherItem.id}:${watcherItem.modified}`;
-      if (!this._hobWatchAstCache) this._hobWatchAstCache = new Map();
-      let asts = this._hobWatchAstCache.get(cacheKey);
-      if (!asts) {
-        asts = this._hobModule.readAll(watcherItem.content.hob);
-        this._hobWatchAstCache.set(cacheKey, asts);
-      }
-
-      // Evaluate all expressions to define handlers
-      for (const ast of asts) {
-        await this._hobModule.evaluate(ast, childEnv, []);
-      }
-
-      // Look up handler by kebab-case name
-      const hobHandlerName = this.eventToHobHandlerName(eventName);
-      let handler;
-      try {
-        handler = childEnv.lookup(hobHandlerName);
-      } catch {
-        console.warn(`Hob watcher ${watcherItem.name || watcherItem.id} has no ${hobHandlerName} handler`);
-        return;
-      }
-
-      if (typeof handler !== 'function') {
-        console.warn(`Hob watcher: ${hobHandlerName} is not a function`);
-        return;
-      }
-
-      // Call with event content and full API
-      const api = this.createAPI();
-      await handler(event.content, api);
-    }
-
     /** Convert an event name to a handler function name (e.g., "item:deleted" → "onItemDeleted").
      * @param {string} eventName - Event name (e.g., "item:deleted", "kernel:boot-complete")
      * @returns {string} Handler name (e.g., "onItemDeleted")
@@ -1982,17 +1814,6 @@ export async function loadKernel(require, storageBackend) {
         part.charAt(0).toUpperCase() + part.slice(1).toLowerCase()
       );
       return 'on' + camelParts.join('');
-    }
-
-    /** Convert an event name to a Hob handler name (kebab-case).
-     * @param {string} eventName - Event name (e.g., "item:updated", "kernel:boot-complete")
-     * @returns {string} Hob handler name (e.g., "on-item-updated", "on-kernel-boot-complete")
-     */
-    eventToHobHandlerName(eventName) {
-      // "item:updated" -> "on-item-updated"
-      // "kernel:boot-complete" -> "on-kernel-boot-complete"
-      // "error-event" -> "on-error-event"
-      return 'on-' + eventName.replace(/:/g, '-');
     }
 
     // -------------------------------------------------------------------------

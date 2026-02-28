@@ -463,6 +463,60 @@ export class RenderingSystem {
       clear: () => rendering.registry.clear()
     };
 
+    // Navigation
+    api.navigate = async (id, params) => {
+      const vpMgr = rendering.kernel.moduleSystem.getCached('viewport-manager');
+      if (vpMgr) return vpMgr.navigate(id, params);
+    };
+    api.getCurrentRoot = () => {
+      const vpMgr = rendering.kernel.moduleSystem.getCached('viewport-manager');
+      return vpMgr?.getRoot() || null;
+    };
+
+    // Viewport state — selection, root item, root view management
+    api.viewport = {
+      select: async (itemId, parentId) => {
+        const selMgr = rendering.kernel.moduleSystem.getCached('selection-manager');
+        if (selMgr) selMgr.select(itemId, parentId);
+      },
+      clearSelection: async () => {
+        const selMgr = rendering.kernel.moduleSystem.getCached('selection-manager');
+        if (selMgr) selMgr.clearSelection();
+      },
+      getSelection: () => {
+        const selMgr = rendering.kernel.moduleSystem.getCached('selection-manager');
+        return selMgr?.getSelection() || null;
+      },
+      getSelectionParent: () => {
+        const selMgr = rendering.kernel.moduleSystem.getCached('selection-manager');
+        return selMgr?.getSelectionParent() || null;
+      },
+      getRoot: () => {
+        const params = new URLSearchParams(window.location.search);
+        return params.get('root');
+      },
+      getRootView: async () => {
+        const vpMgr = rendering.kernel.moduleSystem.getCached('viewport-manager');
+        return vpMgr ? await vpMgr.getRootView() : null;
+      },
+      setRootView: async (viewId) => {
+        const vpMgr = rendering.kernel.moduleSystem.getCached('viewport-manager');
+        if (vpMgr) await vpMgr.setRootView(viewId);
+      },
+      getRootViewConfig: async () => {
+        const vpMgr = rendering.kernel.moduleSystem.getCached('viewport-manager');
+        return vpMgr ? await vpMgr.getRootViewConfig() : null;
+      },
+      updateRootViewConfig: async (updates) => {
+        const vpMgr = rendering.kernel.moduleSystem.getCached('viewport-manager');
+        if (vpMgr) await vpMgr.updateRootViewConfig(updates);
+      },
+      restorePreviousRootView: async () => {
+        const vpMgr = rendering.kernel.moduleSystem.getCached('viewport-manager');
+        return vpMgr ? await vpMgr.restorePreviousRootView() : false;
+      }
+    };
+
     // Context-specific methods (only when containerItem provided)
     if (containerItem) {
       api.getViewConfig = () => getViewConfig(rendering.kernel, containerItem, context);
