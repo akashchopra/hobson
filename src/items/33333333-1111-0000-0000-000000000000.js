@@ -1886,15 +1886,10 @@ export async function loadKernel(require, storageBackend) {
 
       const existingIdx = parent.attachments.findIndex(c => c.id === childId);
       if (existingIdx >= 0) {
-        // Merge new view data into existing attachment
-        if (attachment.view) {
-          parent.attachments[existingIdx] = {
-            ...parent.attachments[existingIdx],
-            view: { ...parent.attachments[existingIdx].view, ...attachment.view }
-          };
-        } else {
-          return; // Already attached, no new data
-        }
+        // Re-attach: apply caller's data, resetting any existing view config.
+        // This lets the parent's view restore context-appropriate state
+        // from the old attachment (available via the item-updated event).
+        parent.attachments[existingIdx] = attachment;
       } else {
         parent.attachments.push(attachment);
       }
