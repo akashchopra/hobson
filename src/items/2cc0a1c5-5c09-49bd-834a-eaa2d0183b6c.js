@@ -6,14 +6,12 @@
 // Supports interactive mode (with handlers) and inert mode (for documentation).
 
 // Default window dimensions for new spatial children
-const DEFAULT_WINDOW_WIDTH = 600;
-const DEFAULT_WINDOW_HEIGHT = 500;
 const STARRED_TAG_ID = 'c0c0c0c0-0060-0000-0000-000000000000';
 
 // Internal: add a new child item to a parent
 // parentId: the item to add a child to
 // clickCoords: {x, y} if adding from a spatial context, null otherwise
-async function addChildToItem(api, parentId, clickCoords) {
+async function addChildToItem(api, parentId) {
   // Re-require to pick up any edits (see docs/Hot-Reloading Libraries.md)
   const typePicker = await api.require('type-picker-lib');
   const selectedType = await typePicker.showTypePicker(api);
@@ -34,89 +32,15 @@ async function addChildToItem(api, parentId, clickCoords) {
 
   await api.set(newItem);
 
-  // Get parent and determine if it's being rendered spatially
-  const parent = await api.get(parentId);
-  const attachments = parent.attachments || [];
-
-  // Check if parent is rendered spatially by looking at existing attachments
-  // If attachments have position data (view.x, view.y), it's spatial
-  const isSpatial = attachments.length > 0
-    ? attachments.some(c => c.view?.x !== undefined || c.view?.y !== undefined)
-    : false;
-
-  if (isSpatial || clickCoords) {
-    // Spatial: add with position in view object
-    const maxZ = attachments.length > 0 ? Math.max(...attachments.map(c => c.view?.z || 1000)) : 999;
-    const x = clickCoords?.x || 50;
-    const y = clickCoords?.y || 50;
-
-    const view = {
-      x: x,
-      y: y,
-      width: DEFAULT_WINDOW_WIDTH,
-      height: DEFAULT_WINDOW_HEIGHT,
-      z: maxZ + 1
-    };
-    if (editView) view.type = editView.id;
-
-    attachments.push({ id: newItem.id, view });
-  } else {
-    // Non-spatial: just add the ID reference, with edit view if available
-    const spec = { id: newItem.id };
-    if (editView) spec.view = { type: editView.id };
-    attachments.push(spec);
-  }
-
-  parent.attachments = attachments;
-  parent.modified = Date.now();
-  await api.update(parent);
+  const attachment = { id: newItem.id };
+  if (editView) attachment.view = { type: editView.id };
+  await api.attach(parentId, attachment);
   api.viewport.select(newItem.id, parentId);
-
-  // Scroll new item into view after DOM updates
-  setTimeout(() => {
-    const el = document.querySelector(`[data-item-id="${newItem.id}"]`);
-    el?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-  }, 0);
 }
 
 // Internal: add an existing item as child to a parent
-async function addExistingChildToItem(api, parentId, childId, clickCoords) {
-  const parent = await api.get(parentId);
-  const attachments = parent.attachments || [];
-
-  // Check if already a child
-  if (attachments.some(c => c.id === childId)) {
-    alert('This item is already attached.');
-    return;
-  }
-
-  // Check if parent is rendered spatially
-  const isSpatial = attachments.length > 0
-    ? attachments.some(c => c.view?.x !== undefined || c.view?.y !== undefined)
-    : false;
-
-  if (isSpatial || clickCoords) {
-    const maxZ = attachments.length > 0 ? Math.max(...attachments.map(c => c.view?.z || 1000)) : 999;
-    const x = clickCoords?.x || 50;
-    const y = clickCoords?.y || 50;
-
-    attachments.push({
-      id: childId,
-      view: {
-        x: x,
-        y: y,
-        width: DEFAULT_WINDOW_WIDTH,
-        height: DEFAULT_WINDOW_HEIGHT,
-        z: maxZ + 1
-      }
-    });
-  } else {
-    attachments.push({ id: childId });
-  }
-
-  parent.attachments = attachments;
-  parent.modified = Date.now();
-  await api.update(parent);
+async function addExistingChildToItem(api, parentId, childId) {
+  await api.attach(parentId, childId);
   api.viewport.select(childId, parentId);
 
   // Scroll new item into view after DOM updates
@@ -127,7 +51,7 @@ async function addExistingChildToItem(api, parentId, childId, clickCoords) {
 }
 
 // Internal: show item picker modal for adding existing item
-async function showExistingItemPicker(api, parentId, clickCoords) {
+async function showExistingItemPicker(api, parentId) {
   // Re-require to pick up any edits (see docs/Hot-Reloading Libraries.md)
   const modalLib = await api.require('modal-lib');
   const searchLib = await api.require('item-search-lib');
@@ -147,7 +71,7 @@ async function showExistingItemPicker(api, parentId, clickCoords) {
     searchContainer,
     async (selectedItem) => {
       close();
-      await addExistingChildToItem(api, parentId, selectedItem.id, clickCoords);
+      await addExistingChildToItem(api, parentId, selectedItem.id);
     },
     api,
     { placeholder: 'Search for items to add...', autoFocus: true }
@@ -236,7 +160,7 @@ export function buildAddChildSubmenu(api, itemId, context) {
   if (context) {
     newItemOption.onclick = async () => {
       context.onDismiss();
-      await addChildToItem(api, itemId, context.getClickCoords());
+      await addChildToItem(api, itemId);
     };
   }
   addChildSubmenu.appendChild(newItemOption);
@@ -245,7 +169,7 @@ export function buildAddChildSubmenu(api, itemId, context) {
   if (context) {
     existingItemOption.onclick = () => {
       context.onDismiss();
-      showExistingItemPicker(api, itemId, context.getClickCoords());
+      showExistingItemPicker(api, itemId);
     };
   }
   addChildSubmenu.appendChild(existingItemOption);
