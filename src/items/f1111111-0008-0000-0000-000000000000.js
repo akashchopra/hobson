@@ -248,6 +248,8 @@ class RenderInstanceRegistry {
       itemId,
       viewId,
       parentId,
+      decorator: null,
+      openIn: null,
       timestamp: Date.now()
     };
 
@@ -496,6 +498,11 @@ export class RenderingSystem {
     api.rerenderByView = (viewId) => rendering.rerenderByView(viewId);
     api.rerenderByType = (typeId) => rendering.rerenderByType(typeId);
     api.renderViewport = () => rendering.renderViewport();
+
+    // Open-in target (where to open/attach items from this view)
+    if (context.openIn) {
+      api.getOpenIn = () => context.openIn;
+    }
 
     // View discovery
     api.getViews = (typeId) => rendering.getViews(typeId);
@@ -834,6 +841,8 @@ export class RenderingSystem {
                 }
                 // Different spec — let morphdom proceed, will be refilled after
                 fromEl.removeAttribute('data-render-child-filled');
+                // Transfer __renderChildSpec from new DOM (morphdom doesn't copy JS properties)
+                if (toEl.__renderChildSpec) fromEl.__renderChildSpec = toEl.__renderChildSpec;
                 if (_dr) console.log(`[morphdom] REPLACE render-child item=${fromItem?.slice(0,8)} → ${toItem?.slice(0,8)}`);
               }
               // Preserve user-entered values in uncontrolled inputs/textareas.
@@ -930,7 +939,11 @@ export class RenderingSystem {
           const unfilled = oldDom.querySelectorAll('[data-render-child]:not([data-render-child-filled])');
           if (unfilled.length > 0) {
             const rerenderItem = await this.kernel.storage.get(itemId);
-            await this.fillMountPoints(oldDom, { parentId: instance.parentId }, rerenderItem);
+            await this.fillMountPoints(oldDom, {
+              parentId: instance.parentId,
+              decorator: instance.decorator,
+              openIn: instance.openIn
+            }, rerenderItem);
           }
 
           updated++;
@@ -1084,7 +1097,10 @@ export class RenderingSystem {
         if (hobResult.domNode) {
           const parentId = context.parentId || null;
           if (parentId) hobResult.domNode.setAttribute('data-parent-id', parentId);
-          this.registry.register(hobResult.domNode, itemId, view.id, parentId, hobResult.trackingId);
+          const instId = this.registry.register(hobResult.domNode, itemId, view.id, parentId, hobResult.trackingId);
+          // Store context for re-render recovery
+          const inst = this.registry.instances.get(instId);
+          if (inst) { inst.decorator = context.decorator || null; inst.openIn = context.openIn || null; }
           // Fill :render-child mount points produced by this Hob view
           if (hobResult.domNode.querySelector?.('[data-render-child]')) {
             await this.fillMountPoints(hobResult.domNode, newContext, item);
@@ -1143,7 +1159,10 @@ export class RenderingSystem {
         domNode.__morphdom = true;
         const parentId = context.parentId || null;
         if (parentId) domNode.setAttribute('data-parent-id', parentId);
-        this.registry.register(domNode, itemId, view.id, parentId, jsTrackingId);
+        const instId = this.registry.register(domNode, itemId, view.id, parentId, jsTrackingId);
+        // Store context for re-render recovery
+        const inst = this.registry.instances.get(instId);
+        if (inst) { inst.decorator = context.decorator || null; inst.openIn = context.openIn || null; }
         // Fill :render-child mount points produced by this JS view
         if (domNode.querySelector?.('[data-render-child]')) {
           await this.fillMountPoints(domNode, newContext, item);
@@ -1595,14 +1614,27 @@ export class RenderingSystem {
       try {
         // Mount points are rendering boundaries — fresh renderPath.
         // The child is an independent render instance, not a nested call.
-        // If the mount point specifies a :parent, use that (allows container views
-        // to propagate their own parentId to children, e.g. for attach! targeting).
+        // parentId = the container item (for setAttachmentView / "View As...")
+        // openIn = where to open items from this view (for attach! targeting)
+        // Propagate decorator so children get data-item-id etc.
         const childContext = {
-          parentId: spec.parentId || (containerItem ? containerItem.id : context.parentId || null),
-          renderPath: []
+          parentId: containerItem ? containerItem.id : context.parentId || null,
+          openIn: spec.openIn || null,
+          renderPath: [],
+          decorator: context.decorator
         };
-        const childDom = await this.renderItem(spec.itemId, spec.viewId || null, {}, childContext);
+        // spec.viewId may be a view config object {type: "guid", ...} from attachment specs.
+        // Extract the string viewId just like renderItemInContext does.
+        const { viewId: resolvedViewId, viewConfig: resolvedViewConfig } = extractViewConfig(spec.viewId);
+        if (resolvedViewConfig) childContext.viewConfig = resolvedViewConfig;
+        const childDom = await this.renderItem(spec.itemId, resolvedViewId, {}, childContext);
         if (childDom) {
+          if (context.decorator) {
+            try {
+              const item = await this.kernel.storage.get(spec.itemId);
+              await context.decorator(childDom, spec.itemId, item);
+            } catch (e) { console.warn('Decorator error in fillMountPoints:', e); }
+          }
           mp.appendChild(childDom);
         }
       } catch (e) {
