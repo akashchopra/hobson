@@ -780,7 +780,7 @@ function hiccupToDOM(hiccup, sourceCtx, _refs) {
       if (hiccup.length > 1 && hiccup[1] && typeof hiccup[1] === 'object'
           && !Array.isArray(hiccup[1]) && !hiccup[1].nodeType && !isKeyword(hiccup[1])) {
         const attrs = hiccup[1];
-        let itemId = null, viewId = null, openIn = null, onCycle = null, navigateTo = null;
+        let itemId = null, viewId = null, openIn = null, onCycle = null, navigateTo = null, decorator = null;
         for (const [k, v] of Object.entries(attrs)) {
           const attrName = isKeyword(k) ? keywordName(k) : k;
           if (attrName === 'item') {
@@ -793,6 +793,8 @@ function hiccupToDOM(hiccup, sourceCtx, _refs) {
             onCycle = v;
           } else if (attrName === 'navigate-to') {
             navigateTo = v;
+          } else if (attrName === 'decorator') {
+            decorator = v;
           } else if (attrName === 'style' || attrName === 'class' || attrName === 'data-sort-key') {
             // Pass through layout attrs
             if (attrName === 'style' && typeof v === 'object' && v !== null) {
@@ -817,7 +819,7 @@ function hiccupToDOM(hiccup, sourceCtx, _refs) {
         // viewId may be a view config object {type: "guid", ...} — normalize for attribute
         const viewIdStr = (viewId && typeof viewId === 'object') ? (viewId.type || null) : viewId;
         if (viewIdStr) el.setAttribute('data-child-view', String(viewIdStr));
-        el.__renderChildSpec = { itemId, viewId, openIn, onCycle, navigateTo };
+        el.__renderChildSpec = { itemId, viewId, openIn, onCycle, navigateTo, decorator };
       }
       // Stamp source attribution
       if (sourceCtx) {
