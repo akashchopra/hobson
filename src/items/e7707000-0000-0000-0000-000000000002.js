@@ -29,7 +29,8 @@ export async function onErrorEvent({ error, context, timestamp }, api) {
     });
     
     // Re-render any visible error lists so they show the new error
-    await api.rerenderByType(ERROR_LIST_TYPE_ID);
+    const vpMgr = await api.require('viewport-manager');
+    await vpMgr.getRendering().rerenderByType(ERROR_LIST_TYPE_ID);
 
     // Show toast notification
     showErrorToast(error.message, errorId, context, api);
@@ -182,17 +183,18 @@ function showErrorToast(message, errorId, context, api) {
 
   toast.onclick = async () => {
     toast.remove();
-    const currentRoot = api.viewport.getRoot();
+    const vpMgr = await api.require('viewport-manager');
+    const currentRoot = vpMgr.getRoot();
     if (context.itemId === currentRoot) {
       // Error was in root item - navigate to error
-      await api.navigate(errorId);
+      await vpMgr.navigate(errorId);
     } else {
       // Error was in child - open error as sibling of root's children
       if (currentRoot) {
         await api.attach(currentRoot, errorId);
-        await api.renderViewport();
+        await vpMgr.getRendering().renderViewport();
       } else {
-        await api.navigate(errorId);
+        await vpMgr.navigate(errorId);
       }
     }
   };

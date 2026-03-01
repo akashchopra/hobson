@@ -9,5 +9,7 @@ export async function onViewportSelectionChanged(payload, api) {
     try { item = await api.get(selectedId); } catch (e) { item = null; }
     if (item && item.type === WIDGET_TYPE_ID) return;
   }
-  await api.rerenderByType(WIDGET_TYPE_ID);
+  const vpMgr = await api.require('viewport-manager');
+  const rendering = vpMgr.getRendering();
+  if (rendering) await rendering.rerenderByType(WIDGET_TYPE_ID);
 }
