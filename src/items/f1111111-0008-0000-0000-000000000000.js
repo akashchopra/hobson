@@ -250,6 +250,7 @@ class RenderInstanceRegistry {
       parentId,
       decorator: null,
       openIn: null,
+      ancestors: null,
       timestamp: Date.now()
     };
 
@@ -942,7 +943,9 @@ export class RenderingSystem {
             await this.fillMountPoints(oldDom, {
               parentId: instance.parentId,
               decorator: instance.decorator,
-              openIn: instance.openIn
+              openIn: instance.openIn,
+              ancestors: instance.ancestors,
+              renderPath: [itemId]
             }, rerenderItem);
           }
 
@@ -1041,8 +1044,10 @@ export class RenderingSystem {
     const _dr = this._debugRender;
     if (_dr) console.log(`[render] START itemId=${String(itemId).slice(0,8)} viewId=${viewId?.slice(0,8)||'auto'} depth=${renderPath.length}`);
 
-    // Cycle detection
-    if (renderPath.includes(itemId)) {
+    // Cycle detection — check both renderPath (within this render tree)
+    // and ancestors (accumulated across :render-child mount point boundaries)
+    const ancestors = context.ancestors || new Set();
+    if (renderPath.includes(itemId) || ancestors.has(itemId)) {
       if (options.onCycle) {
         const item = await this.kernel.storage.get(itemId);
         return options.onCycle(item);
@@ -1080,6 +1085,7 @@ export class RenderingSystem {
     // Build new context with updated render path
     const newContext = {
       ...context,
+      ancestors,
       renderPath: [...renderPath, itemId],
       viewId: view.id,
       debug: context.debug || this.kernel.debugMode
@@ -1100,7 +1106,7 @@ export class RenderingSystem {
           const instId = this.registry.register(hobResult.domNode, itemId, view.id, parentId, hobResult.trackingId);
           // Store context for re-render recovery
           const inst = this.registry.instances.get(instId);
-          if (inst) { inst.decorator = context.decorator || null; inst.openIn = context.openIn || null; }
+          if (inst) { inst.decorator = context.decorator || null; inst.openIn = context.openIn || null; inst.ancestors = context.ancestors || null; }
           // Fill :render-child mount points produced by this Hob view
           if (hobResult.domNode.querySelector?.('[data-render-child]')) {
             await this.fillMountPoints(hobResult.domNode, newContext, item);
@@ -1607,27 +1613,34 @@ export class RenderingSystem {
   async fillMountPoints(parentDom, context, containerItem) {
     if (!parentDom || !parentDom.querySelectorAll) return;
     const mountPoints = parentDom.querySelectorAll('[data-render-child]:not([data-render-child-filled])');
-    for (const mp of mountPoints) {
+    if (mountPoints.length === 0) return;
+
+    // Shared ancestry context — same for all mount points under this parent
+    const parentAncestors = context.ancestors || new Set();
+    const parentPath = context.renderPath || [];
+    const childAncestors = new Set([...parentAncestors, ...parentPath]);
+    const parentId = containerItem ? containerItem.id : context.parentId || null;
+
+    // Render all mount points in parallel for performance (spatial canvas etc.)
+    await Promise.all(Array.from(mountPoints).map(async (mp) => {
       const spec = mp.__renderChildSpec;
-      if (!spec || !spec.itemId) continue;
+      if (!spec || !spec.itemId) { mp.setAttribute('data-render-child-filled', ''); return; }
 
       try {
-        // Mount points are rendering boundaries — fresh renderPath.
-        // The child is an independent render instance, not a nested call.
-        // parentId = the container item (for setAttachmentView / "View As...")
-        // openIn = where to open items from this view (for attach! targeting)
-        // Propagate decorator so children get data-item-id etc.
         const childContext = {
-          parentId: containerItem ? containerItem.id : context.parentId || null,
+          parentId,
           openIn: spec.openIn || null,
           renderPath: [],
+          ancestors: childAncestors,
           decorator: context.decorator
         };
+        if (spec.navigateTo) childContext.navigateTo = spec.navigateTo;
         // spec.viewId may be a view config object {type: "guid", ...} from attachment specs.
-        // Extract the string viewId just like renderItemInContext does.
         const { viewId: resolvedViewId, viewConfig: resolvedViewConfig } = extractViewConfig(spec.viewId);
         if (resolvedViewConfig) childContext.viewConfig = resolvedViewConfig;
-        const childDom = await this.renderItem(spec.itemId, resolvedViewId, {}, childContext);
+        const renderOpts = {};
+        if (spec.onCycle) renderOpts.onCycle = spec.onCycle;
+        const childDom = await this.renderItem(spec.itemId, resolvedViewId, renderOpts, childContext);
         if (childDom) {
           if (context.decorator) {
             try {
@@ -1645,7 +1658,7 @@ export class RenderingSystem {
         mp.appendChild(errDiv);
       }
       mp.setAttribute('data-render-child-filled', '');
-    }
+    }));
   }
 
   /** Lazy-load morphdom library (cached on this instance).
