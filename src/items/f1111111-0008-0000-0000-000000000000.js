@@ -766,12 +766,8 @@ export class RenderingSystem {
             currentViewId = childEntry.view.type || currentViewId;
           }
         } else {
-          // For root items (no parentId), get full view config from viewport-manager
-          const vpMgr = this.kernel.moduleSystem.getCached('viewport-manager');
-          if (vpMgr && vpMgr.getRootViewConfig) {
-            viewConfig = await vpMgr.getRootViewConfig();
-            currentViewId = viewConfig?.type || currentViewId;
-          }
+          // No parentId — this is the viewport or a mount-point child.
+          // Keep instance.viewId as-is; no config override needed.
         }
 
         // Re-render with current view and parent context
@@ -1090,7 +1086,9 @@ export class RenderingSystem {
           if (parentId) hobResult.domNode.setAttribute('data-parent-id', parentId);
           this.registry.register(hobResult.domNode, itemId, view.id, parentId, hobResult.trackingId);
           // Fill :render-child mount points produced by this Hob view
-          await this.fillMountPoints(hobResult.domNode, newContext, item);
+          if (hobResult.domNode.querySelector?.('[data-render-child]')) {
+            await this.fillMountPoints(hobResult.domNode, newContext, item);
+          }
         }
         if (_dr) console.log(`[render] DONE itemId=${String(itemId).slice(0,8)} view=${view.name} hasDOM=${!!hobResult.domNode}`);
         return hobResult.domNode;
@@ -1147,7 +1145,9 @@ export class RenderingSystem {
         if (parentId) domNode.setAttribute('data-parent-id', parentId);
         this.registry.register(domNode, itemId, view.id, parentId, jsTrackingId);
         // Fill :render-child mount points produced by this JS view
-        await this.fillMountPoints(domNode, newContext, item);
+        if (domNode.querySelector?.('[data-render-child]')) {
+          await this.fillMountPoints(domNode, newContext, item);
+        }
       }
 
       return domNode;
