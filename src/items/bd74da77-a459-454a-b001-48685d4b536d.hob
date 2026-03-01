@@ -130,23 +130,16 @@
             title-text (str iname " (" type-name ")" (or tag-str ""))]
         (invoke dom "setAttribute" "title" title-text)))
 
-    ;; Render root item
-    root-node (try
-      (render-item root-id
-        {:view root-view-id
-         :decorator item-decorator
-         :on-cycle (fn []
-           (try
-             (let [default-view (require "kernel:default-view")]
-               (invoke default-view "render" item api))
-             (catch _
-               (hiccup->dom [:div {:style "padding:20px; color:var(--color-text-secondary); font-style:italic; text-align:center;"}
-                 (or (:name item) (subs (:id item) 0 8))]))))})
-      (catch err
-        (hiccup->dom [:div {:style "padding:20px; color:var(--color-danger); background:var(--color-danger-light); border:1px solid var(--color-danger); border-radius:var(--border-radius);"}
-          (str "Error rendering item: " err)])))
+    ;; On-cycle handler for root item
+    root-on-cycle (fn []
+      (try
+        (let [default-view (require "kernel:default-view")]
+          (invoke default-view "render" item api))
+        (catch _
+          (hiccup->dom [:div {:style "padding:20px; color:var(--color-text-secondary); font-style:italic; text-align:center;"}
+            (or (:name item) (subs (:id item) 0 8))]))))
 
-    ;; Build container
+    ;; Build container with :render-child mount point for root item
     [container crefs] (hiccup->dom+
       [:div.viewport-container
         {:ref :container
@@ -154,11 +147,15 @@
          :style "display:flex; flex-direction:column; height:100%; position:relative;"}
         [:div {:ref :content
                :class "viewport-content"
-               :style "flex:1; overflow:auto; display:flex; flex-direction:column; min-height:0;"}]])
+               :data-item-id root-id
+               :style "flex:1; overflow:auto; display:flex; flex-direction:column; min-height:0;"}
+          [:render-child {:item root-id
+                          :view root-view-id
+                          :decorator item-decorator
+                          :on-cycle root-on-cycle
+                          :style "flex:1; min-height:0; display:flex; flex-direction:column;"}]]])
 
     content-area (:content crefs)
-    _ (invoke content-area "setAttribute" "data-item-id" root-id)
-    _ (invoke content-area "appendChild" root-node)
 
     ;; --- Overlay attachments (rendered as modal overlays) ---
     overlay-specs (rest (:attachments item))
@@ -181,10 +178,8 @@
                   (fn [e]
                     (when (= (dom-get e :target) overlay-el)
                       (close-overlay))))
-              onode (try (render-item oid) (catch err
-                (hiccup->dom [:div {:style "padding:20px; color:var(--color-danger);"}
-                  (str "Overlay error: " err)])))
-              _ (invoke modal-el "appendChild" onode)
+              _ (invoke modal-el "appendChild"
+                  (hiccup->dom [:render-child {:item oid}]))
               _ (set-timeout!
                   (fn []
                     (let [input (invoke modal-el "querySelector" "input")]

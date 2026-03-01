@@ -1051,13 +1051,17 @@ export class RenderingSystem {
       if (options.onCycle) {
         const item = await this.kernel.storage.get(itemId);
         return options.onCycle(item);
-      } else {
-        throw new Error(
-          `Cycle detected rendering item ${itemId}. ` +
-          `Render path: ${renderPath.join(' → ')} → ${itemId}. ` +
-          `Provide onCycle callback to handle cycles.`
-        );
       }
+      // No onCycle handler — produce a default cycle placeholder.
+      // With :render-child, cycles can be detected at any nesting level
+      // (sortable-list rendering a child that's also an ancestor), so
+      // a graceful fallback is always needed.
+      const item = await this.kernel.storage.get(itemId);
+      const name = item?.name || itemId.slice(0, 8);
+      const el = document.createElement('div');
+      el.style.cssText = 'padding:12px; color:var(--color-text-tertiary); font-style:italic; border:1px dashed var(--color-border); border-radius:var(--border-radius); background:var(--color-bg-surface-alt); text-align:center;';
+      el.textContent = `↻ ${name} (already shown above)`;
+      return el;
     }
 
     if (isRoot) perf?.mark(`${perfPrefix}-item-fetch-start`);
@@ -1627,12 +1631,13 @@ export class RenderingSystem {
       if (!spec || !spec.itemId) { mp.setAttribute('data-render-child-filled', ''); return; }
 
       try {
+        const effectiveDecorator = spec.decorator || context.decorator;
         const childContext = {
           parentId,
           openIn: spec.openIn || null,
           renderPath: [],
           ancestors: childAncestors,
-          decorator: context.decorator
+          decorator: effectiveDecorator
         };
         if (spec.navigateTo) childContext.navigateTo = spec.navigateTo;
         // spec.viewId may be a view config object {type: "guid", ...} from attachment specs.
@@ -1642,10 +1647,10 @@ export class RenderingSystem {
         if (spec.onCycle) renderOpts.onCycle = spec.onCycle;
         const childDom = await this.renderItem(spec.itemId, resolvedViewId, renderOpts, childContext);
         if (childDom) {
-          if (context.decorator) {
+          if (effectiveDecorator) {
             try {
               const item = await this.kernel.storage.get(spec.itemId);
-              await context.decorator(childDom, spec.itemId, item);
+              await effectiveDecorator(childDom, spec.itemId, item);
             } catch (e) { console.warn('Decorator error in fillMountPoints:', e); }
           }
           mp.appendChild(childDom);
