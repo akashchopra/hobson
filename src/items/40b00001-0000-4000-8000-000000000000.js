@@ -780,15 +780,15 @@ function hiccupToDOM(hiccup, sourceCtx, _refs) {
       if (hiccup.length > 1 && hiccup[1] && typeof hiccup[1] === 'object'
           && !Array.isArray(hiccup[1]) && !hiccup[1].nodeType && !isKeyword(hiccup[1])) {
         const attrs = hiccup[1];
-        let itemId = null, viewId = null, parentId = null;
+        let itemId = null, viewId = null, openIn = null;
         for (const [k, v] of Object.entries(attrs)) {
           const attrName = isKeyword(k) ? keywordName(k) : k;
           if (attrName === 'item') {
             itemId = v;
           } else if (attrName === 'view') {
             viewId = v;
-          } else if (attrName === 'parent') {
-            parentId = v;
+          } else if (attrName === 'open-in') {
+            openIn = v;
           } else if (attrName === 'style' || attrName === 'class' || attrName === 'data-sort-key') {
             // Pass through layout attrs
             if (attrName === 'style' && typeof v === 'object' && v !== null) {
@@ -810,8 +810,10 @@ function hiccupToDOM(hiccup, sourceCtx, _refs) {
           }
         }
         if (itemId) el.setAttribute('data-child-item', String(itemId));
-        if (viewId) el.setAttribute('data-child-view', String(viewId));
-        el.__renderChildSpec = { itemId, viewId, parentId };
+        // viewId may be a view config object {type: "guid", ...} — normalize for attribute
+        const viewIdStr = (viewId && typeof viewId === 'object') ? (viewId.type || null) : viewId;
+        if (viewIdStr) el.setAttribute('data-child-view', String(viewIdStr));
+        el.__renderChildSpec = { itemId, viewId, openIn };
       }
       // Stamp source attribution
       if (sourceCtx) {
@@ -3120,6 +3122,10 @@ function registerViewOps(env, api) {
   env.define('get-parent-id', Object.assign(() => {
     return api.getParentId();
   }, { _hobName: 'get-parent-id' }));
+
+  env.define('get-open-in', Object.assign(() => {
+    return api.getOpenIn ? api.getOpenIn() : null;
+  }, { _hobName: 'get-open-in' }));
 
   env.define('get-current-root', Object.assign(() => {
     return api.getCurrentRoot();
