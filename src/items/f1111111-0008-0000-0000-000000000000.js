@@ -1595,8 +1595,10 @@ export class RenderingSystem {
       try {
         // Mount points are rendering boundaries — fresh renderPath.
         // The child is an independent render instance, not a nested call.
+        // If the mount point specifies a :parent, use that (allows container views
+        // to propagate their own parentId to children, e.g. for attach! targeting).
         const childContext = {
-          parentId: containerItem ? containerItem.id : context.parentId || null,
+          parentId: spec.parentId || (containerItem ? containerItem.id : context.parentId || null),
           renderPath: []
         };
         const childDom = await this.renderItem(spec.itemId, spec.viewId || null, {}, childContext);
