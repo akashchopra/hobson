@@ -272,6 +272,11 @@ export async function hasPreviousView() {
   return !!child?.previousView;
 }
 
+// Get the rendering system instance (for re-rendering operations)
+export function getRendering() {
+  return rendering;
+}
+
 // Force persist - no longer needed (writes happen immediately)
 // Kept for API compatibility
 export async function forcePersist() {
