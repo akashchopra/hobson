@@ -1,58 +1,42 @@
-// Extract content.code from items and save to separate .js files
-// Run this in the Hobson REPL
+// Extract code from items and save to .code sidecar files
+// Handles content.code (JS), content.hob (Hob), or both
 
-(async function extractCodeToFiles() {
+(async function extractCodeFiles() {
   const items = await api.getAllRaw();
+  const hob = await api.require('40b00001-0000-4000-8000-000000000000');
 
-  // Filter items that have content.code
-  const codeItems = items.filter(item => item.content?.code);
-
+  const codeItems = items.filter(item => item.content?.code || Array.isArray(item.content?.hob));
   console.log(`Found ${codeItems.length} items with code`);
 
   for (const item of codeItems) {
-    const code = item.content.code;
-    const filename = `${item.id}.js`;
+    const hasJS = !!item.content.code;
+    const hasHob = Array.isArray(item.content.hob);
+    const parts = [];
 
-    // Create and download the file
-    const blob = new Blob([code], { type: 'text/javascript' });
+    if (hasJS && hasHob) {
+      parts.push(';;; --- JavaScript ---');
+      parts.push(item.content.code);
+      parts.push('');
+      parts.push(';;; --- Hob ---');
+      parts.push(hob.prettyPrintAll(item.content.hob));
+    } else if (hasJS) {
+      parts.push(item.content.code);
+    } else {
+      parts.push(hob.prettyPrintAll(item.content.hob));
+    }
+
+    const blob = new Blob([parts.join('\n')], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = filename;
+    a.download = `${item.id}.code`;
     a.click();
     URL.revokeObjectURL(url);
 
-    // Small delay to avoid overwhelming the browser
     await new Promise(r => setTimeout(r, 100));
-
-    console.log(`Saved: ${filename} (${item.name || item.id})`);
+    const lang = hasJS && hasHob ? 'JS+Hob' : hasJS ? 'JS' : 'Hob';
+    console.log(`Saved: ${item.id}.code (${item.name || item.id}) [${lang}]`);
   }
 
-  console.log(`Done! Extracted ${codeItems.length} code files.`);
-  
-  // Filter items that have content.hob
-  const hobItems = items.filter(item => item.content?.hob);
-
-  console.log(`Found ${hobItems.length} items with hob`);
-
-  for (const item of hobItems) {
-    const code = JSON.stringify(item.content.hob, null, "\t");
-    const filename = `${item.id}.hob`;
-
-    // Create and download the file
-    const blob = new Blob([code], { type: 'text/javascript' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    a.click();
-    URL.revokeObjectURL(url);
-
-    // Small delay to avoid overwhelming the browser
-    await new Promise(r => setTimeout(r, 100));
-
-    console.log(`Saved: ${filename} (${item.name || item.id})`);
-  }
-
-  console.log(`Done! Extracted ${codeItems.length} hob files.`);
+  console.log(`Done! Extracted ${codeItems.length} .code files.`);
 })();
