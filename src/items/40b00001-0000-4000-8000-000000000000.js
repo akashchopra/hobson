@@ -770,6 +770,57 @@ function hiccupToDOM(hiccup, sourceCtx, _refs) {
       return frag;
     }
     const tagName = keywordName(first);
+
+    // :render-child — declarative mount point for child items.
+    // Creates a placeholder div that the rendering system fills independently.
+    if (tagName === 'render-child') {
+      const el = document.createElement('div');
+      el.setAttribute('data-render-child', '');
+      // Extract attrs from hiccup attribute map
+      if (hiccup.length > 1 && hiccup[1] && typeof hiccup[1] === 'object'
+          && !Array.isArray(hiccup[1]) && !hiccup[1].nodeType && !isKeyword(hiccup[1])) {
+        const attrs = hiccup[1];
+        let itemId = null, viewId = null;
+        for (const [k, v] of Object.entries(attrs)) {
+          const attrName = isKeyword(k) ? keywordName(k) : k;
+          if (attrName === 'item') {
+            itemId = v;
+          } else if (attrName === 'view') {
+            viewId = v;
+          } else if (attrName === 'style' || attrName === 'class' || attrName === 'data-sort-key') {
+            // Pass through layout attrs
+            if (attrName === 'style' && typeof v === 'object' && v !== null) {
+              for (const [sp, sv] of Object.entries(v)) {
+                const cssProp = isKeyword(sp) ? keywordName(sp) : sp;
+                el.style[cssProp] = sv;
+              }
+            } else if (attrName === 'class' && typeof v === 'string') {
+              for (const c of v.split(/\s+/)) {
+                if (c) el.classList.add(c);
+              }
+            } else if (v !== false && v !== null && v !== undefined) {
+              el.setAttribute(attrName, String(v));
+            }
+          } else if (v === true) {
+            el.setAttribute(attrName, '');
+          } else if (v !== false && v !== null && v !== undefined) {
+            el.setAttribute(attrName, String(v));
+          }
+        }
+        if (itemId) el.setAttribute('data-child-item', String(itemId));
+        if (viewId) el.setAttribute('data-child-view', String(viewId));
+        el.__renderChildSpec = { itemId, viewId };
+      }
+      // Stamp source attribution
+      if (sourceCtx) {
+        el.setAttribute('data-source', sourceCtx.viewName);
+        el.setAttribute('data-source-lang', 'hob');
+        el.setAttribute('data-view-id', sourceCtx.viewId);
+        if (sourceCtx.forItem) el.setAttribute('data-for-item', sourceCtx.forItem);
+      }
+      return el;
+    }
+
     const parsed = parseTag(tagName);
     const el = document.createElement(parsed.tag);
     if (parsed.id) el.id = parsed.id;

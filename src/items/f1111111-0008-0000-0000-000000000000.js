@@ -819,6 +819,27 @@ export class RenderingSystem {
                 if (_dr) console.log(`[morphdom] SKIP render-instance=${fromEl.getAttribute('data-render-instance')} tag=${fromEl.tagName}`);
                 return false;
               }
+              // Skip filled :render-child mount points with same spec — child has its own lifecycle.
+              // Update wrapper attrs (style, position, class) but skip children.
+              if (fromEl.hasAttribute('data-render-child-filled') && toEl.hasAttribute('data-render-child')) {
+                const fromItem = fromEl.getAttribute('data-child-item');
+                const toItem = toEl.getAttribute('data-child-item');
+                const fromView = fromEl.getAttribute('data-child-view');
+                const toView = toEl.getAttribute('data-child-view');
+                if (fromItem === toItem && fromView === toView) {
+                  // Same child spec — update wrapper attrs, skip children
+                  if (toEl.getAttribute('style') !== null) fromEl.setAttribute('style', toEl.getAttribute('style'));
+                  if (toEl.getAttribute('class') !== null) fromEl.setAttribute('class', toEl.getAttribute('class'));
+                  if (toEl.getAttribute('data-sort-key') !== null) fromEl.setAttribute('data-sort-key', toEl.getAttribute('data-sort-key'));
+                  // Transfer __renderChildSpec from new DOM
+                  if (toEl.__renderChildSpec) fromEl.__renderChildSpec = toEl.__renderChildSpec;
+                  if (_dr) console.log(`[morphdom] SKIP render-child item=${fromItem?.slice(0,8)} (same spec)`);
+                  return false;
+                }
+                // Different spec — let morphdom proceed, will be refilled after
+                fromEl.removeAttribute('data-render-child-filled');
+                if (_dr) console.log(`[morphdom] REPLACE render-child item=${fromItem?.slice(0,8)} → ${toItem?.slice(0,8)}`);
+              }
               // Preserve user-entered values in uncontrolled inputs/textareas.
               // morphdom syncs the value property, which clobbers what the user typed.
               // For uncontrolled inputs (no value attribute in new DOM), copy the
@@ -853,6 +874,8 @@ export class RenderingSystem {
                 // Without this, stale instances accumulate in the registry
                 // and dep tracker on each add/remove cycle, causing
                 // progressively more wasted work on subsequent re-renders.
+                // This covers both direct render-instances and those inside
+                // :render-child mount points (mount point removal → child cleanup).
                 const nested = node.querySelectorAll?.('[data-render-instance]');
                 if (nested) {
                   for (const el of nested) {
@@ -904,6 +927,14 @@ export class RenderingSystem {
           } else {
             delete oldDom.__hobsonCleanup;
             oldDom.removeAttribute('data-hobson-cleanup');
+          }
+
+          // Fill any new :render-child mount points that morphdom introduced
+          // (e.g. parent re-rendered with a new child added to attachments)
+          const unfilled = oldDom.querySelectorAll('[data-render-child]:not([data-render-child-filled])');
+          if (unfilled.length > 0) {
+            const rerenderItem = await this.kernel.storage.get(itemId);
+            await this.fillMountPoints(oldDom, { parentId: instance.parentId }, rerenderItem);
           }
 
           updated++;
@@ -1058,6 +1089,8 @@ export class RenderingSystem {
           const parentId = context.parentId || null;
           if (parentId) hobResult.domNode.setAttribute('data-parent-id', parentId);
           this.registry.register(hobResult.domNode, itemId, view.id, parentId, hobResult.trackingId);
+          // Fill :render-child mount points produced by this Hob view
+          await this.fillMountPoints(hobResult.domNode, newContext, item);
         }
         if (_dr) console.log(`[render] DONE itemId=${String(itemId).slice(0,8)} view=${view.name} hasDOM=${!!hobResult.domNode}`);
         return hobResult.domNode;
@@ -1113,6 +1146,8 @@ export class RenderingSystem {
         const parentId = context.parentId || null;
         if (parentId) domNode.setAttribute('data-parent-id', parentId);
         this.registry.register(domNode, itemId, view.id, parentId, jsTrackingId);
+        // Fill :render-child mount points produced by this JS view
+        await this.fillMountPoints(domNode, newContext, item);
       }
 
       return domNode;
@@ -1542,6 +1577,41 @@ export class RenderingSystem {
     }
 
     return { domNode, trackingId };
+  }
+
+  /** Fill :render-child mount points in a DOM tree.
+   * Queries for unfilled mount-point divs, renders each child item into them.
+   * @param {HTMLElement} parentDom - The DOM tree to scan
+   * @param {Object} context - Render context from the parent
+   * @param {Object|null} containerItem - The parent item (for parentId in child context)
+   */
+  async fillMountPoints(parentDom, context, containerItem) {
+    if (!parentDom || !parentDom.querySelectorAll) return;
+    const mountPoints = parentDom.querySelectorAll('[data-render-child]:not([data-render-child-filled])');
+    for (const mp of mountPoints) {
+      const spec = mp.__renderChildSpec;
+      if (!spec || !spec.itemId) continue;
+
+      try {
+        // Mount points are rendering boundaries — fresh renderPath.
+        // The child is an independent render instance, not a nested call.
+        const childContext = {
+          parentId: containerItem ? containerItem.id : context.parentId || null,
+          renderPath: []
+        };
+        const childDom = await this.renderItem(spec.itemId, spec.viewId || null, {}, childContext);
+        if (childDom) {
+          mp.appendChild(childDom);
+        }
+      } catch (e) {
+        console.error(`[fillMountPoints] Error rendering child ${spec.itemId}:`, e);
+        const errDiv = document.createElement('div');
+        errDiv.textContent = `Error rendering ${spec.itemId}: ${e.message}`;
+        errDiv.style.color = 'red';
+        mp.appendChild(errDiv);
+      }
+      mp.setAttribute('data-render-child-filled', '');
+    }
   }
 
   /** Lazy-load morphdom library (cached on this instance).
