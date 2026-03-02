@@ -490,7 +490,7 @@ export class RenderingSystem {
       rendering.renderItemInContext(itemId, viewIdOrConfig, options, context, containerItem);
     api.fillMountPoints = (dom) =>
       rendering.fillMountPoints(dom, context, containerItem);
-    api.rerenderItem = (itemId) => rendering.rerenderItem(itemId);
+    api.rerenderItem = (itemId) => rendering.rerenderItem(itemId ?? containerItem?.id);
     api.rerenderByView = (viewId) => rendering.rerenderByView(viewId);
     api.rerenderByType = (typeId) => rendering.rerenderByType(typeId);
     api.renderViewport = () => rendering.renderViewport();
