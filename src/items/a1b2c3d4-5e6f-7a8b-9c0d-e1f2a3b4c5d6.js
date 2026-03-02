@@ -329,10 +329,20 @@ export async function render(markdown, api, options = {}) {
         navLink.style.cssText = 'color: var(--color-primary); cursor: pointer;';
         navLink.onclick = (e) => {
           e.preventDefault(); e.stopPropagation();
+          const navigateTo = {
+            field: parsed.fragment || null,
+            symbol: parsed.queryParams.symbol || null,
+            region: parsed.queryParams.region || null,
+            line: parsed.queryParams.lines ? parseInt(parsed.queryParams.lines) : null
+          };
+          const hasNavigation = navigateTo.field || navigateTo.symbol || navigateTo.region || navigateTo.line;
           if (openTarget) {
-            api.attach(openTarget, parsed.itemId);
+            const attachment = hasNavigation
+              ? { id: parsed.itemId, view: { navigateTo } }
+              : parsed.itemId;
+            api.attach(openTarget, attachment);
           } else {
-            api.navigate(parsed.itemId);
+            api.navigate(parsed.itemId, hasNavigation ? navigateTo : undefined);
           }
         };
         header.appendChild(navLink);
