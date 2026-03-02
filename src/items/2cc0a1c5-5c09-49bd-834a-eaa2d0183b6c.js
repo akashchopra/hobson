@@ -740,16 +740,16 @@ export function buildEditViewItem(api, itemId, context, viewState) {
     el.onclick = async () => {
       context.onDismiss();
       const editView = await findEditableView(api, CODE_TYPE);
-      const parentId = api.getParentId();
-      if (parentId) {
-        await api.attach(parentId, activeViewId);
+      if (context.parentId) {
+        await api.attach(context.parentId, activeViewId);
+        if (editView) {
+          await api.setAttachmentView(context.parentId, activeViewId, editView.id);
+        }
       } else {
-        api.navigate(activeViewId);
-      }
-      if (editView && context.parentId) {
-        await api.setAttachmentView(context.parentId, activeViewId, editView.id);
-      } else if (editView) {
-        await api.viewport.setRootView(editView.id);
+        await api.navigate(activeViewId);
+        if (editView) {
+          await api.viewport.setRootView(editView.id);
+        }
       }
     };
   }
