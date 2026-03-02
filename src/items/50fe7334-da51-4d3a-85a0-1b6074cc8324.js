@@ -865,8 +865,9 @@ function deleteSelected(state) {
   const idx = parent.children.indexOf(node);
   if (idx === -1) return;
 
-  if (parent.type === 'map') {
+  if (parent.type === 'map' && node.type !== 'hole') {
     // Map special case: delete the entire key-value pair
+    // (holes are single insertions that break pairing — use normal removal)
     const pairStart = idx % 2 === 0 ? idx : idx - 1;
     const removed = parent.children.splice(pairStart, 2);
     removed.forEach(n => removeFromMaps(n, state));
@@ -2145,7 +2146,8 @@ function handleKey(e, ctx) {
     updateSelectionVisual(state);
     updateStatusBar(state, statusBar);
     // Show starter suggestions when freshly entering a hole
-    if (state.mode === 'input' && !state.inputBuffer && !state.acVisible) {
+    // (but not when user just dismissed autocomplete with Escape)
+    if (state.mode === 'input' && !state.inputBuffer && !state.acVisible && e.key !== 'Escape') {
       updateAutocomplete(state, ctx);
     }
   }
