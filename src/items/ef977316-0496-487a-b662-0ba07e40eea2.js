@@ -225,9 +225,19 @@ export async function render(pageItem, api) {
         let widgetElement;
         try {
           if (viewItem.content?.hob && !viewItem.content?.code) {
-            // Hob view: render through the rendering system (handles AST caching etc.)
-            // Pass pageContext via options so the rendering system can attach it to the api
-            widgetElement = await api.renderItem(childId, { type: viewItem.id, openIn }, { pageContext });
+            // Hob view: create a :render-child mount point (filled by api.fillMountPoints below)
+            const mountPoint = document.createElement('div');
+            mountPoint.setAttribute('data-render-child', '');
+            mountPoint.setAttribute('data-child-item', childId);
+            const viewIdStr = viewItem.id;
+            if (viewIdStr) mountPoint.setAttribute('data-child-view', viewIdStr);
+            mountPoint.__renderChildSpec = {
+              itemId: childId,
+              viewId: { type: viewItem.id, openIn },
+              openIn,
+              pageContext
+            };
+            widgetElement = mountPoint;
           } else {
             // JS view: load module and call render directly (supports pageContext injection)
             const viewModule = await api.require(viewItem.id);
@@ -375,6 +385,13 @@ export async function render(pageItem, api) {
     }
 
     wrapper.appendChild(grid);
+
+    // Fill :render-child mount points (Hob view widgets).
+    // On initial render the rendering system also fills after render() returns,
+    // but for design-mode re-renders we need to trigger it explicitly.
+    if (api.fillMountPoints) {
+      await api.fillMountPoints(wrapper);
+    }
   }
 
   // Initial render

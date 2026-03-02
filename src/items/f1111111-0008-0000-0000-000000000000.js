@@ -495,6 +495,8 @@ export class RenderingSystem {
     // Rendering operations
     api.renderItem = (itemId, viewIdOrConfig, options) =>
       rendering.renderItemInContext(itemId, viewIdOrConfig, options, context, containerItem);
+    api.fillMountPoints = (dom) =>
+      rendering.fillMountPoints(dom, context, containerItem);
     api.rerenderItem = (itemId) => rendering.rerenderItem(itemId);
     api.rerenderByView = (viewId) => rendering.rerenderByView(viewId);
     api.rerenderByType = (typeId) => rendering.rerenderByType(typeId);
@@ -1645,6 +1647,7 @@ export class RenderingSystem {
         if (resolvedViewConfig) childContext.viewConfig = resolvedViewConfig;
         const renderOpts = {};
         if (spec.onCycle) renderOpts.onCycle = spec.onCycle;
+        if (spec.pageContext) renderOpts.pageContext = spec.pageContext;
         const childDom = await this.renderItem(spec.itemId, resolvedViewId, renderOpts, childContext);
         if (childDom) {
           if (effectiveDecorator) {

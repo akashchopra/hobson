@@ -380,8 +380,11 @@ export async function render(markdown, api, options = {}) {
         header.appendChild(navLink);
         wrapperDiv.appendChild(header);
 
-        const renderedContent = await api.renderItem(parsed.itemId);
-        wrapperDiv.appendChild(renderedContent);
+        const mountPoint = document.createElement('div');
+        mountPoint.setAttribute('data-render-child', '');
+        mountPoint.setAttribute('data-child-item', parsed.itemId);
+        mountPoint.__renderChildSpec = { itemId: parsed.itemId, viewId: null, openIn: null };
+        wrapperDiv.appendChild(mountPoint);
       }
 
       img.parentNode.replaceChild(wrapperDiv, img);
