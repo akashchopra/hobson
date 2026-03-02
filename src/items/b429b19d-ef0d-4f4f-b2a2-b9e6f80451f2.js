@@ -166,9 +166,15 @@ export async function render(item, api) {
       fieldElement.textContent = 'Error: ' + renderError.message;
     }
 
+    // Key each field by path+mode so morphdom replaces (not patches) when mode changes.
+    // Without this, morphdom patches the old field DOM in place, keeping stale event
+    // handlers whose closures captured the old mode's state (e.g. onChange = null).
+    const fieldKey = `field-${path}-${hint.mode || 'readonly'}`;
+
     // Wrap in collapsible <details> if requested
     if (hint.collapsible) {
       const details = api.createElement('details');
+      details.setAttribute('data-sort-key', fieldKey);
       const shouldOpen = hint.startCollapsed === 'ifEmpty' ? !!value : !hint.startCollapsed;
       if (shouldOpen) details.setAttribute('open', '');
       const summary = api.createElement('summary');
@@ -178,6 +184,7 @@ export async function render(item, api) {
       details.appendChild(fieldElement);
       scrollArea.appendChild(details);
     } else {
+      fieldElement.setAttribute('data-sort-key', fieldKey);
       scrollArea.appendChild(fieldElement);
     }
 
