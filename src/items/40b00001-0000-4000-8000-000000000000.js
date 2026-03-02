@@ -4,7 +4,7 @@
 // Phase 2: Macros, quasiquote, destructuring, multi-arity, atoms, concurrency, error handling
 // Phase 3: DOM runtime (hiccupToDOM, parseTag), view ops, def-view macro
 // Phase 4: Watches and events (def-watch, emit!, hobToJs, JS interop fix)
-// Phase 5: Reactivity (DependencyTracker, instrumented get-item/deref/swap!/reset!)
+// Phase 5: Reactivity (selector-based, via api._renderItemId/_selectorInfo)
 
 // ============================================================
 // Error types
@@ -866,14 +866,14 @@ function hiccupToDOM(hiccup, sourceCtx, _refs) {
             const throttleMs = v[keyword('throttle')] || v['throttle'];
             handler = rawHandler;
             if (debounceMs) {
-              const orig = wrapEventHandler(handler);
+              const orig = handler;
               handler = function(e) {
                 if (el.__hobTimers?.[eventName]) clearTimeout(el.__hobTimers[eventName]);
                 if (!el.__hobTimers) el.__hobTimers = {};
                 el.__hobTimers[eventName] = setTimeout(() => orig(e), debounceMs);
               };
             } else if (throttleMs) {
-              const orig = wrapEventHandler(handler);
+              const orig = handler;
               handler = function(e) {
                 if (el.__hobTimers?.[eventName]) return;
                 if (!el.__hobTimers) el.__hobTimers = {};
@@ -883,10 +883,9 @@ function hiccupToDOM(hiccup, sourceCtx, _refs) {
             }
           }
           if (typeof handler === 'function') {
-            const wrapped = wrapEventHandler(handler);
-            el.addEventListener(eventName, wrapped);
+            el.addEventListener(eventName, handler);
             if (!el.__hobEvents) el.__hobEvents = {};
-            el.__hobEvents[eventName] = wrapped;
+            el.__hobEvents[eventName] = handler;
           }
         } else if (attrName === 'style' && typeof v === 'object' && v !== null) {
           for (const [sp, sv] of Object.entries(v)) {
@@ -1037,148 +1036,10 @@ function hobToJs(value) {
 }
 
 // ============================================================
-// Dependency Tracking (reactive re-rendering)
+// (DependencyTracker removed — Phase 7 simplification)
+// Selectors are now stored on render instances via api._renderItemId / api._selectorInfo.
+// The rendering system uses registry.getByItemId for reactive lookups.
 // ============================================================
-
-let _currentTrackingContext = null;
-let _atomMutationCallback = null;
-
-class DependencyTracker {
-  constructor() {
-    this.contextDeps = new Map();      // contextId -> Set<itemId>
-    this.contextAtomDeps = new Map();  // contextId -> Set<atom>
-    this.itemDependents = new Map();   // itemId -> Set<contextId>  (reverse index)
-    this.atomDependents = new Map();   // atom -> Set<contextId>    (reverse index)
-    this.contextSelectors = new Map(); // contextId -> Map<itemId, {selector,lastValue}|null>
-  }
-
-  startTracking(contextId) {
-    // Save parent context for proper nesting (render-item inside render-item)
-    const prev = _currentTrackingContext;
-    this.clearDeps(contextId);
-    this.contextDeps.set(contextId, new Set());
-    this.contextAtomDeps.set(contextId, new Set());
-    _currentTrackingContext = { trackerId: contextId, tracker: this, _prev: prev };
-  }
-
-  stopTracking() {
-    const ctx = _currentTrackingContext;
-    // Restore parent context instead of nulling out
-    _currentTrackingContext = ctx?._prev || null;
-    if (!ctx) return { items: new Set(), atoms: new Set() };
-    return {
-      items: this.contextDeps.get(ctx.trackerId) || new Set(),
-      atoms: this.contextAtomDeps.get(ctx.trackerId) || new Set()
-    };
-  }
-
-  recordAccess(itemId, selectorInfo = null) {
-    if (!_currentTrackingContext) return;
-    const ctxId = _currentTrackingContext.trackerId;
-    const deps = this.contextDeps.get(ctxId);
-    if (deps) deps.add(itemId);
-    if (!this.itemDependents.has(itemId)) this.itemDependents.set(itemId, new Set());
-    this.itemDependents.get(itemId).add(ctxId);
-
-    // Selector tracking for fine-grained reactivity
-    if (!this.contextSelectors.has(ctxId)) this.contextSelectors.set(ctxId, new Map());
-    const selMap = this.contextSelectors.get(ctxId);
-    const existing = selMap.get(itemId);
-    if (existing === undefined) {
-      selMap.set(itemId, selectorInfo);           // first registration
-    }
-    // "Selector pins": an explicit selector is an intentional narrowing of
-    // reactivity.  Later bare get-item calls on the same item (e.g. helpers
-    // reading fresh data during render) must not widen it — the selector is
-    // the contract for what triggers a re-render.
-  }
-
-  /** Record a dependency for an explicit context ID (bypasses global _currentTrackingContext).
-   * Used by renderHobView's fallback dep to guarantee correct registration even when
-   * concurrent pmap children have corrupted the global tracking context.
-   */
-  recordAccessFor(ctxId, itemId, selectorInfo = null) {
-    const deps = this.contextDeps.get(ctxId);
-    if (deps) deps.add(itemId);
-    if (!this.itemDependents.has(itemId)) this.itemDependents.set(itemId, new Set());
-    this.itemDependents.get(itemId).add(ctxId);
-
-    if (!this.contextSelectors.has(ctxId)) this.contextSelectors.set(ctxId, new Map());
-    const selMap = this.contextSelectors.get(ctxId);
-    const existing = selMap.get(itemId);
-    if (existing === undefined) {
-      selMap.set(itemId, selectorInfo);
-    }
-  }
-
-  getSelectorInfo(contextId, itemId) {
-    const selMap = this.contextSelectors.get(contextId);
-    if (!selMap) return undefined;
-    return selMap.has(itemId) ? selMap.get(itemId) : undefined;
-  }
-
-  recordAtomAccess(atom) {
-    if (!_currentTrackingContext) return;
-    const ctxId = _currentTrackingContext.trackerId;
-    // Skip tracking self-owned atoms — atoms created by this view's own evaluation
-    // should not trigger re-renders of that same view (they're managed internally via handlers)
-    if (atom._ownerCtx === ctxId) return;
-    const deps = this.contextAtomDeps.get(ctxId);
-    if (deps) deps.add(atom);
-    if (!this.atomDependents.has(atom)) this.atomDependents.set(atom, new Set());
-    this.atomDependents.get(atom).add(ctxId);
-  }
-
-  getDependents(itemId) {
-    return this.itemDependents.get(itemId) || new Set();
-  }
-
-  getAtomDependents(atom) {
-    return this.atomDependents.get(atom) || new Set();
-  }
-
-  clearDeps(contextId) {
-    const itemDeps = this.contextDeps.get(contextId);
-    if (itemDeps) {
-      for (const itemId of itemDeps) {
-        const s = this.itemDependents.get(itemId);
-        if (s) { s.delete(contextId); if (s.size === 0) this.itemDependents.delete(itemId); }
-      }
-      this.contextDeps.delete(contextId);
-    }
-    const atomDeps = this.contextAtomDeps.get(contextId);
-    if (atomDeps) {
-      for (const atom of atomDeps) {
-        const s = this.atomDependents.get(atom);
-        if (s) { s.delete(contextId); if (s.size === 0) this.atomDependents.delete(atom); }
-      }
-      this.contextAtomDeps.delete(contextId);
-    }
-    this.contextSelectors.delete(contextId);
-  }
-
-  static isTracking() { return _currentTrackingContext !== null; }
-}
-
-function setAtomMutationCallback(cb) { _atomMutationCallback = cb; }
-
-/** Wrap a Hob function for use as an event handler.
- * Saves and nulls _currentTrackingContext so the handler doesn't
- * contaminate any in-progress render's dependency tracking.
- * Without this, event handlers that fire during async render gaps
- * record spurious deps on the render context, causing cascading re-renders.
- */
-function wrapEventHandler(handler) {
-  return function(...args) {
-    const saved = _currentTrackingContext;
-    _currentTrackingContext = null;
-    try {
-      return handler.apply(this, args);
-    } finally {
-      _currentTrackingContext = saved;
-    }
-  };
-}
 
 // ============================================================
 // Keyword helpers
@@ -2760,14 +2621,10 @@ function createStdlib() {
 
   // --- Atoms ---
   env.define('atom', Object.assign((value) => {
-    const a = { _hobType: 'atom', value };
-    // Tag with creation context so self-owned atoms don't trigger re-renders of their own view
-    if (_currentTrackingContext) a._ownerCtx = _currentTrackingContext.trackerId;
-    return a;
+    return { _hobType: 'atom', value };
   }, { _hobName: 'atom' }));
   env.define('deref', Object.assign((atom) => {
     if (!atom || atom._hobType !== 'atom') throw new Error('deref requires an atom');
-    if (_currentTrackingContext) _currentTrackingContext.tracker.recordAtomAccess(atom);
     return atom.value;
   }, { _hobName: 'deref' }));
   env.define('swap!', Object.assign(async (atom, fn, ...args) => {
@@ -2775,13 +2632,11 @@ function createStdlib() {
     let newVal = fn(atom.value, ...args);
     if (newVal && typeof newVal.then === 'function') newVal = await newVal;
     atom.value = newVal;
-    if (_atomMutationCallback) _atomMutationCallback(atom);
     return newVal;
   }, { _hobName: 'swap!' }));
   env.define('reset!', Object.assign((atom, value) => {
     if (!atom || atom._hobType !== 'atom') throw new Error('reset! requires an atom');
     atom.value = value;
-    if (_atomMutationCallback) _atomMutationCallback(atom);
     return value;
   }, { _hobName: 'reset!' }));
 
@@ -2859,20 +2714,11 @@ function createStdlib() {
   // --- Concurrency ---
   env.define('pmap', Object.assign(async (fn, coll) => {
     if (coll === null) return [];
-    // Suspend parent tracking context during concurrent children.
-    // Without this, all children share the global _currentTrackingContext,
-    // recording deps on the parent context and corrupting each other's stacks.
-    const savedCtx = _currentTrackingContext;
-    _currentTrackingContext = null;
-    try {
-      return await Promise.all(coll.map(item => {
-        let result = fn(item);
-        if (result && typeof result.then === 'function') return result;
-        return result;
-      }));
-    } finally {
-      _currentTrackingContext = savedCtx;
-    }
+    return await Promise.all(coll.map(item => {
+      let result = fn(item);
+      if (result && typeof result.then === 'function') return result;
+      return result;
+    }));
   }, { _hobName: 'pmap' }));
 
   // --- JS Interop ---
@@ -2918,14 +2764,12 @@ function registerItemOps(env, api) {
     }
     let item;
     try { item = await api.get(id); } catch { item = null; }
-    if (_currentTrackingContext) {
-      if (selectorFn && item !== null) {
-        let lastValue = selectorFn(item);
-        if (lastValue && typeof lastValue.then === 'function') lastValue = await lastValue;
-        _currentTrackingContext.tracker.recordAccess(id, { selector: selectorFn, lastValue });
-      } else {
-        _currentTrackingContext.tracker.recordAccess(id, null);
-      }
+    // Register selector for own-item reactivity (rendering system reads api._selectorInfo)
+    // "Selector pins": first :select call wins (!api._selectorInfo check)
+    if (selectorFn && item !== null && api._renderItemId && id === api._renderItemId && !api._selectorInfo) {
+      let lastValue = selectorFn(item);
+      if (lastValue && typeof lastValue.then === 'function') lastValue = await lastValue;
+      api._selectorInfo = { selector: selectorFn, lastValue };
     }
     return item;
   }, { _hobName: 'get-item' }));
@@ -3016,17 +2860,15 @@ function registerViewOps(env, api) {
 
   env.define('on-document!', Object.assign((eventName, handler) => {
     const name = isKeyword(eventName) ? keywordName(eventName) : String(eventName);
-    const wrapped = wrapEventHandler(handler);
-    document.addEventListener(name, wrapped);
-    const remove = () => document.removeEventListener(name, wrapped);
+    document.addEventListener(name, handler);
+    const remove = () => document.removeEventListener(name, handler);
     api._hobCleanups.push(remove);
     return remove;
   }, { _hobName: 'on-document!' }));
 
   env.define('on-event!', Object.assign((eventId, handler) => {
     const id = isKeyword(eventId) ? keywordName(eventId) : String(eventId);
-    const wrapped = wrapEventHandler(handler);
-    const unsub = api.events.on(id, wrapped);
+    const unsub = api.events.on(id, handler);
     api._hobCleanups.push(unsub);
     return unsub;
   }, { _hobName: 'on-event!' }));
@@ -3205,7 +3047,7 @@ function registerEventOps(env, eventApi) {
 export { read, readAll, evaluate, prStr, Environment, HobError, tokenize, parse,
          keyword, isKeyword, valueToAst, astToValue, hiccupToDOM, hiccupToDOMWithRefs, parseTag,
          registerViewOps, registerItemOps, registerEventOps, hobToJs,
-         DependencyTracker, setAtomMutationCallback, setupSortable,
+         setupSortable,
          compactify, compactifyAll, prettyPrint, prettyPrintAll, deepEquals };
 
 // ============================================================
@@ -3328,11 +3170,10 @@ export function createInterpreter(api, viewApi, eventApi) {
     if (el.__hobEvents?.[eventName]) {
       el.removeEventListener(eventName, el.__hobEvents[eventName]);
     }
-    const wrapped = wrapEventHandler(handler);
-    el.addEventListener(eventName, wrapped);
+    el.addEventListener(eventName, handler);
     // Register in __hobEvents so morphdom's onBeforeElUpdated can transfer handlers
     if (!el.__hobEvents) el.__hobEvents = {};
-    el.__hobEvents[eventName] = wrapped;
+    el.__hobEvents[eventName] = handler;
     return null;
   }, { _hobName: 'dom-on!' }));
 

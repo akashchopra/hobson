@@ -225,22 +225,15 @@ class RenderInstanceRegistry {
     this.nextId = 1;
   }
 
-  /** Allocate an instance ID without registering. Used for pre-allocation before rendering.
-   * @returns {number} The allocated instance ID
-   */
-  allocateId() { return this.nextId++; }
-
   /** Register a new render instance and index it.
    * @param {HTMLElement} domNode - The rendered DOM element
    * @param {string} itemId - Item GUID
    * @param {string} viewId - View GUID used to render
    * @param {string|null} parentId - Parent item GUID (null for root)
-   * @param {number|null} [forceId] - Pre-allocated instance ID (from allocateId)
    * @returns {number} The new instance ID
    */
-  register(domNode, itemId, viewId, parentId, forceId = null) {
-    const instanceId = forceId !== null ? forceId : this.nextId++;
-    if (forceId !== null && forceId >= this.nextId) this.nextId = forceId + 1;
+  register(domNode, itemId, viewId, parentId) {
+    const instanceId = this.nextId++;
 
     const info = {
       instanceId,
@@ -251,6 +244,7 @@ class RenderInstanceRegistry {
       decorator: null,
       openIn: null,
       ancestors: null,
+      selector: null,
       timestamp: Date.now()
     };
 
@@ -427,8 +421,7 @@ export class RenderingSystem {
   constructor(kernel) {
     this.kernel = kernel;
     this.registry = new RenderInstanceRegistry();
-    this._depTracker = null;
-    this._pendingReRenders = new Map(); // ctxId -> Set<changedItemId>
+    this._pendingReRenders = new Map(); // instanceId -> Set<changedItemId>
     this._reRenderScheduled = false;
     this._flushInProgress = false;
     this._reRenderDepth = new Map(); // itemId -> count (tracks by itemId, not instanceId)
@@ -760,7 +753,6 @@ export class RenderingSystem {
         const oldDom = instance.domNode;
         if (!oldDom || !oldDom.parentNode) {
           this.registry.unregister(instance.instanceId);
-          if (this._depTracker) this._depTracker.clearDeps(instance.instanceId);
           continue;
         }
 
@@ -810,7 +802,6 @@ export class RenderingSystem {
           const morphdom = await this._loadMorphdom();
           const _dr = this._debugRender;
           const _registry = this.registry;
-          const _depTracker = this._depTracker;
 
           morphdom(oldDom, newDom, {
             // Key children by data-sort-key for correct reorder matching.
@@ -880,22 +871,18 @@ export class RenderingSystem {
                 cleanupDOMTree(node);
                 // Unregister render instances in the discarded subtree.
                 // Without this, stale instances accumulate in the registry
-                // and dep tracker on each add/remove cycle, causing
-                // progressively more wasted work on subsequent re-renders.
-                // This covers both direct render-instances and those inside
-                // :render-child mount points (mount point removal → child cleanup).
+                // on each add/remove cycle, causing progressively more
+                // wasted work on subsequent re-renders.
                 const nested = node.querySelectorAll?.('[data-render-instance]');
                 if (nested) {
                   for (const el of nested) {
                     const nestedId = parseInt(el.getAttribute('data-render-instance'), 10);
                     _registry.unregister(nestedId);
-                    if (_depTracker) _depTracker.clearDeps(nestedId);
                   }
                 }
                 if (node.hasAttribute?.('data-render-instance')) {
                   const id = parseInt(node.getAttribute('data-render-instance'), 10);
                   _registry.unregister(id);
-                  if (_depTracker) _depTracker.clearDeps(id);
                 }
               }
             }
@@ -903,13 +890,12 @@ export class RenderingSystem {
 
           // After morphdom: oldDom is still in the DOM (patched in place).
           // Clean up the NEW render's nested instances — morphdom skipped them
-          // (child render-instances manage their own lifecycle via dep tracking).
+          // (child render-instances manage their own lifecycle independently).
           const newNested = newDom.querySelectorAll('[data-render-instance]');
           for (const el of newNested) {
             cleanupDOMTree(el);
             const nestedId = parseInt(el.getAttribute('data-render-instance'), 10);
             this.registry.unregister(nestedId);
-            if (this._depTracker) this._depTracker.clearDeps(nestedId);
           }
 
           // renderItem registered a new instance pointing to newDom.
@@ -919,7 +905,6 @@ export class RenderingSystem {
           if (newInstance) {
             // Unregister old instance, transfer new instance to oldDom
             this.registry.unregister(instance.instanceId);
-            if (this._depTracker) this._depTracker.clearDeps(instance.instanceId);
             newInstance.domNode = oldDom;
             oldDom.setAttribute('data-render-instance', newInstance.instanceId);
           }
@@ -960,11 +945,9 @@ export class RenderingSystem {
             for (const el of newInstances) {
               const nestedId = parseInt(el.dataset.renderInstance, 10);
               this.registry.unregister(nestedId);
-              if (this._depTracker) this._depTracker.clearDeps(nestedId);
             }
           }
           this.registry.unregister(instance.instanceId);
-          if (this._depTracker) this._depTracker.clearDeps(instance.instanceId);
         }
       } catch (error) {
         console.error(`[Partial Re-render Error] Item ${itemId}:`, error);
@@ -1109,10 +1092,15 @@ export class RenderingSystem {
         if (hobResult.domNode) {
           const parentId = context.parentId || null;
           if (parentId) hobResult.domNode.setAttribute('data-parent-id', parentId);
-          const instId = this.registry.register(hobResult.domNode, itemId, view.id, parentId, hobResult.trackingId);
-          // Store context for re-render recovery
+          const instId = this.registry.register(hobResult.domNode, itemId, view.id, parentId);
+          // Store context and selector for re-render recovery
           const inst = this.registry.instances.get(instId);
-          if (inst) { inst.decorator = context.decorator || null; inst.openIn = context.openIn || null; inst.ancestors = context.ancestors || null; }
+          if (inst) {
+            inst.decorator = context.decorator || null;
+            inst.openIn = context.openIn || null;
+            inst.ancestors = context.ancestors || null;
+            inst.selector = hobResult.selectorInfo || null;
+          }
           // Fill :render-child mount points produced by this Hob view
           if (hobResult.domNode.querySelector?.('[data-render-child]')) {
             await this.fillMountPoints(hobResult.domNode, newContext, item);
@@ -1145,25 +1133,11 @@ export class RenderingSystem {
       const api = this.kernel.createAPI(item, newContext);
       this.enrichAPI(api, newContext, item);
 
-      // Track item dependency for JS views (same principle as Hob views).
-      // Every render instance is reactive to its own item — when the item
-      // changes, this instance re-renders independently.
-      const jsTrackingId = this._depTracker ? this.registry.allocateId() : null;
-      if (jsTrackingId != null) {
-        this._depTracker.startTracking(jsTrackingId);
-        this._depTracker.recordAccess(itemId);
-      }
-
-      let domNode;
-      try {
-        if (isRoot) perf?.mark(`${perfPrefix}-render-exec-start`);
-        domNode = await viewModule.render(item, api);
-        if (isRoot) {
-          perf?.mark(`${perfPrefix}-render-exec-end`);
-          perf?.measure(`${perfPrefix}-render-exec`, `${perfPrefix}-render-exec-start`, `${perfPrefix}-render-exec-end`);
-        }
-      } finally {
-        if (jsTrackingId != null) this._depTracker.stopTracking();
+      if (isRoot) perf?.mark(`${perfPrefix}-render-exec-start`);
+      const domNode = await viewModule.render(item, api);
+      if (isRoot) {
+        perf?.mark(`${perfPrefix}-render-exec-end`);
+        perf?.measure(`${perfPrefix}-render-exec`, `${perfPrefix}-render-exec-start`, `${perfPrefix}-render-exec-end`);
       }
 
       // Register render instance
@@ -1171,7 +1145,7 @@ export class RenderingSystem {
         domNode.__morphdom = true;
         const parentId = context.parentId || null;
         if (parentId) domNode.setAttribute('data-parent-id', parentId);
-        const instId = this.registry.register(domNode, itemId, view.id, parentId, jsTrackingId);
+        const instId = this.registry.register(domNode, itemId, view.id, parentId);
         // Store context for re-render recovery
         const inst = this.registry.instances.get(instId);
         if (inst) { inst.decorator = context.decorator || null; inst.openIn = context.openIn || null; }
@@ -1502,31 +1476,37 @@ export class RenderingSystem {
    * @param {Object} item - The item being rendered
    * @param {Object} api - The kernel API for this render context
    * @param {Object} context - Render context
-   * @returns {Promise<{domNode: HTMLElement|null, trackingId: number|null}>}
+   * @returns {Promise<{domNode: HTMLElement|null, selectorInfo: Object|null}>}
    */
   async renderHobView(view, item, api, context) {
     // Lazy-load interpreter (cached on this instance)
     if (!this._hobInterp) {
       const hob = await this.kernel.moduleSystem.require('40b00001-0000-4000-8000-000000000000');
-      this._hobInterp = hob.createInterpreter({
+      // The interpreter-level API is captured by get-item's closure.
+      // We store a reference so renderHobView can set _renderItemId/_selectorInfo on it.
+      this._hobItemApi = {
         get: id => this.kernel.storage.get(id),
         set: item => this.kernel.saveItem(item),
         delete: id => this.kernel.deleteItem(id),
         getAll: () => this.kernel.storage.getAll(),
         query: filter => this.kernel.storage.query(filter),
-      });
+      };
+      this._hobInterp = hob.createInterpreter(this._hobItemApi);
       this._hobModule = hob;
       await this._hobInterp.macrosReady;
     }
 
-    // Initialize reactivity once after first Hob module load
-    if (!this._depTracker && this._hobModule.DependencyTracker) {
-      this._depTracker = new this._hobModule.DependencyTracker();
-      this._initReactiveSubscriptions(this._hobModule);
+    // Initialize reactive subscriptions once after first Hob module load
+    if (!this._reactiveInit) {
+      this._reactiveInit = true;
+      this._initReactiveSubscriptions();
     }
 
-    // Allocate tracking ID now that tracker is guaranteed initialized
-    const trackingId = this._depTracker ? this.registry.allocateId() : null;
+    // Set up selector registration channel on the interpreter-level API object
+    // (the one captured by get-item's closure). During evaluation, get-item with
+    // :select stores selector info here when the requested item matches _renderItemId.
+    this._hobItemApi._renderItemId = item.id;
+    this._hobItemApi._selectorInfo = null;
 
     // Create child env for this render with view ops
     const childEnv = this._hobInterp.createEnvironment();
@@ -1544,32 +1524,18 @@ export class RenderingSystem {
       this._hobAstCache.set(cacheKey, asts);
     }
 
-    // Wrap evaluation in tracking context
-    if (trackingId != null) this._depTracker.startTracking(trackingId);
-
     let result = null;
     try {
       for (const ast of asts) {
         result = await this._hobModule.evaluate(ast, childEnv, []);
       }
-      // Fallback: if the view didn't register its own dep on item.id, add a bare dep.
-      // This preserves backward-compat for views that use `item` directly without get-item.
-      // Views that use (get-item (:id item) :select ...) already registered a selector-based
-      // dep during eval, so the fallback won't fire and the selector controls re-rendering.
-      //
-      // Uses recordAccessFor (context-explicit) instead of recordAccess (global-context)
-      // because concurrent pmap children can corrupt _currentTrackingContext at await points,
-      // causing the fallback to register in the wrong context. This guarantees the bare dep
-      // lands in this render's tracking context.
-      if (trackingId != null) {
-        const deps = this._depTracker.contextDeps.get(trackingId);
-        if (!deps || !deps.has(item.id)) {
-          this._depTracker.recordAccessFor(trackingId, item.id);
-        }
-      }
     } finally {
-      if (trackingId != null) this._depTracker.stopTracking();
+      this._hobItemApi._renderItemId = null;
     }
+
+    // Capture selector info registered during evaluation
+    const selectorInfo = this._hobItemApi._selectorInfo;
+    this._hobItemApi._selectorInfo = null;
 
     // Result should be a hiccup vector — convert to DOM
     const debugActive = context.debug || this.kernel.debugMode;
@@ -1607,7 +1573,7 @@ export class RenderingSystem {
       }
     }
 
-    return { domNode, trackingId };
+    return { domNode, selectorInfo };
   }
 
   /** Fill :render-child mount points in a DOM tree.
@@ -1684,47 +1650,41 @@ export class RenderingSystem {
   // Reactive infrastructure
   // ============================================================
 
-  /** Initialize reactive event subscriptions. Called once after first Hob module load.
-   * @param {Object} hob - The Hob interpreter module
+  /** Initialize reactive event subscriptions. Called once on first Hob render.
+   * Uses registry.getByItemId for reactive lookups — no separate dep tracker needed.
    */
-  _initReactiveSubscriptions(hob) {
+  _initReactiveSubscriptions() {
     const EVENT_IDS = this.kernel.EVENT_IDS;
-    // item:updated → check deps → schedule re-render
+    // item:updated → registry lookup → schedule re-render
     this.kernel.events.on(EVENT_IDS.ITEM_UPDATED, (event) => {
       const itemId = event.content?.id;
-      if (!itemId || !this._depTracker) return;
-      const dependents = this._depTracker.getDependents(itemId);
-      if (dependents.size > 0) this._scheduleReRenders(dependents, itemId);
+      if (!itemId) return;
+      const instanceIds = this.registry.byItemId.get(itemId);
+      if (instanceIds && instanceIds.size > 0) this._scheduleReRenders(instanceIds, itemId);
     });
     // item:deleted → same
     this.kernel.events.on(EVENT_IDS.ITEM_DELETED, (event) => {
       const itemId = event.content?.id;
-      if (!itemId || !this._depTracker) return;
-      const dependents = this._depTracker.getDependents(itemId);
-      if (dependents.size > 0) this._scheduleReRenders(dependents, itemId);
-    });
-    // Atom mutation callback — no item changed, always re-render
-    hob.setAtomMutationCallback((atom) => {
-      if (!this._depTracker) return;
-      const dependents = this._depTracker.getAtomDependents(atom);
-      if (dependents.size > 0) this._scheduleReRenders(dependents, null);
+      if (!itemId) return;
+      const instanceIds = this.registry.byItemId.get(itemId);
+      if (instanceIds && instanceIds.size > 0) this._scheduleReRenders(instanceIds, itemId);
     });
   }
 
-  /** Schedule re-renders for contexts whose dependencies changed (microtask batched).
-   * @param {Set<number>} contextIds - Set of tracking context IDs
-   * @param {string|null} changedItemId - The item that changed (null for atom-triggered)
+  /** Schedule re-renders for instances whose item changed (microtask batched).
+   * @param {Set<number>} instanceIds - Set of render instance IDs
+   * @param {string} changedItemId - The item that changed
    */
-  _scheduleReRenders(contextIds, changedItemId = null) {
-    for (const ctxId of contextIds) {
-      const instance = this.registry.get(ctxId);
+  _scheduleReRenders(instanceIds, changedItemId) {
+    for (const instId of instanceIds) {
+      const instance = this.registry.get(instId);
       if (!instance) continue;
-      if (!this._pendingReRenders.has(ctxId)) {
-        this._pendingReRenders.set(ctxId, new Set());
+      if (!this._pendingReRenders.has(instId)) {
+        this._pendingReRenders.set(instId, new Set());
       }
-      if (changedItemId) this._pendingReRenders.get(ctxId).add(changedItemId);
+      this._pendingReRenders.get(instId).add(changedItemId);
     }
-    if (this._debugRender) console.log(`[reactivity] SCHEDULE contexts=${[...contextIds].join(',')} pending=${[...this._pendingReRenders.keys()].join(',')}`);
+    if (this._debugRender) console.log(`[reactivity] SCHEDULE instances=${[...instanceIds].join(',')} pending=${[...this._pendingReRenders.keys()].join(',')}`);
     if (!this._reRenderScheduled) {
       this._reRenderScheduled = true;
       queueMicrotask(() => this._flushReRenders());
@@ -1749,37 +1709,27 @@ export class RenderingSystem {
       // Determine which item IDs actually need re-rendering after selector checks
       const itemsToReRender = new Set();
 
-      for (const [ctxId, changedItemIds] of pending) {
-        const instance = this.registry.get(ctxId);
+      for (const [instId, changedItemIds] of pending) {
+        const instance = this.registry.get(instId);
         if (!instance) continue;
 
-        let needsReRender = false;
-        if (changedItemIds.size === 0) {
-          needsReRender = true;                       // atom-triggered, no filtering
-        } else {
-          for (const changedId of changedItemIds) {
-            const selInfo = this._depTracker?.getSelectorInfo(ctxId, changedId);
-            if (selInfo === undefined || selInfo === null) {
-              needsReRender = true; break;            // no selector → always re-render
+        let needsReRender = true;
+        if (instance.selector && changedItemIds.size > 0) {
+          try {
+            const currentItem = await this.kernel.storage.get(instance.itemId);
+            let currentValue = instance.selector.selector(currentItem);
+            if (currentValue && typeof currentValue.then === 'function') currentValue = await currentValue;
+            if (this._hobModule.deepEquals(instance.selector.lastValue, currentValue)) {
+              needsReRender = false;
+            } else {
+              instance.selector.lastValue = currentValue;
             }
-            try {
-              const currentItem = await this.kernel.storage.get(changedId);
-              let currentValue = selInfo.selector(currentItem);
-              if (currentValue && typeof currentValue.then === 'function') currentValue = await currentValue;
-              if (!this._hobModule.deepEquals(selInfo.lastValue, currentValue)) {
-                needsReRender = true;
-                selInfo.lastValue = currentValue;     // update for next comparison
-                break;
-              }
-            } catch {
-              needsReRender = true; break;            // error → safe fallback
-            }
-          }
+          } catch { /* error → re-render */ }
         }
         if (needsReRender) {
           itemsToReRender.add(instance.itemId);
         } else if (this._debugRender) {
-          console.log(`[reactivity] SKIP ctx=${ctxId} item=${instance.itemId.slice(0,8)} (selector unchanged)`);
+          console.log(`[reactivity] SKIP inst=${instId} item=${instance.itemId.slice(0,8)} (selector unchanged)`);
         }
       }
 
