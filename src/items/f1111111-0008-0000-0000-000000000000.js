@@ -541,6 +541,30 @@ export class RenderingSystem {
       return vpMgr?.getRoot() || null;
     };
 
+    // Open item with modifier key support: Ctrl/Cmd=new tab, Alt=root, plain=attach
+    // itemIdOrAttachment: string id or { id, view: { navigateTo } } attachment object
+    api.openItem = async (event, itemIdOrAttachment) => {
+      const itemId = typeof itemIdOrAttachment === 'string' ? itemIdOrAttachment : itemIdOrAttachment?.id;
+      const navigateTo = typeof itemIdOrAttachment === 'object' ? itemIdOrAttachment?.view?.navigateTo : undefined;
+      if (event?.ctrlKey || event?.metaKey) {
+        const url = new URL(window.location);
+        url.searchParams.set('root', itemId);
+        window.open(url);
+        return;
+      }
+      if (event?.altKey) {
+        await api.navigate(itemId, navigateTo);
+        return;
+      }
+      // Default: attach to open-in target, parent, or current root
+      const target = api.getOpenIn?.() || api.getParentId?.() || api.getCurrentRoot?.();
+      if (target) {
+        await rendering.kernel.attach(target, itemIdOrAttachment);
+      } else {
+        await api.navigate(itemId, navigateTo);
+      }
+    };
+
     // Viewport state — selection, root item, root view management
     api.viewport = {
       select: async (itemId, parentId) => {

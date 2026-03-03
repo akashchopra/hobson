@@ -175,8 +175,6 @@ export async function render(markdown, api, options = {}) {
     const parsed = parseItemUrl(href);
     if (parsed) {
       link.onclick = (e) => {
-        // Let browser handle Ctrl/Cmd+Click natively (opens href in new tab)
-        if (e.ctrlKey || e.metaKey) return;
         e.preventDefault();
         // Build navigateTo params from URL fragment and query params
         const navigateTo = {
@@ -186,21 +184,10 @@ export async function render(markdown, api, options = {}) {
           symbol: parsed.queryParams.symbol || null
         };
         const hasNavigation = navigateTo.field || navigateTo.line || navigateTo.region || navigateTo.symbol;
-
-        if (e.altKey) {
-          // Alt+Click: open as root (navigate viewport)
-          api.navigate(parsed.itemId, hasNavigation ? navigateTo : undefined);
-        } else {
-          // Plain click: open in openTarget (or navigate if no container)
-          if (openTarget) {
-            const attachment = hasNavigation
-              ? { id: parsed.itemId, view: { navigateTo } }
-              : parsed.itemId;
-            api.attach(openTarget, attachment);
-          } else {
-            api.navigate(parsed.itemId, hasNavigation ? navigateTo : undefined);
-          }
-        }
+        const attachment = hasNavigation
+          ? { id: parsed.itemId, view: { navigateTo } }
+          : parsed.itemId;
+        api.openItem(e, attachment);
       };
       // Let browser show native context menu (with "Copy link") instead of Hobson's
       link.addEventListener('contextmenu', (e) => { e.stopPropagation(); });
@@ -252,11 +239,7 @@ export async function render(markdown, api, options = {}) {
         navLink.style.cssText = 'color: var(--color-primary); cursor: pointer;';
         navLink.onclick = (e) => {
           e.preventDefault(); e.stopPropagation();
-          if (openTarget) {
-            api.attach(openTarget, { id: parsed.itemId, view: { navigateTo: { symbol: fnName } } });
-          } else {
-            api.navigate(parsed.itemId, { symbol: fnName });
-          }
+          api.openItem(e, { id: parsed.itemId, view: { navigateTo: { symbol: fnName } } });
         };
         header.appendChild(navLink);
         wrapperDiv.appendChild(header);
@@ -465,7 +448,6 @@ export async function render(markdown, api, options = {}) {
           const parsed = parseItemUrl(href);
           if (parsed) {
             link.onclick = (e) => {
-              if (e.ctrlKey || e.metaKey) return;
               e.preventDefault();
               const navigateTo = {
                 field: parsed.fragment,
@@ -474,19 +456,10 @@ export async function render(markdown, api, options = {}) {
                 symbol: parsed.queryParams.symbol || null
               };
               const hasNavigation = navigateTo.field || navigateTo.line || navigateTo.region || navigateTo.symbol;
-
-              if (e.altKey) {
-                api.navigate(parsed.itemId, hasNavigation ? navigateTo : undefined);
-              } else {
-                if (openTarget) {
-                  const attachment = hasNavigation
-                    ? { id: parsed.itemId, view: { navigateTo } }
-                    : parsed.itemId;
-                  api.attach(openTarget, attachment);
-                } else {
-                  api.navigate(parsed.itemId, hasNavigation ? navigateTo : undefined);
-                }
-              }
+              const attachment = hasNavigation
+                ? { id: parsed.itemId, view: { navigateTo } }
+                : parsed.itemId;
+              api.openItem(e, attachment);
             };
             link.addEventListener('contextmenu', (e) => { e.stopPropagation(); });
             link.style.cssText = 'color: var(--color-primary); text-decoration: none; border-bottom: 1px solid var(--color-primary); cursor: pointer;';
@@ -507,11 +480,7 @@ export async function render(markdown, api, options = {}) {
             link.title = 'From: ' + itemName;
             link.onclick = (e) => {
               e.preventDefault();
-              if (openTarget) {
-                api.attach(openTarget, itemId);
-              } else {
-                api.navigate(itemId);
-              }
+              api.openItem(e, itemId);
             };
           }
         }
@@ -536,11 +505,7 @@ export async function render(markdown, api, options = {}) {
           navLink.style.cssText = 'color: var(--color-primary); cursor: pointer;';
           navLink.onclick = (e) => {
             e.preventDefault(); e.stopPropagation();
-            if (openTarget) {
-              api.attach(openTarget, itemId);
-            } else {
-              api.navigate(itemId);
-            }
+            api.openItem(e, itemId);
           };
           header.appendChild(navLink);
           wrapperDiv.appendChild(header);
