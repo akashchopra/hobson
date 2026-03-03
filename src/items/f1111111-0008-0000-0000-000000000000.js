@@ -556,26 +556,21 @@ export class RenderingSystem {
         await api.navigate(itemId, navigateTo);
         return;
       }
-      // Default: attach to open-in target, parent, or current root
-      // Skip viewport as target — it's a container, not a content parent.
-      // When open-in was set but resolves to viewport, skip parent too (it's an
-      // intermediate container like item-search) and go straight to current root.
+      // Default: attach to open-in target, parent, or current root.
+      // Viewport as open-in means we're inside a viewport attachment (modal) with
+      // no explicit container target — navigate and detach the modal.
       const openIn = api.getOpenIn?.();
-      let target;
-      if (openIn) {
-        target = openIn !== VIEWPORT_ID ? openIn : api.getCurrentRoot?.();
-      } else {
-        target = api.getParentId?.() || api.getCurrentRoot?.();
-      }
-      if (target) {
-        await rendering.kernel.attach(target, itemIdOrAttachment);
-        // If we're inside a viewport attachment, detach it (close the modal)
-        if (openIn === VIEWPORT_ID) {
-          const parentId = api.getParentId?.();
-          if (parentId) await rendering.kernel.detach(VIEWPORT_ID, parentId);
-        }
-      } else {
+      if (openIn === VIEWPORT_ID) {
+        const parentId = api.getParentId?.();
+        if (parentId) await rendering.kernel.detach(VIEWPORT_ID, parentId);
         await api.navigate(itemId, navigateTo);
+      } else {
+        const target = openIn || api.getParentId?.() || api.getCurrentRoot?.();
+        if (target) {
+          await rendering.kernel.attach(target, itemIdOrAttachment);
+        } else {
+          await api.navigate(itemId, navigateTo);
+        }
       }
     };
 
