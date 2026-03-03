@@ -245,7 +245,7 @@ export async function buildSimpleActions(api, itemId, context) {
         if (Object.keys(otherConfig).length > 0 && api.viewport.updateRootViewConfig) {
           await api.viewport.updateRootViewConfig(otherConfig);
         }
-        await window.kernel.renderViewport();
+        await api.renderViewport();
       }
     };
   }
