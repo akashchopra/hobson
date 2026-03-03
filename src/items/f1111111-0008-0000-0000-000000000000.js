@@ -774,9 +774,11 @@ export class RenderingSystem {
 
         // Re-render with current view and parent context
         // Pass viewConfig in context so views can access innerView, etc.
+        // Include ancestors so cycle detection works when view changes to a recursive view.
         const newDom = await this.renderItem(itemId, currentViewId, {}, {
           parentId: instance.parentId,
-          viewConfig: viewConfig
+          viewConfig: viewConfig,
+          ancestors: instance.ancestors || new Set()
         });
 
         // Replace content in existing container (re-check parentNode — async work above may have changed it)
@@ -833,11 +835,23 @@ export class RenderingSystem {
                   if (_dr) console.log(`[morphdom] SKIP render-child item=${fromItem?.slice(0,8)} (same spec)`);
                   return false;
                 }
-                // Different spec — let morphdom proceed, will be refilled after
-                fromEl.removeAttribute('data-render-child-filled');
+                // Different spec — clear old children so morphdom can replace them.
+                // Old children have data-render-instance which causes morphdom to
+                // skip their update (line above). Removing them allows morphdom to
+                // insert the new children (already filled by renderItem).
+                while (fromEl.firstChild) {
+                  const child = fromEl.firstChild;
+                  fromEl.removeChild(child);
+                  if (child.nodeType === 1) {
+                    cleanupDOMTree(child);
+                    const nested = child.querySelectorAll?.('[data-render-instance]');
+                    if (nested) for (const el of nested) _registry.unregister(parseInt(el.getAttribute('data-render-instance'), 10));
+                    if (child.hasAttribute?.('data-render-instance')) _registry.unregister(parseInt(child.getAttribute('data-render-instance'), 10));
+                  }
+                }
                 // Transfer __renderChildSpec from new DOM (morphdom doesn't copy JS properties)
                 if (toEl.__renderChildSpec) fromEl.__renderChildSpec = toEl.__renderChildSpec;
-                if (_dr) console.log(`[morphdom] REPLACE render-child item=${fromItem?.slice(0,8)} → ${toItem?.slice(0,8)}`);
+                if (_dr) console.log(`[morphdom] REPLACE render-child item=${fromItem?.slice(0,8)} view=${fromView?.slice(0,8)||'null'} → ${toView?.slice(0,8)||'null'}`);
               }
               // Preserve user-entered values in uncontrolled inputs/textareas.
               // morphdom syncs the value property, which clobbers what the user typed.
@@ -932,7 +946,7 @@ export class RenderingSystem {
               decorator: instance.decorator,
               openIn: instance.openIn,
               ancestors: instance.ancestors,
-              renderPath: [itemId]
+              renderPath: [`${itemId}:${instance.viewId}`]
             }, rerenderItem);
           }
 
@@ -1029,10 +1043,18 @@ export class RenderingSystem {
     const _dr = this._debugRender;
     if (_dr) console.log(`[render] START itemId=${String(itemId).slice(0,8)} viewId=${viewId?.slice(0,8)||'auto'} depth=${renderPath.length}`);
 
-    // Cycle detection — check both renderPath (within this render tree)
-    // and ancestors (accumulated across :render-child mount point boundaries)
+    // Cycle detection — track (itemId, viewId) pairs so the same item can
+    // appear multiple times in the tree with different views (e.g. spatial-canvas
+    // at top level, compact-card in a search result). Only an exact pair match
+    // indicates true recursion.
     const ancestors = context.ancestors || new Set();
-    if (renderPath.includes(itemId) || ancestors.has(itemId)) {
+    const pairKey = viewId ? `${itemId}:${viewId}` : null;
+    const isCycle = pairKey
+      ? (renderPath.includes(pairKey) || ancestors.has(pairKey))
+      : // viewId unknown: conservative check — any pair with this itemId
+        (renderPath.some(k => k.startsWith(itemId + ':')) ||
+         [...ancestors].some(k => k.startsWith(itemId + ':')));
+    if (isCycle) {
       if (options.onCycle) {
         const item = await this.kernel.storage.get(itemId);
         return options.onCycle(item);
@@ -1046,6 +1068,9 @@ export class RenderingSystem {
       const el = document.createElement('div');
       el.style.cssText = 'padding:12px; color:var(--color-text-tertiary); font-style:italic; border:1px dashed var(--color-border); border-radius:var(--border-radius); background:var(--color-bg-surface-alt); text-align:center;';
       el.textContent = `↻ ${name} (already shown above)`;
+      // Set data attributes so context menu can target this item for "View As..."
+      el.setAttribute('data-item-id', itemId);
+      if (context.parentId) el.setAttribute('data-parent-id', context.parentId);
       return el;
     }
 
@@ -1075,7 +1100,7 @@ export class RenderingSystem {
     const newContext = {
       ...context,
       ancestors,
-      renderPath: [...renderPath, itemId],
+      renderPath: [...renderPath, `${itemId}:${view.id}`],
       viewId: view.id,
       debug: context.debug || this.kernel.debugMode
     };
@@ -1616,6 +1641,8 @@ export class RenderingSystem {
         if (spec.pageContext) renderOpts.pageContext = spec.pageContext;
         const childDom = await this.renderItem(spec.itemId, resolvedViewId, renderOpts, childContext);
         if (childDom) {
+          // Set data-parent-id so context menu can target this child for "View As..."
+          if (parentId) childDom.setAttribute('data-parent-id', parentId);
           if (effectiveDecorator) {
             try {
               const item = await this.kernel.storage.get(spec.itemId);
