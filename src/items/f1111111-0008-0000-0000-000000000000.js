@@ -557,9 +557,23 @@ export class RenderingSystem {
         return;
       }
       // Default: attach to open-in target, parent, or current root
-      const target = api.getOpenIn?.() || api.getParentId?.() || api.getCurrentRoot?.();
+      // Skip viewport as target — it's a container, not a content parent.
+      // When open-in was set but resolves to viewport, skip parent too (it's an
+      // intermediate container like item-search) and go straight to current root.
+      const openIn = api.getOpenIn?.();
+      let target;
+      if (openIn) {
+        target = openIn !== VIEWPORT_ID ? openIn : api.getCurrentRoot?.();
+      } else {
+        target = api.getParentId?.() || api.getCurrentRoot?.();
+      }
       if (target) {
         await rendering.kernel.attach(target, itemIdOrAttachment);
+        // If we're inside a viewport attachment, detach it (close the modal)
+        if (openIn === VIEWPORT_ID) {
+          const parentId = api.getParentId?.();
+          if (parentId) await rendering.kernel.detach(VIEWPORT_ID, parentId);
+        }
       } else {
         await api.navigate(itemId, navigateTo);
       }
