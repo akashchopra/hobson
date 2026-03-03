@@ -2967,6 +2967,13 @@ function registerViewOps(env, api) {
     return null;
   }, { _hobName: 'attach!' }));
 
+  env.define('open-item!', Object.assign(async (event, itemId) => {
+    if (api.openItem) {
+      await api.openItem(event, itemId);
+    }
+    return null;
+  }, { _hobName: 'open-item!' }));
+
   env.define('get-parent-id', Object.assign(() => {
     return api.getParentId();
   }, { _hobName: 'get-parent-id' }));

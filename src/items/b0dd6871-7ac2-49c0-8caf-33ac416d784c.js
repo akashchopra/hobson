@@ -18,14 +18,9 @@ export async function render(value, options, api) {
   let nameSpan = null;
 
   // Helper to navigate to item
-  const navigateToItem = async (id) => {
+  const navigateToItem = async (e, id) => {
     try {
-      const parentId = api.getParentId();
-      if (parentId) {
-        await api.attach(parentId, id);
-      } else {
-        api.navigate(id);
-      }
+      await api.openItem(e, id);
     } catch (err) {
       console.error('item_ref navigation error:', err);
     }
@@ -108,7 +103,7 @@ export async function render(value, options, api) {
       navBtn.onclick = async (e) => {
         e.preventDefault();
         e.stopPropagation();
-        await navigateToItem(itemId);
+        await navigateToItem(e, itemId);
       };
       row.appendChild(navBtn);
     }
@@ -134,7 +129,7 @@ export async function render(value, options, api) {
       link.onclick = async (e) => {
         e.preventDefault();
         e.stopPropagation();
-        await navigateToItem(itemId);
+        await navigateToItem(e, itemId);
       };
       wrapper.appendChild(link);
     } else if (itemId) {

@@ -67,13 +67,8 @@ export function render(value, options, api) {
         // Click to open tag item
         if (mode !== 'editable') {
           pill.style.cursor = 'pointer';
-          pill.onclick = () => {
-            const parentId = api.getParentId();
-            if (parentId) {
-              api.attach(parentId, tagId);
-            } else {
-              api.navigate(tagId);
-            }
+          pill.onclick = (e) => {
+            api.openItem(e, tagId);
           };
         }
 
