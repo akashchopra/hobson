@@ -139,10 +139,10 @@ export async function render(item, api) {
     // Check if this field is the navigation target for scroll-to-line/region
     // navigateTo.field is just 'code' but path might be 'content.code', so compare last segment
     const fieldName = path.split('.').pop();
-    // Navigation target: explicit field match, OR symbol without field defaults to 'code'
+    // Navigation target: explicit field match, OR symbol without field defaults to code/hob
     const isNavigationTarget = navigateTo && (
       navigateTo.field === fieldName ||
-      (navigateTo.symbol && !navigateTo.field && fieldName === 'code')
+      (navigateTo.symbol && !navigateTo.field && (fieldName === 'code' || fieldName === 'hob'))
     );
     // Render field - AWAIT in case it's async!
     let fieldElement;
