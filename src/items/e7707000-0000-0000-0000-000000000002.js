@@ -47,7 +47,7 @@ async function parseStackTrace(stack, api) {
   const lines = stack.split('\n').slice(1); // Skip "Error: message" line
   const frames = [];
   
-  // Cache item lookups to avoid repeated queries
+  // Cache item lookups to avoid repeated queries (stores { id, hasHob })
   const itemCache = new Map();
   
   for (const line of lines) {
@@ -104,22 +104,25 @@ async function parseStackTrace(stack, api) {
     
     // Try to find item by source name
     let itemId = null;
+    let hasHob = false;
     if (sourceName) {
       // Remove .js extension if present
       const itemName = sourceName.replace(/\.js$/, '');
-      
+
       // Skip built-in browser sources
       if (!itemName.includes('://') &&
           !itemName.startsWith('blob:')) {
-        
+
         if (itemCache.has(itemName)) {
-          itemId = itemCache.get(itemName);
+          const cached = itemCache.get(itemName);
+          if (cached) { itemId = cached.id; hasHob = cached.hasHob; }
         } else {
           try {
             const item = await api.helpers.findByName(itemName);
             if (item) {
               itemId = item.id;
-              itemCache.set(itemName, itemId);
+              hasHob = Array.isArray(item.content?.hob);
+              itemCache.set(itemName, { id: itemId, hasHob });
             } else {
               itemCache.set(itemName, null);
             }
@@ -129,11 +132,11 @@ async function parseStackTrace(stack, api) {
         }
       }
     }
-    
+
     frames.push({
       raw: trimmed,
       sourceName: sourceName,
-      field: 'code',
+      field: hasHob ? 'hob' : 'code',
       line: lineNum,
       column: colNum,
       itemId: itemId,

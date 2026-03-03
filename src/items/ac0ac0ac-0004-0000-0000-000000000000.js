@@ -9,11 +9,14 @@ export async function onItemUpdated({ item }, api) {
 }
 
 async function indexSymbols(item, api) {
-  const code = item.content?.code;
-  if (!code || typeof code !== 'string') return;
+  const hasCode = item.content?.code && typeof item.content.code === 'string';
+  const hasHob = Array.isArray(item.content?.hob);
+  if (!hasCode && !hasHob) return;
 
   const extractor = await api.require('symbol-extractor-lib');
-  const symbols = await extractor.extractSymbols(code, api);
+  const symbols = hasHob
+    ? extractor.extractHobSymbols(item.content.hob)
+    : await extractor.extractSymbols(item.content.code, api);
 
   // Check if symbols changed (avoid unnecessary saves)
   const existingSymbols = item.content._symbols || {};

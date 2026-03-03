@@ -2967,9 +2967,12 @@ function registerViewOps(env, api) {
     return null;
   }, { _hobName: 'attach!' }));
 
-  env.define('open-item!', Object.assign(async (event, itemId) => {
+  env.define('open-item!', Object.assign(async (event, itemIdOrObj) => {
     if (api.openItem) {
-      await api.openItem(event, itemId);
+      const arg = typeof itemIdOrObj === 'string'
+        ? itemIdOrObj
+        : hobToJs(itemIdOrObj);
+      await api.openItem(event, arg);
     }
     return null;
   }, { _hobName: 'open-item!' }));

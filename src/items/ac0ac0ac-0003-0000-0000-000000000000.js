@@ -1,5 +1,5 @@
 // symbol-extractor-lib
-// Extracts symbol definitions from JavaScript code using Acorn
+// Extracts symbol definitions from JavaScript code (using Acorn) and Hob code (AST walk)
 
 export async function extractSymbols(code, api) {
   await api.require('acorn');
@@ -25,6 +25,120 @@ export async function extractSymbols(code, api) {
   attachJSDoc(comments, symbols);
   return symbols;
 }
+
+// --- Hob symbol extraction (compact JSON AST) ---
+
+const HOB_DEF_FORMS = new Set(['defn', 'def', 'def-view', 'def-watch', 'defmacro']);
+
+export function extractHobSymbols(hobAst) {
+  if (!Array.isArray(hobAst)) return {};
+  const symbols = {};
+  for (const form of hobAst) walkHobForm(form, null, symbols);
+  return symbols;
+}
+
+function walkHobForm(form, scope, symbols) {
+  if (!Array.isArray(form) || form.length < 2) return;
+  const head = form[0];
+  if (typeof head !== 'string') return;
+
+  if (HOB_DEF_FORMS.has(head)) {
+    const name = form[1];
+    if (typeof name !== 'string' || name.startsWith(':') || name.startsWith('@')) return;
+    const info = { name, kind: null, scope: scope || null };
+
+    switch (head) {
+      case 'defn': {
+        info.kind = 'function';
+        info.signature = hobParamSignature(form[2]);
+        break;
+      }
+      case 'def': {
+        const value = form[2];
+        if (Array.isArray(value) && value[0] === 'fn') {
+          info.kind = 'function';
+          info.signature = hobParamSignature(value[1]);
+        } else {
+          info.kind = 'variable';
+        }
+        break;
+      }
+      case 'def-view': {
+        info.kind = 'view';
+        info.signature = hobParamSignature(form[3]);
+        break;
+      }
+      case 'def-watch': {
+        info.kind = 'watch';
+        info.signature = hobParamSignature(form[3]);
+        break;
+      }
+      case 'defmacro': {
+        info.kind = 'macro';
+        info.signature = hobParamSignature(form[2]);
+        break;
+      }
+    }
+    if (info.kind) {
+      const key = scope ? `${scope}.${name}` : name;
+      symbols[key] = info;
+    }
+  } else if (head === 'let' && form[1]?.v) {
+    // (let [name1 val1 name2 val2 ...] body...)
+    const bindings = form[1].v;
+    for (let i = 0; i < bindings.length; i += 2) {
+      const name = bindings[i];
+      if (typeof name !== 'string' || name.startsWith(':') || name.startsWith('@')) continue;
+      const value = bindings[i + 1];
+      const isFn = Array.isArray(value) && value[0] === 'fn';
+      const key = scope ? `${scope}.${name}` : name;
+      symbols[key] = {
+        name,
+        kind: isFn ? 'function' : 'binding',
+        scope: scope || null,
+        ...(isFn ? { signature: hobParamSignature(value[1]) } : {})
+      };
+      // Recurse into the value expression
+      if (Array.isArray(value)) walkHobForm(value, scope, symbols);
+    }
+    // Recurse into body forms
+    for (let i = 2; i < form.length; i++) {
+      if (Array.isArray(form[i])) walkHobForm(form[i], scope, symbols);
+    }
+  } else {
+    // Recurse into sub-forms (fn bodies, etc.)
+    for (let i = 1; i < form.length; i++) {
+      if (Array.isArray(form[i])) walkHobForm(form[i], scope, symbols);
+    }
+  }
+}
+
+function hobParamSignature(params) {
+  // Params are a vector: {v: ["a", "b", "c"]} or multi-arity: array of ([params] body) lists
+  if (params && params.v && Array.isArray(params.v)) {
+    const names = params.v.map(p => {
+      if (typeof p === 'string') {
+        if (p === '&') return '&';
+        return p;
+      }
+      return '?';
+    });
+    return '(' + names.join(' ') + ')';
+  }
+  // Multi-arity: first form is a list whose first element is the param vector
+  if (Array.isArray(params) && Array.isArray(params[0])) {
+    const arities = params.map(arity => {
+      if (Array.isArray(arity) && arity[0]?.v) {
+        return '(' + arity[0].v.join(' ') + ')';
+      }
+      return '(?)';
+    });
+    return arities.join(' | ');
+  }
+  return null;
+}
+
+// --- JavaScript symbol extraction (Acorn) ---
 
 // Helper: Extract function signature from params
 function extractSignature(params) {

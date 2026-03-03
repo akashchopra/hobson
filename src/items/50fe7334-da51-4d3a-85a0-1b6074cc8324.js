@@ -83,6 +83,42 @@ const STDLIB = [
   { n: 'str/includes?', d: 'core' }, { n: 'str/replace', d: 'core' },
 ];
 
+// --- Symbol navigation: find a named definition/binding in inflated AST ---
+
+function findSymbolNode(node, targetName) {
+  if (!node.children) return null;
+  for (const child of node.children) {
+    if (!child.children?.length) continue;
+
+    // Only check definition heads in list nodes
+    if (child.type === 'list') {
+      const head = child.children[0];
+      if (head?.type === 'symbol') {
+        // defn/def/def-view/def-watch/defmacro: name is children[1]
+        if (_HOB_DEF_FORMS.has(head.value) && child.children.length >= 2) {
+          const nameNode = child.children[1];
+          if (nameNode?.type === 'symbol' && nameNode.value === targetName) return child.id;
+        }
+        // let: bindings vector is children[1], names at even indices
+        if (head.value === 'let' && child.children.length >= 2) {
+          const bindings = child.children[1];
+          if (bindings?.type === 'vector' && bindings.children) {
+            for (let i = 0; i < bindings.children.length; i += 2) {
+              const nameNode = bindings.children[i];
+              if (nameNode?.type === 'symbol' && nameNode.value === targetName) return nameNode.id;
+            }
+          }
+        }
+      }
+    }
+
+    // Recurse into all container nodes (list, vector, map, root)
+    const found = findSymbolNode(child, targetName);
+    if (found !== null) return found;
+  }
+  return null;
+}
+
 // --- System symbol index (module-level, shared across editor instances) ---
 const _CODE_TYPE_ID  = '22222222-0000-0000-0000-000000000000';
 const _HOB_DEF_FORMS = new Set(['defn', 'def', 'def-view', 'def-watch', 'defmacro']);
@@ -2491,9 +2527,24 @@ export async function render(value, options, api) {
   editorEl.addEventListener('click', (e) => handleClick(e, ctx));
   editorEl.addEventListener('dblclick', (e) => handleDoubleClick(e, ctx));
 
+  // Navigate to symbol if requested — search defn/def/let bindings recursively
+  if (options.scrollToSymbol) {
+    const targetName = options.scrollToSymbol;
+    const foundId = findSymbolNode(root, targetName);
+    if (foundId !== null) state.selectedId = foundId;
+  }
+
   // Initial selection
   updateSelectionVisual(state);
   updateStatusBar(state, statusBar);
+
+  // Deferred scroll — element may not be in the DOM yet when render() returns
+  if (options.scrollToSymbol && state.selectedId != null) {
+    requestAnimationFrame(() => {
+      const el = state.domMap.get(state.selectedId);
+      if (el) el.scrollIntoView({ block: 'center', inline: 'nearest' });
+    });
+  }
 
   // Build system symbol index once per session, subscribe to updates
   if (!_symbolIndex.subscribed) {
