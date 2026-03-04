@@ -21,6 +21,11 @@ function buildContent() {
       <tr><td style="${tdStyle}"><kbd style="${kbdStyle}">Ctrl+E</kbd></td><td>Edit selected item</td></tr>
       <tr><td style="${tdStyle}"><kbd style="${kbdStyle}">Ctrl+Shift+?</kbd></td><td>Show this help</td></tr>
     </table>
+    <h3 style="margin-top: 20px; margin-bottom: 12px;">Spatial Canvas</h3>
+    <table style="width: 100%; border-collapse: collapse;">
+      <tr><td style="${tdStyle}"><kbd style="${kbdStyle}">Ctrl+Shift+N</kbd></td><td>New item on canvas</td></tr>
+      <tr><td style="${tdStyle}"><kbd style="${kbdStyle}">Ctrl+Shift+A</kbd></td><td>Add existing item to canvas</td></tr>
+    </table>
     <h3 style="margin-top: 20px; margin-bottom: 12px;">Mouse</h3>
     <table style="width: 100%; border-collapse: collapse;">
       <tr><td style="${tdStyle}">Right-click</td><td>Context menu</td></tr>
