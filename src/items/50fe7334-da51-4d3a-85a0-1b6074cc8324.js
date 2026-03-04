@@ -1673,14 +1673,22 @@ function handleNavKey(e, ctx) {
   } else if (e.key === 'r' && !e.ctrlKey && !e.metaKey && !e.altKey && state.onChange) {
     // Replace: swap selected with hole pre-filled (select-all: first keystroke replaces)
     if (!node.children) {
-      const prefill = leafText(node);
       const hole = makeNode(state, 'hole', {});
       state.replaceOriginal = { nodeSnapshot: JSON.parse(JSON.stringify(node)), parentId: state.parentMap.get(node.id)?.id };
       applyMutation(state, itemNames, api, statusBar, () => replaceNode(state, node.id, hole));
-      enterInputMode(state, hole.id);
-      state.inputBuffer = prefill;
-      state.inputCursor = prefill.length;
-      state.inputSelectAll = true;
+      if (node.type === 'string') {
+        // Strings → enter string mode with raw value (no quotes)
+        enterInputMode(state, hole.id);
+        state.mode = 'string';
+        state.inputBuffer = node.value;
+        state.inputCursor = node.value.length;
+      } else {
+        const prefill = leafText(node);
+        enterInputMode(state, hole.id);
+        state.inputBuffer = prefill;
+        state.inputCursor = prefill.length;
+        state.inputSelectAll = true;
+      }
       rerender(state, itemNames, api, statusBar);
     } else { handled = false; }
   } else if ((e.key === '(' || e.key === '[' || e.key === '{') && state.onChange) {
@@ -2284,15 +2292,23 @@ function handleDoubleClick(e, ctx) {
     updateSelectionVisual(state);
     updateStatusBar(state, statusBar);
   } else {
-    // Leaf → replace mode with select-all
-    const prefill = leafText(node);
+    // Leaf → replace mode
     const hole = makeNode(state, 'hole', {});
     state.replaceOriginal = { nodeSnapshot: JSON.parse(JSON.stringify(node)), parentId: state.parentMap.get(node.id)?.id };
     applyMutation(state, itemNames, api, statusBar, () => replaceNode(state, node.id, hole));
-    enterInputMode(state, hole.id);
-    state.inputBuffer = prefill;
-    state.inputCursor = prefill.length;
-    state.inputSelectAll = true;
+    if (node.type === 'string') {
+      // Strings → enter string mode with raw value (no quotes)
+      enterInputMode(state, hole.id);
+      state.mode = 'string';
+      state.inputBuffer = node.value;
+      state.inputCursor = node.value.length;
+    } else {
+      const prefill = leafText(node);
+      enterInputMode(state, hole.id);
+      state.inputBuffer = prefill;
+      state.inputCursor = prefill.length;
+      state.inputSelectAll = true;
+    }
     rerender(state, itemNames, api, statusBar);
     updateSelectionVisual(state);
     updateStatusBar(state, statusBar);
@@ -2522,6 +2538,26 @@ export async function render(value, options, api) {
 
   // Key handler
   editorEl.addEventListener('keydown', (e) => handleKey(e, ctx));
+
+  // Paste handler for input/string modes
+  editorEl.addEventListener('paste', (e) => {
+    if ((state.mode === 'input' || state.mode === 'string') && state.onChange) {
+      e.preventDefault();
+      const text = e.clipboardData?.getData('text') || '';
+      if (!text) return;
+      if (state.inputSelectAll) {
+        state.inputBuffer = text;
+        state.inputCursor = text.length;
+        state.inputSelectAll = false;
+      } else {
+        state.inputBuffer = state.inputBuffer.slice(0, state.inputCursor) + text + state.inputBuffer.slice(state.inputCursor);
+        state.inputCursor += text.length;
+      }
+      updateHoleDisplay(state);
+      if (state.mode === 'string') updateStringAutocomplete(state, ctx);
+      else updateAutocomplete(state, ctx);
+    }
+  });
 
   // Click and double-click handlers
   editorEl.addEventListener('click', (e) => handleClick(e, ctx));
