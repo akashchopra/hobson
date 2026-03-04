@@ -1730,6 +1730,9 @@ export class RenderingSystem {
       if (!itemId) return;
       const instanceIds = this.registry.byItemId.get(itemId);
       if (instanceIds && instanceIds.size > 0) this._scheduleReRenders(instanceIds, itemId);
+      // Also re-render instances that use the changed item as their view
+      const viewInstanceIds = this.registry.byViewId.get(itemId);
+      if (viewInstanceIds && viewInstanceIds.size > 0) this._scheduleReRenders(viewInstanceIds, itemId);
     });
     // item:deleted → same
     this.kernel.events.on(EVENT_IDS.ITEM_DELETED, (event) => {
@@ -1737,6 +1740,8 @@ export class RenderingSystem {
       if (!itemId) return;
       const instanceIds = this.registry.byItemId.get(itemId);
       if (instanceIds && instanceIds.size > 0) this._scheduleReRenders(instanceIds, itemId);
+      const viewInstanceIds = this.registry.byViewId.get(itemId);
+      if (viewInstanceIds && viewInstanceIds.size > 0) this._scheduleReRenders(viewInstanceIds, itemId);
     });
   }
 
@@ -1783,7 +1788,10 @@ export class RenderingSystem {
         if (!instance) continue;
 
         let needsReRender = true;
-        if (instance.selector && changedItemIds.size > 0) {
+        // Skip selector check if the view itself changed — the rendered item's
+        // fingerprint is unchanged but the view code is different.
+        const viewChanged = changedItemIds.has(instance.viewId);
+        if (instance.selector && changedItemIds.size > 0 && !viewChanged) {
           try {
             const currentItem = await this.kernel.storage.get(instance.itemId);
             let currentValue = instance.selector.selector(currentItem);
