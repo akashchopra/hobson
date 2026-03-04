@@ -3,29 +3,29 @@
   "name": "window-minimize-lib",
   "type": "66666666-0000-0000-0000-000000000000",
   "content": {
-    "description": "Minimize and restore handling for spatial-canvas-view windows. Single code path fixes the overlay bug where two implementations (onclick handler and render loop) created duplicate pills.\n\n## Bug Fix\n\n`createMinimizedPill` is idempotent — it removes any existing pill for the same childId before creating a new one. Both the onclick handler and the render loop call the same functions, preventing pill divergence.\n\nPills are appended as direct children of the main container (not the dock overlay or scroll area) at z-index 10000, so they always appear above all windows.\n\n## Usage\n\n```javascript\nconst minLib = await api.require('window-minimize-lib');\n\n// Onclick: optimistic hide + pill + persist\nwrapper.style.display = 'none';\nminLib.createMinimizedPill(childId, name, container, index, api, { onRestore });\nawait updateChild(childId, { minimized: true });\n\n// Render loop: batch create all pills\nminLib.renderMinimizedPills(minimizedChildren, container, api, { getItemName, onRestore });\n\n// After restoring one pill:\nminLib.repositionPills(container);\n```",
-    "code": "// Item: window-minimize-lib\n// ID: 6dd254a8-dc94-4300-8a2e-19ce4165e22e\n// Type: 66666666-0000-0000-0000-000000000000\n//\n// Minimize/restore for spatial-canvas-view. Single code path fixes overlay bug.\n// Pills are placed in a flex tray that wraps rows upward automatically.\n\nconst PILL_WIDTH = 150;\nconst PILL_HEIGHT = 32;\nconst PILL_GAP = 8;\n\n// Find or create the flex tray at the bottom of the container\nfunction getPillTray(container, api) {\n  let tray = container.querySelector('[data-pill-tray]');\n  if (!tray) {\n    tray = api.createElement('div', {\n      'data-pill-tray': 'true',\n      style: `\n        position: absolute;\n        bottom: 0;\n        left: 0;\n        right: 0;\n        display: flex;\n        flex-wrap: wrap-reverse;\n        gap: ${PILL_GAP}px;\n        padding: ${PILL_GAP}px;\n        pointer-events: none;\n        z-index: 10000;\n      `\n    }, []);\n    container.appendChild(tray);\n  }\n  return tray;\n}\n\n// Create a single minimized pill (idempotent — removes existing pill for same childId first)\nexport function createMinimizedPill(childId, childName, container, index, api, { onRestore }) {\n  // Remove existing pill for this child if present (idempotent)\n  const existing = container.querySelector(`[data-minimized-id=\"${childId}\"]`);\n  if (existing) existing.remove();\n\n  const tray = getPillTray(container, api);\n\n  const pill = api.createElement('div', {\n    'data-minimized-id': childId,\n    'data-minimized': 'true',\n    style: `\n      width: ${PILL_WIDTH}px;\n      height: ${PILL_HEIGHT}px;\n      background: var(--color-bg-hover);\n      border: 1px solid var(--color-border);\n      border-radius: var(--border-radius);\n      display: flex;\n      align-items: center;\n      padding: 0 8px;\n      cursor: pointer;\n      pointer-events: auto;\n      box-shadow: var(--shadow-sm);\n    `,\n    title: childName\n  }, []);\n\n  const text = api.createElement('span', {\n    style: 'flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.75rem;'\n  }, [childName]);\n  pill.appendChild(text);\n\n  pill.addEventListener('click', async () => {\n    await onRestore(childId);\n  });\n\n  tray.appendChild(pill);\n  return pill;\n}\n\n// Render all minimized pills into container (used by render loop)\n// Clears existing pills, creates one per minimized child\nexport function renderMinimizedPills(minimizedChildren, container, api, { getItemName, onRestore }) {\n  // Clear existing tray (will be recreated by createMinimizedPill)\n  const existingTray = container.querySelector('[data-pill-tray]');\n  if (existingTray) existingTray.remove();\n\n  minimizedChildren.forEach((child, index) => {\n    const name = getItemName(child);\n    createMinimizedPill(child.id, name, container, index, api, { onRestore });\n  });\n}\n\n// No-op — flex tray handles repositioning via CSS\nexport function repositionPills(container) {}\n\n// Calculate what happens when restoring a window\n// Returns updated attachments array with target unminimized at front and all z-indices normalized\nexport function calculateRestore(childId, allChildren, isAnchoredFn) {\n  // Get floating, non-minimized children sorted by z (excluding the one being restored)\n  const floating = allChildren\n    .filter(c => !isAnchoredFn(c.view?.anchor) && !c.view?.minimized && c.id !== childId)\n    .map(c => ({ id: c.id, z: c.view?.z || 0 }))\n    .sort((a, b) => a.z - b.z);\n\n  // Add restored window at the end (front)\n  floating.push({ id: childId, z: floating.length });\n\n  // Build map of new z-values\n  const newZValues = new Map();\n  floating.forEach((c, idx) => {\n    newZValues.set(c.id, idx);\n  });\n\n  // Build updated children array\n  const updatedChildren = allChildren.map(c => {\n    if (c.id === childId) {\n      return {\n        ...c,\n        view: { ...(c.view || {}), minimized: false, z: newZValues.get(c.id) }\n      };\n    }\n    if (newZValues.has(c.id)) {\n      return {\n        ...c,\n        view: { ...(c.view || {}), z: newZValues.get(c.id) }\n      };\n    }\n    return c;\n  });\n\n  return { updatedChildren };\n}\n",
+    "description": "Inventory bar and restore logic for spatial-canvas-view. Shows all attachments as compact chips in a 24px bar at the bottom of the canvas, with state indicators and click-to-focus/restore/minimize.\n\n## API\n\n```javascript\nconst minLib = await api.require('window-minimize-lib');\n\n// Render inventory bar with all children\nminLib.renderInventoryBar(allChildren, container, api, {\n  nameMap,       // plain JS object: childId -> display name\n  isAnchoredFn,  // from anchor-lib.isAnchored\n  frontChildId,  // ID of topmost floating/maximized child\n  onRestore,     // callback for minimized chips\n  onFocus,       // callback for open (non-front) chips\n  onMinimize     // callback for front chip (second click)\n});\n\n// Calculate which child is at the front\nminLib.calculateFrontChild(allChildren, baseZ, isAnchoredFn);\n\n// Calculate z-index normalization when restoring\nminLib.calculateRestore(childId, allChildren, isAnchoredFn);\n```\n\n## State Indicators\n\n- ● open (floating)\n- ○ minimized\n- ■ maximized\n- ◆ docked/pinned\n\nFront child is highlighted with primary color.",
+    "code": "// Item: window-minimize-lib\n// ID: 6dd254a8-dc94-4300-8a2e-19ce4165e22e\n// Type: 66666666-0000-0000-0000-000000000000\n//\n// Inventory bar and restore logic for spatial-canvas-view.\n// Shows all attachments as compact chips with state indicators.\n\nconst BAR_HEIGHT = 24;\nconst CHIP_MAX_WIDTH = 140;\nconst CHIP_GAP = 2;\nconst SCROLL_STEP = 120;\n\nfunction classifyState(child, isAnchoredFn) {\n  const v = child.view || {};\n  if (v.minimized) return 'minimized';\n  if (v.maximized) return 'maximized';\n  if (isAnchoredFn(v.anchor)) return 'anchored';\n  return 'open';\n}\n\nconst ARROW_STYLE = `\n  flex-shrink: 0;\n  width: 20px; height: 20px;\n  padding: 0; border: none;\n  background: transparent;\n  border-radius: var(--border-radius);\n  cursor: pointer;\n  font-size: 0.675rem;\n  color: var(--color-text-tertiary);\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  opacity: 0.3;\n`;\n\nfunction createInventoryBar(container, api) {\n  const wrapper = api.createElement('div', {\n    'data-inventory-bar': 'true',\n    style: `\n      position: absolute;\n      bottom: 0; left: 0; right: 0;\n      height: ${BAR_HEIGHT}px;\n      display: flex;\n      align-items: center;\n      gap: 2px;\n      padding: 0 2px;\n      background: var(--color-bg-chrome);\n      border-top: 1px solid var(--color-border-light);\n      z-index: 10000;\n      pointer-events: auto;\n    `\n  }, []);\n\n  const leftBtn = api.createElement('button', {\n    'data-scroll-left': 'true',\n    style: ARROW_STYLE,\n    title: 'Scroll left'\n  }, ['\\u25C0']);\n\n  const track = api.createElement('div', {\n    'data-inventory-track': 'true',\n    style: `\n      flex: 1; min-width: 0;\n      display: flex;\n      align-items: center;\n      gap: ${CHIP_GAP}px;\n      overflow-x: auto;\n      scrollbar-width: none;\n      white-space: nowrap;\n      scroll-behavior: smooth;\n    `\n  }, []);\n\n  const rightBtn = api.createElement('button', {\n    'data-scroll-right': 'true',\n    style: ARROW_STYLE,\n    title: 'Scroll right'\n  }, ['\\u25B6']);\n\n  leftBtn.addEventListener('click', () => { track.scrollLeft -= SCROLL_STEP; });\n  rightBtn.addEventListener('click', () => { track.scrollLeft += SCROLL_STEP; });\n\n  function updateArrows() {\n    const canScrollLeft = track.scrollLeft > 1;\n    const canScrollRight = track.scrollLeft < track.scrollWidth - track.clientWidth - 1;\n    leftBtn.style.opacity = canScrollLeft ? '1' : '0.3';\n    leftBtn.style.cursor = canScrollLeft ? 'pointer' : 'default';\n    rightBtn.style.opacity = canScrollRight ? '1' : '0.3';\n    rightBtn.style.cursor = canScrollRight ? 'pointer' : 'default';\n  }\n\n  track.addEventListener('scroll', updateArrows);\n\n  wrapper.appendChild(leftBtn);\n  wrapper.appendChild(track);\n  wrapper.appendChild(rightBtn);\n  container.appendChild(wrapper);\n\n  return { track };\n}\n\n// Render inventory bar showing all children with state indicators\nexport function renderInventoryBar(allChildren, container, api, options) {\n  const { isAnchoredFn, frontChildId, onRestore, onFocus, onMinimize } = options;\n\n  const existing = container.querySelector('[data-inventory-bar]');\n  if (existing) existing.remove();\n\n  if (!allChildren || allChildren.length === 0) return;\n\n  const { track } = createInventoryBar(container, api);\n\n  const indicators = {\n    open: '\\u25CF',      // ●\n    minimized: '\\u25CB', // ○\n    maximized: '\\u25A0', // ■\n    anchored: '\\u25C6'   // ◆\n  };\n\n  allChildren.forEach(child => {\n    const childId = child.id;\n    const state = classifyState(child, isAnchoredFn);\n    const name = child._name || childId.substring(0, 8);\n    const isFront = childId === frontChildId;\n\n    const bgStyle = isFront\n      ? 'background: var(--color-primary-light); border: 1px solid var(--color-primary);'\n      : state === 'minimized'\n        ? 'background: var(--color-bg-hover); opacity: 0.7; border: 1px solid transparent;'\n        : 'background: var(--color-bg-hover); border: 1px solid transparent;';\n\n    const chip = api.createElement('div', {\n      'data-inventory-id': childId,\n      'data-sort-key': `inv-${childId}`,\n      'data-state': state,\n      'data-is-front': isFront ? 'true' : 'false',\n      style: `\n        height: 20px;\n        padding: 0 6px;\n        max-width: ${CHIP_MAX_WIDTH}px;\n        border-radius: var(--border-radius);\n        cursor: pointer;\n        display: inline-flex;\n        align-items: center;\n        gap: 3px;\n        flex-shrink: 0;\n        font-size: 0.675rem;\n        line-height: 20px;\n        ${bgStyle}\n      `,\n      title: `${name} (${state})`\n    }, []);\n\n    const indicator = api.createElement('span', {\n      'data-sort-key': `inv-ind-${childId}`,\n      style: `font-size: 0.5rem; color: ${isFront ? 'var(--color-primary)' : 'var(--color-text-tertiary)'};`\n    }, [indicators[state]]);\n    chip.appendChild(indicator);\n\n    const text = api.createElement('span', {\n      'data-sort-key': `inv-txt-${childId}`,\n      style: 'overflow: hidden; text-overflow: ellipsis; white-space: nowrap;'\n    }, [name]);\n    chip.appendChild(text);\n\n    // Read state from data attributes at click time (not closures)\n    // because morphdom keeps old elements with old handlers but updates attributes\n    chip.addEventListener('click', async (e) => {\n      e.stopPropagation();\n      const curState = chip.getAttribute('data-state');\n      const curIsFront = chip.getAttribute('data-is-front') === 'true';\n      if (curState === 'minimized') {\n        await onRestore(childId);\n      } else if (curIsFront) {\n        await onMinimize(childId);\n      } else {\n        await onFocus(childId);\n      }\n    });\n\n    track.appendChild(chip);\n  });\n\n}\n\n// Return the ID of the topmost floating or maximized child\nexport function calculateFrontChild(allChildren, baseZ, isAnchoredFn) {\n  const maximized = allChildren.find(c => c.view?.maximized && !c.view?.minimized);\n  if (maximized) return maximized.id;\n\n  const floating = allChildren\n    .filter(c => !isAnchoredFn(c.view?.anchor) && !c.view?.minimized && !c.view?.maximized)\n    .sort((a, b) => (b.view?.z || 0) - (a.view?.z || 0));\n\n  return floating.length > 0 ? floating[0].id : null;\n}\n\n// Calculate what happens when restoring a window\n// Returns updated attachments array with target unminimized at front and all z-indices normalized\nexport function calculateRestore(childId, allChildren, isAnchoredFn) {\n  // Get floating, non-minimized children sorted by z (excluding the one being restored)\n  const floating = allChildren\n    .filter(c => !isAnchoredFn(c.view?.anchor) && !c.view?.minimized && c.id !== childId)\n    .map(c => ({ id: c.id, z: c.view?.z || 0 }))\n    .sort((a, b) => a.z - b.z);\n\n  // Add restored window at the end (front)\n  floating.push({ id: childId, z: floating.length });\n\n  // Build map of new z-values\n  const newZValues = new Map();\n  floating.forEach((c, idx) => {\n    newZValues.set(c.id, idx);\n  });\n\n  // Build updated children array\n  const updatedChildren = allChildren.map(c => {\n    if (c.id === childId) {\n      return {\n        ...c,\n        view: { ...(c.view || {}), minimized: false, z: newZValues.get(c.id) }\n      };\n    }\n    if (newZValues.has(c.id)) {\n      return {\n        ...c,\n        view: { ...(c.view || {}), z: newZValues.get(c.id) }\n      };\n    }\n    return c;\n  });\n\n  return { updatedChildren };\n}\n",
     "_symbols": {
-      "PILL_WIDTH": {
-        "name": "PILL_WIDTH",
+      "BAR_HEIGHT": {
+        "name": "BAR_HEIGHT",
         "line": 8,
         "col": 6,
         "endLine": 8,
-        "endCol": 22,
+        "endCol": 20,
         "kind": "variable",
         "scope": null
       },
-      "PILL_HEIGHT": {
-        "name": "PILL_HEIGHT",
+      "CHIP_MAX_WIDTH": {
+        "name": "CHIP_MAX_WIDTH",
         "line": 9,
         "col": 6,
         "endLine": 9,
-        "endCol": 22,
+        "endCol": 24,
         "kind": "variable",
         "scope": null
       },
-      "PILL_GAP": {
-        "name": "PILL_GAP",
+      "CHIP_GAP": {
+        "name": "CHIP_GAP",
         "line": 10,
         "col": 6,
         "endLine": 10,
@@ -33,185 +33,59 @@
         "kind": "variable",
         "scope": null
       },
-      "getPillTray": {
-        "name": "getPillTray",
-        "line": 13,
+      "classifyState": {
+        "name": "classifyState",
+        "line": 12,
         "col": 0,
-        "endLine": 34,
+        "endLine": 18,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(child, isAnchoredFn)"
+      },
+      "getOrCreateInventoryBar": {
+        "name": "getOrCreateInventoryBar",
+        "line": 20,
+        "col": 0,
+        "endLine": 44,
         "endCol": 1,
         "kind": "function",
         "scope": null,
         "signature": "(container, api)"
       },
-      "getPillTray.tray": {
-        "name": "tray",
-        "line": 14,
-        "col": 6,
-        "endLine": 14,
-        "endCol": 56,
-        "kind": "variable",
-        "scope": "getPillTray"
-      },
-      "getPillTray.style": {
-        "name": "style",
-        "line": 18,
-        "col": 6,
-        "endLine": 29,
-        "endCol": 7,
-        "kind": "property",
-        "scope": "getPillTray"
-      },
-      "createMinimizedPill": {
-        "name": "createMinimizedPill",
-        "line": 37,
+      "renderInventoryBar": {
+        "name": "renderInventoryBar",
+        "line": 47,
         "col": 7,
-        "endLine": 74,
+        "endLine": 112,
         "endCol": 1,
         "kind": "function",
         "scope": null,
-        "signature": "(childId, childName, container, index, api, { ... })"
+        "signature": "(allChildren, container, api, options)"
       },
-      "createMinimizedPill.existing": {
-        "name": "existing",
-        "line": 39,
-        "col": 8,
-        "endLine": 39,
-        "endCol": 78,
-        "kind": "variable",
-        "scope": "createMinimizedPill"
-      },
-      "createMinimizedPill.tray": {
-        "name": "tray",
-        "line": 42,
-        "col": 8,
-        "endLine": 42,
-        "endCol": 42,
-        "kind": "variable",
-        "scope": "createMinimizedPill"
-      },
-      "createMinimizedPill.pill": {
-        "name": "pill",
-        "line": 44,
-        "col": 8,
-        "endLine": 61,
-        "endCol": 8,
-        "kind": "variable",
-        "scope": "createMinimizedPill"
-      },
-      "createMinimizedPill.text": {
-        "name": "text",
-        "line": 63,
-        "col": 8,
-        "endLine": 65,
-        "endCol": 17,
-        "kind": "variable",
-        "scope": "createMinimizedPill"
-      },
-      "renderMinimizedPills": {
-        "name": "renderMinimizedPills",
-        "line": 78,
+      "calculateFrontChild": {
+        "name": "calculateFrontChild",
+        "line": 115,
         "col": 7,
-        "endLine": 87,
+        "endLine": 124,
         "endCol": 1,
         "kind": "function",
         "scope": null,
-        "signature": "(minimizedChildren, container, api, { ... })"
-      },
-      "renderMinimizedPills.existingTray": {
-        "name": "existingTray",
-        "line": 80,
-        "col": 8,
-        "endLine": 80,
-        "endCol": 66,
-        "kind": "variable",
-        "scope": "renderMinimizedPills"
-      },
-      "renderMinimizedPills.name": {
-        "name": "name",
-        "line": 84,
-        "col": 10,
-        "endLine": 84,
-        "endCol": 35,
-        "kind": "variable",
-        "scope": "renderMinimizedPills"
-      },
-      "renderMinimizedPills.onRestore": {
-        "name": "onRestore",
-        "line": 85,
-        "col": 65,
-        "endLine": 85,
-        "endCol": 74,
-        "kind": "property",
-        "scope": "renderMinimizedPills"
-      },
-      "repositionPills": {
-        "name": "repositionPills",
-        "line": 90,
-        "col": 7,
-        "endLine": 90,
-        "endCol": 45,
-        "kind": "function",
-        "scope": null,
-        "signature": "(container)"
+        "signature": "(allChildren, baseZ, isAnchoredFn)"
       },
       "calculateRestore": {
         "name": "calculateRestore",
-        "line": 94,
+        "line": 128,
         "col": 7,
-        "endLine": 128,
+        "endLine": 157,
         "endCol": 1,
         "kind": "function",
         "scope": null,
         "signature": "(childId, allChildren, isAnchoredFn)"
-      },
-      "calculateRestore.floating": {
-        "name": "floating",
-        "line": 96,
-        "col": 8,
-        "endLine": 99,
-        "endCol": 30,
-        "kind": "variable",
-        "scope": "calculateRestore"
-      },
-      "calculateRestore.id": {
-        "name": "id",
-        "line": 102,
-        "col": 18,
-        "endLine": 102,
-        "endCol": 29,
-        "kind": "property",
-        "scope": "calculateRestore"
-      },
-      "calculateRestore.z": {
-        "name": "z",
-        "line": 102,
-        "col": 31,
-        "endLine": 102,
-        "endCol": 49,
-        "kind": "property",
-        "scope": "calculateRestore"
-      },
-      "calculateRestore.newZValues": {
-        "name": "newZValues",
-        "line": 105,
-        "col": 8,
-        "endLine": 105,
-        "endCol": 30,
-        "kind": "variable",
-        "scope": "calculateRestore"
-      },
-      "calculateRestore.updatedChildren": {
-        "name": "updatedChildren",
-        "line": 127,
-        "col": 11,
-        "endLine": 127,
-        "endCol": 26,
-        "kind": "property",
-        "scope": "calculateRestore"
       }
     }
   },
-  "modified": 1771190331216,
+  "modified": 1772630000000,
   "created": 1770322000000,
   "attachments": []
 }

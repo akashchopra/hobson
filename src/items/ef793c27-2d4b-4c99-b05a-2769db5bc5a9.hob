@@ -23,15 +23,15 @@
   doc (dom-get (hiccup->dom [:div]) :ownerDocument)
   win (dom-get doc :defaultView)
 
-  ;; 4. Structural selector — re-render on add/remove/min/max/anchor/z changes
+  ;; 4. Structural selector — re-render on add/remove/min/max/anchor changes
+  ;; z excluded: bring-to-front updates z-index directly on DOM, no re-render needed
   structural-item (get-item (:id item)
     :select (fn [it]
       (map (fn [a]
         [(:id a)
          (get-in a [:view :minimized])
          (get-in a [:view :maximized])
-         (get-in a [:view :anchor])
-         (get-in a [:view :z])])
+         (get-in a [:view :anchor])])
         (or (:attachments it) []))))
 
   ;; 5. Scroll preservation — save before re-render (plain JS object)
@@ -54,9 +54,9 @@
     [:div {:data-container-id (:id item)
            :style "position:relative; width:100%; height:100%; overflow:hidden; background:var(--color-bg-body);"}
       [:div {:ref :dock-overlay :data-dock-overlay "true"
-             :style "position:absolute; inset:0; pointer-events:none; overflow:hidden;"}]
+             :style "position:absolute; top:0; left:0; right:0; bottom:24px; pointer-events:none; overflow:hidden;"}]
       [:div {:ref :scroll-area :data-scroll-area "true"
-             :style "position:absolute; inset:0; overflow:auto;"}
+             :style "position:absolute; top:0; left:0; right:0; bottom:24px; overflow:auto;"}
         [:div {:ref :background :class "spatial-background"
                :style "position:absolute; inset:0; z-index:0; overflow:auto; display:flex; flex-direction:column;"}]]])
 
@@ -100,7 +100,15 @@
           fresh-children (or (:attachments fresh) [])
           result (invoke z-lib "bringToFrontZ" child-id fresh-children base-z (dom-get anchor-lib :isAnchored))]
       (when result
-        (update-child child-id {:z (dom-get result :newStoredZ)})
+        ;; Silent save — z-only change must not trigger re-render
+        ;; (a compact-card-view instance of this item has no selector and would force full re-render)
+        (let [new-stored-z (dom-get result :newStoredZ)
+              updated (map (fn [c]
+                             (if (= (:id c) child-id)
+                               (assoc c :view (merge (or (:view c) {}) {:z new-stored-z}))
+                               c))
+                           fresh-children)]
+          (invoke api "set" (assoc fresh :attachments updated :modified (now)) {:silent true}))
         (dom-get result :newZ))))
 
   ;; 11. Cycle handler
@@ -116,8 +124,7 @@
           fresh-children (or (:attachments fresh) [])
           result (invoke min-lib "calculateRestore" child-id fresh-children (dom-get anchor-lib :isAnchored))
           updated-children (dom-get result :updatedChildren)]
-      (set-item! (assoc fresh :attachments updated-children :modified (now)))
-      (rerender!)))
+      (set-item! (assoc fresh :attachments updated-children :modified (now)))))
 
   ;; 13. create-window function
   create-window (fn [child-id child-view nav-to]
@@ -183,11 +190,14 @@
                 (str "position:absolute; " inset-style " z-index:" z "; pointer-events:auto; border:1px solid var(--color-border-light); border-radius:var(--border-radius); background:var(--color-bg-surface-alt); overflow:hidden; box-shadow:var(--shadow-sm);")
                 (str "position:absolute; left:" x "px; top:" y "px; width:" width "px; height:" height "px; z-index:" z "; border:1px solid var(--color-border-light); border-radius:var(--border-radius); background:var(--color-bg-surface-alt); overflow:hidden; box-shadow:var(--shadow-sm);")))
 
+          child-name (or (get-in child-item [:content :title]) (:name child-item) (subs child-id 0 8))
+
           [wrapper wrefs] (hiccup->dom+
             [:div {:ref :wrapper
                    :data-sort-key child-id
                    :data-item-id child-id
                    :data-parent-id (:id item)
+                   :data-item-name child-name
                    :data-anchor (or (:anchor effective-view) "")
                    :data-maximized (if is-maximized "true" "false")
                    :data-orig-x x
@@ -273,7 +283,7 @@
           ;; Title text
           title-span (hiccup->dom
             [:span {:style "flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"}
-              (or (get-in child-item [:content :title]) (:name child-item) (:id child-item))])
+              child-name])
           _ (invoke titlebar "appendChild" title-span)
 
           ;; Button container
@@ -318,13 +328,6 @@
                   (fn [click-e]
                     (invoke click-e "stopPropagation")
                     (dom-set! (dom-get wrapper :style) :display "none")
-                    (let [existing-pills (invoke container "querySelectorAll" "[data-minimized=\"true\"]")]
-                      (invoke min-lib "createMinimizedPill" child-id
-                        (or (get-in child-item [:content :title]) (:name child-item) (subs child-id 0 8))
-                        container (dom-get existing-pills :length) api
-                        (let [opts (invoke (dom-get win :Object) "create" nil)]
-                          (dom-set! opts :onRestore handle-restore)
-                          opts)))
                     (update-child child-id {:minimized true :maximized false})))
                 (dom-on! max-btn :click
                   (fn [click-e]
@@ -374,11 +377,19 @@
                 (dom-set! drag-opts :onDragStart (fn [] (bring-to-front child-id)))
                 (dom-set! drag-opts :onDragEnd
                   (fn [final-x final-y]
-                    (update-child child-id
-                      {:x final-x :y final-y
-                       :width (or (invoke win "parseInt" (dom-get (dom-get wrapper :style) :width)) width)
-                       :height (or (invoke win "parseInt" (dom-get (dom-get wrapper :style) :height)) height)
-                       :anchor nil})))
+                    ;; Silent save — position/size changes must not trigger re-render
+                    (let [fresh (get-item (:id item))
+                          fresh-children (or (:attachments fresh) [])
+                          view-updates {:x final-x :y final-y
+                                        :width (or (invoke win "parseInt" (dom-get (dom-get wrapper :style) :width)) width)
+                                        :height (or (invoke win "parseInt" (dom-get (dom-get wrapper :style) :height)) height)
+                                        :anchor nil}
+                          updated (map (fn [c]
+                                         (if (= (:id c) child-id)
+                                           (assoc c :view (merge (or (:view c) {}) view-updates))
+                                           c))
+                                       fresh-children)]
+                      (invoke api "set" (assoc fresh :attachments updated :modified (now)) {:silent true}))))
                 (invoke drag-lib "attachDrag" titlebar wrapper drag-opts)))
 
           _ (invoke wrapper "appendChild" titlebar)
@@ -389,7 +400,15 @@
                 (dom-set! resize-opts :onResizeStart (fn [] (bring-to-front child-id)))
                 (dom-set! resize-opts :onResizeEnd
                   (fn [fx fy fw fh]
-                    (update-child child-id {:x fx :y fy :width fw :height fh :anchor nil})))
+                    ;; Silent save — cosmetic change
+                    (let [fresh (get-item (:id item))
+                          fresh-children (or (:attachments fresh) [])
+                          updated (map (fn [c]
+                                         (if (= (:id c) child-id)
+                                           (assoc c :view (merge (or (:view c) {}) {:x fx :y fy :width fw :height fh :anchor nil}))
+                                           c))
+                                       fresh-children)]
+                      (invoke api "set" (assoc fresh :attachments updated :modified (now)) {:silent true}))))
                 (dom-set! resize-opts :minWidth MIN-W)
                 (dom-set! resize-opts :minHeight MIN-H)
                 (invoke drag-lib "attachCornerResize" wrapper api resize-opts)))
@@ -399,7 +418,15 @@
               (let [edge-opts (invoke (dom-get win :Object) "create" nil)]
                 (dom-set! edge-opts :onResizeEnd
                   (fn [fw fh]
-                    (update-child child-id {:width fw :height fh})))
+                    ;; Silent save — cosmetic change
+                    (let [fresh (get-item (:id item))
+                          fresh-children (or (:attachments fresh) [])
+                          updated (map (fn [c]
+                                         (if (= (:id c) child-id)
+                                           (assoc c :view (merge (or (:view c) {}) {:width fw :height fh}))
+                                           c))
+                                       fresh-children)]
+                      (invoke api "set" (assoc fresh :attachments updated :modified (now)) {:silent true}))))
                 (dom-set! edge-opts :minWidth MIN-DW)
                 (dom-set! edge-opts :minHeight MIN-DH)
                 (invoke drag-lib "attachEdgeResize" wrapper (:anchor effective-view) api edge-opts)))
@@ -438,30 +465,44 @@
         (invoke target "appendChild" w)))
     rendered children-to-render)
 
-  ;; 17. Minimized pills — call createMinimizedPill directly per child
-  ;; (renderMinimizedPills uses a sync callback; Hob fns are always async, so call directly)
-  _ (when (> (count minimized-children) 0)
-      (let [existing-tray (invoke container "querySelector" "[data-pill-tray]")
-            _ (when existing-tray (invoke existing-tray "remove"))
-            pill-opts (let [o (invoke (dom-get win :Object) "create" nil)]
-                        (dom-set! o :onRestore handle-restore) o)]
-        (map (fn [mc]
-          (let [ci (try (get-item (:id mc)) (catch _ nil))
-                pill-name (or (when ci (get-in ci [:content :title]))
-                              (when ci (:name ci))
-                              (subs (:id mc) 0 8))
-                pill (invoke min-lib "createMinimizedPill"
-                       (:id mc) pill-name container 0 api pill-opts)
-                mv (or (:view mc) {})]
-            (invoke pill "setAttribute" "data-sort-key" (str "pill-" (:id mc)))
-            (invoke pill "setAttribute" "data-parent-id" (:id item))
-            (invoke pill "setAttribute" "data-item-id" (:id mc))
-            (invoke pill "setAttribute" "data-orig-x" (or (:x mv) 0))
-            (invoke pill "setAttribute" "data-orig-y" (or (:y mv) 0))
-            (invoke pill "setAttribute" "data-orig-width" (or (:width mv) DEFAULT-W))
-            (invoke pill "setAttribute" "data-orig-height" (or (:height mv) DEFAULT-H))
-            (invoke pill "setAttribute" "data-anchor" (or (:anchor mv) ""))))
-          minimized-children)))
+  ;; 17. Inventory bar — shows ALL children with state indicators
+  ;; Names for rendered children come from data-item-name DOM attr (fast, no DB read).
+  ;; Names for minimized children (no wrapper) come from get-item (parallel).
+  _ (let [named-children (pmap (fn [child]
+                                 (let [cid (:id child)
+                                       w (invoke doc "querySelector"
+                                           (str "[data-parent-id=\"" (:id item) "\"][data-item-id=\"" cid "\"]"))
+                                       dom-name (when w (invoke w "getAttribute" "data-item-name"))]
+                                   (if dom-name
+                                     (assoc child :_name dom-name)
+                                     (let [ci (try (get-item cid) (catch _ nil))]
+                                       (assoc child :_name
+                                         (or (when ci (get-in ci [:content :title]))
+                                             (when ci (:name ci))
+                                             (subs cid 0 8)))))))
+                               children)
+          front-id (invoke min-lib "calculateFrontChild" children base-z (dom-get anchor-lib :isAnchored))
+          bar-opts (let [o (invoke (dom-get win :Object) "create" nil)]
+                     (dom-set! o :isAnchoredFn (dom-get anchor-lib :isAnchored))
+                     (dom-set! o :frontChildId front-id)
+                     (dom-set! o :onRestore handle-restore)
+                     (dom-set! o :onFocus
+                       (fn [child-id]
+                         (let [new-z (bring-to-front child-id)
+                               w (invoke doc "querySelector"
+                                   (str "[data-parent-id=\"" (:id item) "\"][data-item-id=\"" child-id "\"]"))]
+                           (when (and w new-z)
+                             (dom-set! (dom-get w :style) :zIndex new-z))
+                           (when w
+                             (invoke w "scrollIntoView" {:behavior "smooth" :block "nearest" :inline "nearest"})))))
+                     (dom-set! o :onMinimize
+                       (fn [child-id]
+                         (let [w (invoke doc "querySelector"
+                                   (str "[data-parent-id=\"" (:id item) "\"][data-item-id=\"" child-id "\"]"))]
+                           (when w (dom-set! (dom-get w :style) :display "none")))
+                         (update-child child-id {:minimized true :maximized false})))
+                     o)]
+      (invoke min-lib "renderInventoryBar" named-children container api bar-opts))
 
   ;; 18. Scroll restoration (scroll-states is a plain JS object keyed by child ID)
   _ (when (> (dom-get (invoke (dom-get win :Object) "keys" scroll-states) :length) 0)
