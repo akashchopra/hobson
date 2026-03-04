@@ -836,13 +836,19 @@ function hiccupToDOM(hiccup, sourceCtx, _refs) {
     if (parsed.id) el.id = parsed.id;
     if (parsed.classes.length) el.classList.add(...parsed.classes);
 
+    // Override sourceCtx if hiccup carries a function name tag from evalApply
+    let effectiveCtx = sourceCtx;
+    if (sourceCtx && hiccup._hobBinding) {
+      effectiveCtx = { ...sourceCtx, bindingName: hiccup._hobBinding };
+    }
+
     // Stamp source attribution for element inspector
-    if (sourceCtx) {
-      el.setAttribute('data-source', sourceCtx.viewName);
+    if (effectiveCtx) {
+      el.setAttribute('data-source', effectiveCtx.viewName);
       el.setAttribute('data-source-lang', 'hob');
-      el.setAttribute('data-view-id', sourceCtx.viewId);
-      if (sourceCtx.forItem) el.setAttribute('data-for-item', sourceCtx.forItem);
-      if (sourceCtx.bindingName) el.setAttribute('data-source-binding', sourceCtx.bindingName);
+      el.setAttribute('data-view-id', effectiveCtx.viewId);
+      if (effectiveCtx.forItem) el.setAttribute('data-for-item', effectiveCtx.forItem);
+      if (effectiveCtx.bindingName) el.setAttribute('data-source-binding', effectiveCtx.bindingName);
     }
 
     let childStart = 1;
@@ -920,7 +926,7 @@ function hiccupToDOM(hiccup, sourceCtx, _refs) {
 
     // Process children (flatten nested arrays from map/for)
     for (let i = childStart; i < hiccup.length; i++) {
-      appendHiccupChild(el, hiccup[i], sourceCtx, _refs);
+      appendHiccupChild(el, hiccup[i], effectiveCtx, _refs);
     }
     return el;
   }
@@ -2172,6 +2178,13 @@ async function evalApply(ast, env, callStack) {
   try {
     let result = headVal(...args);
     if (result && typeof result.then === 'function') result = await result;
+    // Tag hiccup results with function name for element inspector.
+    // When this hiccup is later converted to DOM by hiccupToDOM, the tag
+    // provides the binding name even though the function call has returned.
+    if (fnName && result && typeof result === 'object' && !result.nodeType) {
+      try { Object.defineProperty(result, '_hobBinding', { value: fnName, configurable: true }); }
+      catch (e) { /* frozen/sealed */ }
+    }
     return result;
   } catch (e) {
     if (e instanceof HobError) throw e;
