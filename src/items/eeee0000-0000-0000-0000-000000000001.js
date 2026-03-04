@@ -94,7 +94,7 @@ export function collectElementInfo(element) {
     // Collect any attribution present
     if (el.dataset.source) {
       entry.source = el.dataset.source;
-      entry.sourceLine = el.dataset.sourceLine;
+      if (el.dataset.sourceLine) entry.sourceLine = el.dataset.sourceLine;
       if (el.dataset.sourceLang) entry.sourceLang = el.dataset.sourceLang;
       if (el.dataset.sourceBinding) entry.sourceBinding = el.dataset.sourceBinding;
     }
