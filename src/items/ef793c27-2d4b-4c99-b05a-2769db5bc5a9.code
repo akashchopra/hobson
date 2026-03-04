@@ -1,0 +1,1255 @@
+(let [anchor-lib (require "window-anchor-lib")
+      z-lib (require "window-zindex-lib")
+      drag-lib (require "window-drag-resize-lib")
+      min-lib (require "window-minimize-lib")
+      menu-lib (require "window-menu-lib")
+      DEFAULT-W (dom-get anchor-lib :DEFAULT_WINDOW_WIDTH)
+      DEFAULT-H (dom-get anchor-lib :DEFAULT_WINDOW_HEIGHT)
+      MIN-W (dom-get anchor-lib :MIN_WINDOW_WIDTH)
+      MIN-H (dom-get anchor-lib :MIN_WINDOW_HEIGHT)
+      MIN-DW (dom-get anchor-lib :MIN_DOCKED_WIDTH)
+      MIN-DH (dom-get anchor-lib :MIN_DOCKED_HEIGHT)
+      doc (dom-get (hiccup->dom [:div]) :ownerDocument)
+      win (dom-get doc :defaultView)
+      structural-item (get-item
+                        (:id item)
+                        :select
+                        (fn [it]
+                          (map
+                            (fn [a]
+                              [(:id a)
+                               (get-in a [:view :minimized])
+                               (get-in a [:view :maximized])
+                               (get-in a [:view :anchor])
+                               (get-in a [:view :type])])
+                            (or (:attachments it) []))))
+      scroll-states (let [m (invoke (dom-get win :Object) "create" nil)]
+                      (invoke
+                        (invoke
+                          doc
+                          "querySelectorAll"
+                          (str "[data-parent-id=\"" (:id item) "\"]"))
+                        "forEach"
+                        (fn [w]
+                          (let [cid (invoke w "getAttribute" "data-item-id")
+                                content (invoke
+                                          w
+                                          "querySelector"
+                                          ".window-content")]
+                            (when
+                              (and content cid)
+                              (dom-set!
+                                m
+                                cid
+                                {:scrollTop (dom-get content :scrollTop)
+                                 :scrollLeft (dom-get content :scrollLeft)})))))
+                      m)
+      [container crefs] (hiccup->dom+
+                          [:div {:data-container-id (:id item)
+                                 :style "position:relative; width:100%; height:100%; overflow:hidden; background:var(--color-bg-body);"}
+                            [:div {:ref :dock-overlay
+                                   :data-dock-overlay "true"
+                                   :style "position:absolute; top:0; left:0; right:0; bottom:24px; pointer-events:none; overflow:hidden;"}]
+                            [:div {:ref :scroll-area
+                                   :data-scroll-area "true"
+                                   :style "position:absolute; top:0; left:0; right:0; bottom:24px; overflow:auto;"}
+                              [:div {:ref :background
+                                     :class "spatial-background"
+                                     :style "position:absolute; inset:0; z-index:0; overflow:auto; display:flex; flex-direction:column;"}]]])
+      dock-overlay (:dock-overlay crefs)
+      scroll-area (:scroll-area crefs)
+      background (:background crefs)
+      children (or (:attachments structural-item) [])
+      normal-children (filter
+                        (fn [c]
+                          (and
+                            (not (get-in c [:view :minimized]))
+                            (not (get-in c [:view :maximized]))))
+                        children)
+      maximized-children (filter
+                           (fn [c]
+                             (and
+                               (get-in c [:view :maximized])
+                               (not (get-in c [:view :minimized]))))
+                           children)
+      minimized-children (filter
+                           (fn [c] (get-in c [:view :minimized]))
+                           children)
+      children-to-render (concat normal-children maximized-children)
+      ANCHOR-Z 1
+      base-z 2
+      update-child (fn [child-id view-updates]
+                     (let [fresh (get-item (:id item))
+                           fresh-children (or (:attachments fresh) [])
+                           updated (map
+                                     (fn [c]
+                                       (if
+                                         (= (:id c) child-id)
+                                         (assoc
+                                           c
+                                           :view
+                                           (merge
+                                             (or (:view c) {})
+                                             view-updates))
+                                         c))
+                                     fresh-children)]
+                       (set-item!
+                         (assoc fresh :attachments updated :modified (now)))))
+      get-max-z (fn []
+                  (let [fresh (get-item (:id item))]
+                    (invoke
+                      z-lib
+                      "getMaxZ"
+                      (or (:attachments fresh) [])
+                      base-z
+                      (dom-get anchor-lib :isAnchored))))
+      bring-to-front (fn [child-id]
+                       (let [fresh (get-item (:id item))
+                             fresh-children (or (:attachments fresh) [])
+                             result (invoke
+                                      z-lib
+                                      "bringToFrontZ"
+                                      child-id
+                                      fresh-children
+                                      base-z
+                                      (dom-get anchor-lib :isAnchored))]
+                         (when
+                           result
+                           (let [new-stored-z (dom-get result :newStoredZ)
+                                 updated (map
+                                           (fn [c]
+                                             (if
+                                               (= (:id c) child-id)
+                                               (assoc
+                                                 c
+                                                 :view
+                                                 (merge
+                                                   (or (:view c) {})
+                                                   {:z new-stored-z}))
+                                               c))
+                                           fresh-children)]
+                             (invoke
+                               api
+                               "set"
+                               (assoc
+                                 fresh
+                                 :attachments
+                                 updated
+                                 :modified
+                                 (now))
+                               {:silent true}))
+                           (dom-get result :newZ))))
+      on-cycle (fn [cycle-item]
+                 (hiccup->dom
+                   [:div {:class "cycle-marker"
+                          :style "padding:12px; color:var(--color-text-tertiary); font-style:italic; border:1px dashed var(--color-border); border-radius:var(--border-radius); background:var(--color-bg-surface-alt); text-align:center;"}
+                     (str
+                       "↻ "
+                       (or (:name cycle-item) (subs (:id cycle-item) 0 8))
+                       " (already shown above)")]))
+      handle-restore (fn [child-id]
+                       (let [fresh (get-item (:id item))
+                             fresh-children (or (:attachments fresh) [])
+                             result (invoke
+                                      min-lib
+                                      "calculateRestore"
+                                      child-id
+                                      fresh-children
+                                      (dom-get anchor-lib :isAnchored))
+                             updated-children (dom-get result :updatedChildren)]
+                         (set-item!
+                           (assoc
+                             fresh
+                             :attachments
+                             updated-children
+                             :modified
+                             (now)))))
+      create-window (fn [child-id child-view nav-to]
+                      (let [c-rect (invoke container "getBoundingClientRect")
+                            c-width (or (dom-get c-rect :width) 1000)
+                            c-height (or (dom-get c-rect :height) 600)
+                            existing-wrapper (when
+                                               (nil? (:x child-view))
+                                               (invoke
+                                                 doc
+                                                 "querySelector"
+                                                 (str
+                                                   "[data-parent-id=\""
+                                                   (:id item)
+                                                   "\"][data-item-id=\""
+                                                   child-id
+                                                   "\"]")))
+                            child-view (if
+                                         existing-wrapper
+                                         (let [prev-anchor (invoke
+                                                             existing-wrapper
+                                                             "getAttribute"
+                                                             "data-anchor")
+]
+                                           {:x (invoke
+                                                 win
+                                                 "parseInt"
+                                                 (invoke
+                                                   existing-wrapper
+                                                   "getAttribute"
+                                                   "data-orig-x"))
+                                            :y (invoke
+                                                 win
+                                                 "parseInt"
+                                                 (invoke
+                                                   existing-wrapper
+                                                   "getAttribute"
+                                                   "data-orig-y"))
+                                            :width (invoke
+                                                     win
+                                                     "parseInt"
+                                                     (invoke
+                                                       existing-wrapper
+                                                       "getAttribute"
+                                                       "data-orig-width"))
+                                            :height (invoke
+                                                      win
+                                                      "parseInt"
+                                                      (invoke
+                                                        existing-wrapper
+                                                        "getAttribute"
+                                                        "data-orig-height"))
+                                            :anchor (when
+                                                      (and
+                                                        prev-anchor
+                                                        (not= prev-anchor ""))
+                                                      prev-anchor)})
+                                         child-view)
+                            anchor (or (:anchor child-view) nil)
+                            is-anchored (invoke anchor-lib "isAnchored" anchor)
+                            is-corner-anchored (invoke
+                                                 anchor-lib
+                                                 "isCornerAnchor"
+                                                 anchor)
+                            is-edge-anchored (invoke
+                                               anchor-lib
+                                               "isEdgeAnchor"
+                                               anchor)
+                            effective-view (if
+                                             (and
+                                               (:pinned child-view)
+                                               (not anchor))
+                                             (let [pin-result (invoke
+                                                                anchor-lib
+                                                                "pinToNearestCorner"
+                                                                child-view
+                                                                c-width
+                                                                c-height)
+]
+                                               (update-child
+                                                 child-id
+                                                 {:anchor (dom-get
+                                                            pin-result
+                                                            :anchor)
+                                                  :x (dom-get pin-result :x)
+                                                  :y (dom-get pin-result :y)
+                                                  :pinned nil})
+                                               (merge
+                                                 child-view
+                                                 {:anchor (dom-get
+                                                            pin-result
+                                                            :anchor)
+                                                  :x (dom-get pin-result :x)
+                                                  :y (dom-get pin-result :y)}))
+                                             child-view)
+                            effective-anchor (:anchor effective-view)
+                            inset-style (invoke
+                                          anchor-lib
+                                          "generateInsetStyle"
+                                          effective-anchor
+                                          effective-view)
+                            needs-position (and
+                                             (not inset-style)
+                                             (nil? (:x effective-view)))
+                            cascade-n (count
+                                        (filter
+                                          (fn [c]
+                                            (not (get-in c [:view :minimized])))
+                                          children))
+                            x (if
+                                inset-style
+                                0
+                                (if
+                                  needs-position
+                                  (+ 50 (* 30 cascade-n))
+                                  (:x effective-view)))
+                            y (if
+                                inset-style
+                                0
+                                (if
+                                  needs-position
+                                  (+ 50 (* 30 cascade-n))
+                                  (:y effective-view)))
+                            width (or (:width effective-view) DEFAULT-W)
+                            height (or (:height effective-view) DEFAULT-H)
+                            z (if
+                                (or is-anchored effective-anchor)
+                                ANCHOR-Z
+                                (if
+                                  (not= (:z effective-view) nil)
+                                  (+ (:z effective-view) base-z)
+                                  (+ (get-max-z) 1)))
+                            is-maximized (or (:maximized effective-view) false)
+                            _ (when
+                                (or needs-position existing-wrapper)
+                                (update-child
+                                  child-id
+                                  {:x x
+                                   :y y
+                                   :z (- z base-z)
+                                   :width width
+                                   :height height
+                                   :anchor (:anchor child-view)}))
+                            child-item (get-item child-id)
+                            wrapper-style (if
+                                            is-maximized
+                                            "position:absolute; left:0; top:0; right:0; bottom:0; z-index:1000000; border:1px solid var(--color-border-light); border-radius:var(--border-radius); background:var(--color-bg-surface-alt); overflow:hidden; box-shadow:var(--shadow-md);"
+                                            (if
+                                              inset-style
+                                              (str
+                                                "position:absolute; "
+                                                inset-style
+                                                " z-index:"
+                                                z
+                                                "; pointer-events:auto; border:1px solid var(--color-border-light); border-radius:var(--border-radius); background:var(--color-bg-surface-alt); overflow:hidden; box-shadow:var(--shadow-sm);")
+                                              (str
+                                                "position:absolute; left:"
+                                                x
+                                                "px; top:"
+                                                y
+                                                "px; width:"
+                                                width
+                                                "px; height:"
+                                                height
+                                                "px; z-index:"
+                                                z
+                                                "; border:1px solid var(--color-border-light); border-radius:var(--border-radius); background:var(--color-bg-surface-alt); overflow:hidden; box-shadow:var(--shadow-sm);")))
+                            child-name (or
+                                         (get-in child-item [:content :title])
+                                         (:name child-item)
+                                         (subs child-id 0 8))
+                            [wrapper wrefs] (hiccup->dom+
+                                              [:div {:ref :wrapper
+                                                     :data-sort-key child-id
+                                                     :data-item-id child-id
+                                                     :data-parent-id (:id item)
+                                                     :data-item-name child-name
+                                                     :data-anchor (or
+                                                                    (:anchor
+                                                                      effective-view)
+                                                                    "")
+                                                     :data-maximized (if
+                                                                       is-maximized
+                                                                       "true"
+                                                                       "false")
+                                                     :data-orig-x x
+                                                     :data-orig-y y
+                                                     :data-orig-width width
+                                                     :data-orig-height height
+                                                     :data-orig-z z
+                                                     :style wrapper-style}])
+                            wrapper (:wrapper wrefs)
+                            can-drag (and
+                                       (not is-anchored)
+                                       (not effective-anchor)
+                                       (not is-maximized))
+                            _ (when
+                                (and
+                                  (not is-anchored)
+                                  (not effective-anchor)
+                                  (not is-maximized))
+                                (dom-on!
+                                  wrapper
+                                  :mousedown
+                                  (fn [e]
+                                    (when
+                                      (and
+                                        (not
+                                          (invoke
+                                            (dom-get e :target)
+                                            "closest"
+                                            ".titlebar"))
+                                        (not
+                                          (invoke
+                                            (dom-get
+                                              (dom-get e :target)
+                                              :classList)
+                                            "contains"
+                                            "resize-handle"))
+                                        (not
+                                          (invoke
+                                            (dom-get e :target)
+                                            "closest"
+                                            "a")))
+                                      (let [new-z (bring-to-front child-id)]
+                                        (when
+                                          new-z
+                                          (dom-set!
+                                            (dom-get wrapper :style)
+                                            :zIndex
+                                            new-z)))))))
+                            [titlebar-el trefs] (hiccup->dom+
+                                                  [:div {:ref :titlebar
+                                                         :class "titlebar"
+                                                         :style (str
+                                                                  "height:24px; background:var(--color-bg-chrome); border-bottom:1px solid var(--color-border); padding:0 8px; display:flex; align-items:center; justify-content:space-between; font-size:0.75rem; font-weight:500; cursor:"
+                                                                  (if
+                                                                    can-drag
+                                                                    "move"
+                                                                    "default")
+                                                                  "; user-select:none;")}])
+                            titlebar (:titlebar trefs)
+                            menu-btn (hiccup->dom
+                                       [:button {:style "width:20px; height:18px; padding:0; margin-right:6px; border:none; background:transparent; cursor:pointer; font-size:0.75rem; color:var(--color-text-secondary); display:flex; align-items:center; justify-content:center;"
+                                                 :title "Window menu"}
+                                         "≡"])
+                            _ (dom-on!
+                                menu-btn
+                                :click
+                                (fn [e]
+                                  (invoke e "stopPropagation")
+                                  (let [menu-opts (invoke
+                                                    (dom-get win :Object)
+                                                    "create"
+                                                    nil)
+]
+                                    (dom-set!
+                                      menu-opts
+                                      :isAnchored
+                                      (or
+                                        is-anchored
+                                        (not (not effective-anchor))))
+                                    (dom-set!
+                                      menu-opts
+                                      :isCornerAnchored
+                                      (or
+                                        is-corner-anchored
+                                        (invoke
+                                          anchor-lib
+                                          "isCornerAnchor"
+                                          effective-anchor)))
+                                    (dom-set!
+                                      menu-opts
+                                      :isEdgeAnchored
+                                      (or
+                                        is-edge-anchored
+                                        (invoke
+                                          anchor-lib
+                                          "isEdgeAnchor"
+                                          effective-anchor)))
+                                    (dom-set! menu-opts :wrapper wrapper)
+                                    (dom-set!
+                                      menu-opts
+                                      :effectiveView
+                                      effective-view)
+                                    (dom-set!
+                                      menu-opts
+                                      :onPin
+                                      (fn [w]
+                                        (let [c-el (dom-get w :parentElement)
+                                              cW (or
+                                                   (when
+                                                     c-el
+                                                     (dom-get c-el :clientWidth))
+                                                   1000)
+                                              cH (or
+                                                   (when
+                                                     c-el
+                                                     (dom-get
+                                                       c-el
+                                                       :clientHeight))
+                                                   600)
+                                              pin-result (invoke
+                                                           anchor-lib
+                                                           "pinToNearestCorner"
+                                                           {:x (or
+                                                                 (invoke
+                                                                   win
+                                                                   "parseInt"
+                                                                   (dom-get
+                                                                     (dom-get
+                                                                       w
+                                                                       :style)
+                                                                     :left))
+                                                                 0)
+                                                            :y (or
+                                                                 (invoke
+                                                                   win
+                                                                   "parseInt"
+                                                                   (dom-get
+                                                                     (dom-get
+                                                                       w
+                                                                       :style)
+                                                                     :top))
+                                                                 0)
+                                                            :width (or
+                                                                     (invoke
+                                                                       win
+                                                                       "parseInt"
+                                                                       (dom-get
+                                                                         (dom-get
+                                                                           w
+                                                                           :style)
+                                                                         :width))
+                                                                     DEFAULT-W)
+                                                            :height (or
+                                                                      (invoke
+                                                                        win
+                                                                        "parseInt"
+                                                                        (dom-get
+                                                                          (dom-get
+                                                                            w
+                                                                            :style)
+                                                                          :height))
+                                                                      DEFAULT-H)}
+                                                           cW
+                                                           cH)]
+                                          (update-child
+                                            child-id
+                                            {:anchor (dom-get
+                                                       pin-result
+                                                       :anchor)
+                                             :x (dom-get pin-result :x)
+                                             :y (dom-get pin-result :y)
+                                             :z 0
+                                             :pinned nil})
+                                          (navigate!
+                                            (invoke api "getCurrentRoot")))))
+                                    (dom-set!
+                                      menu-opts
+                                      :onUnpin
+                                      (fn [w]
+                                        (let [c-el (dom-get w :parentElement)
+                                              cW (or
+                                                   (when
+                                                     c-el
+                                                     (dom-get c-el :clientWidth))
+                                                   1000)
+                                              cH (or
+                                                   (when
+                                                     c-el
+                                                     (dom-get
+                                                       c-el
+                                                       :clientHeight))
+                                                   600)
+                                              abs-pos (invoke
+                                                        anchor-lib
+                                                        "calculateAbsolutePosition"
+                                                        effective-view
+                                                        cW
+                                                        cH)
+                                              max-z (get-max-z)]
+                                          (update-child
+                                            child-id
+                                            {:anchor nil
+                                             :x (dom-get abs-pos :left)
+                                             :y (dom-get abs-pos :top)
+                                             :width (dom-get abs-pos :width)
+                                             :height (dom-get abs-pos :height)
+                                             :z (+ (- max-z base-z) 1)})
+                                          (navigate!
+                                            (invoke api "getCurrentRoot")))))
+                                    (dom-set!
+                                      menu-opts
+                                      :onUndock
+                                      (fn [w]
+                                        (let [max-z (get-max-z)
+                                              cur-left (or
+                                                         (invoke
+                                                           win
+                                                           "parseInt"
+                                                           (dom-get
+                                                             (dom-get w :style)
+                                                             :left))
+                                                         0)
+                                              cur-top (or
+                                                        (invoke
+                                                          win
+                                                          "parseInt"
+                                                          (dom-get
+                                                            (dom-get w :style)
+                                                            :top))
+                                                        0)
+                                              cur-w (or
+                                                      (invoke
+                                                        win
+                                                        "parseInt"
+                                                        (dom-get
+                                                          (dom-get w :style)
+                                                          :width))
+                                                      DEFAULT-W)
+                                              cur-h (or
+                                                      (invoke
+                                                        win
+                                                        "parseInt"
+                                                        (dom-get
+                                                          (dom-get w :style)
+                                                          :height))
+                                                      DEFAULT-H)]
+                                          (update-child
+                                            child-id
+                                            {:anchor nil
+                                             :x cur-left
+                                             :y cur-top
+                                             :width cur-w
+                                             :height cur-h
+                                             :z (+ (- max-z base-z) 1)})
+                                          (navigate!
+                                            (invoke api "getCurrentRoot")))))
+                                    (dom-set!
+                                      menu-opts
+                                      :onDock
+                                      (fn [pos w]
+                                        (let [cur-w (or
+                                                      (invoke
+                                                        win
+                                                        "parseInt"
+                                                        (dom-get
+                                                          (dom-get w :style)
+                                                          :width))
+                                                      DEFAULT-W)
+                                              cur-h (or
+                                                      (invoke
+                                                        win
+                                                        "parseInt"
+                                                        (dom-get
+                                                          (dom-get w :style)
+                                                          :height))
+                                                      DEFAULT-H)]
+                                          (update-child
+                                            child-id
+                                            {:anchor pos
+                                             :x 0
+                                             :y 0
+                                             :width cur-w
+                                             :height cur-h
+                                             :z 0
+                                             :minimized false
+                                             :maximized false
+                                             :pinned nil})
+                                          (navigate!
+                                            (invoke api "getCurrentRoot")))))
+                                    (invoke
+                                      menu-lib
+                                      "showWindowMenu"
+                                      menu-btn
+                                      api
+                                      menu-opts))))
+                            _ (invoke titlebar "appendChild" menu-btn)
+                            title-span (hiccup->dom
+                                         [:span {:style "flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"}
+
+                                           child-name])
+                            _ (invoke titlebar "appendChild" title-span)
+                            btn-container (hiccup->dom
+                                            [:div {:style "display:flex; gap:4px; align-items:center;"}
+])
+                            _ (when
+                                (or is-anchored effective-anchor)
+                                (let [anchor-btn (hiccup->dom
+                                                   [:button {:style "width:18px; height:18px; padding:0; border:none; background:transparent; cursor:pointer; font-size:0.75rem; color:var(--color-text-secondary); display:flex; align-items:center; justify-content:center;"
+                                                             :title (if
+                                                                      (or
+                                                                        is-edge-anchored
+                                                                        (invoke
+                                                                          anchor-lib
+                                                                          "isEdgeAnchor"
+                                                                          effective-anchor))
+                                                                      "Undock"
+                                                                      "Unpin")}
+                                                     "📌"])
+]
+                                  (dom-on!
+                                    anchor-btn
+                                    :click
+                                    (fn [click-e]
+                                      (invoke click-e "stopPropagation")
+                                      (let [c-el (dom-get
+                                                   wrapper
+                                                   :parentElement)
+                                            cW (or
+                                                 (when
+                                                   c-el
+                                                   (dom-get c-el :clientWidth))
+                                                 1000)
+                                            cH (or
+                                                 (when
+                                                   c-el
+                                                   (dom-get c-el :clientHeight))
+                                                 600)
+                                            max-z (get-max-z)]
+                                        (update-child
+                                          child-id
+                                          {:anchor nil
+                                           :x (or
+                                                (invoke
+                                                  win
+                                                  "parseInt"
+                                                  (dom-get
+                                                    (dom-get wrapper :style)
+                                                    :left))
+                                                0)
+                                           :y (or
+                                                (invoke
+                                                  win
+                                                  "parseInt"
+                                                  (dom-get
+                                                    (dom-get wrapper :style)
+                                                    :top))
+                                                0)
+                                           :width (or
+                                                    (invoke
+                                                      win
+                                                      "parseInt"
+                                                      (dom-get
+                                                        (dom-get wrapper :style)
+                                                        :width))
+                                                    DEFAULT-W)
+                                           :height (or
+                                                     (invoke
+                                                       win
+                                                       "parseInt"
+                                                       (dom-get
+                                                         (dom-get
+                                                           wrapper
+                                                           :style)
+                                                         :height))
+                                                     DEFAULT-H)
+                                           :z (+ (- max-z base-z) 1)})
+                                        (navigate!
+                                          (invoke api "getCurrentRoot")))))
+                                  (invoke
+                                    btn-container
+                                    "appendChild"
+                                    anchor-btn)))
+                            _ (when
+                                (and (not is-anchored) (not effective-anchor))
+                                (let [min-btn (hiccup->dom
+                                                [:button {:style "width:18px; height:18px; padding:0; border:none; background:transparent; cursor:pointer; font-size:0.875rem; font-weight:bold; color:var(--color-text-secondary); display:flex; align-items:center; justify-content:center;"
+                                                          :title "Minimize"}
+                                                  "−"])
+                                      max-btn (hiccup->dom
+                                                [:button {:style "width:18px; height:18px; padding:0; border:none; background:transparent; cursor:pointer; font-size:0.75rem; color:var(--color-text-secondary); display:flex; align-items:center; justify-content:center;"
+                                                          :title (if
+                                                                   is-maximized
+                                                                   "Restore"
+                                                                   "Maximize")}
+                                                  (if is-maximized "❏" "□")])
+                                      close-btn (hiccup->dom
+                                                  [:button {:style "width:18px; height:18px; padding:0; border:none; background:transparent; cursor:pointer; font-size:0.875rem; font-weight:bold; color:var(--color-text-secondary); display:flex; align-items:center; justify-content:center;"
+                                                            :title "Close"}
+                                                    "×"])]
+                                  (dom-on!
+                                    min-btn
+                                    :click
+                                    (fn [click-e]
+                                      (invoke click-e "stopPropagation")
+                                      (dom-set!
+                                        (dom-get wrapper :style)
+                                        :display
+                                        "none")
+                                      (update-child
+                                        child-id
+                                        {:minimized true :maximized false})))
+                                  (dom-on!
+                                    max-btn
+                                    :click
+                                    (fn [click-e]
+                                      (invoke click-e "stopPropagation")
+                                      (let [currently-maximized (=
+                                                                  (dom-get
+                                                                    (dom-get
+                                                                      wrapper
+                                                                      :dataset)
+                                                                    :maximized)
+                                                                  "true")
+]
+                                        (if
+                                          currently-maximized
+                                          (do
+                                            (dom-set!
+                                              (dom-get wrapper :style)
+                                              :left
+                                              (str
+                                                (dom-get
+                                                  (dom-get wrapper :dataset)
+                                                  :origX)
+                                                "px"))
+                                            (dom-set!
+                                              (dom-get wrapper :style)
+                                              :top
+                                              (str
+                                                (dom-get
+                                                  (dom-get wrapper :dataset)
+                                                  :origY)
+                                                "px"))
+                                            (dom-set!
+                                              (dom-get wrapper :style)
+                                              :width
+                                              (str
+                                                (dom-get
+                                                  (dom-get wrapper :dataset)
+                                                  :origWidth)
+                                                "px"))
+                                            (dom-set!
+                                              (dom-get wrapper :style)
+                                              :height
+                                              (str
+                                                (dom-get
+                                                  (dom-get wrapper :dataset)
+                                                  :origHeight)
+                                                "px"))
+                                            (dom-set!
+                                              (dom-get wrapper :style)
+                                              :right
+                                              "")
+                                            (dom-set!
+                                              (dom-get wrapper :style)
+                                              :bottom
+                                              "")
+                                            (dom-set!
+                                              (dom-get wrapper :style)
+                                              :zIndex
+                                              (dom-get
+                                                (dom-get wrapper :dataset)
+                                                :origZ))
+                                            (dom-set!
+                                              (dom-get wrapper :dataset)
+                                              :maximized
+                                              "false")
+                                            (dom-set! max-btn :textContent "□")
+                                            (dom-set! max-btn :title "Maximize")
+                                            (update-child
+                                              child-id
+                                              {:maximized false}))
+                                          (do
+                                            (dom-set!
+                                              (dom-get wrapper :style)
+                                              :left
+                                              "0")
+                                            (dom-set!
+                                              (dom-get wrapper :style)
+                                              :top
+                                              "0")
+                                            (dom-set!
+                                              (dom-get wrapper :style)
+                                              :right
+                                              "0")
+                                            (dom-set!
+                                              (dom-get wrapper :style)
+                                              :bottom
+                                              "0")
+                                            (dom-set!
+                                              (dom-get wrapper :style)
+                                              :width
+                                              "auto")
+                                            (dom-set!
+                                              (dom-get wrapper :style)
+                                              :height
+                                              "auto")
+                                            (dom-set!
+                                              (dom-get wrapper :style)
+                                              :zIndex
+                                              "1000000")
+                                            (dom-set!
+                                              (dom-get wrapper :dataset)
+                                              :maximized
+                                              "true")
+                                            (dom-set! max-btn :textContent "❏")
+                                            (dom-set! max-btn :title "Restore")
+                                            (update-child
+                                              child-id
+                                              {:maximized true}))))))
+                                  (dom-on!
+                                    close-btn
+                                    :click
+                                    (fn [click-e]
+                                      (invoke click-e "stopPropagation")
+                                      (let [fresh (get-item (:id item))
+                                            updated-atts (vec
+                                                           (filter
+                                                             (fn [c]
+                                                               (not=
+                                                                 (:id c)
+                                                                 child-id))
+                                                             (or
+                                                               (:attachments
+                                                                 fresh)
+                                                               [])))]
+                                        (set-item!
+                                          (assoc
+                                            fresh
+                                            :attachments
+                                            updated-atts
+                                            :modified
+                                            (now))))))
+                                  (invoke btn-container "appendChild" min-btn)
+                                  (invoke btn-container "appendChild" max-btn)
+                                  (invoke btn-container "appendChild" close-btn)))
+                            _ (invoke titlebar "appendChild" btn-container)
+                            _ (when
+                                can-drag
+                                (let [drag-opts (invoke
+                                                  (dom-get win :Object)
+                                                  "create"
+                                                  nil)
+]
+                                  (dom-set!
+                                    drag-opts
+                                    :onDragStart
+                                    (fn [] (bring-to-front child-id)))
+                                  (dom-set!
+                                    drag-opts
+                                    :onDragEnd
+                                    (fn [final-x final-y]
+                                      (let [fresh (get-item (:id item))
+                                            fresh-children (or
+                                                             (:attachments
+                                                               fresh)
+                                                             [])
+                                            view-updates {:x final-x
+                                                          :y final-y
+                                                          :width (or
+                                                                   (invoke
+                                                                     win
+                                                                     "parseInt"
+                                                                     (dom-get
+                                                                       (dom-get
+                                                                         wrapper
+                                                                         :style)
+                                                                       :width))
+                                                                   width)
+                                                          :height (or
+                                                                    (invoke
+                                                                      win
+                                                                      "parseInt"
+                                                                      (dom-get
+                                                                        (dom-get
+                                                                          wrapper
+                                                                          :style)
+                                                                        :height))
+                                                                    height)
+                                                          :anchor nil}
+                                            updated (map
+                                                      (fn [c]
+                                                        (if
+                                                          (= (:id c) child-id)
+                                                          (assoc
+                                                            c
+                                                            :view
+                                                            (merge
+                                                              (or (:view c) {})
+                                                              view-updates))
+                                                          c))
+                                                      fresh-children)]
+                                        (invoke
+                                          api
+                                          "set"
+                                          (assoc
+                                            fresh
+                                            :attachments
+                                            updated
+                                            :modified
+                                            (now))
+                                          {:silent true}))))
+                                  (invoke
+                                    drag-lib
+                                    "attachDrag"
+                                    titlebar
+                                    wrapper
+                                    drag-opts)))
+                            _ (invoke wrapper "appendChild" titlebar)
+                            _ (when
+                                can-drag
+                                (let [resize-opts (invoke
+                                                    (dom-get win :Object)
+                                                    "create"
+                                                    nil)
+]
+                                  (dom-set!
+                                    resize-opts
+                                    :onResizeStart
+                                    (fn [] (bring-to-front child-id)))
+                                  (dom-set!
+                                    resize-opts
+                                    :onResizeEnd
+                                    (fn [fx fy fw fh]
+                                      (let [fresh (get-item (:id item))
+                                            fresh-children (or
+                                                             (:attachments
+                                                               fresh)
+                                                             [])
+                                            updated (map
+                                                      (fn [c]
+                                                        (if
+                                                          (= (:id c) child-id)
+                                                          (assoc
+                                                            c
+                                                            :view
+                                                            (merge
+                                                              (or (:view c) {})
+                                                              {:x fx
+                                                               :y fy
+                                                               :width fw
+                                                               :height fh
+                                                               :anchor nil}))
+                                                          c))
+                                                      fresh-children)]
+                                        (invoke
+                                          api
+                                          "set"
+                                          (assoc
+                                            fresh
+                                            :attachments
+                                            updated
+                                            :modified
+                                            (now))
+                                          {:silent true}))))
+                                  (dom-set! resize-opts :minWidth MIN-W)
+                                  (dom-set! resize-opts :minHeight MIN-H)
+                                  (invoke
+                                    drag-lib
+                                    "attachCornerResize"
+                                    wrapper
+                                    api
+                                    resize-opts)))
+                            _ (when
+                                (or
+                                  is-edge-anchored
+                                  (invoke
+                                    anchor-lib
+                                    "isEdgeAnchor"
+                                    effective-anchor))
+                                (let [edge-opts (invoke
+                                                  (dom-get win :Object)
+                                                  "create"
+                                                  nil)
+]
+                                  (dom-set!
+                                    edge-opts
+                                    :onResizeEnd
+                                    (fn [fw fh]
+                                      (let [fresh (get-item (:id item))
+                                            fresh-children (or
+                                                             (:attachments
+                                                               fresh)
+                                                             [])
+                                            updated (map
+                                                      (fn [c]
+                                                        (if
+                                                          (= (:id c) child-id)
+                                                          (assoc
+                                                            c
+                                                            :view
+                                                            (merge
+                                                              (or (:view c) {})
+                                                              {:width fw
+                                                               :height fh}))
+                                                          c))
+                                                      fresh-children)]
+                                        (invoke
+                                          api
+                                          "set"
+                                          (assoc
+                                            fresh
+                                            :attachments
+                                            updated
+                                            :modified
+                                            (now))
+                                          {:silent true}))))
+                                  (dom-set! edge-opts :minWidth MIN-DW)
+                                  (dom-set! edge-opts :minHeight MIN-DH)
+                                  (invoke
+                                    drag-lib
+                                    "attachEdgeResize"
+                                    wrapper
+                                    (:anchor effective-view)
+                                    api
+                                    edge-opts)))
+                            content-area (hiccup->dom
+                                           [:div {:class "window-content"
+                                                  :style "padding:1px; overflow:auto; height:calc(100% - 24px);"}
+                                             [:render-child {:item child-id
+                                                             :view (when
+                                                                     (:type
+                                                                       effective-view)
+                                                                     effective-view)
+                                                             :open-in (:id item)
+                                                             :on-cycle on-cycle
+                                                             :navigate-to nav-to
+                                                             :style "height:100%;"}]])
+                            _ (invoke wrapper "appendChild" content-area)]
+                        wrapper))
+      rendered (pmap
+                 (fn [child]
+                   (try
+                     (create-window
+                       (:id child)
+                       (or (:view child) {})
+                       (get-in child [:view :navigateTo]))
+                     (catch
+                       err
+                       (let [cv (or (:view child) {})]
+                         (hiccup->dom
+                           [:div {:data-sort-key (:id child)
+                                  :style (str
+                                           "position:absolute; left:"
+                                           (or (:x cv) 0)
+                                           "px; top:"
+                                           (or (:y cv) 0)
+                                           "px; width:"
+                                           (or (:width cv) DEFAULT-W)
+                                           "px; padding:15px; border:1px solid var(--color-danger); border-radius:var(--border-radius); background:var(--color-danger-light); color:var(--color-danger); z-index:"
+                                           (+ (or (:z cv) 0) base-z)
+                                           ";")}
+                             (str
+                               "Error rendering child: "
+                               (:id child)
+                               " - "
+                               err)])))))
+                 children-to-render)
+      _ (map
+          (fn [w child]
+            (let [child-view (or (:view child) {})
+                  target (if
+                           (invoke anchor-lib "isAnchored" (:anchor child-view))
+                           dock-overlay
+                           scroll-area)]
+              (invoke target "appendChild" w)))
+          rendered
+          children-to-render)
+      _ (let [named-children (pmap
+                               (fn [child]
+                                 (let [cid (:id child)
+                                       w (invoke
+                                           doc
+                                           "querySelector"
+                                           (str
+                                             "[data-parent-id=\""
+                                             (:id item)
+                                             "\"][data-item-id=\""
+                                             cid
+                                             "\"]"))
+                                       dom-name (when
+                                                  w
+                                                  (invoke
+                                                    w
+                                                    "getAttribute"
+                                                    "data-item-name"))]
+                                   (if
+                                     dom-name
+                                     (assoc child :_name dom-name)
+                                     (let [ci (try (get-item cid) (catch _ nil))
+]
+                                       (assoc
+                                         child
+                                         :_name
+                                         (or
+                                           (when
+                                             ci
+                                             (get-in ci [:content :title]))
+                                           (when ci (:name ci))
+                                           (subs cid 0 8)))))))
+                               children)
+              front-id (invoke
+                         min-lib
+                         "calculateFrontChild"
+                         children
+                         base-z
+                         (dom-get anchor-lib :isAnchored))
+              bar-opts (let [o (invoke (dom-get win :Object) "create" nil)]
+                         (dom-set!
+                           o
+                           :isAnchoredFn
+                           (dom-get anchor-lib :isAnchored))
+                         (dom-set! o :frontChildId front-id)
+                         (dom-set! o :onRestore handle-restore)
+                         (dom-set!
+                           o
+                           :onFocus
+                           (fn [child-id]
+                             (let [new-z (bring-to-front child-id)
+                                   w (invoke
+                                       doc
+                                       "querySelector"
+                                       (str
+                                         "[data-parent-id=\""
+                                         (:id item)
+                                         "\"][data-item-id=\""
+                                         child-id
+                                         "\"]"))]
+                               (when
+                                 (and w new-z)
+                                 (dom-set! (dom-get w :style) :zIndex new-z))
+                               (when
+                                 w
+                                 (invoke
+                                   w
+                                   "scrollIntoView"
+                                   {:behavior "smooth"
+                                    :block "nearest"
+                                    :inline "nearest"})))))
+                         (dom-set!
+                           o
+                           :onMinimize
+                           (fn [child-id]
+                             (let [w (invoke
+                                       doc
+                                       "querySelector"
+                                       (str
+                                         "[data-parent-id=\""
+                                         (:id item)
+                                         "\"][data-item-id=\""
+                                         child-id
+                                         "\"]"))
+]
+                               (when
+                                 w
+                                 (dom-set! (dom-get w :style) :display "none")))
+                             (update-child
+                               child-id
+                               {:minimized true :maximized false})))
+                         o)]
+          (invoke
+            min-lib
+            "renderInventoryBar"
+            named-children
+            container
+            api
+            bar-opts))
+      _ (when
+          (>
+            (dom-get
+              (invoke (dom-get win :Object) "keys" scroll-states)
+              :length)
+            0)
+          (invoke
+            win
+            "requestAnimationFrame"
+            (fn []
+              (invoke
+                win
+                "requestAnimationFrame"
+                (fn []
+                  (invoke
+                    (invoke
+                      doc
+                      "querySelectorAll"
+                      (str "[data-parent-id=\"" (:id item) "\"]"))
+                    "forEach"
+                    (fn [w]
+                      (let [cid (invoke w "getAttribute" "data-item-id")
+                            saved (dom-get scroll-states cid)]
+                        (when
+                          saved
+                          (let [c (invoke w "querySelector" ".window-content")]
+                            (when
+                              c
+                              (dom-set! c :scrollTop (:scrollTop saved))
+                              (dom-set! c :scrollLeft (:scrollLeft saved)))))))))))))]
+  container)

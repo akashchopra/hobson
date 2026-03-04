@@ -1,0 +1,650 @@
+// Item Search Library
+// See [item-search-lib documentation](item://6734035b-e30b-4c2a-829e-d57b3d1fd5dc)
+
+const TYPE_DEFINITION_ID = '11111111-0000-0000-0000-000000000000';
+const STARRED_TAG_ID = 'c0c0c0c0-0060-0000-0000-000000000000';
+
+// [BEGIN:tokenize]
+/**
+ * Tokenize a query string, respecting quoted phrases
+ */
+function tokenize(queryString) {
+  const tokens = [];
+  let current = '';
+  let inQuotes = false;
+  let quoteChar = null;
+
+  for (let i = 0; i < queryString.length; i++) {
+    const char = queryString[i];
+
+    if ((char === '"' || char === "'") && !inQuotes) {
+      inQuotes = true;
+      quoteChar = char;
+    } else if (char === quoteChar && inQuotes) {
+      inQuotes = false;
+      quoteChar = null;
+    } else if (char === ' ' && !inQuotes) {
+      if (current.length > 0) {
+        tokens.push(current);
+        current = '';
+      }
+    } else {
+      current += char;
+    }
+  }
+
+  if (current.length > 0) {
+    tokens.push(current);
+  }
+
+  return tokens;
+}
+// [END:tokenize]
+
+// [BEGIN:parseQuery]
+/**
+ * Parse a query string into structured filters
+ * @param {string} queryString - The query to parse
+ * @param {Object} caches - { typeCache: Map<name, id>, tagCache: Map<name, id> }
+ * @returns {Object} Parsed filters
+ */
+export function parseQuery(queryString, caches = {}) {
+  const { typeCache = new Map(), tagCache = new Map() } = caches;
+
+  const result = {
+    text: [],
+    negatedText: [],
+    types: {
+      include: [],
+      exclude: []
+    },
+    tags: {
+      include: [],
+      exclude: []
+    },
+    fields: {}
+  };
+
+  const tokens = tokenize(queryString);
+
+  for (const token of tokens) {
+    const isNegated = token.startsWith('-');
+    const cleanToken = isNegated ? token.slice(1) : token;
+
+    // type:xxx or type:xxx+
+    if (cleanToken.startsWith('type:')) {
+      const typeValue = cleanToken.slice(5);
+      const inherited = typeValue.endsWith('+');
+      const typeNames = (inherited ? typeValue.slice(0, -1) : typeValue).split(',');
+
+      for (const typeName of typeNames) {
+        const typeId = resolveTypeId(typeName, typeCache);
+        const typeFilter = { id: typeId, inherited };
+
+        if (isNegated) {
+          result.types.exclude.push(typeFilter);
+        } else {
+          result.types.include.push(typeFilter);
+        }
+      }
+      continue;
+    }
+
+    // tag:xxx or #xxx
+    if (cleanToken.startsWith('tag:') || cleanToken.startsWith('#')) {
+      const tagValue = cleanToken.startsWith('tag:') ? cleanToken.slice(4) : cleanToken.slice(1);
+      const tagNames = tagValue.split(',');
+      // Each name can resolve to multiple IDs, flatten them
+      const tagIdArrays = tagNames.map(name => resolveTagIds(name, tagCache));
+      const tagIds = tagIdArrays.flat();
+
+      if (isNegated) {
+        result.tags.exclude.push(...tagIds);
+      } else {
+        result.tags.include.push(tagIds);
+      }
+      continue;
+    }
+
+    // name:xxx
+    if (cleanToken.startsWith('name:')) {
+      result.fields.name = cleanToken.slice(5);
+      continue;
+    }
+
+    // title:xxx
+    if (cleanToken.startsWith('title:')) {
+      result.fields.title = cleanToken.slice(6);
+      continue;
+    }
+
+    // Plain text term
+    if (isNegated) {
+      result.negatedText.push(cleanToken.toLowerCase());
+    } else {
+      result.text.push(token.toLowerCase());
+    }
+  }
+
+  return result;
+}
+
+function resolveTypeId(name, typeCache) {
+  const lowerName = name.toLowerCase();
+  if (typeCache.has(lowerName)) {
+    return typeCache.get(lowerName);
+  }
+  if (name.match(/^[0-9a-f-]{36}$/i)) {
+    return name;
+  }
+  return name;
+}
+
+function resolveTagIds(name, tagCache) {
+  const lowerName = name.toLowerCase();
+  if (tagCache.has(lowerName)) {
+    return tagCache.get(lowerName);  // Returns array of IDs
+  }
+  if (name.match(/^[0-9a-f-]{36}$/i)) {
+    return [name];
+  }
+  return [name];
+}
+// [END:parseQuery]
+
+// [BEGIN:buildSearchableText]
+/**
+ * Build searchable text from an item
+ */
+function buildSearchableText(item) {
+  return [
+    item.id,
+    item.type,
+    item.name,
+    item.content?.title,
+    item.content?.body,
+    item.content?.description,
+    JSON.stringify(item.content)
+  ].filter(Boolean).join(' ').toLowerCase();
+}
+// [END:buildSearchableText]
+
+// [BEGIN:matchesFilters]
+/**
+ * Check if an item matches the parsed filters
+ * @param {Object} item - The item to check
+ * @param {Object} filters - Parsed filters from parseQuery
+ * @param {Object} api - The API object
+ * @returns {Promise<boolean>}
+ */
+export async function matchesFilters(item, filters, api) {
+  // Text matching
+  if (filters.text.length > 0) {
+    const searchableText = buildSearchableText(item);
+    if (!filters.text.every(term => searchableText.includes(term))) {
+      return false;
+    }
+  }
+
+  // Negated text
+  if (filters.negatedText.length > 0) {
+    const searchableText = buildSearchableText(item);
+    if (filters.negatedText.some(term => searchableText.includes(term))) {
+      return false;
+    }
+  }
+
+  // Type includes (OR across all type filters)
+  if (filters.types.include.length > 0) {
+    const matches = await Promise.all(
+      filters.types.include.map(async ({ id, inherited }) => {
+        if (inherited && api.typeChainIncludes) {
+          return api.typeChainIncludes(item.type, id);
+        }
+        return item.type === id;
+      })
+    );
+    if (!matches.some(m => m)) return false;
+  }
+
+  // Type excludes
+  for (const { id, inherited } of filters.types.exclude) {
+    if (inherited && api.typeChainIncludes) {
+      if (await api.typeChainIncludes(item.type, id)) return false;
+    } else {
+      if (item.type === id) return false;
+    }
+  }
+
+  // Tag includes - outer array is AND, inner is OR
+  const itemTags = item.content?.tags || [];
+  for (const orGroup of filters.tags.include) {
+    if (!orGroup.some(tagId => itemTags.includes(tagId))) {
+      return false;
+    }
+  }
+
+  // Tag excludes
+  for (const tagId of filters.tags.exclude) {
+    if (itemTags.includes(tagId)) return false;
+  }
+
+  // Field-specific filters
+  for (const [field, value] of Object.entries(filters.fields)) {
+    const itemValue = (item[field] || item.content?.[field] || '').toLowerCase();
+    if (!itemValue.includes(value.toLowerCase())) {
+      return false;
+    }
+  }
+
+  return true;
+}
+// [END:matchesFilters]
+
+// [BEGIN:hasFilterSyntax]
+/**
+ * Check if a query string contains filter syntax
+ */
+function hasFilterSyntax(query) {
+  return /(?:^|\s)(?:-?(?:type:|tag:|name:|title:)|#)/.test(query);
+}
+// [END:hasFilterSyntax]
+
+// [BEGIN:searchItems]
+/**
+ * Search items based on query string
+ */
+export async function searchItems(query, api, options = {}) {
+  if (!query || query.trim().length === 0) {
+    return [];
+  }
+
+  const { targetContainer, allItems } = options;
+  let itemsToSearch;
+
+  if (allItems) {
+    itemsToSearch = allItems;
+  } else if (targetContainer) {
+    try {
+      const container = await api.get(targetContainer);
+      const childIds = (container.attachments || []).map(c =>
+        typeof c === 'string' ? c : c.id
+      );
+      itemsToSearch = await Promise.all(
+        childIds.map(id => api.get(id).catch(() => null))
+      );
+      itemsToSearch = itemsToSearch.filter(i => i !== null);
+    } catch (err) {
+      console.error('Error fetching container:', err);
+      itemsToSearch = [];
+    }
+  } else {
+    itemsToSearch = await api.getAll();
+  }
+
+  // Fast path: no filter syntax, use simple text matching
+  if (!hasFilterSyntax(query)) {
+    const queryLower = query.toLowerCase();
+    const matches = itemsToSearch.filter(item => {
+      const searchableText = buildSearchableText(item);
+      return searchableText.includes(queryLower);
+    });
+    matches.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+    return matches;
+  }
+
+  // Build lookup caches for type and tag names
+  const typeCache = new Map();
+  const tagCache = new Map();  // name -> [id1, id2, ...] (multiple tags can share names)
+
+  try {
+    const allTypes = await api.query({ type: api.IDS?.TYPE_DEFINITION || TYPE_DEFINITION_ID });
+    allTypes.forEach(t => {
+      if (t.name) {
+        const fullName = t.name.toLowerCase();
+        typeCache.set(fullName, t.id);
+        // Also index without namespace prefix (kernel:code -> code)
+        if (fullName.includes(':')) {
+          const shortName = fullName.split(':').pop();
+          if (!typeCache.has(shortName)) {
+            typeCache.set(shortName, t.id);
+          }
+        }
+      }
+    });
+  } catch (err) {
+    console.warn('Could not load types for search cache:', err);
+  }
+
+  try {
+    // Discover tags from actual usage in content.tags across all items
+    const tagIds = new Set();
+    for (const item of itemsToSearch) {
+      const tags = item.content?.tags || [];
+      for (const tagId of tags) tagIds.add(tagId);
+    }
+    // Resolve each tag ID to its item for name lookup
+    const itemById = new Map(itemsToSearch.map(i => [i.id, i]));
+    const tagItemsById = new Map();
+    for (const tagId of tagIds) {
+      const tagItem = itemById.get(tagId) || await api.get(tagId).catch(() => null);
+      if (tagItem) {
+        tagItemsById.set(tagId, tagItem);
+        const name = (tagItem.name || tagItem.content?.name || '').toLowerCase();
+        if (name) {
+          if (!tagCache.has(name)) tagCache.set(name, []);
+          tagCache.get(name).push(tagItem.id);
+        }
+      }
+    }
+    // Walk parent chains so ancestor tag names also match descendant tag IDs.
+    // e.g. tag:concept should match items tagged with primitive (child of concept).
+    for (const [tagId, tagItem] of tagItemsById) {
+      let parentId = tagItem.content?.parent;
+      const visited = new Set();
+      while (parentId && !visited.has(parentId)) {
+        visited.add(parentId);
+        let parentItem = tagItemsById.get(parentId) || itemById.get(parentId);
+        if (!parentItem) parentItem = await api.get(parentId).catch(() => null);
+        if (!parentItem) break;
+        tagItemsById.set(parentId, parentItem);
+        const parentName = (parentItem.name || parentItem.content?.name || '').toLowerCase();
+        if (parentName) {
+          if (!tagCache.has(parentName)) tagCache.set(parentName, []);
+          const ids = tagCache.get(parentName);
+          if (!ids.includes(tagId)) ids.push(tagId);
+          // Also ensure the parent's own ID is in its cache entry
+          if (!ids.includes(parentId)) ids.push(parentId);
+        }
+        parentId = parentItem.content?.parent;
+      }
+    }
+  } catch (err) {
+    console.warn('Could not load tags for search cache:', err);
+  }
+
+  // Parse the query with caches
+  const filters = parseQuery(query, { typeCache, tagCache });
+
+  // Filter items
+  const matches = [];
+  for (const item of itemsToSearch) {
+    if (await matchesFilters(item, filters, api)) {
+      matches.push(item);
+    }
+  }
+
+  matches.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  return matches;
+}
+// [END:searchItems]
+
+// [BEGIN:getStarredItems]
+/**
+ * Get items tagged with "starred", sorted by most recently modified
+ */
+export async function getStarredItems(api, options = {}) {
+  const { targetContainer, allItems } = options;
+  let itemsToSearch;
+
+  if (allItems) {
+    itemsToSearch = allItems;
+  } else if (targetContainer) {
+    try {
+      const container = await api.get(targetContainer);
+      const childIds = (container.attachments || []).map(c =>
+        typeof c === 'string' ? c : c.id
+      );
+      itemsToSearch = await Promise.all(
+        childIds.map(id => api.get(id).catch(() => null))
+      );
+      itemsToSearch = itemsToSearch.filter(i => i !== null);
+    } catch (err) {
+      itemsToSearch = [];
+    }
+  } else {
+    itemsToSearch = await api.getAll();
+  }
+
+  const starred = itemsToSearch.filter(item => {
+    const tags = item.content?.tags || [];
+    return tags.includes(STARRED_TAG_ID);
+  });
+
+  starred.sort((a, b) => (b.modified || 0) - (a.modified || 0));
+  return starred;
+}
+// [END:getStarredItems]
+
+// [BEGIN:createSearchUI]
+/**
+ * Create a search UI widget
+ */
+export function createSearchUI(containerEl, onSelect, api, options = {}) {
+  const {
+    placeholder = 'Search by `name|type|tag|title:...`, or free text',
+    savedQuery = '',
+    targetContainer = null,
+    autoFocus = false,
+    renderActions = null
+  } = options;
+
+  containerEl.innerHTML = '';
+
+  const searchBox = api.createElement('div', {
+    style: 'margin-bottom: 20px;'
+  }, []);
+
+  const input = api.createElement('input', {
+    type: 'text',
+    placeholder,
+    value: savedQuery,
+    style: 'width: 100%; padding: 12px 16px; font-size: 1rem; border: 2px solid var(--color-border); border-radius: var(--border-radius); outline: none; transition: border-color 0.2s;'
+  }, []);
+
+  input.onfocus = () => { input.style.borderColor = 'var(--color-primary)'; };
+  input.onblur = () => { input.style.borderColor = 'var(--color-border)'; };
+
+  searchBox.appendChild(input);
+  containerEl.appendChild(searchBox);
+
+  const resultsContainer = api.createElement('div', {}, []);
+  containerEl.appendChild(resultsContainer);
+
+  const statusDiv = api.createElement('div', {
+    style: 'padding: 40px; text-align: center; color: var(--color-border-dark); font-style: italic;'
+  }, ['Type to search...']);
+  resultsContainer.appendChild(statusDiv);
+
+  const resultsList = api.createElement('div', {
+    style: 'display: none; max-height: 600px; overflow-y: auto;'
+  }, []);
+  resultsContainer.appendChild(resultsList);
+
+  let searchTimeout = null;
+  let currentQuery = savedQuery;
+
+  const renderResultItem = (item) => {
+    const resultDiv = api.createElement('div', {
+      style: 'padding: 12px; margin-bottom: 8px; background: var(--color-bg-surface); border: 1px solid var(--color-border-light); border-radius: var(--border-radius); cursor: pointer; transition: all 0.2s;'
+    }, []);
+
+    const itemTitle = api.createElement('div', {
+      style: 'font-weight: 500; color: var(--color-text); margin-bottom: 6px; font-size: 0.9375rem;'
+    }, [item.name || item.content?.title || item.id]);
+    resultDiv.appendChild(itemTitle);
+
+    const previewText = item.content?.body || item.content?.description ||
+                       JSON.stringify(item.content).substring(0, 150);
+    const preview = api.createElement('div', {
+      style: 'font-size: 0.8125rem; color: var(--color-text-secondary); margin-bottom: 6px; line-height: 1.4; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;'
+    }, [previewText.substring(0, 200)]);
+    resultDiv.appendChild(preview);
+
+    const meta = api.createElement('div', {
+      style: 'font-size: 0.75rem; color: var(--color-border-dark);'
+    }, [
+      'Type: ' + item.type.substring(0, 8) + '... | Modified: ' +
+      new Date(item.modified).toLocaleDateString()
+    ]);
+    resultDiv.appendChild(meta);
+
+    if (renderActions) {
+      resultDiv.style.cursor = 'default';
+      const actionsEl = renderActions(item);
+      if (actionsEl) resultDiv.appendChild(actionsEl);
+    } else {
+      resultDiv.onclick = () => { onSelect(item); };
+    }
+
+    resultDiv.onmouseover = () => {
+      resultDiv.style.background = 'var(--color-bg-surface-alt)';
+      resultDiv.style.borderColor = 'var(--color-primary)';
+      resultDiv.style.transform = 'translateX(4px)';
+    };
+    resultDiv.onmouseout = () => {
+      resultDiv.style.background = 'white';
+      resultDiv.style.borderColor = 'var(--color-border-light)';
+      resultDiv.style.transform = 'translateX(0)';
+    };
+
+    resultsList.appendChild(resultDiv);
+  };
+
+  const executeSearch = async (query) => {
+    currentQuery = query;
+
+    if (!query || query.trim().length === 0) {
+      // Show starred items as defaults
+      const starred = await getStarredItems(api, { targetContainer });
+      if (starred.length === 0) {
+        statusDiv.style.display = 'block';
+        resultsList.style.display = 'none';
+        statusDiv.textContent = 'Type to search...';
+        return;
+      }
+      statusDiv.style.display = 'none';
+      resultsList.style.display = 'block';
+      resultsList.innerHTML = '';
+
+      const header = api.createElement('div', {
+        style: 'margin-bottom: 15px; font-size: 0.875rem; color: var(--color-text-secondary); font-weight: 500;'
+      }, ['\u2605 Starred']);
+      resultsList.appendChild(header);
+
+      starred.forEach(item => renderResultItem(item));
+      return;
+    }
+
+    statusDiv.style.display = 'block';
+    resultsList.style.display = 'none';
+    statusDiv.textContent = 'Searching...';
+
+    const matches = await searchItems(query, api, { targetContainer });
+
+    if (matches.length === 0) {
+      statusDiv.style.display = 'block';
+      resultsList.style.display = 'none';
+      statusDiv.innerHTML = '';
+
+      // Message
+      const noMatchMsg = api.createElement('div', {
+        style: 'margin-bottom: 16px;'
+      }, ['No items found matching "' + query + '"']);
+      statusDiv.appendChild(noMatchMsg);
+
+      // Create New button
+      const createBtn = api.createElement('button', {
+        style: 'padding: 10px 20px; background: var(--color-primary); color: white; border: none; border-radius: var(--border-radius); cursor: pointer; font-size: 0.875rem; font-weight: 500; transition: background 0.2s;',
+        onclick: async () => {
+          try {
+            // Look up note type
+            const noteTypes = await api.query({ name: 'note' });
+            const noteTypeId = noteTypes[0]?.id || '871ae771-b9b1-4f40-8c7f-d9038bfb69c3';
+
+            // Create sanitized name (lowercase, underscores for spaces)
+            const sanitizedName = query.toLowerCase().replace(/\s+/g, '_');
+
+            // Create new note item
+            const newItem = {
+              id: crypto.randomUUID(),
+              name: sanitizedName,
+              type: noteTypeId,
+              created: Date.now(),
+              modified: Date.now(),
+              children: [],
+              content: {
+                title: query,
+                description: ''
+              }
+            };
+
+            // Save and select
+            await api.set(newItem);
+            onSelect(newItem);
+          } catch (err) {
+            console.error('Failed to create item:', err);
+            alert('Failed to create item: ' + err.message);
+          }
+        }
+      }, ['Create New: ' + query]);
+
+      // Hover effects
+      createBtn.onmouseover = () => {
+        createBtn.style.background = 'var(--color-primary-hover)';
+      };
+      createBtn.onmouseout = () => {
+        createBtn.style.background = 'var(--color-primary)';
+      };
+
+      statusDiv.appendChild(createBtn);
+    } else {
+      statusDiv.style.display = 'none';
+      resultsList.style.display = 'block';
+      resultsList.innerHTML = '';
+
+      const countHeader = api.createElement('div', {
+        style: 'margin-bottom: 15px; font-size: 0.875rem; color: var(--color-text-secondary); font-weight: 500;'
+      }, ['Found ' + matches.length + ' item' + (matches.length === 1 ? '' : 's')]);
+      resultsList.appendChild(countHeader);
+
+      matches.forEach(item => renderResultItem(item));
+    }
+  };
+
+  const performSearch = (query) => {
+    if (searchTimeout) {
+      clearTimeout(searchTimeout);
+    }
+    searchTimeout = setTimeout(() => {
+      executeSearch(query);
+    }, 300);
+  };
+
+  input.oninput = (e) => {
+    performSearch(e.target.value);
+  };
+
+  if (autoFocus) {
+    setTimeout(() => input.focus(), 0);
+  }
+
+  // Show starred items immediately, or run saved query
+  executeSearch(savedQuery);
+
+  return {
+    performSearch: executeSearch,
+    getQuery: () => currentQuery,
+    setQuery: (query) => {
+      input.value = query;
+      executeSearch(query);
+    },
+    destroy: () => {
+      if (searchTimeout) {
+        clearTimeout(searchTimeout);
+      }
+      containerEl.innerHTML = '';
+    }
+  };
+}
+// [END:createSearchUI]
