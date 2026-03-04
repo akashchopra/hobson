@@ -1395,10 +1395,7 @@ export async function loadKernel(require, storageBackend) {
               stack: error.stack || ''
             },
             context: {
-              operation: context.operation || 'unknown',
-              itemId: context.itemId,
-              itemName: context.itemName,
-              rendererId: context.rendererId,
+              operation: 'unknown',
               ...context
             }
           }
