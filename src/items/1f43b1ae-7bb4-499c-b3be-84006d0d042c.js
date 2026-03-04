@@ -150,6 +150,23 @@
   text-align: center;
 }
 
+/* Blinking cursor */
+.hob-cursor {
+  display: inline-block;
+  width: 0;
+  border-left: 2px solid var(--color-text, #333);
+  margin: 0 -1px;
+  animation: hob-blink 1s step-end infinite;
+}
+
+@keyframes hob-blink {
+  50% { opacity: 0; }
+}
+
+.hob-hole-active.hob-selected {
+  padding: 0 2px;
+}
+
 /* Insert-between hover (editable mode only) */
 .hob-editable [data-insert-after]:hover {
   background: oklch(85% 0.08 250);
