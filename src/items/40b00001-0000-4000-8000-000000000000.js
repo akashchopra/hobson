@@ -842,7 +842,7 @@ function hiccupToDOM(hiccup, sourceCtx, _refs) {
       el.setAttribute('data-source-lang', 'hob');
       el.setAttribute('data-view-id', sourceCtx.viewId);
       if (sourceCtx.forItem) el.setAttribute('data-for-item', sourceCtx.forItem);
-      if (hiccup._hobLine != null) el.setAttribute('data-source-line', String(hiccup._hobLine));
+      if (sourceCtx.bindingName) el.setAttribute('data-source-binding', sourceCtx.bindingName);
     }
 
     let childStart = 1;
@@ -1234,6 +1234,10 @@ async function evalFn(ast, env, callStack) {
   return evalFnSingleArity(ast, env, callStack);
 }
 
+// Module-level binding name for element inspector source attribution.
+// Set by evalLet before evaluating each sequential binding, read by hiccupToDOM.
+let _currentBindingName = null;
+
 async function evalLet(ast, env, callStack) {
   if (ast.length < 3) throw hobError('let requires bindings and body', null, callStack);
   const bindingsNode = ast[1];
@@ -1265,9 +1269,12 @@ async function evalLet(ast, env, callStack) {
 
   for (const batch of batches) {
     if (batch.length === 1) {
-      // Sequential
+      // Sequential — track binding name for element inspector
       const { nameNode, exprNode } = batch[0];
+      const prevBinding = _currentBindingName;
+      if (isSym(nameNode)) _currentBindingName = nameNode;
       const value = await evaluate(exprNode, letEnv, callStack);
+      _currentBindingName = prevBinding;
       if (isSym(nameNode)) {
         letEnv.define(nameNode, value);
       } else {
@@ -1277,7 +1284,7 @@ async function evalLet(ast, env, callStack) {
         }
       }
     } else {
-      // Parallel
+      // Parallel — binding name tracking not reliable, skip
       const values = await Promise.all(batch.map(b => evaluate(b.exprNode, letEnv, callStack)));
       for (let i = 0; i < batch.length; i++) {
         const { nameNode } = batch[i];
@@ -3163,14 +3170,26 @@ const STANDARD_MACROS = `
 
 export function createInterpreter(api, viewApi, eventApi) {
   const stdlib = createStdlib();
-  // hiccup->dom is always available (pure function, no API dependency)
+
+  // Helper: construct sourceCtx from _hobItemApi render context (set by renderHobView)
+  function _hobSourceCtx() {
+    if (!api._debugActive || !api._renderViewName) return null;
+    return {
+      viewName: api._renderViewName,
+      viewId: api._renderViewId,
+      forItem: api._renderItemId,
+      bindingName: _currentBindingName,
+    };
+  }
+
+  // hiccup->dom creates DOM from hiccup, with source attribution when debug is active
   stdlib.define('hiccup->dom', Object.assign((hiccup) => {
-    return hiccupToDOM(hiccup);
+    return hiccupToDOM(hiccup, _hobSourceCtx());
   }, { _hobName: 'hiccup->dom' }));
 
   // hiccup->dom+ returns [dom-node refs-map] for imperative DOM manipulation
   stdlib.define('hiccup->dom+', Object.assign((hiccup) => {
-    return hiccupToDOMWithRefs(hiccup);
+    return hiccupToDOMWithRefs(hiccup, _hobSourceCtx());
   }, { _hobName: 'hiccup->dom+' }));
 
   // DOM mutation ops (no API dependency — pure DOM operations)
@@ -3207,7 +3226,7 @@ export function createInterpreter(api, viewApi, eventApi) {
       el.appendChild(content);
     } else {
       // Treat as hiccup
-      const node = hiccupToDOM(content);
+      const node = hiccupToDOM(content, _hobSourceCtx());
       if (node) el.appendChild(node);
     }
     return null;

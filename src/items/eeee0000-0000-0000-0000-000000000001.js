@@ -96,6 +96,7 @@ export function collectElementInfo(element) {
       entry.source = el.dataset.source;
       entry.sourceLine = el.dataset.sourceLine;
       if (el.dataset.sourceLang) entry.sourceLang = el.dataset.sourceLang;
+      if (el.dataset.sourceBinding) entry.sourceBinding = el.dataset.sourceBinding;
     }
     if (el.dataset.viewId) {
       entry.viewId = el.dataset.viewId;
@@ -175,7 +176,7 @@ export function inspectOnce(api) {
  * Resolve an inspector link target and navigate to it.
  * Opens as sibling on spatial canvas if available.
  */
-export async function resolveAndNavigate(api, { id, name, line, lang }) {
+export async function resolveAndNavigate(api, { id, name, line, lang, binding }) {
   // Resolve target item ID
   let targetId = id;
   if (!targetId && name) {
@@ -196,9 +197,15 @@ export async function resolveAndNavigate(api, { id, name, line, lang }) {
 
   if (!targetId) return;
 
-  // Build navigation params for scroll-to-line support
+  // Build navigation params for scroll-to-line or scroll-to-symbol support
   const field = lang === 'hob' ? 'hob' : 'code';
-  const navigateTo = line ? { field, lines: line } : null;
+  let navigateTo = null;
+  if (binding && lang === 'hob') {
+    // Hob: navigate to symbol (binding name) in structural editor
+    navigateTo = { field, symbol: binding };
+  } else if (line) {
+    navigateTo = { field, lines: line };
+  }
 
   // Open as sibling on spatial canvas if possible
   const currentRoot = api.viewport.getRoot();
