@@ -395,12 +395,11 @@ function renderLeaf(node, state, itemNames, api) {
           span.textContent = state.inputBuffer;
         } else if (state.mode === 'string') {
           const b = state.inputBuffer, c = state.inputCursor;
-          span.textContent = '"' + b.slice(0, c) + '|' + b.slice(c) + '"';
+          buildCursorContent(span, '"' + b.slice(0, c), b.slice(c) + '"');
           span.classList.add('hob-string');
         } else {
           const b = state.inputBuffer, c = state.inputCursor;
-          span.textContent = b.slice(0, c) + '|' + b.slice(c);
-          if (!b) span.textContent = '|';
+          buildCursorContent(span, b.slice(0, c), b.slice(c));
         }
       } else {
         span.className = 'hob-hole';
@@ -1146,6 +1145,16 @@ function updateStatusBar(state, statusBar) {
 
 // --- Hole utilities ---
 
+function buildCursorContent(el, before, after) {
+  el.textContent = '';
+  if (before) el.appendChild(document.createTextNode(before));
+  const cur = document.createElement('span');
+  cur.className = 'hob-cursor';
+  cur.textContent = '\u200B'; // zero-width space for height
+  el.appendChild(cur);
+  if (after) el.appendChild(document.createTextNode(after));
+}
+
 function updateHoleDisplay(state) {
   const el = state.domMap.get(state.inputHoleId);
   if (!el) return;
@@ -1156,11 +1165,9 @@ function updateHoleDisplay(state) {
     el.classList.remove('hob-hole-select-all');
     const b = state.inputBuffer, c = state.inputCursor;
     if (state.mode === 'string') {
-      el.textContent = '"' + b.slice(0, c) + '|' + b.slice(c) + '"';
-    } else if (b) {
-      el.textContent = b.slice(0, c) + '|' + b.slice(c);
+      buildCursorContent(el, '"' + b.slice(0, c), b.slice(c) + '"');
     } else {
-      el.textContent = '|';
+      buildCursorContent(el, b.slice(0, c), b.slice(c));
     }
   }
 }
