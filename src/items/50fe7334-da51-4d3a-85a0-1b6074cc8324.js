@@ -2538,12 +2538,22 @@ export async function render(value, options, api) {
   updateSelectionVisual(state);
   updateStatusBar(state, statusBar);
 
-  // Deferred scroll — element may not be in the DOM yet when render() returns
+  // Deferred scroll — element may not be in the DOM yet when render() returns.
+  // When opened as a new canvas sibling, the window/scroll container may take
+  // multiple frames to mount, so retry until the element is actually in the document.
   if (options.scrollToSymbol && state.selectedId != null) {
-    requestAnimationFrame(() => {
-      const el = state.domMap.get(state.selectedId);
-      if (el) el.scrollIntoView({ block: 'center', inline: 'nearest' });
-    });
+    const scrollTarget = state.domMap.get(state.selectedId);
+    if (scrollTarget) {
+      let attempts = 0;
+      const tryScroll = () => {
+        if (scrollTarget.isConnected) {
+          scrollTarget.scrollIntoView({ block: 'center', inline: 'nearest' });
+        } else if (++attempts < 10) {
+          requestAnimationFrame(tryScroll);
+        }
+      };
+      requestAnimationFrame(tryScroll);
+    }
   }
 
   // Build system symbol index once per session, subscribe to updates

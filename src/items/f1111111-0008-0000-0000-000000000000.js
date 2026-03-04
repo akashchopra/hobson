@@ -1566,6 +1566,13 @@ export class RenderingSystem {
     this._hobItemApi._renderItemId = item.id;
     this._hobItemApi._selectorInfo = null;
 
+    // Source attribution for element inspector: hiccup->dom reads these
+    // to stamp data-source/data-view-id/data-for-item on created DOM elements.
+    const debugActive = context.debug || this.kernel.debugMode;
+    this._hobItemApi._debugActive = debugActive;
+    this._hobItemApi._renderViewName = debugActive ? view.name : null;
+    this._hobItemApi._renderViewId = debugActive ? view.id : null;
+
     // Create child env for this render with view ops
     const childEnv = this._hobInterp.createEnvironment();
     this._hobModule.registerViewOps(childEnv, api);
@@ -1589,14 +1596,16 @@ export class RenderingSystem {
       }
     } finally {
       this._hobItemApi._renderItemId = null;
+      this._hobItemApi._debugActive = false;
+      this._hobItemApi._renderViewName = null;
+      this._hobItemApi._renderViewId = null;
     }
 
     // Capture selector info registered during evaluation
     const selectorInfo = this._hobItemApi._selectorInfo;
     this._hobItemApi._selectorInfo = null;
 
-    // Result should be a hiccup vector — convert to DOM
-    const debugActive = context.debug || this.kernel.debugMode;
+    // Result should be a hiccup vector — convert to DOM (reuse debug flag from above)
     const sourceCtx = debugActive ? { viewName: view.name, viewId: view.id, forItem: item.id } : null;
     let domNode = null;
     if (result && Array.isArray(result)) {
