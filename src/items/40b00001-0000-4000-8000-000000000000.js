@@ -2157,12 +2157,17 @@ async function evalApply(ast, env, callStack) {
   }
 
   // Push call frame
+  const fnName = headVal._hobName || (isSym(headNode) ? headNode : null);
   const frame = {
-    name: headVal._hobName || (isSym(headNode) ? headNode : null),
+    name: fnName,
     line: null,
     col: null
   };
   callStack.push(frame);
+
+  // Track function name for element inspector source attribution
+  const prevBinding = _currentBindingName;
+  if (fnName) _currentBindingName = fnName;
 
   try {
     let result = headVal(...args);
@@ -2172,6 +2177,7 @@ async function evalApply(ast, env, callStack) {
     if (e instanceof HobError) throw e;
     throw hobError(e.message, null, callStack);
   } finally {
+    _currentBindingName = prevBinding;
     callStack.pop();
   }
 }
