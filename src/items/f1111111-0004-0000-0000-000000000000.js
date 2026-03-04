@@ -27,25 +27,41 @@ export async function onKernelBootComplete({ safeMode }, _api) {
         const tag = document.activeElement?.tagName;
         if (tag === 'INPUT' || tag === 'TEXTAREA' || document.activeElement?.isContentEditable) return;
 
-        const selectedId = api.viewport.getSelection();
+        const selMgr = await api.require('selection-manager');
+        const selectedId = selMgr.getSelection();
         if (!selectedId) return;
 
         e.preventDefault();
 
-        const parentId = api.viewport.getSelectionParent();
+        const parentId = selMgr.getSelectionParent();
 
         try {
           const ctxLib = await api.require('context-menu-lib');
+          const vpMgr = await api.require('viewport-manager');
+          const rendering = vpMgr.getRendering();
           const item = await api.get(selectedId);
-          const editView = await ctxLib.findEditableView(api, item.type);
+          // findEditableView needs api.getViews which is rendering-only
+          const enrichedApi = { ...api, getViews: (t) => rendering.getViews(t) };
+          const editView = await ctxLib.findEditableView(enrichedApi, item.type);
           if (!editView) return;
 
           if (parentId) {
-            await api.setAttachmentView(parentId, selectedId, editView.id);
-            await api.rerenderItem(selectedId);
+            // Inline setAttachmentView: update parent's attachment spec
+            const parent = await api.get(parentId);
+            const idx = parent.attachments.findIndex(c => c.id === selectedId);
+            if (idx >= 0) {
+              const child = parent.attachments[idx];
+              parent.attachments = [...parent.attachments];
+              parent.attachments[idx] = {
+                ...child,
+                previousView: child.view ? { ...child.view } : null,
+                view: { ...(child.view || {}), type: editView.id }
+              };
+              await api.set(parent); // triggers reactive re-render
+            }
           } else {
-            await api.viewport.setRootView(editView.id);
-            await api.renderViewport();
+            await vpMgr.setRootView(editView.id);
+            await rendering.renderViewport();
           }
         } catch (err) {
           console.warn('Ctrl+E edit failed:', err.message);
