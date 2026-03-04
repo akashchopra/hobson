@@ -90,6 +90,8 @@ function createInventoryBar(container, api) {
   }
 
   track.addEventListener('scroll', updateArrows);
+  // Fire updateArrows when track gets layout (initial mount) or resizes
+  new ResizeObserver(updateArrows).observe(track);
 
   wrapper.appendChild(leftBtn);
   wrapper.appendChild(track);
