@@ -3,6 +3,23 @@
 
 let api = null;
 
+// Minimal createElement matching viewport-rendering's API shape (without debug attribution)
+function createElement(tag, props = {}, children = []) {
+  const el = document.createElement(tag);
+  for (const [key, value] of Object.entries(props)) {
+    if (typeof value === 'function') el[key] = value;
+    else if (key === 'class') el.className = value;
+    else if (key === 'style' && typeof value === 'string') el.style.cssText = value;
+    else el.setAttribute(key, value);
+  }
+  for (const child of children) {
+    if (typeof child === 'string') el.appendChild(document.createTextNode(child));
+    else if (child instanceof Node) el.appendChild(child);
+    else if (Array.isArray(child)) el.appendChild(createElement(child[0], child[1], child[2]));
+  }
+  return el;
+}
+
 export async function onKernelBootComplete({ safeMode }, _api) {
   if (safeMode) return;  // No shortcuts in safe mode
 
@@ -65,6 +82,93 @@ export async function onKernelBootComplete({ safeMode }, _api) {
           }
         } catch (err) {
           console.warn('Ctrl+E edit failed:', err.message);
+        }
+      }
+
+      // Ctrl+Shift+N - New child item on spatial canvas
+      if (e.ctrlKey && !e.metaKey && e.shiftKey && !e.altKey && e.key === 'N') {
+        const tag = document.activeElement?.tagName;
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || document.activeElement?.isContentEditable) return;
+
+        const vpMgr = await api.require('viewport-manager');
+        const rootId = vpMgr.getRoot();
+        if (!document.querySelector(`[data-container-id="${rootId}"]`)) return;
+
+        e.preventDefault();
+
+        try {
+          const typePicker = await api.require('type-picker-lib');
+          const ctxLib = await api.require('context-menu-lib');
+          const rendering = vpMgr.getRendering();
+          const enrichedApi = { ...api, getViews: (t) => rendering.getViews(t), createElement };
+
+          const selectedType = await typePicker.showTypePicker(enrichedApi);
+          if (!selectedType) return;
+
+          const editView = await ctxLib.findEditableView(enrichedApi, selectedType);
+
+          const newItem = {
+            id: crypto.randomUUID(),
+            name: new Date().toISOString(),
+            type: selectedType,
+            created: Date.now(),
+            modified: Date.now(),
+            attachments: [],
+            content: {}
+          };
+          await api.set(newItem);
+
+          const attachment = { id: newItem.id };
+          if (editView) attachment.view = { type: editView.id };
+
+          const root = await api.get(rootId);
+          root.attachments = [...(root.attachments || []), attachment];
+          root.modified = Date.now();
+          await api.set(root);
+        } catch (err) {
+          console.warn('Ctrl+Shift+N failed:', err.message);
+        }
+      }
+
+      // Ctrl+Shift+A - Add existing item to spatial canvas
+      if (e.ctrlKey && !e.metaKey && e.shiftKey && !e.altKey && e.key === 'A') {
+        const tag = document.activeElement?.tagName;
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || document.activeElement?.isContentEditable) return;
+
+        const vpMgr = await api.require('viewport-manager');
+        const rootId = vpMgr.getRoot();
+        if (!document.querySelector(`[data-container-id="${rootId}"]`)) return;
+
+        e.preventDefault();
+
+        try {
+          const modalLib = await api.require('modal-lib');
+          const searchLib = await api.require('item-search-lib');
+
+          const searchContainer = document.createElement('div');
+          const enrichedApi = { ...api, createElement };
+          const { close } = modalLib.showModal({
+            title: 'Add Existing Item',
+            width: '600px',
+            maxHeight: '80vh',
+            api: enrichedApi,
+            content: searchContainer
+          });
+
+          searchLib.createSearchUI(
+            searchContainer,
+            async (selectedItem) => {
+              close();
+              const root = await api.get(rootId);
+              root.attachments = [...(root.attachments || []), { id: selectedItem.id }];
+              root.modified = Date.now();
+              await api.set(root);
+            },
+            enrichedApi,
+            { placeholder: 'Search for items to add...', autoFocus: true }
+          );
+        } catch (err) {
+          console.warn('Ctrl+Shift+A failed:', err.message);
         }
       }
 
