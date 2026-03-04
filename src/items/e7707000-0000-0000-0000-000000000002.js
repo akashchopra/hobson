@@ -43,76 +43,83 @@ export async function onErrorEvent({ error, context, timestamp }, api) {
 
 async function parseStackTrace(stack, api) {
   if (!stack) return [];
-  
-  const lines = stack.split('\n').slice(1); // Skip "Error: message" line
+
+  const allLines = stack.split('\n');
+  // Skip error message lines at the top.  Chrome's .stack includes them, Firefox's doesn't.
+  // A frame line contains '@' (Firefox) or starts with 'at ' (Chrome).
+  let startIdx = 0;
+  while (startIdx < allLines.length) {
+    const t = allLines[startIdx].trim();
+    if (t.includes('@') || t.startsWith('at ')) break;
+    startIdx++;
+  }
+  const lines = allLines.slice(startIdx);
   const frames = [];
-  
+
   // Cache item lookups to avoid repeated queries (stores { id, hasHob })
   const itemCache = new Map();
-  
+
   for (const line of lines) {
     const trimmed = line.trim();
     if (!trimmed) continue;
-    
+
     // Parse stack frame formats:
-    // Firefox classic: "functionName@sourceURL:line:column"
-    // Firefox simple:  "functionName sourceURL:line"
-    // Chrome:          "    at functionName (sourceURL:line:column)"
-    // Anonymous:       "@sourceURL:line:column"
-    
+    // Firefox: "functionName@sourceURL:line:column" or "@sourceURL:line:column"
+    // Chrome:  "    at functionName (sourceURL:line:column)"
+    // Chrome anonymous: "    at sourceURL:line:column"
+
     let sourceName = null;
     let lineNum = null;
     let colNum = null;
-    
-    // Try Firefox classic format: funcName@source:line:col
-    const firefoxClassicMatch = trimmed.match(/@([^:]+):(\d+):(\d+)$/);
-    if (firefoxClassicMatch) {
-      sourceName = firefoxClassicMatch[1];
-      lineNum = firefoxClassicMatch[2];
-      colNum = firefoxClassicMatch[3];
+
+    // Extract :line:col from the end, then parse the rest by format
+    const lineColMatch = trimmed.match(/:(\d+):(\d+)$/);
+    if (lineColMatch) {
+      lineNum = lineColMatch[1];
+      colNum = lineColMatch[2];
+      const before = trimmed.slice(0, lineColMatch.index);
+
+      // Firefox: funcName@source or @source
+      const atIdx = before.indexOf('@');
+      if (atIdx >= 0) {
+        sourceName = before.slice(atIdx + 1);
+      }
+      // Chrome: at funcName (source  or  at source
+      else if (before.includes('(')) {
+        sourceName = before.slice(before.lastIndexOf('(') + 1);
+      }
+      // Chrome anonymous: at source
+      else if (before.trim().startsWith('at ')) {
+        sourceName = before.trim().slice(3).trim();
+      }
     }
-    
-    // Try Firefox simple format: funcName source:line (space-separated, no column)
-    if (!sourceName) {
-      const firefoxSimpleMatch = trimmed.match(/^(\S+)\s+([^:]+):(\d+)$/);
-      if (firefoxSimpleMatch) {
-        sourceName = firefoxSimpleMatch[2];
-        lineNum = firefoxSimpleMatch[3];
+    // Try :line only (no column) — Firefox simple format
+    else {
+      const lineOnlyMatch = trimmed.match(/:(\d+)$/);
+      if (lineOnlyMatch) {
+        lineNum = lineOnlyMatch[1];
         colNum = '0';
+        const before = trimmed.slice(0, lineOnlyMatch.index);
+        const atIdx = before.indexOf('@');
+        if (atIdx >= 0) {
+          sourceName = before.slice(atIdx + 1);
+        }
       }
     }
-    
-    // Try Firefox simple format with column: funcName source:line:col
-    if (!sourceName) {
-      const firefoxSimpleColMatch = trimmed.match(/^(\S+)\s+([^:]+):(\d+):(\d+)$/);
-      if (firefoxSimpleColMatch) {
-        sourceName = firefoxSimpleColMatch[2];
-        lineNum = firefoxSimpleColMatch[3];
-        colNum = firefoxSimpleColMatch[4];
-      }
-    }
-    
-    // Try Chrome format: at funcName (source:line:col)
-    if (!sourceName) {
-      const chromeMatch = trimmed.match(/\(([^:]+):(\d+):(\d+)\)$/);
-      if (chromeMatch) {
-        sourceName = chromeMatch[1];
-        lineNum = chromeMatch[2];
-        colNum = chromeMatch[3];
-      }
-    }
-    
+
     // Try to find item by source name
     let itemId = null;
     let hasHob = false;
     if (sourceName) {
-      // Remove .js extension if present
-      const itemName = sourceName.replace(/\.js$/, '');
+      // Extract just the filename from the source path/URL
+      let itemName = sourceName;
+      // Strip blob: prefix and URL parts — extract last path segment
+      const lastSlash = itemName.lastIndexOf('/');
+      if (lastSlash >= 0) itemName = itemName.slice(lastSlash + 1);
+      // Remove .js extension
+      itemName = itemName.replace(/\.js$/, '');
 
-      // Skip built-in browser sources
-      if (!itemName.includes('://') &&
-          !itemName.startsWith('blob:')) {
-
+      if (itemName && itemName !== 'null') {
         if (itemCache.has(itemName)) {
           const cached = itemCache.get(itemName);
           if (cached) { itemId = cached.id; hasHob = cached.hasHob; }
@@ -133,17 +140,20 @@ async function parseStackTrace(stack, api) {
       }
     }
 
+    // Compensate for module system wrapping (empty line + "use strict" = 2 lines)
+    const adjustedLine = (lineNum && itemId) ? String(Math.max(1, parseInt(lineNum, 10) - 2)) : lineNum;
+
     frames.push({
       raw: trimmed,
       sourceName: sourceName,
       field: hasHob ? 'hob' : 'code',
-      line: lineNum,
+      line: adjustedLine,
       column: colNum,
       itemId: itemId,
       navigable: !!itemId
     });
   }
-  
+
   return frames;
 }
 

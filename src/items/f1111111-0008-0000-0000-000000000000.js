@@ -1172,8 +1172,8 @@ export class RenderingSystem {
           operation: 'render-hob',
           itemId,
           itemName: item?.name,
-          viewId: view?.id,
-          viewName: view?.name
+          rendererId: view?.id,
+          rendererName: view?.name
         });
         return this.createErrorView(error, itemId);
       }
@@ -1223,8 +1223,8 @@ export class RenderingSystem {
         operation: 'render',
         itemId,
         itemName: item?.name,
-        viewId: view?.id,
-        viewName: view?.name
+        rendererId: view?.id,
+        rendererName: view?.name
       });
       return this.createErrorView(error, itemId);
     }

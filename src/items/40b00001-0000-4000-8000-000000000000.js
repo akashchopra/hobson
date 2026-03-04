@@ -2497,9 +2497,9 @@ function createStdlib() {
       const kw = f;
       return (obj) => {
         if (obj && typeof obj === 'object' && !Array.isArray(obj)) {
-          if (kw in obj) return obj[kw];
+          if (kw in obj) return obj[kw] ?? null;
           const plain = keywordName(kw);
-          if (plain in obj) return obj[plain];
+          if (plain in obj) return obj[plain] ?? null;
         }
         return null;
       };
@@ -2994,7 +2994,7 @@ function registerViewOps(env, api) {
   }, { _hobName: 'attach!' }));
 
   env.define('open-item!', Object.assign(async (event, itemIdOrObj) => {
-    if (api.openItem) {
+    if (api.openItem && itemIdOrObj != null) {
       const arg = typeof itemIdOrObj === 'string'
         ? itemIdOrObj
         : hobToJs(itemIdOrObj);
