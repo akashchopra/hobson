@@ -1,26 +1,23 @@
-// REPL UI Library
-// Provides the REPL interface as a collapsible bottom panel
-// State persisted to viewport item
+// REPL Panel Shell
+// Manages the collapsible bottom panel chrome. The REPL content is rendered
+// by repl-view into the panel's content area.
 
 const VIEWPORT_ID = '88888888-0000-0000-0000-000000000000';
+const REPL_ITEM_ID = 'f1111111-0003-0003-0000-000000000000';
+const REPL_VIEW_ID = 'f1111111-0003-0002-0000-000000000000';
 
 let api = null;
 let panelElement = null;
-let history = [];
-let historyIndex = 0;
 
-// Panel state
+// Panel state (persisted to viewport item)
 let panelState = {
   expanded: false,
-  panelHeight: 300,
-  inputWidthPercent: 50
+  panelHeight: 300
 };
 
-// Document-level event handlers
+// Document-level event handlers for panel splitter
 let _panelSplitterMoveHandler = null;
 let _panelSplitterUpHandler = null;
-let _verticalSplitterMoveHandler = null;
-let _verticalSplitterUpHandler = null;
 
 // Debounce timer for persisting state
 let persistTimer = null;
@@ -33,49 +30,88 @@ async function loadPanelState() {
       panelState = { ...panelState, ...viewport.content.replPanelState };
     }
   } catch (e) {
-    console.warn('[repl-ui] Failed to load panel state:', e);
+    console.warn('[repl-shell] Failed to load panel state:', e);
   }
 }
 
 async function savePanelState() {
   if (!api) return;
-  
-  // Debounce: wait 500ms after last change before persisting
+
   if (persistTimer) clearTimeout(persistTimer);
   persistTimer = setTimeout(async () => {
     try {
       const viewport = await api.get(VIEWPORT_ID);
       viewport.content = viewport.content || {};
-      viewport.content.replPanelState = { ...panelState };
+      viewport.content.replPanelState = {
+        expanded: panelState.expanded,
+        panelHeight: panelState.panelHeight
+      };
       viewport.modified = Date.now();
       await api.set(viewport, { silent: true });
     } catch (e) {
-      console.warn('[repl-ui] Failed to save panel state:', e);
+      console.warn('[repl-shell] Failed to save panel state:', e);
     }
   }, 500);
 }
 
 export async function onKernelBootComplete({ safeMode }, _api) {
-  if (safeMode) return;  // No REPL in safe mode
+  if (safeMode) return;
 
   api = _api;
 
-  // Remove previous REPL elements on re-import (late activation)
-  // Note: must query DOM by ID — module variables are fresh (null) after re-evaluation
+  // Remove previous elements on re-import (late activation)
   const oldSplitter = document.getElementById('repl-panel-splitter');
   const oldPanel = document.getElementById('repl-panel');
   if (oldSplitter) oldSplitter.remove();
   if (oldPanel) oldPanel.remove();
 
-  // Load saved state from viewport
+  // Load saved state
   await loadPanelState();
 
   // Create panel splitter (between main-view and panel)
   const panelSplitter = api.createElement('div');
   panelSplitter.id = 'repl-panel-splitter';
 
-  // Create and attach REPL panel
-  panelElement = createPanel();
+  // Create panel
+  panelElement = api.createElement('div');
+  panelElement.id = 'repl-panel';
+  panelElement.className = 'collapsed';
+
+  // Collapse bar — always visible
+  const collapseBar = api.createElement('div');
+  collapseBar.className = 'repl-collapse-bar';
+  collapseBar.onclick = async () => await toggle();
+
+  const title = api.createElement('span');
+  title.className = 'repl-title';
+  title.textContent = 'REPL';
+  collapseBar.appendChild(title);
+
+  const hint = api.createElement('span');
+  hint.className = 'repl-hint';
+  hint.textContent = 'Ctrl+\\ to toggle';
+  collapseBar.appendChild(hint);
+
+  const expandIcon = api.createElement('span');
+  expandIcon.className = 'repl-expand-icon';
+  expandIcon.textContent = '▲';
+  collapseBar.appendChild(expandIcon);
+
+  panelElement.appendChild(collapseBar);
+
+  // Render REPL view into panel content
+  try {
+    const replItem = await api.get(REPL_ITEM_ID);
+    const viewModule = await api.require(REPL_VIEW_ID);
+    const content = await viewModule.render(replItem, api);
+    panelElement.appendChild(content);
+  } catch (e) {
+    console.error('[repl-shell] Failed to render REPL view:', e);
+    const errorDiv = api.createElement('div');
+    errorDiv.style.cssText = 'padding: 16px; color: var(--color-danger);';
+    errorDiv.textContent = 'Failed to load REPL: ' + e.message;
+    panelElement.appendChild(errorDiv);
+  }
 
   const app = document.getElementById('app');
   app.appendChild(panelSplitter);
@@ -83,7 +119,7 @@ export async function onKernelBootComplete({ safeMode }, _api) {
 
   // Setup panel height resize
   setupPanelSplitter(panelSplitter);
-  
+
   // Apply saved state
   applyPanelState();
 
@@ -100,7 +136,7 @@ export async function onKernelBootComplete({ safeMode }, _api) {
 
 function applyPanelState() {
   if (!panelElement) return;
-  
+
   if (panelState.expanded) {
     panelElement.classList.remove('collapsed');
     panelElement.classList.add('expanded');
@@ -110,166 +146,7 @@ function applyPanelState() {
     panelElement.classList.remove('expanded');
     panelElement.style.flex = '';
   }
-  
-  // Apply input width
-  const inputSection = panelElement.querySelector('.repl-input-section');
-  const outputSection = panelElement.querySelector('.repl-output-section');
-  if (inputSection && outputSection) {
-    inputSection.style.flex = `0 0 ${panelState.inputWidthPercent}%`;
-    outputSection.style.flex = '1';
-  }
 }
-
-// [BEGIN:createPanel]
-function createPanel() {
-  const panel = api.createElement('div');
-  panel.id = 'repl-panel';
-  panel.className = 'collapsed';
-
-  // Collapse bar - always visible
-  const collapseBar = api.createElement('div');
-  collapseBar.className = 'repl-collapse-bar';
-  collapseBar.onclick = async () => await toggle();
-  
-  const title = api.createElement('span');
-  title.className = 'repl-title';
-  title.textContent = 'REPL';
-  collapseBar.appendChild(title);
-  
-  const hint = api.createElement('span');
-  hint.className = 'repl-hint';
-  hint.textContent = 'Ctrl+\\ to toggle';
-  collapseBar.appendChild(hint);
-  
-  const expandIcon = api.createElement('span');
-  expandIcon.className = 'repl-expand-icon';
-  expandIcon.textContent = '▲';
-  collapseBar.appendChild(expandIcon);
-  
-  panel.appendChild(collapseBar);
-
-  // Panel content - horizontal layout
-  const panelContent = api.createElement('div');
-  panelContent.className = 'repl-panel-content';
-
-  // Input section (left)
-  const inputSection = api.createElement('div');
-  inputSection.className = 'repl-input-section';
-
-  const inputScroll = api.createElement('div');
-  inputScroll.className = 'repl-input-scroll';
-
-  const input = api.createElement('textarea');
-  input.id = 'repl-input';
-  input.placeholder = "Enter JavaScript... (api object available; help(api) for details)\nOr Hob... (use `:h ` prefix)\nCtrl+Enter to run | Up/Down for history";
-  input.spellcheck = false;
-  inputScroll.appendChild(input);
-  inputSection.appendChild(inputScroll);
-
-  // Action buttons
-  const actions = api.createElement('div');
-  actions.className = 'repl-actions';
-
-  const runBtn = api.createElement('button');
-  runBtn.textContent = 'Run';
-  runBtn.className = 'primary';
-  runBtn.onclick = () => run();
-  actions.appendChild(runBtn);
-
-  const clearInputBtn = api.createElement('button');
-  clearInputBtn.textContent = 'Clear';
-  clearInputBtn.onclick = () => { input.value = ''; };
-  actions.appendChild(clearInputBtn);
-
-  inputSection.appendChild(actions);
-  panelContent.appendChild(inputSection);
-
-  // Vertical splitter between input and output
-  const verticalSplitter = api.createElement('div');
-  verticalSplitter.className = 'repl-vertical-splitter';
-  panelContent.appendChild(verticalSplitter);
-
-  // Output section (right)
-  const outputSection = api.createElement('div');
-  outputSection.className = 'repl-output-section';
-
-  const transcriptHeader = api.createElement('div');
-  transcriptHeader.className = 'repl-transcript-header';
-
-  const transcriptHeading = api.createElement('h4');
-  transcriptHeading.textContent = 'Output';
-  transcriptHeader.appendChild(transcriptHeading);
-
-  const clearTranscriptBtn = api.createElement('button');
-  clearTranscriptBtn.textContent = 'Clear';
-  clearTranscriptBtn.onclick = () => {
-    document.getElementById('repl-transcript-entries').innerHTML = '';
-  };
-  transcriptHeader.appendChild(clearTranscriptBtn);
-
-  outputSection.appendChild(transcriptHeader);
-
-  const transcriptEntries = api.createElement('div');
-  transcriptEntries.id = 'repl-transcript-entries';
-  outputSection.appendChild(transcriptEntries);
-
-  panelContent.appendChild(outputSection);
-  panel.appendChild(panelContent);
-
-  // Setup vertical splitter drag
-  setupVerticalSplitter(verticalSplitter, inputSection, outputSection, panelContent);
-
-  // Keyboard shortcuts for input
-  input.addEventListener('keydown', (e) => {
-    // Ctrl+Enter to run
-    if (e.ctrlKey && e.key === 'Enter') {
-      e.preventDefault();
-      run();
-    }
-
-    // Escape to dismiss
-    if (e.key === 'Escape' && panelState.expanded) {
-      e.preventDefault();
-      toggle();
-    }
-
-    // Tab for indentation
-    if (e.key === 'Tab') {
-      e.preventDefault();
-      const start = input.selectionStart;
-      const end = input.selectionEnd;
-      input.value = input.value.substring(0, start) + '  ' + input.value.substring(end);
-      input.selectionStart = input.selectionEnd = start + 2;
-    }
-
-    // Up/Down for history
-    if (e.key === 'ArrowUp' && !e.shiftKey && !e.ctrlKey) {
-      if (historyIndex > 0) {
-        historyIndex--;
-        input.value = history[historyIndex];
-        e.preventDefault();
-        setTimeout(() => {
-          input.selectionStart = input.selectionEnd = input.value.length;
-        }, 0);
-      }
-    }
-
-    if (e.key === 'ArrowDown' && !e.shiftKey && !e.ctrlKey) {
-      if (historyIndex < history.length - 1) {
-        historyIndex++;
-        input.value = history[historyIndex];
-        e.preventDefault();
-      } else if (historyIndex === history.length - 1) {
-        historyIndex++;
-        input.value = '';
-        e.preventDefault();
-      }
-    }
-  });
-
-  return panel;
-}
-// [END:createPanel]
 
 function setupPanelSplitter(splitter) {
   let isDragging = false;
@@ -288,7 +165,6 @@ function setupPanelSplitter(splitter) {
 
   _panelSplitterMoveHandler = (e) => {
     if (!isDragging) return;
-    // Dragging up (negative delta) should increase panel height
     const delta = startY - e.clientY;
     const newHeight = Math.max(150, Math.min(window.innerHeight - 100, startHeight + delta));
     panelState.panelHeight = newHeight;
@@ -310,193 +186,32 @@ function setupPanelSplitter(splitter) {
   document.addEventListener('mouseup', _panelSplitterUpHandler);
 }
 
-function setupVerticalSplitter(splitter, inputSection, outputSection, container) {
-  let isDragging = false;
-  let startX = 0;
-  let startInputWidth = 0;
-
-  splitter.addEventListener('mousedown', (e) => {
-    isDragging = true;
-    startX = e.clientX;
-    startInputWidth = inputSection.offsetWidth;
-    document.body.style.cursor = 'col-resize';
-    document.body.style.userSelect = 'none';
-    e.preventDefault();
-  });
-
-  _verticalSplitterMoveHandler = (e) => {
-    if (!isDragging) return;
-    const delta = e.clientX - startX;
-    const containerWidth = container.offsetWidth;
-    const newInputWidth = startInputWidth + delta;
-    const minWidth = 200;
-    const maxWidth = containerWidth - 200 - 6; // 6px for splitter
-    
-    if (newInputWidth >= minWidth && newInputWidth <= maxWidth) {
-      const percent = (newInputWidth / containerWidth) * 100;
-      panelState.inputWidthPercent = percent;
-      inputSection.style.flex = `0 0 ${percent}%`;
-      outputSection.style.flex = '1';
-    }
-  };
-
-  _verticalSplitterUpHandler = () => {
-    if (isDragging) {
-      isDragging = false;
-      document.body.style.cursor = '';
-      document.body.style.userSelect = '';
-      savePanelState();
-    }
-  };
-
-  document.addEventListener('mousemove', _verticalSplitterMoveHandler);
-  document.addEventListener('mouseup', _verticalSplitterUpHandler);
-}
-
-function addTranscriptEntry(code, result, error, consoleLines) {
-  const container = document.getElementById('repl-transcript-entries');
-  if (!container) return;
-
-  const entry = api.createElement('div');
-  entry.className = 'repl-entry' + (error ? ' error' : ' success');
-
-  const codeDiv = api.createElement('div');
-  codeDiv.className = 'repl-entry-code';
-  codeDiv.textContent = '> ' + code;
-  entry.appendChild(codeDiv);
-
-  // Show captured console output
-  if (consoleLines && consoleLines.length > 0) {
-    const consoleDiv = api.createElement('div');
-    consoleDiv.className = 'repl-entry-console';
-    consoleDiv.textContent = consoleLines.join('\n');
-    entry.appendChild(consoleDiv);
-  }
-
-  const outputDiv = api.createElement('div');
-  outputDiv.className = error ? 'repl-entry-error' : 'repl-entry-output';
-  outputDiv.textContent = error || result;
-  entry.appendChild(outputDiv);
-
-  container.appendChild(entry);
-
-  // Scroll to bottom
-  entry.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-}
-
-// [BEGIN:run]
-export async function run() {
-  const input = document.getElementById('repl-input');
-  if (!input || !api) return;
-
-  const code = input.value.trim();
-  if (!code) return;
-
-  // Add to history
-  if (history.length === 0 || history[history.length - 1] !== code) {
-    history.push(code);
-    if (history.length > 50) {
-      history.shift();
-    }
-  }
-  historyIndex = history.length;
-
-  // Intercept console methods to capture output
-  const consoleLines = [];
-  const origLog = console.log;
-  const origWarn = console.warn;
-  const origError = console.error;
-  const formatArgs = (args) => args.map(a => typeof a === 'string' ? a : JSON.stringify(a, null, 2)).join(' ');
-  console.log = (...args) => { origLog(...args); consoleLines.push(formatArgs(args)); };
-  console.warn = (...args) => { origWarn(...args); consoleLines.push(`[warn] ${formatArgs(args)}`); };
-  console.error = (...args) => { origError(...args); consoleLines.push(`[error] ${formatArgs(args)}`); };
-
-  try {
-    // Detect Hob language code
-    if (code.startsWith(':hob ') || code.startsWith(':h ')) {
-      const hobSource = code.startsWith(':h ') ? code.slice(3) : code.slice(5);
-      const hob = await api.require('hob-interpreter');
-      const interp = hob.createInterpreter(api, api, { emit: e => api.events.emit(e) });
-      const result = await interp.eval(hobSource);
-      const resultStr = hob.prStr(result);
-      addTranscriptEntry(code, resultStr, null, consoleLines);
-      input.value = '';
-      return;
-    }
-
-    // Try to auto-return expression results (so users don't need explicit "return")
-    let execCode = code;
-    const trimmed = code.replace(/;\s*$/, '');
-    try {
-      new Function('api', `return (async () => { return (${trimmed}); })()`);
-      execCode = `return (${trimmed})`;
-    } catch (e) {
-      // Not a simple expression — run as statements
-    }
-
-    // Wrap in async function to allow await
-    const asyncFn = new Function('api', `
-      return (async () => {
-        ${execCode}
-      })();
-    `);
-
-    const result = await asyncFn(api);
-
-    let resultStr;
-    if (result === undefined) {
-      resultStr = '// Executed successfully (no return value)';
-    } else if (typeof result === 'string' && result.includes('\n')) {
-      resultStr = result;
-    } else {
-      resultStr = JSON.stringify(result, null, 2);
-    }
-
-    addTranscriptEntry(code, resultStr, null, consoleLines);
-    input.value = '';
-
-  } catch (error) {
-    const errorStr = `Error: ${error.message}\n${error.stack}`;
-    addTranscriptEntry(code, null, errorStr, consoleLines);
-  } finally {
-    console.log = origLog;
-    console.warn = origWarn;
-    console.error = origError;
-  }
-}
-// [END:run]
-
-// [BEGIN:toggle]
 export async function toggle() {
   if (!panelElement) return;
 
   const expandIcon = panelElement.querySelector('.repl-expand-icon');
-  
+
   if (panelState.expanded) {
-    // Collapse
     panelState.expanded = false;
     panelElement.classList.add('collapsed');
     panelElement.classList.remove('expanded');
     panelElement.style.flex = '';
     if (expandIcon) expandIcon.textContent = '▲';
   } else {
-    // Expand
     panelState.expanded = true;
     panelElement.classList.remove('collapsed');
     panelElement.classList.add('expanded');
     panelElement.style.flex = `0 0 ${panelState.panelHeight}px`;
     if (expandIcon) expandIcon.textContent = '▼';
-    
-    // Focus the input
-    const input = document.getElementById('repl-input');
+
+    // Focus the input in the view
+    const input = panelElement.querySelector('textarea');
     if (input) input.focus();
   }
-  
+
   savePanelState();
 }
-// [END:toggle]
 
-// Export for external use
 export function isVisible() {
   return panelState.expanded;
 }
