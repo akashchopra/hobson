@@ -1,6 +1,8 @@
 (let [attachments (or (:attachments item) [])
       total       (count attachments)
       idx         (atom 0)
+      zoom        (atom 100)
+      zoom-step   25
 
       ;; Render ALL children up front, each in a wrapper div
       slide-els (for [att attachments]
@@ -22,21 +24,36 @@
             [:button {:ref :next
                       :style "padding:4px 12px; cursor:pointer; background:var(--color-bg-surface); border:1px solid var(--color-border-light); border-radius:4px; font-size:16px;"
                       :on-click (fn [e] (go (+ (deref idx) 1)))}
-              "›"]]])
+              "›"]
+            [:span {:style "width:16px;"}]
+            [:button {:style "padding:2px 8px; cursor:pointer; background:var(--color-bg-surface); border:1px solid var(--color-border-light); border-radius:4px; font-size:13px;"
+                      :on-click (fn [e] (apply-zoom (- (deref zoom) zoom-step)))}
+              "−"]
+            [:span {:ref :zoom-label :style "min-width:40px; text-align:center; font-size:12px;"} "100%"]
+            [:button {:style "padding:2px 8px; cursor:pointer; background:var(--color-bg-surface); border:1px solid var(--color-border-light); border-radius:4px; font-size:13px;"
+                      :on-click (fn [e] (apply-zoom (+ (deref zoom) zoom-step)))}
+              "+"]]])
 
-      stage    (:stage refs)
-      counter  (:counter refs)
-      prev-btn (:prev refs)
-      next-btn (:next refs)
+      stage      (:stage refs)
+      counter    (:counter refs)
+      prev-btn   (:prev refs)
+      next-btn   (:next refs)
+      zoom-label (:zoom-label refs)
 
       ;; Append all slide wrappers to stage
       _ (for [el slide-els] (invoke stage "appendChild" el))
 
-      ;; Helper: set style.display on a DOM element
+      ;; Helpers
       set-display (fn [el val]
                     (dom-set! (dom-get el :style) :display val))
       set-visibility (fn [el val]
                        (dom-set! (dom-get el :style) :visibility val))
+
+      apply-zoom (fn [pct]
+                   (let [clamped (max 50 (min pct 300))]
+                     (reset! zoom clamped)
+                     (dom-set! (dom-get stage :style) :zoom (str (/ clamped 100)))
+                     (dom-set! zoom-label :textContent (str clamped "%"))))
 
       go (fn [i]
            (when (> total 0)
