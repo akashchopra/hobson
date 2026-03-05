@@ -1,4 +1,4 @@
-// Type Workshop view — visual form for creating new Hobson types
+// Type Workshop view — visual form for creating and editing Hobson types
 
 export async function render(workshop, api) {
   const container = api.createElement('div', {
@@ -24,12 +24,22 @@ export async function render(workshop, api) {
 
   const MODES = ['both', 'readonly', 'editable'];
 
+  // Known hint properties that map to workshop field options
+  const KNOWN_HINT_PROPS = new Set([
+    'field_view', 'mode', 'label',
+    'level', 'placeholder', 'rows', 'sizing', 'language',
+    'min', 'max', 'step', 'format',
+    'dividerAfter', 'collapsible', 'startCollapsed'
+  ]);
+
   // State — initialize from persisted content or defaults
   const state = {
     typeName: workshop.content?.typeName || '',
     extendsType: workshop.content?.extendsType || ITEM_TYPE,
     typeDescription: workshop.content?.typeDescription || '',
-    fields: (workshop.content?.fields || []).map(f => ({ ...f, options: { ...(f.options || {}) } }))
+    fields: (workshop.content?.fields || []).map(f => ({ ...f, options: { ...(f.options || {}) } })),
+    editingSource: workshop.content?.editingSource || null,
+    lastStatus: workshop.content?.lastStatus || null  // { msg, isError }
   };
 
   // Fetch all type-defs for the extends dropdown
@@ -37,6 +47,240 @@ export async function render(workshop, api) {
   const typeDefs = allItems
     .filter(i => i.type === TYPE_DEFINITION)
     .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+
+  // ==============================
+  // Edit Existing: helpers
+  // ==============================
+
+  // Classify views for a type into generic-view delegates vs custom views
+  async function classifyViews(viewIds) {
+    const genericDelegates = { readonly: null, editable: null };
+    const customViews = [];
+
+    for (const viewId of viewIds) {
+      const view = await api.get(viewId);
+      if (!view) continue;
+
+      const code = view.content?.code || '';
+      const isDelegate = code.includes("require('generic-view')") &&
+                         code.includes('genericView.render');
+      const hasHints = !!view.content?.ui_hints;
+
+      if (isDelegate && hasHints) {
+        const hints = view.content.ui_hints;
+        // Find first non-name hint to determine mode
+        const firstHint = Object.entries(hints)
+          .filter(([p]) => p !== 'name')
+          .map(([, h]) => h)[0];
+        if (firstHint?.mode === 'editable') {
+          genericDelegates.editable = view;
+        } else {
+          genericDelegates.readonly = view;
+        }
+      } else {
+        customViews.push(view);
+      }
+    }
+    return { genericDelegates, customViews };
+  }
+
+  // Reverse-engineer workshop fields from ui_hints
+  function uiHintsToFields(readonlyHints, editableHints) {
+    const fields = [];
+    const allPaths = new Set([
+      ...Object.keys(readonlyHints || {}),
+      ...Object.keys(editableHints || {})
+    ]);
+    allPaths.delete('name'); // auto-included heading
+
+    for (const path of allPaths) {
+      const rHint = readonlyHints?.[path];
+      const eHint = editableHints?.[path];
+      const hint = eHint || rHint;
+
+      // Determine mode
+      let mode = 'both';
+      if (rHint && !eHint) mode = 'readonly';
+      if (!rHint && eHint) mode = 'editable';
+
+      // Normalize field_view: strip mode suffix
+      let fieldView = hint.field_view;
+      if (fieldView?.endsWith('-readonly') || fieldView?.endsWith('-editable')) {
+        const base = fieldView.replace(/-readonly$/, '').replace(/-editable$/, '');
+        if (base === 'markdown' || base === 'code') fieldView = base;
+      }
+
+      // Extract known options
+      const options = {};
+      if (hint.level) options.level = hint.level;
+      if (hint.placeholder) options.placeholder = hint.placeholder;
+      if (hint.rows) options.rows = hint.rows;
+      if (hint.sizing) options.sizing = hint.sizing;
+      if (hint.language) options.language = hint.language;
+      if (hint.min != null) options.min = hint.min;
+      if (hint.max != null) options.max = hint.max;
+      if (hint.step != null) options.step = hint.step;
+      if (hint.format) options.format = hint.format;
+      if (hint.dividerAfter) options.dividerAfter = true;
+      if (hint.collapsible) options.collapsible = true;
+      if (hint.startCollapsed) options.startCollapsed = hint.startCollapsed;
+
+      // Preserve unrecognized hint properties for round-trip fidelity
+      const extraHintProps = {};
+      for (const key of Object.keys(hint)) {
+        if (!KNOWN_HINT_PROPS.has(key)) {
+          extraHintProps[key] = hint[key];
+        }
+      }
+
+      fields.push({
+        id: crypto.randomUUID(),
+        path,
+        label: hint.label || '',
+        fieldView: fieldView || 'text',
+        mode,
+        options,
+        extraHintProps: Object.keys(extraHintProps).length > 0 ? extraHintProps : undefined
+      });
+    }
+    return fields;
+  }
+
+  // Load an existing type into the workshop form
+  async function loadType(typeDef) {
+    const relLib = await api.require('related-items-lib');
+    const viewIds = relLib.getViewsFor(typeDef.id);
+    const { genericDelegates, customViews } = await classifyViews(viewIds);
+
+    const readonlyView = genericDelegates.readonly;
+    const editableView = genericDelegates.editable;
+    const readonlyHints = readonlyView?.content?.ui_hints || {};
+    const editableHints = editableView?.content?.ui_hints || {};
+
+    state.typeName = typeDef.name || '';
+    state.extendsType = typeDef.extends || ITEM_TYPE;
+    state.typeDescription = typeDef.content?.description || '';
+    state.fields = uiHintsToFields(readonlyHints, editableHints);
+    state.editingSource = {
+      typeDefId: typeDef.id,
+      readonlyViewId: readonlyView?.id || null,
+      editableViewId: editableView?.id || null,
+      customViewIds: customViews.map(v => v.id),
+      preferredViewId: typeDef.preferredView || null
+    };
+
+    // Set status message (showStatus will persistState + render)
+    if (customViews.length > 0) {
+      const names = customViews.map(v => v.name || v.id.substring(0, 8)).join(', ');
+      showStatus('Loaded. Note: ' + customViews.length + ' custom view(s) not managed here: ' + names, 'warning');
+    } else {
+      showStatus('Loaded type: ' + state.typeName, 'success');
+    }
+
+    // Update form controls (these are local DOM updates, not affected by re-render
+    // since the re-render from persistState will rebuild everything from state)
+    nameInput.value = state.typeName;
+    extendsSelect.value = state.extendsType;
+    descInput.value = state.typeDescription;
+    rebuildFields();
+    renderSummary();
+    updateEditModeUI();
+  }
+
+  // Reset to create-new mode
+  function resetToNew() {
+    state.typeName = '';
+    state.extendsType = ITEM_TYPE;
+    state.typeDescription = '';
+    state.fields = [];
+    state.editingSource = null;
+    state.lastStatus = null;
+    persistState();
+    nameInput.value = '';
+    extendsSelect.value = ITEM_TYPE;
+    descInput.value = '';
+    rebuildFields();
+    renderSummary();
+    updateEditModeUI();
+    renderStatusArea();
+  }
+
+  // Show the type picker modal
+  async function showTypePicker() {
+    const modalLib = await api.require('modal-lib');
+
+    modalLib.showModal({
+      title: 'Load Existing Type',
+      width: '480px',
+      api,
+      content: ({ close }) => {
+        const wrapper = api.createElement('div', {
+          style: 'display: flex; flex-direction: column; gap: 8px;'
+        }, []);
+
+        // Search input
+        const searchInput = api.createElement('input', {
+          type: 'text',
+          placeholder: 'Filter types...',
+          style: inputStyle + ' margin-bottom: 8px;'
+        }, []);
+        wrapper.appendChild(searchInput);
+
+        // Type list
+        const listEl = api.createElement('div', {
+          style: 'max-height: 360px; overflow-y: auto; display: flex; flex-direction: column; gap: 4px;'
+        }, []);
+
+        function renderList(filter) {
+          listEl.innerHTML = '';
+          const filtered = typeDefs.filter(td => {
+            if (!filter) return true;
+            const f = filter.toLowerCase();
+            return (td.name || '').toLowerCase().includes(f) ||
+                   td.id.toLowerCase().includes(f);
+          });
+          if (filtered.length === 0) {
+            listEl.appendChild(api.createElement('div', {
+              style: 'padding: 12px; color: var(--color-text-secondary); text-align: center;'
+            }, ['No matching types.']));
+            return;
+          }
+          for (const td of filtered) {
+            const row = api.createElement('div', {
+              style: 'padding: 8px 12px; border-radius: var(--border-radius); cursor: pointer; display: flex; justify-content: space-between; align-items: center;'
+            }, []);
+            row.appendChild(api.createElement('span', {
+              style: 'font-weight: 500;'
+            }, [td.name || td.id.substring(0, 8)]));
+            row.appendChild(api.createElement('span', {
+              style: 'font-size: 0.75rem; color: var(--color-text-secondary);'
+            }, [td.id.substring(0, 8)]));
+            row.onmouseenter = () => { row.style.background = 'var(--color-bg-hover)'; };
+            row.onmouseleave = () => { row.style.background = ''; };
+            row.onclick = async () => {
+              close();
+              try {
+                await loadType(td);
+              } catch (e) {
+                console.error('loadType failed:', e);
+                showStatus('Load failed: ' + e.message, 'error');
+              }
+            };
+            listEl.appendChild(row);
+          }
+        }
+
+        searchInput.oninput = () => renderList(searchInput.value);
+        renderList('');
+
+        wrapper.appendChild(listEl);
+
+        // Focus search after modal opens
+        setTimeout(() => searchInput.focus(), 50);
+        return wrapper;
+      }
+    });
+  }
 
   // Persist state to workshop item (symbol-browser pattern)
   const persistState = () => {
@@ -60,12 +304,31 @@ export async function render(workshop, api) {
   // Header
   // ==============================
   const header = api.createElement('div', {
-    style: 'margin-bottom: 24px; padding-bottom: 15px; border-bottom: 2px solid var(--color-border-light);'
+    style: 'margin-bottom: 24px; padding-bottom: 15px; border-bottom: 2px solid var(--color-border-light); display: flex; align-items: center; justify-content: space-between;'
   }, []);
-  header.appendChild(api.createElement('h2', {
+  const headerTitle = api.createElement('h2', {
     style: 'margin: 0; font-size: 1.25rem;'
-  }, ['Type Workshop']));
+  }, ['Type Workshop']);
+  header.appendChild(headerTitle);
+
+  const headerActions = api.createElement('div', {
+    style: 'display: flex; gap: 8px;'
+  }, []);
+  const loadBtn = api.createElement('button', { style: btnStyle }, ['Load Existing']);
+  loadBtn.onclick = () => showTypePicker();
+  headerActions.appendChild(loadBtn);
+
+  const newBtn = api.createElement('button', { style: btnStyle }, ['New Type']);
+  newBtn.style.display = state.editingSource ? '' : 'none';
+  newBtn.onclick = () => resetToNew();
+  headerActions.appendChild(newBtn);
+
+  header.appendChild(headerActions);
   container.appendChild(header);
+
+  // Status message area (below header, above form)
+  const statusArea = api.createElement('div', { style: 'margin-bottom: 16px;' }, []);
+  container.appendChild(statusArea);
 
   // ==============================
   // Type Metadata Section
@@ -512,15 +775,29 @@ export async function render(workshop, api) {
     summaryContent.innerHTML = '';
     const name = state.typeName || '(unnamed)';
     const extendsName = typeDefs.find(t => t.id === state.extendsType)?.name || 'kernel:item';
+    const isEditing = !!state.editingSource;
 
     const lines = [
       'Type: ' + name + ' (extends ' + extendsName + ')',
-      '',
-      'Will create 3 items:',
-      '  1. Type definition: ' + name,
-      '  2. Readonly view: ' + name + '-view-readonly',
-      '  3. Editable view: ' + name + '-view-editable',
+      ''
     ];
+
+    if (isEditing) {
+      const src = state.editingSource;
+      const parts = [];
+      parts.push('type definition');
+      if (src.readonlyViewId) parts.push('readonly view');
+      if (src.editableViewId) parts.push('editable view');
+      lines.push('Will update ' + parts.length + ' item(s):');
+      for (let i = 0; i < parts.length; i++) {
+        lines.push('  ' + (i + 1) + '. ' + parts[i]);
+      }
+    } else {
+      lines.push('Will create 3 items:');
+      lines.push('  1. Type definition: ' + name);
+      lines.push('  2. Readonly view: ' + name + '-view-readonly');
+      lines.push('  3. Editable view: ' + name + '-view-editable');
+    }
 
     if (state.fields.length > 0) {
       lines.push('');
@@ -562,19 +839,44 @@ export async function render(workshop, api) {
 
   container.appendChild(actionsSection);
 
-  // Status message area
-  const statusArea = api.createElement('div', { style: 'margin-top: 12px;' }, []);
-  container.appendChild(statusArea);
+  // Update UI elements based on edit mode
+  function updateEditModeUI() {
+    const isEditing = !!state.editingSource;
+    headerTitle.textContent = isEditing
+      ? 'Type Workshop \u2014 Editing \u2018' + state.typeName + '\u2019'
+      : 'Type Workshop';
+    createBtn.textContent = isEditing ? 'Update Type' : 'Create Type';
+    createAndInstanceBtn.textContent = isEditing ? 'Update Type + Instance' : 'Create Type + Instance';
+    newBtn.style.display = isEditing ? '' : 'none';
+  }
 
-  function showStatus(msg, isError) {
+  // level: 'success' | 'error' | 'warning'
+  function showStatus(msg, level) {
+    state.lastStatus = { msg, level };
+    persistState();
+    renderStatusArea();
+  }
+
+  function renderStatusArea() {
     statusArea.innerHTML = '';
+    if (!state.lastStatus) return;
+    const { msg, level, isError } = state.lastStatus;
+    // Support old format: { msg, isError: bool }
+    const resolvedLevel = level || (isError ? 'error' : 'success');
+    const styles = {
+      error: 'background: rgba(239,68,68,0.1); color: var(--color-danger); border: 1px solid var(--color-danger);',
+      warning: 'background: rgba(234,179,8,0.1); color: #a16207; border: 1px solid #eab308;',
+      success: 'background: rgba(34,197,94,0.1); color: #22c55e; border: 1px solid #22c55e;'
+    };
     const el = api.createElement('div', {
-      style: 'padding: 10px 14px; border-radius: var(--border-radius); ' +
-        (isError
-          ? 'background: rgba(239,68,68,0.1); color: var(--color-danger); border: 1px solid var(--color-danger);'
-          : 'background: rgba(34,197,94,0.1); color: #22c55e; border: 1px solid #22c55e;')
+      style: 'padding: 10px 14px; border-radius: var(--border-radius); ' + (styles[resolvedLevel] || styles.success)
     }, [msg]);
     statusArea.appendChild(el);
+  }
+
+  function clearStatus() {
+    state.lastStatus = null;
+    statusArea.innerHTML = '';
   }
 
   // ==============================
@@ -595,9 +897,9 @@ export async function render(workshop, api) {
         errors.push('Field ' + (i + 1) + ' is missing a path.');
       }
     }
-    // Warn on name collision
+    // Warn on name collision (skip if editing the same type)
     const existing = typeDefs.find(t => t.name === state.typeName);
-    if (existing) {
+    if (existing && (!state.editingSource || existing.id !== state.editingSource.typeDefId)) {
       errors.push('Warning: A type named "' + state.typeName + '" already exists.');
     }
     return errors;
@@ -649,6 +951,11 @@ export async function render(workshop, api) {
       if (opts.collapsible) hint.collapsible = true;
       if (opts.startCollapsed) hint.startCollapsed = true;
 
+      // Merge back any unrecognized hint properties from the original
+      if (field.extraHintProps) {
+        Object.assign(hint, field.extraHintProps);
+      }
+
       hints[field.path] = hint;
     }
     return hints;
@@ -658,66 +965,125 @@ export async function render(workshop, api) {
     const errors = validate();
     const hardErrors = errors.filter(e => !e.startsWith('Warning:'));
     if (hardErrors.length > 0) {
-      showStatus(hardErrors.join(' '), true);
+      showStatus(hardErrors.join(' '), 'error');
       return;
     }
 
     const now = Date.now();
-    const typeDefId = crypto.randomUUID();
-    const readonlyViewId = crypto.randomUUID();
-    const editableViewId = crypto.randomUUID();
-
-    // 1. Type definition
-    const typeDef = {
-      id: typeDefId,
-      name: state.typeName,
-      type: TYPE_DEFINITION,
-      extends: state.extendsType,
-      preferredView: readonlyViewId,
-      created: now,
-      modified: now,
-      content: { description: state.typeDescription || '' },
-      attachments: []
-    };
-
-    // 2. Readonly view
-    const readonlyView = {
-      id: readonlyViewId,
-      name: state.typeName + '-view-readonly',
-      type: VIEW_TYPE,
-      created: now,
-      modified: now,
-      content: {
-        for_type: typeDefId,
-        displayName: state.typeName + ' (readonly)',
-        code: DELEGATE_CODE,
-        ui_hints: buildUiHints('readonly')
-      },
-      attachments: []
-    };
-
-    // 3. Editable view
-    const editableView = {
-      id: editableViewId,
-      name: state.typeName + '-view-editable',
-      type: VIEW_TYPE,
-      created: now,
-      modified: now,
-      content: {
-        for_type: typeDefId,
-        displayName: state.typeName + ' (editable)',
-        code: DELEGATE_CODE,
-        ui_hints: buildUiHints('editable')
-      },
-      attachments: []
-    };
+    const isEditing = !!state.editingSource;
 
     try {
-      await api.set(typeDef);
-      await api.set(readonlyView);
-      await api.set(editableView);
+      let typeDefId;
+      let msg;
 
-      let msg = 'Created: ' + state.typeName + ' type + readonly view + editable view.';
+      if (isEditing) {
+        // ---- UPDATE existing items ----
+        const src = state.editingSource;
+        typeDefId = src.typeDefId;
+
+        // 1. Update type definition
+        const existingTypeDef = await api.get(src.typeDefId);
+        existingTypeDef.name = state.typeName;
+        existingTypeDef.extends = state.extendsType;
+        existingTypeDef.content = existingTypeDef.content || {};
+        existingTypeDef.content.description = state.typeDescription || '';
+        // Preserve preferredView
+        if (src.preferredViewId) {
+          existingTypeDef.preferredView = src.preferredViewId;
+        }
+        existingTypeDef.modified = now;
+        await api.set(existingTypeDef);
+
+        // 2. Update readonly view (if it exists)
+        if (src.readonlyViewId) {
+          const rv = await api.get(src.readonlyViewId);
+          rv.name = state.typeName + '-view-readonly';
+          rv.content.displayName = state.typeName + ' (readonly)';
+          rv.content.ui_hints = buildUiHints('readonly');
+          rv.modified = now;
+          await api.set(rv);
+        }
+
+        // 3. Update editable view (if it exists)
+        if (src.editableViewId) {
+          const ev = await api.get(src.editableViewId);
+          ev.name = state.typeName + '-view-editable';
+          ev.content.displayName = state.typeName + ' (editable)';
+          ev.content.ui_hints = buildUiHints('editable');
+          ev.modified = now;
+          await api.set(ev);
+        }
+
+        msg = 'Updated: ' + state.typeName + ' type';
+        if (src.readonlyViewId) msg += ' + readonly view';
+        if (src.editableViewId) msg += ' + editable view';
+        msg += '.';
+
+      } else {
+        // ---- CREATE new items ----
+        typeDefId = crypto.randomUUID();
+        const readonlyViewId = crypto.randomUUID();
+        const editableViewId = crypto.randomUUID();
+
+        const typeDef = {
+          id: typeDefId,
+          name: state.typeName,
+          type: TYPE_DEFINITION,
+          extends: state.extendsType,
+          preferredView: readonlyViewId,
+          created: now,
+          modified: now,
+          content: { description: state.typeDescription || '' },
+          attachments: []
+        };
+
+        const readonlyView = {
+          id: readonlyViewId,
+          name: state.typeName + '-view-readonly',
+          type: VIEW_TYPE,
+          created: now,
+          modified: now,
+          content: {
+            for_type: typeDefId,
+            displayName: state.typeName + ' (readonly)',
+            code: DELEGATE_CODE,
+            ui_hints: buildUiHints('readonly')
+          },
+          attachments: []
+        };
+
+        const editableView = {
+          id: editableViewId,
+          name: state.typeName + '-view-editable',
+          type: VIEW_TYPE,
+          created: now,
+          modified: now,
+          content: {
+            for_type: typeDefId,
+            displayName: state.typeName + ' (editable)',
+            code: DELEGATE_CODE,
+            ui_hints: buildUiHints('editable')
+          },
+          attachments: []
+        };
+
+        await api.set(typeDef);
+        await api.set(readonlyView);
+        await api.set(editableView);
+
+        // Switch to editing mode so subsequent saves update these items
+        state.editingSource = {
+          typeDefId,
+          readonlyViewId,
+          editableViewId,
+          customViewIds: [],
+          preferredViewId: readonlyViewId
+        };
+        persistState();
+        updateEditModeUI();
+
+        msg = 'Created: ' + state.typeName + ' type + readonly view + editable view.';
+      }
 
       if (createInstance) {
         const instance = {
@@ -739,9 +1105,9 @@ export async function render(workshop, api) {
         }
       }
 
-      showStatus(msg, false);
+      showStatus(msg, 'success');
     } catch (e) {
-      showStatus('Generation failed: ' + e.message, true);
+      showStatus('Generation failed: ' + e.message, 'error');
     }
   }
 
@@ -750,6 +1116,8 @@ export async function render(workshop, api) {
   // ==============================
   rebuildFields();
   renderSummary();
+  updateEditModeUI();
+  renderStatusArea();
 
   return container;
 }
