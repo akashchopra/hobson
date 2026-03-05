@@ -6,3 +6,6 @@ The system aims to document itself from within, so the only way to learn more is
 <img width="834" height="402" alt="image" src="https://github.com/user-attachments/assets/5e586a00-ba45-46d7-b540-6d5f2dca5ef4" />
 
 Upload the backup.json file (which contains the full system, not just the kernel) and you are ready to go! The system should open at the "New Users" workspace, but if for some reason the backup file was configured to load a different workspace, simply press Ctrl+k and select "New Users" from the choices offered - it is the best starting point for learning about the system.
+
+## Warning
+This system is almost entirely vibe-coded, and needs serious review. The documentation within the system is also mostly AI-generated, and can sometimes read like marketing material - treat with caution!
