@@ -1,0 +1,320 @@
+// REPL View — renders the REPL input/output UI for a repl-session item
+// Manages history, transcript, code execution, and vertical splitter
+
+const REPL_ITEM_ID = 'f1111111-0003-0003-0000-000000000000';
+const MAX_TRANSCRIPT = 50;
+
+let persistTimer = null;
+
+function persistState(item, api) {
+  if (persistTimer) clearTimeout(persistTimer);
+  persistTimer = setTimeout(async () => {
+    try {
+      item.modified = Date.now();
+      await api.set(item, { silent: true });
+    } catch (e) {
+      console.warn('[repl-view] Failed to persist state:', e);
+    }
+  }, 500);
+}
+
+export async function render(item, api) {
+  // Load persisted state
+  const history = item.content?.history || [];
+  let historyIndex = history.length;
+  const transcript = item.content?.transcript || [];
+  let inputWidthPercent = item.content?.inputWidthPercent || 50;
+
+  // Ensure content object exists
+  item.content = item.content || {};
+  item.content.history = history;
+  item.content.transcript = transcript;
+
+  // --- Panel content container (horizontal layout) ---
+  const container = api.createElement('div');
+  container.className = 'repl-panel-content';
+
+  // --- Input section (left) ---
+  const inputSection = api.createElement('div');
+  inputSection.className = 'repl-input-section';
+  inputSection.style.flex = `0 0 ${inputWidthPercent}%`;
+
+  const inputScroll = api.createElement('div');
+  inputScroll.className = 'repl-input-scroll';
+
+  const input = api.createElement('textarea');
+  input.id = 'repl-input';
+  input.placeholder = "Enter JavaScript... (api object available; help(api) for details)\nOr Hob... (use `:h ` prefix)\nCtrl+Enter to run | Up/Down for history";
+  input.spellcheck = false;
+  inputScroll.appendChild(input);
+  inputSection.appendChild(inputScroll);
+
+  // Action buttons
+  const actions = api.createElement('div');
+  actions.className = 'repl-actions';
+
+  const runBtn = api.createElement('button');
+  runBtn.textContent = 'Run';
+  runBtn.className = 'primary';
+  runBtn.onclick = () => run();
+  actions.appendChild(runBtn);
+
+  const clearInputBtn = api.createElement('button');
+  clearInputBtn.textContent = 'Clear';
+  clearInputBtn.onclick = () => { input.value = ''; };
+  actions.appendChild(clearInputBtn);
+
+  inputSection.appendChild(actions);
+  container.appendChild(inputSection);
+
+  // --- Vertical splitter ---
+  const verticalSplitter = api.createElement('div');
+  verticalSplitter.className = 'repl-vertical-splitter';
+  container.appendChild(verticalSplitter);
+
+  // --- Output section (right) ---
+  const outputSection = api.createElement('div');
+  outputSection.className = 'repl-output-section';
+  outputSection.style.flex = '1';
+
+  const transcriptHeader = api.createElement('div');
+  transcriptHeader.className = 'repl-transcript-header';
+
+  const transcriptHeading = api.createElement('h4');
+  transcriptHeading.textContent = 'Output';
+  transcriptHeader.appendChild(transcriptHeading);
+
+  const clearTranscriptBtn = api.createElement('button');
+  clearTranscriptBtn.textContent = 'Clear';
+  clearTranscriptBtn.onclick = () => {
+    transcriptEntries.innerHTML = '';
+    transcript.length = 0;
+    persistState(item, api);
+  };
+  transcriptHeader.appendChild(clearTranscriptBtn);
+
+  outputSection.appendChild(transcriptHeader);
+
+  const transcriptEntries = api.createElement('div');
+  transcriptEntries.id = 'repl-transcript-entries';
+  outputSection.appendChild(transcriptEntries);
+
+  container.appendChild(outputSection);
+
+  // --- Restore persisted transcript ---
+  for (const entry of transcript) {
+    appendTranscriptEntry(entry.code, entry.result, entry.error, entry.console);
+  }
+
+  // --- Vertical splitter drag ---
+  let isDragging = false;
+  let startX = 0;
+  let startInputWidth = 0;
+
+  verticalSplitter.addEventListener('mousedown', (e) => {
+    isDragging = true;
+    startX = e.clientX;
+    startInputWidth = inputSection.offsetWidth;
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    e.preventDefault();
+  });
+
+  const moveHandler = (e) => {
+    if (!isDragging) return;
+    const delta = e.clientX - startX;
+    const containerWidth = container.offsetWidth;
+    const newInputWidth = startInputWidth + delta;
+    const minWidth = 200;
+    const maxWidth = containerWidth - 200 - 6;
+
+    if (newInputWidth >= minWidth && newInputWidth <= maxWidth) {
+      const percent = (newInputWidth / containerWidth) * 100;
+      inputWidthPercent = percent;
+      inputSection.style.flex = `0 0 ${percent}%`;
+      outputSection.style.flex = '1';
+    }
+  };
+
+  const upHandler = () => {
+    if (isDragging) {
+      isDragging = false;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      item.content.inputWidthPercent = inputWidthPercent;
+      persistState(item, api);
+    }
+  };
+
+  document.addEventListener('mousemove', moveHandler);
+  document.addEventListener('mouseup', upHandler);
+
+  // --- Keyboard shortcuts ---
+  input.addEventListener('keydown', (e) => {
+    // Ctrl+Enter to run
+    if (e.ctrlKey && e.key === 'Enter') {
+      e.preventDefault();
+      run();
+    }
+
+    // Escape to collapse panel (dispatches to shell)
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      // Find and click the collapse bar to toggle
+      const collapseBar = document.querySelector('.repl-collapse-bar');
+      if (collapseBar) collapseBar.click();
+    }
+
+    // Tab for indentation
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      const start = input.selectionStart;
+      const end = input.selectionEnd;
+      input.value = input.value.substring(0, start) + '  ' + input.value.substring(end);
+      input.selectionStart = input.selectionEnd = start + 2;
+    }
+
+    // Up/Down for history
+    if (e.key === 'ArrowUp' && !e.shiftKey && !e.ctrlKey) {
+      if (historyIndex > 0) {
+        historyIndex--;
+        input.value = history[historyIndex];
+        e.preventDefault();
+        setTimeout(() => {
+          input.selectionStart = input.selectionEnd = input.value.length;
+        }, 0);
+      }
+    }
+
+    if (e.key === 'ArrowDown' && !e.shiftKey && !e.ctrlKey) {
+      if (historyIndex < history.length - 1) {
+        historyIndex++;
+        input.value = history[historyIndex];
+        e.preventDefault();
+      } else if (historyIndex === history.length - 1) {
+        historyIndex++;
+        input.value = '';
+        e.preventDefault();
+      }
+    }
+  });
+
+  // --- Transcript entry rendering ---
+  function appendTranscriptEntry(code, result, error, consoleLines) {
+    const entry = api.createElement('div');
+    entry.className = 'repl-entry' + (error ? ' error' : ' success');
+
+    const codeDiv = api.createElement('div');
+    codeDiv.className = 'repl-entry-code';
+    codeDiv.textContent = '> ' + code;
+    entry.appendChild(codeDiv);
+
+    if (consoleLines && consoleLines.length > 0) {
+      const consoleDiv = api.createElement('div');
+      consoleDiv.className = 'repl-entry-console';
+      consoleDiv.textContent = consoleLines.join('\n');
+      entry.appendChild(consoleDiv);
+    }
+
+    const outputDiv = api.createElement('div');
+    outputDiv.className = error ? 'repl-entry-error' : 'repl-entry-output';
+    outputDiv.textContent = error || result;
+    entry.appendChild(outputDiv);
+
+    transcriptEntries.appendChild(entry);
+    entry.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+
+  // --- Run ---
+  async function run() {
+    if (!input) return;
+
+    const code = input.value.trim();
+    if (!code) return;
+
+    // Add to history
+    if (history.length === 0 || history[history.length - 1] !== code) {
+      history.push(code);
+      if (history.length > 50) {
+        history.shift();
+      }
+    }
+    historyIndex = history.length;
+
+    // Intercept console methods
+    const consoleLines = [];
+    const origLog = console.log;
+    const origWarn = console.warn;
+    const origError = console.error;
+    const formatArgs = (args) => args.map(a => typeof a === 'string' ? a : JSON.stringify(a, null, 2)).join(' ');
+    console.log = (...args) => { origLog(...args); consoleLines.push(formatArgs(args)); };
+    console.warn = (...args) => { origWarn(...args); consoleLines.push(`[warn] ${formatArgs(args)}`); };
+    console.error = (...args) => { origError(...args); consoleLines.push(`[error] ${formatArgs(args)}`); };
+
+    try {
+      // Detect Hob language code
+      if (code.startsWith(':hob ') || code.startsWith(':h ')) {
+        const hobSource = code.startsWith(':h ') ? code.slice(3) : code.slice(5);
+        const hob = await api.require('hob-interpreter');
+        const interp = hob.createInterpreter(api, api, { emit: e => api.events.emit(e) });
+        const result = await interp.eval(hobSource);
+        const resultStr = hob.prStr(result);
+        addResult(code, resultStr, null, consoleLines);
+        input.value = '';
+        return;
+      }
+
+      // Try to auto-return expression results
+      let execCode = code;
+      const trimmed = code.replace(/;\s*$/, '');
+      try {
+        new Function('api', `return (async () => { return (${trimmed}); })()`);
+        execCode = `return (${trimmed})`;
+      } catch (e) {
+        // Not a simple expression — run as statements
+      }
+
+      const asyncFn = new Function('api', `
+        return (async () => {
+          ${execCode}
+        })();
+      `);
+
+      const result = await asyncFn(api);
+
+      let resultStr;
+      if (result === undefined) {
+        resultStr = '// Executed successfully (no return value)';
+      } else if (typeof result === 'string' && result.includes('\n')) {
+        resultStr = result;
+      } else {
+        resultStr = JSON.stringify(result, null, 2);
+      }
+
+      addResult(code, resultStr, null, consoleLines);
+      input.value = '';
+
+    } catch (error) {
+      const errorStr = `Error: ${error.message}\n${error.stack}`;
+      addResult(code, null, errorStr, consoleLines);
+    } finally {
+      console.log = origLog;
+      console.warn = origWarn;
+      console.error = origError;
+    }
+  }
+
+  // Add result to transcript + persist
+  function addResult(code, result, error, consoleLines) {
+    appendTranscriptEntry(code, result, error, consoleLines);
+
+    // Persist to item
+    transcript.push({ code, result, error, console: consoleLines });
+    if (transcript.length > MAX_TRANSCRIPT) {
+      transcript.splice(0, transcript.length - MAX_TRANSCRIPT);
+    }
+    persistState(item, api);
+  }
+
+  return container;
+}
