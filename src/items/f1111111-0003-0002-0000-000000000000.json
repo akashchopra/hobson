@@ -3,14 +3,618 @@
   "name": "repl-view",
   "type": "aaaaaaaa-0000-0000-0000-000000000000",
   "created": 1741132800000,
-  "modified": 1741132800000,
+  "modified": 1772731637887,
   "content": {
     "for_type": "f1111111-0003-0001-0000-000000000000",
     "capabilities": [
       "read",
       "write"
     ],
-    "code": "// REPL View — renders the REPL input/output UI for a repl-session item\n// Manages history, transcript, code execution, and vertical splitter\n\nconst REPL_ITEM_ID = 'f1111111-0003-0003-0000-000000000000';\nconst MAX_TRANSCRIPT = 50;\n\nlet persistTimer = null;\n\nfunction persistState(item, api) {\n  if (persistTimer) clearTimeout(persistTimer);\n  persistTimer = setTimeout(async () => {\n    try {\n      item.modified = Date.now();\n      await api.set(item, { silent: true });\n    } catch (e) {\n      console.warn('[repl-view] Failed to persist state:', e);\n    }\n  }, 500);\n}\n\nexport async function render(item, api) {\n  // Load persisted state\n  const history = item.content?.history || [];\n  let historyIndex = history.length;\n  const transcript = item.content?.transcript || [];\n  let inputWidthPercent = item.content?.inputWidthPercent || 50;\n\n  // Ensure content object exists\n  item.content = item.content || {};\n  item.content.history = history;\n  item.content.transcript = transcript;\n\n  // --- Panel content container (horizontal layout) ---\n  const container = api.createElement('div');\n  container.className = 'repl-panel-content';\n\n  // --- Input section (left) ---\n  const inputSection = api.createElement('div');\n  inputSection.className = 'repl-input-section';\n  inputSection.style.flex = `0 0 ${inputWidthPercent}%`;\n\n  const inputScroll = api.createElement('div');\n  inputScroll.className = 'repl-input-scroll';\n\n  const input = api.createElement('textarea');\n  input.id = 'repl-input';\n  input.placeholder = \"Enter JavaScript... (api object available; help(api) for details)\\nOr Hob... (use `:h ` prefix)\\nCtrl+Enter to run | Up/Down for history\";\n  input.spellcheck = false;\n  inputScroll.appendChild(input);\n  inputSection.appendChild(inputScroll);\n\n  // Action buttons\n  const actions = api.createElement('div');\n  actions.className = 'repl-actions';\n\n  const runBtn = api.createElement('button');\n  runBtn.textContent = 'Run';\n  runBtn.className = 'primary';\n  runBtn.onclick = () => run();\n  actions.appendChild(runBtn);\n\n  const clearInputBtn = api.createElement('button');\n  clearInputBtn.textContent = 'Clear';\n  clearInputBtn.onclick = () => {\n    input.value = '';\n    history.length = 0;\n    historyIndex = 0;\n    persistState(item, api);\n  };\n  actions.appendChild(clearInputBtn);\n\n  inputSection.appendChild(actions);\n  container.appendChild(inputSection);\n\n  // --- Vertical splitter ---\n  const verticalSplitter = api.createElement('div');\n  verticalSplitter.className = 'repl-vertical-splitter';\n  container.appendChild(verticalSplitter);\n\n  // --- Output section (right) ---\n  const outputSection = api.createElement('div');\n  outputSection.className = 'repl-output-section';\n  outputSection.style.flex = '1';\n\n  const transcriptHeader = api.createElement('div');\n  transcriptHeader.className = 'repl-transcript-header';\n\n  const transcriptHeading = api.createElement('h4');\n  transcriptHeading.textContent = 'Output';\n  transcriptHeader.appendChild(transcriptHeading);\n\n  const clearTranscriptBtn = api.createElement('button');\n  clearTranscriptBtn.textContent = 'Clear';\n  clearTranscriptBtn.onclick = () => {\n    transcriptEntries.innerHTML = '';\n    transcript.length = 0;\n    persistState(item, api);\n  };\n  transcriptHeader.appendChild(clearTranscriptBtn);\n\n  outputSection.appendChild(transcriptHeader);\n\n  const transcriptEntries = api.createElement('div');\n  transcriptEntries.id = 'repl-transcript-entries';\n  outputSection.appendChild(transcriptEntries);\n\n  container.appendChild(outputSection);\n\n  // --- Restore persisted transcript ---\n  for (const entry of transcript) {\n    appendTranscriptEntry(entry.code, entry.result, entry.error, entry.console);\n  }\n\n  // --- Vertical splitter drag ---\n  let isDragging = false;\n  let startX = 0;\n  let startInputWidth = 0;\n\n  verticalSplitter.addEventListener('mousedown', (e) => {\n    isDragging = true;\n    startX = e.clientX;\n    startInputWidth = inputSection.offsetWidth;\n    document.body.style.cursor = 'col-resize';\n    document.body.style.userSelect = 'none';\n    e.preventDefault();\n  });\n\n  const moveHandler = (e) => {\n    if (!isDragging) return;\n    const delta = e.clientX - startX;\n    const containerWidth = container.offsetWidth;\n    const newInputWidth = startInputWidth + delta;\n    const minWidth = 200;\n    const maxWidth = containerWidth - 200 - 6;\n\n    if (newInputWidth >= minWidth && newInputWidth <= maxWidth) {\n      const percent = (newInputWidth / containerWidth) * 100;\n      inputWidthPercent = percent;\n      inputSection.style.flex = `0 0 ${percent}%`;\n      outputSection.style.flex = '1';\n    }\n  };\n\n  const upHandler = () => {\n    if (isDragging) {\n      isDragging = false;\n      document.body.style.cursor = '';\n      document.body.style.userSelect = '';\n      item.content.inputWidthPercent = inputWidthPercent;\n      persistState(item, api);\n    }\n  };\n\n  document.addEventListener('mousemove', moveHandler);\n  document.addEventListener('mouseup', upHandler);\n\n  // --- Keyboard shortcuts ---\n  input.addEventListener('keydown', (e) => {\n    // Ctrl+Enter to run\n    if (e.ctrlKey && e.key === 'Enter') {\n      e.preventDefault();\n      run();\n    }\n\n    // Escape to collapse panel (dispatches to shell)\n    if (e.key === 'Escape') {\n      e.preventDefault();\n      // Find and click the collapse bar to toggle\n      const collapseBar = document.querySelector('.repl-collapse-bar');\n      if (collapseBar) collapseBar.click();\n    }\n\n    // Tab for indentation\n    if (e.key === 'Tab') {\n      e.preventDefault();\n      const start = input.selectionStart;\n      const end = input.selectionEnd;\n      input.value = input.value.substring(0, start) + '  ' + input.value.substring(end);\n      input.selectionStart = input.selectionEnd = start + 2;\n    }\n\n    // Up/Down for history\n    if (e.key === 'ArrowUp' && !e.shiftKey && !e.ctrlKey) {\n      if (historyIndex > 0) {\n        historyIndex--;\n        input.value = history[historyIndex];\n        e.preventDefault();\n        setTimeout(() => {\n          input.selectionStart = input.selectionEnd = input.value.length;\n        }, 0);\n      }\n    }\n\n    if (e.key === 'ArrowDown' && !e.shiftKey && !e.ctrlKey) {\n      if (historyIndex < history.length - 1) {\n        historyIndex++;\n        input.value = history[historyIndex];\n        e.preventDefault();\n      } else if (historyIndex === history.length - 1) {\n        historyIndex++;\n        input.value = '';\n        e.preventDefault();\n      }\n    }\n  });\n\n  // --- Transcript entry rendering ---\n  function appendTranscriptEntry(code, result, error, consoleLines) {\n    const entry = api.createElement('div');\n    entry.className = 'repl-entry' + (error ? ' error' : ' success');\n\n    const codeDiv = api.createElement('div');\n    codeDiv.className = 'repl-entry-code';\n    codeDiv.textContent = '> ' + code;\n    entry.appendChild(codeDiv);\n\n    if (consoleLines && consoleLines.length > 0) {\n      const consoleDiv = api.createElement('div');\n      consoleDiv.className = 'repl-entry-console';\n      consoleDiv.textContent = consoleLines.join('\\n');\n      entry.appendChild(consoleDiv);\n    }\n\n    const outputDiv = api.createElement('div');\n    outputDiv.className = error ? 'repl-entry-error' : 'repl-entry-output';\n    outputDiv.textContent = error || result;\n    entry.appendChild(outputDiv);\n\n    transcriptEntries.appendChild(entry);\n    entry.scrollIntoView({ behavior: 'smooth', block: 'nearest' });\n  }\n\n  // --- Run ---\n  async function run() {\n    if (!input) return;\n\n    const code = input.value.trim();\n    if (!code) return;\n\n    // Add to history\n    if (history.length === 0 || history[history.length - 1] !== code) {\n      history.push(code);\n      if (history.length > 50) {\n        history.shift();\n      }\n    }\n    historyIndex = history.length;\n\n    // Intercept console methods\n    const consoleLines = [];\n    const origLog = console.log;\n    const origWarn = console.warn;\n    const origError = console.error;\n    const formatArgs = (args) => args.map(a => typeof a === 'string' ? a : JSON.stringify(a, null, 2)).join(' ');\n    console.log = (...args) => { origLog(...args); consoleLines.push(formatArgs(args)); };\n    console.warn = (...args) => { origWarn(...args); consoleLines.push(`[warn] ${formatArgs(args)}`); };\n    console.error = (...args) => { origError(...args); consoleLines.push(`[error] ${formatArgs(args)}`); };\n\n    try {\n      // Detect Hob language code\n      if (code.startsWith(':hob ') || code.startsWith(':h ')) {\n        const hobSource = code.startsWith(':h ') ? code.slice(3) : code.slice(5);\n        const hob = await api.require('hob-interpreter');\n        const interp = hob.createInterpreter(api, api, { emit: e => api.events.emit(e) });\n        const result = await interp.eval(hobSource);\n        const resultStr = hob.prStr(result);\n        addResult(code, resultStr, null, consoleLines);\n        input.value = '';\n        return;\n      }\n\n      // Try to auto-return expression results\n      let execCode = code;\n      const trimmed = code.replace(/;\\s*$/, '');\n      try {\n        new Function('api', `return (async () => { return (${trimmed}); })()`);\n        execCode = `return (${trimmed})`;\n      } catch (e) {\n        // Not a simple expression — run as statements\n      }\n\n      const asyncFn = new Function('api', `\n        return (async () => {\n          ${execCode}\n        })();\n      `);\n\n      const result = await asyncFn(api);\n\n      let resultStr;\n      if (result === undefined) {\n        resultStr = '// Executed successfully (no return value)';\n      } else if (typeof result === 'string' && result.includes('\\n')) {\n        resultStr = result;\n      } else {\n        resultStr = JSON.stringify(result, null, 2);\n      }\n\n      addResult(code, resultStr, null, consoleLines);\n      input.value = '';\n\n    } catch (error) {\n      const errorStr = `Error: ${error.message}\\n${error.stack}`;\n      addResult(code, null, errorStr, consoleLines);\n    } finally {\n      console.log = origLog;\n      console.warn = origWarn;\n      console.error = origError;\n    }\n  }\n\n  // Add result to transcript + persist\n  function addResult(code, result, error, consoleLines) {\n    appendTranscriptEntry(code, result, error, consoleLines);\n\n    // Persist to item\n    transcript.push({ code, result, error, console: consoleLines });\n    if (transcript.length > MAX_TRANSCRIPT) {\n      transcript.splice(0, transcript.length - MAX_TRANSCRIPT);\n    }\n    persistState(item, api);\n  }\n\n  return container;\n}\n"
+    "code": "// REPL View — renders the REPL input/output UI for a repl-session item\n// Manages history, transcript, code execution, and vertical splitter\n\nconst REPL_ITEM_ID = 'f1111111-0003-0003-0000-000000000000';\nconst MAX_TRANSCRIPT = 50;\n\nlet persistTimer = null;\n\nfunction persistState(item, api) {\n  if (persistTimer) clearTimeout(persistTimer);\n  persistTimer = setTimeout(async () => {\n    try {\n      item.modified = Date.now();\n      await api.set(item, { silent: true });\n    } catch (e) {\n      console.warn('[repl-view] Failed to persist state:', e);\n    }\n  }, 500);\n}\n\nexport async function render(item, api) {\n  // Load persisted state\n  const history = item.content?.history || [];\n  let historyIndex = history.length;\n  const transcript = item.content?.transcript || [];\n  let inputWidthPercent = item.content?.inputWidthPercent || 50;\n\n  // Ensure content object exists\n  item.content = item.content || {};\n  item.content.history = history;\n  item.content.transcript = transcript;\n\n  // --- Panel content container (horizontal layout) ---\n  const container = api.createElement('div');\n  container.className = 'repl-panel-content';\n\n  // --- Input section (left) ---\n  const inputSection = api.createElement('div');\n  inputSection.className = 'repl-input-section';\n  inputSection.style.flex = `0 0 ${inputWidthPercent}%`;\n\n  const inputScroll = api.createElement('div');\n  inputScroll.className = 'repl-input-scroll';\n\n  const input = api.createElement('textarea');\n  input.id = 'repl-input';\n  input.placeholder = \"Enter JavaScript... (api object available; help(api) for details)\\nOr Hob... (use `:h ` prefix)\\nCtrl+Enter to run | Up/Down for history\";\n  input.spellcheck = false;\n  inputScroll.appendChild(input);\n  inputSection.appendChild(inputScroll);\n\n  // Action buttons\n  const actions = api.createElement('div');\n  actions.className = 'repl-actions';\n\n  const runBtn = api.createElement('button');\n  runBtn.textContent = 'Run';\n  runBtn.className = 'primary';\n  runBtn.onclick = () => run();\n  actions.appendChild(runBtn);\n\n  const clearInputBtn = api.createElement('button');\n  clearInputBtn.textContent = 'Clear';\n  clearInputBtn.onclick = () => {\n    input.value = '';\n    history.length = 0;\n    historyIndex = 0;\n    persistState(item, api);\n  };\n  actions.appendChild(clearInputBtn);\n\n  inputSection.appendChild(actions);\n  container.appendChild(inputSection);\n\n  // --- Vertical splitter ---\n  const verticalSplitter = api.createElement('div');\n  verticalSplitter.className = 'repl-vertical-splitter';\n  container.appendChild(verticalSplitter);\n\n  // --- Output section (right) ---\n  const outputSection = api.createElement('div');\n  outputSection.className = 'repl-output-section';\n  outputSection.style.flex = '1';\n\n  const transcriptHeader = api.createElement('div');\n  transcriptHeader.className = 'repl-transcript-header';\n\n  const transcriptHeading = api.createElement('h4');\n  transcriptHeading.textContent = 'Output';\n  transcriptHeader.appendChild(transcriptHeading);\n\n  const clearTranscriptBtn = api.createElement('button');\n  clearTranscriptBtn.textContent = 'Clear';\n  clearTranscriptBtn.onclick = () => {\n    transcriptEntries.innerHTML = '';\n    transcript.length = 0;\n    persistState(item, api);\n  };\n  transcriptHeader.appendChild(clearTranscriptBtn);\n\n  outputSection.appendChild(transcriptHeader);\n\n  const transcriptEntries = api.createElement('div');\n  transcriptEntries.id = 'repl-transcript-entries';\n  outputSection.appendChild(transcriptEntries);\n\n  container.appendChild(outputSection);\n\n  // --- Restore persisted transcript ---\n  for (const entry of transcript) {\n    appendTranscriptEntry(entry.code, entry.result, entry.error, entry.console);\n  }\n\n  // --- Vertical splitter drag ---\n  let isDragging = false;\n  let startX = 0;\n  let startInputWidth = 0;\n\n  verticalSplitter.addEventListener('mousedown', (e) => {\n    isDragging = true;\n    startX = e.clientX;\n    startInputWidth = inputSection.offsetWidth;\n    document.body.style.cursor = 'col-resize';\n    document.body.style.userSelect = 'none';\n    e.preventDefault();\n  });\n\n  const moveHandler = (e) => {\n    if (!isDragging) return;\n    const delta = e.clientX - startX;\n    const containerWidth = container.offsetWidth;\n    const newInputWidth = startInputWidth + delta;\n    const minWidth = 200;\n    const maxWidth = containerWidth - 200 - 6;\n\n    if (newInputWidth >= minWidth && newInputWidth <= maxWidth) {\n      const percent = (newInputWidth / containerWidth) * 100;\n      inputWidthPercent = percent;\n      inputSection.style.flex = `0 0 ${percent}%`;\n      outputSection.style.flex = '1';\n    }\n  };\n\n  const upHandler = () => {\n    if (isDragging) {\n      isDragging = false;\n      document.body.style.cursor = '';\n      document.body.style.userSelect = '';\n      item.content.inputWidthPercent = inputWidthPercent;\n      persistState(item, api);\n    }\n  };\n\n  document.addEventListener('mousemove', moveHandler);\n  document.addEventListener('mouseup', upHandler);\n\n  // --- Keyboard shortcuts ---\n  input.addEventListener('keydown', (e) => {\n    // Ctrl+Enter to run\n    if (e.ctrlKey && e.key === 'Enter') {\n      e.preventDefault();\n      run();\n    }\n\n    // Escape to collapse panel (dispatches to shell)\n    if (e.key === 'Escape') {\n      e.preventDefault();\n      // Find and click the collapse bar to toggle\n      const collapseBar = document.querySelector('.repl-collapse-bar');\n      if (collapseBar) collapseBar.click();\n    }\n\n    // Tab for indentation\n    if (e.key === 'Tab') {\n      e.preventDefault();\n      const start = input.selectionStart;\n      const end = input.selectionEnd;\n      input.value = input.value.substring(0, start) + '  ' + input.value.substring(end);\n      input.selectionStart = input.selectionEnd = start + 2;\n    }\n\n    // Up/Down for history\n    if (e.key === 'ArrowUp' && !e.shiftKey && !e.ctrlKey) {\n      if (historyIndex > 0) {\n        historyIndex--;\n        input.value = history[historyIndex];\n        e.preventDefault();\n        setTimeout(() => {\n          input.selectionStart = input.selectionEnd = input.value.length;\n        }, 0);\n      }\n    }\n\n    if (e.key === 'ArrowDown' && !e.shiftKey && !e.ctrlKey) {\n      if (historyIndex < history.length - 1) {\n        historyIndex++;\n        input.value = history[historyIndex];\n        e.preventDefault();\n      } else if (historyIndex === history.length - 1) {\n        historyIndex++;\n        input.value = '';\n        e.preventDefault();\n      }\n    }\n  });\n\n  // --- Transcript entry rendering ---\n  function appendTranscriptEntry(code, result, error, consoleLines) {\n    const entry = api.createElement('div');\n    entry.className = 'repl-entry' + (error ? ' error' : ' success');\n\n    const codeDiv = api.createElement('div');\n    codeDiv.className = 'repl-entry-code';\n    codeDiv.textContent = '> ' + code;\n    entry.appendChild(codeDiv);\n\n    if (consoleLines && consoleLines.length > 0) {\n      const consoleDiv = api.createElement('div');\n      consoleDiv.className = 'repl-entry-console';\n      consoleDiv.textContent = consoleLines.join('\\n');\n      entry.appendChild(consoleDiv);\n    }\n\n    const outputDiv = api.createElement('div');\n    outputDiv.className = error ? 'repl-entry-error' : 'repl-entry-output';\n    outputDiv.textContent = error || result;\n    entry.appendChild(outputDiv);\n\n    transcriptEntries.appendChild(entry);\n    entry.scrollIntoView({ behavior: 'smooth', block: 'nearest' });\n  }\n\n  // --- Run ---\n  async function run() {\n    if (!input) return;\n\n    const code = input.value.trim();\n    if (!code) return;\n\n    // Add to history\n    if (history.length === 0 || history[history.length - 1] !== code) {\n      history.push(code);\n      if (history.length > 50) {\n        history.shift();\n      }\n    }\n    historyIndex = history.length;\n\n    // Intercept console methods\n    const consoleLines = [];\n    const origLog = console.log;\n    const origWarn = console.warn;\n    const origError = console.error;\n    const formatArgs = (args) => args.map(a => typeof a === 'string' ? a : JSON.stringify(a, null, 2)).join(' ');\n    console.log = (...args) => { origLog(...args); consoleLines.push(formatArgs(args)); };\n    console.warn = (...args) => { origWarn(...args); consoleLines.push(`[warn] ${formatArgs(args)}`); };\n    console.error = (...args) => { origError(...args); consoleLines.push(`[error] ${formatArgs(args)}`); };\n\n    try {\n      // Detect Hob language code\n      if (code.startsWith(':hob ') || code.startsWith(':h ')) {\n        const hobSource = code.startsWith(':h ') ? code.slice(3) : code.slice(5);\n        const hob = await api.require('hob-interpreter');\n        const interp = hob.createInterpreter(api, api, { emit: e => api.events.emit(e) });\n        const result = await interp.eval(hobSource);\n        const resultStr = hob.prStr(result);\n        addResult(code, resultStr, null, consoleLines);\n        input.value = '';\n        return;\n      }\n\n      // Try to auto-return expression results\n      let execCode = code;\n      const trimmed = code.replace(/;\\s*$/, '');\n      try {\n        new Function('api', `return (async () => { return (${trimmed}); })()`);\n        execCode = `return (${trimmed})`;\n      } catch (e) {\n        // Not a simple expression — run as statements\n      }\n\n      const asyncFn = new Function('api', `\n        return (async () => {\n          ${execCode}\n        })();\n      `);\n\n      const result = await asyncFn(api);\n\n      let resultStr;\n      if (result === undefined) {\n        resultStr = '// Executed successfully (no return value)';\n      } else if (typeof result === 'string' && result.includes('\\n')) {\n        resultStr = result;\n      } else {\n        resultStr = JSON.stringify(result, null, 2);\n      }\n\n      addResult(code, resultStr, null, consoleLines);\n      input.value = '';\n\n    } catch (error) {\n      const errorStr = `Error: ${error.message}\\n${error.stack}`;\n      addResult(code, null, errorStr, consoleLines);\n    } finally {\n      console.log = origLog;\n      console.warn = origWarn;\n      console.error = origError;\n    }\n  }\n\n  // Add result to transcript + persist\n  function addResult(code, result, error, consoleLines) {\n    appendTranscriptEntry(code, result, error, consoleLines);\n\n    // Persist to item\n    transcript.push({ code, result, error, console: consoleLines });\n    if (transcript.length > MAX_TRANSCRIPT) {\n      transcript.splice(0, transcript.length - MAX_TRANSCRIPT);\n    }\n    persistState(item, api);\n  }\n\n  return container;\n}\n",
+    "_symbols": {
+      "REPL_ITEM_ID": {
+        "name": "REPL_ITEM_ID",
+        "line": 4,
+        "col": 6,
+        "endLine": 4,
+        "endCol": 59,
+        "kind": "variable",
+        "scope": null
+      },
+      "MAX_TRANSCRIPT": {
+        "name": "MAX_TRANSCRIPT",
+        "line": 5,
+        "col": 6,
+        "endLine": 5,
+        "endCol": 25,
+        "kind": "variable",
+        "scope": null
+      },
+      "persistTimer": {
+        "name": "persistTimer",
+        "line": 7,
+        "col": 4,
+        "endLine": 7,
+        "endCol": 23,
+        "kind": "variable",
+        "scope": null
+      },
+      "persistState": {
+        "name": "persistState",
+        "line": 9,
+        "col": 0,
+        "endLine": 19,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(item, api)"
+      },
+      "persistState.silent": {
+        "name": "silent",
+        "line": 14,
+        "col": 28,
+        "endLine": 14,
+        "endCol": 40,
+        "kind": "property",
+        "scope": "persistState"
+      },
+      "render": {
+        "name": "render",
+        "line": 21,
+        "col": 7,
+        "endLine": 325,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(item, api)"
+      },
+      "render.history": {
+        "name": "history",
+        "line": 23,
+        "col": 8,
+        "endLine": 23,
+        "endCol": 45,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.historyIndex": {
+        "name": "historyIndex",
+        "line": 24,
+        "col": 6,
+        "endLine": 24,
+        "endCol": 35,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.transcript": {
+        "name": "transcript",
+        "line": 25,
+        "col": 8,
+        "endLine": 25,
+        "endCol": 51,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.inputWidthPercent": {
+        "name": "inputWidthPercent",
+        "line": 26,
+        "col": 6,
+        "endLine": 26,
+        "endCol": 63,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.container": {
+        "name": "container",
+        "line": 34,
+        "col": 8,
+        "endLine": 34,
+        "endCol": 44,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.inputSection": {
+        "name": "inputSection",
+        "line": 38,
+        "col": 8,
+        "endLine": 38,
+        "endCol": 47,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.inputScroll": {
+        "name": "inputScroll",
+        "line": 42,
+        "col": 8,
+        "endLine": 42,
+        "endCol": 46,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.input": {
+        "name": "input",
+        "line": 45,
+        "col": 8,
+        "endLine": 45,
+        "endCol": 45,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.actions": {
+        "name": "actions",
+        "line": 53,
+        "col": 8,
+        "endLine": 53,
+        "endCol": 42,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.runBtn": {
+        "name": "runBtn",
+        "line": 56,
+        "col": 8,
+        "endLine": 56,
+        "endCol": 44,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.clearInputBtn": {
+        "name": "clearInputBtn",
+        "line": 62,
+        "col": 8,
+        "endLine": 62,
+        "endCol": 51,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.verticalSplitter": {
+        "name": "verticalSplitter",
+        "line": 76,
+        "col": 8,
+        "endLine": 76,
+        "endCol": 51,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.outputSection": {
+        "name": "outputSection",
+        "line": 81,
+        "col": 8,
+        "endLine": 81,
+        "endCol": 48,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.transcriptHeader": {
+        "name": "transcriptHeader",
+        "line": 85,
+        "col": 8,
+        "endLine": 85,
+        "endCol": 51,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.transcriptHeading": {
+        "name": "transcriptHeading",
+        "line": 88,
+        "col": 8,
+        "endLine": 88,
+        "endCol": 51,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.clearTranscriptBtn": {
+        "name": "clearTranscriptBtn",
+        "line": 92,
+        "col": 8,
+        "endLine": 92,
+        "endCol": 56,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.transcriptEntries": {
+        "name": "transcriptEntries",
+        "line": 103,
+        "col": 8,
+        "endLine": 103,
+        "endCol": 52,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.entry": {
+        "name": "entry",
+        "line": 110,
+        "col": 13,
+        "endLine": 110,
+        "endCol": 18,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.isDragging": {
+        "name": "isDragging",
+        "line": 115,
+        "col": 6,
+        "endLine": 115,
+        "endCol": 24,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.startX": {
+        "name": "startX",
+        "line": 116,
+        "col": 6,
+        "endLine": 116,
+        "endCol": 16,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.startInputWidth": {
+        "name": "startInputWidth",
+        "line": 117,
+        "col": 6,
+        "endLine": 117,
+        "endCol": 25,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.moveHandler": {
+        "name": "moveHandler",
+        "line": 128,
+        "col": 8,
+        "endLine": 142,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "render",
+        "signature": "(e)"
+      },
+      "moveHandler.delta": {
+        "name": "delta",
+        "line": 130,
+        "col": 10,
+        "endLine": 130,
+        "endCol": 36,
+        "kind": "variable",
+        "scope": "moveHandler"
+      },
+      "moveHandler.containerWidth": {
+        "name": "containerWidth",
+        "line": 131,
+        "col": 10,
+        "endLine": 131,
+        "endCol": 48,
+        "kind": "variable",
+        "scope": "moveHandler"
+      },
+      "moveHandler.newInputWidth": {
+        "name": "newInputWidth",
+        "line": 132,
+        "col": 10,
+        "endLine": 132,
+        "endCol": 49,
+        "kind": "variable",
+        "scope": "moveHandler"
+      },
+      "moveHandler.minWidth": {
+        "name": "minWidth",
+        "line": 133,
+        "col": 10,
+        "endLine": 133,
+        "endCol": 24,
+        "kind": "variable",
+        "scope": "moveHandler"
+      },
+      "moveHandler.maxWidth": {
+        "name": "maxWidth",
+        "line": 134,
+        "col": 10,
+        "endLine": 134,
+        "endCol": 45,
+        "kind": "variable",
+        "scope": "moveHandler"
+      },
+      "moveHandler.percent": {
+        "name": "percent",
+        "line": 137,
+        "col": 12,
+        "endLine": 137,
+        "endCol": 60,
+        "kind": "variable",
+        "scope": "moveHandler"
+      },
+      "render.upHandler": {
+        "name": "upHandler",
+        "line": 144,
+        "col": 8,
+        "endLine": 152,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "render",
+        "signature": "()"
+      },
+      "render.collapseBar": {
+        "name": "collapseBar",
+        "line": 169,
+        "col": 12,
+        "endLine": 169,
+        "endCol": 70,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.start": {
+        "name": "start",
+        "line": 176,
+        "col": 12,
+        "endLine": 176,
+        "endCol": 40,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.end": {
+        "name": "end",
+        "line": 177,
+        "col": 12,
+        "endLine": 177,
+        "endCol": 36,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.appendTranscriptEntry": {
+        "name": "appendTranscriptEntry",
+        "line": 208,
+        "col": 2,
+        "endLine": 231,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "render",
+        "signature": "(code, result, error, consoleLines)"
+      },
+      "appendTranscriptEntry.entry": {
+        "name": "entry",
+        "line": 209,
+        "col": 10,
+        "endLine": 209,
+        "endCol": 42,
+        "kind": "variable",
+        "scope": "appendTranscriptEntry"
+      },
+      "appendTranscriptEntry.codeDiv": {
+        "name": "codeDiv",
+        "line": 212,
+        "col": 10,
+        "endLine": 212,
+        "endCol": 44,
+        "kind": "variable",
+        "scope": "appendTranscriptEntry"
+      },
+      "appendTranscriptEntry.consoleDiv": {
+        "name": "consoleDiv",
+        "line": 218,
+        "col": 12,
+        "endLine": 218,
+        "endCol": 49,
+        "kind": "variable",
+        "scope": "appendTranscriptEntry"
+      },
+      "appendTranscriptEntry.outputDiv": {
+        "name": "outputDiv",
+        "line": 224,
+        "col": 10,
+        "endLine": 224,
+        "endCol": 46,
+        "kind": "variable",
+        "scope": "appendTranscriptEntry"
+      },
+      "appendTranscriptEntry.behavior": {
+        "name": "behavior",
+        "line": 230,
+        "col": 27,
+        "endLine": 230,
+        "endCol": 45,
+        "kind": "property",
+        "scope": "appendTranscriptEntry"
+      },
+      "appendTranscriptEntry.block": {
+        "name": "block",
+        "line": 230,
+        "col": 47,
+        "endLine": 230,
+        "endCol": 63,
+        "kind": "property",
+        "scope": "appendTranscriptEntry"
+      },
+      "render.run": {
+        "name": "run",
+        "line": 234,
+        "col": 2,
+        "endLine": 310,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "render",
+        "signature": "()"
+      },
+      "run.code": {
+        "name": "code",
+        "line": 237,
+        "col": 10,
+        "endLine": 237,
+        "endCol": 35,
+        "kind": "variable",
+        "scope": "run"
+      },
+      "run.consoleLines": {
+        "name": "consoleLines",
+        "line": 250,
+        "col": 10,
+        "endLine": 250,
+        "endCol": 27,
+        "kind": "variable",
+        "scope": "run"
+      },
+      "run.origLog": {
+        "name": "origLog",
+        "line": 251,
+        "col": 10,
+        "endLine": 251,
+        "endCol": 31,
+        "kind": "variable",
+        "scope": "run"
+      },
+      "run.origWarn": {
+        "name": "origWarn",
+        "line": 252,
+        "col": 10,
+        "endLine": 252,
+        "endCol": 33,
+        "kind": "variable",
+        "scope": "run"
+      },
+      "run.origError": {
+        "name": "origError",
+        "line": 253,
+        "col": 10,
+        "endLine": 253,
+        "endCol": 35,
+        "kind": "variable",
+        "scope": "run"
+      },
+      "run.formatArgs": {
+        "name": "formatArgs",
+        "line": 254,
+        "col": 10,
+        "endLine": 254,
+        "endCol": 112,
+        "kind": "function",
+        "scope": "run",
+        "signature": "(args)"
+      },
+      "run.hobSource": {
+        "name": "hobSource",
+        "line": 262,
+        "col": 14,
+        "endLine": 262,
+        "endCol": 80,
+        "kind": "variable",
+        "scope": "run"
+      },
+      "run.hob": {
+        "name": "hob",
+        "line": 263,
+        "col": 14,
+        "endLine": 263,
+        "endCol": 56,
+        "kind": "variable",
+        "scope": "run"
+      },
+      "run.interp": {
+        "name": "interp",
+        "line": 264,
+        "col": 14,
+        "endLine": 264,
+        "endCol": 89,
+        "kind": "variable",
+        "scope": "run"
+      },
+      "run.result": {
+        "name": "result",
+        "line": 288,
+        "col": 12,
+        "endLine": 288,
+        "endCol": 39,
+        "kind": "variable",
+        "scope": "run"
+      },
+      "run.resultStr": {
+        "name": "resultStr",
+        "line": 290,
+        "col": 10,
+        "endLine": 290,
+        "endCol": 19,
+        "kind": "variable",
+        "scope": "run"
+      },
+      "run.execCode": {
+        "name": "execCode",
+        "line": 273,
+        "col": 10,
+        "endLine": 273,
+        "endCol": 25,
+        "kind": "variable",
+        "scope": "run"
+      },
+      "run.trimmed": {
+        "name": "trimmed",
+        "line": 274,
+        "col": 12,
+        "endLine": 274,
+        "endCol": 47,
+        "kind": "variable",
+        "scope": "run"
+      },
+      "run.asyncFn": {
+        "name": "asyncFn",
+        "line": 282,
+        "col": 12,
+        "endLine": 286,
+        "endCol": 8,
+        "kind": "variable",
+        "scope": "run"
+      },
+      "run.errorStr": {
+        "name": "errorStr",
+        "line": 303,
+        "col": 12,
+        "endLine": 303,
+        "endCol": 64,
+        "kind": "variable",
+        "scope": "run"
+      },
+      "render.addResult": {
+        "name": "addResult",
+        "line": 313,
+        "col": 2,
+        "endLine": 322,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "render",
+        "signature": "(code, result, error, consoleLines)"
+      },
+      "addResult.code": {
+        "name": "code",
+        "line": 317,
+        "col": 22,
+        "endLine": 317,
+        "endCol": 26,
+        "kind": "property",
+        "scope": "addResult"
+      },
+      "addResult.result": {
+        "name": "result",
+        "line": 317,
+        "col": 28,
+        "endLine": 317,
+        "endCol": 34,
+        "kind": "property",
+        "scope": "addResult"
+      },
+      "addResult.error": {
+        "name": "error",
+        "line": 317,
+        "col": 36,
+        "endLine": 317,
+        "endCol": 41,
+        "kind": "property",
+        "scope": "addResult"
+      },
+      "addResult.console": {
+        "name": "console",
+        "line": 317,
+        "col": 43,
+        "endLine": 317,
+        "endCol": 64,
+        "kind": "property",
+        "scope": "addResult"
+      }
+    }
   },
   "attachments": []
 }
