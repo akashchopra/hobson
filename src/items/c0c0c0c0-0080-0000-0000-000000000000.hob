@@ -1,0 +1,74 @@
+(let [attachments (or (:attachments item) [])
+      total       (count attachments)
+      idx         (atom 0)
+
+      ;; Render ALL children up front, each in a wrapper div
+      slide-els (for [att attachments]
+                  (let [dom (render-item (:id att))]
+                    (hiccup->dom [:div {:style "display:none; height:100%;"} dom])))
+
+      ;; Build shell with refs
+      [root refs] (hiccup->dom+
+        [:div {:ref :root
+               :style "display:flex; flex-direction:column; height:100%; background:var(--color-bg-surface);"}
+          [:div {:ref :stage
+                 :style "flex:1; overflow:auto; position:relative;"}]
+          [:div {:style "display:flex; align-items:center; padding:8px 16px; border-top:1px solid var(--color-border-light); font-size:13px; color:var(--color-text-secondary);"}
+            [:button {:ref :prev
+                      :style "padding:4px 12px; cursor:pointer; background:var(--color-bg-surface); border:1px solid var(--color-border-light); border-radius:4px; font-size:16px;"
+                      :on-click (fn [e] (go (- (deref idx) 1)))}
+              "‹"]
+            [:span {:ref :counter :style "flex:1; text-align:center;"} ""]
+            [:button {:ref :next
+                      :style "padding:4px 12px; cursor:pointer; background:var(--color-bg-surface); border:1px solid var(--color-border-light); border-radius:4px; font-size:16px;"
+                      :on-click (fn [e] (go (+ (deref idx) 1)))}
+              "›"]]])
+
+      stage    (:stage refs)
+      counter  (:counter refs)
+      prev-btn (:prev refs)
+      next-btn (:next refs)
+
+      ;; Append all slide wrappers to stage
+      _ (for [el slide-els] (invoke stage "appendChild" el))
+
+      ;; Helper: set style.display on a DOM element
+      set-display (fn [el val]
+                    (dom-set! (dom-get el :style) :display val))
+      set-visibility (fn [el val]
+                       (dom-set! (dom-get el :style) :visibility val))
+
+      go (fn [i]
+           (when (> total 0)
+             (let [clamped (max 0 (min i (- total 1)))
+                   prev    (deref idx)]
+               (reset! idx clamped)
+               ;; Hide previous, show current
+               (when (nth slide-els prev)
+                 (set-display (nth slide-els prev) "none"))
+               (when (nth slide-els clamped)
+                 (set-display (nth slide-els clamped) ""))
+               ;; Update footer
+               (let [child-name (or (:name (get-item (:id (nth attachments clamped)))) "")]
+                 (dom-set! counter :textContent
+                   (str (+ clamped 1) " / " total "  —  " child-name)))
+               (set-visibility prev-btn (if (= clamped 0) "hidden" "visible"))
+               (set-visibility next-btn (if (= clamped (- total 1)) "hidden" "visible")))))]
+
+  ;; Keyboard nav
+  (on-document! :keydown
+    (fn [e]
+      (let [key (dom-get e :key)]
+        (cond
+          (= key "ArrowLeft")  (go (- (deref idx) 1))
+          (= key "ArrowRight") (go (+ (deref idx) 1))
+          (= key "Home")       (go 0)
+          (= key "End")        (go (- total 1))))))
+
+  ;; Show first slide or empty message
+  (if (> total 0)
+    (go 0)
+    (invoke stage "appendChild"
+      (hiccup->dom [:div {:style "padding:40px; text-align:center; color:var(--color-text-secondary);"} "No attachments to show as slides"])))
+
+  root)
