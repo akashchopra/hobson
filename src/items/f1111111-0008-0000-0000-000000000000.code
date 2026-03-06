@@ -507,6 +507,11 @@ export class RenderingSystem {
       api.getOpenIn = () => context.openIn;
     }
 
+    // Container-provided open handler (set via :open-item on :render-child)
+    if (context.openItemFn) {
+      api.getOpenItemFn = () => context.openItemFn;
+    }
+
     // View discovery
     api.getViews = (typeId) => rendering.getViews(typeId);
     api.getDefaultView = (typeId) => rendering.getDefaultView(typeId);
@@ -563,7 +568,15 @@ export class RenderingSystem {
         await api.navigate(itemId, navigateTo);
         return;
       }
-      // Default: attach to open-in target, parent, or current root.
+      // Delegate to container-provided handler if available.
+      // The container (e.g. spatial canvas) handles attach, bring-to-front,
+      // unminimize, and navigateTo — all in one atomic mutation.
+      const openItemFn = api.getOpenItemFn?.();
+      if (openItemFn) {
+        await openItemFn(itemIdOrAttachment);
+        return;
+      }
+      // Fallback: attach to open-in target, parent, or current root.
       // Viewport as open-in means we're inside a viewport attachment (modal) with
       // no explicit container target — navigate and detach the modal.
       const openIn = api.getOpenIn?.();
@@ -818,7 +831,9 @@ export class RenderingSystem {
         const newDom = await this.renderItem(itemId, currentViewId, {}, {
           parentId: instance.parentId,
           viewConfig: viewConfig,
-          ancestors: instance.ancestors || new Set()
+          ancestors: instance.ancestors || new Set(),
+          openIn: instance.openIn || null,
+          openItemFn: instance.openItemFn || null
         });
 
         // Replace content in existing container (re-check parentNode — async work above may have changed it)
@@ -865,7 +880,9 @@ export class RenderingSystem {
                 const toItem = toEl.getAttribute('data-child-item');
                 const fromView = fromEl.getAttribute('data-child-view');
                 const toView = toEl.getAttribute('data-child-view');
-                if (fromItem === toItem && fromView === toView) {
+                const fromNav = fromEl.getAttribute('data-navigate-to');
+                const toNav = toEl.getAttribute('data-navigate-to');
+                if (fromItem === toItem && fromView === toView && fromNav === toNav) {
                   // Same child spec — update wrapper attrs, skip children
                   if (toEl.getAttribute('style') !== null) fromEl.setAttribute('style', toEl.getAttribute('style'));
                   if (toEl.getAttribute('class') !== null) fromEl.setAttribute('class', toEl.getAttribute('class'));
@@ -1163,6 +1180,7 @@ export class RenderingSystem {
           if (inst) {
             inst.decorator = context.decorator || null;
             inst.openIn = context.openIn || null;
+            inst.openItemFn = context.openItemFn || null;
             inst.ancestors = context.ancestors || null;
             inst.selector = hobResult.selectorInfo || null;
           }
@@ -1213,7 +1231,7 @@ export class RenderingSystem {
         const instId = this.registry.register(domNode, itemId, view.id, parentId);
         // Store context for re-render recovery
         const inst = this.registry.instances.get(instId);
-        if (inst) { inst.decorator = context.decorator || null; inst.openIn = context.openIn || null; }
+        if (inst) { inst.decorator = context.decorator || null; inst.openIn = context.openIn || null; inst.openItemFn = context.openItemFn || null; }
         // Fill :render-child mount points produced by this JS view
         if (domNode.querySelector?.('[data-render-child]')) {
           await this.fillMountPoints(domNode, newContext, item);
@@ -1677,6 +1695,7 @@ export class RenderingSystem {
         const childContext = {
           parentId,
           openIn: spec.openIn || null,
+          openItemFn: spec.openItemFn || context.openItemFn || null,
           renderPath: [],
           ancestors: childAncestors,
           decorator: effectiveDecorator
