@@ -1837,6 +1837,17 @@ export class RenderingSystem {
       }
 
       if (this._debugRender) console.log(`[reactivity] FLUSH items=[${[...itemsToReRender].map(id=>id.slice(0,8)).join(',')}]`);
+      // The viewport item must use full renderViewport() instead of morphdom rerenderItem().
+      // viewport-view has body-appended elements and document-level event listeners whose
+      // closures don't survive morphdom's handler-preservation strategy.
+      if (itemsToReRender.has(VIEWPORT_ID)) {
+        itemsToReRender.delete(VIEWPORT_ID);
+        try { await this.renderViewport(); }
+        catch (e) { console.error(`[Reactivity] renderViewport error:`, e); }
+        // renderViewport() clears the registry and re-renders everything, so skip
+        // any other pending items — they were already re-rendered fresh.
+        itemsToReRender.clear();
+      }
       for (const itemId of itemsToReRender) {
         // Cycle detection by itemId (not instanceId) — survives morphdom instance transfer
         const depth = this._reRenderDepth.get(itemId) || 0;
