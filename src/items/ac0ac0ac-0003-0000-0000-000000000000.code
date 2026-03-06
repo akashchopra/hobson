@@ -264,6 +264,35 @@ function walkNode(node, scope, symbols) {
       }
       break;
 
+    case 'ExpressionStatement':
+      // Detect env.define('name', fn) or env.define('name', Object.assign(fn, ...))
+      if (node.expression?.type === 'CallExpression') {
+        const call = node.expression;
+        const callee = call.callee;
+        if (callee?.type === 'MemberExpression' &&
+            callee.property?.name === 'define' &&
+            call.arguments?.length >= 2 &&
+            call.arguments[0].type === 'Literal' &&
+            typeof call.arguments[0].value === 'string') {
+          const symName = call.arguments[0].value;
+          let valuNode = call.arguments[1];
+          // Unwrap Object.assign(fn, {_hobName: ...})
+          if (valuNode.type === 'CallExpression' &&
+              valuNode.callee?.type === 'MemberExpression' &&
+              valuNode.callee.object?.name === 'Object' &&
+              valuNode.callee.property?.name === 'assign' &&
+              valuNode.arguments?.length >= 1) {
+            valuNode = valuNode.arguments[0];
+          }
+          const isFunc = valuNode.type === 'ArrowFunctionExpression' ||
+                         valuNode.type === 'FunctionExpression';
+          const sig = isFunc ? extractSignature(valuNode.params) : null;
+          addSymbol(symbols, symName, node.loc, isFunc ? 'function' : 'variable', scope, sig);
+        }
+      }
+      walkNode(node.expression, scope, symbols);
+      break;
+
     default:
       for (const key of Object.keys(node)) {
         if (key === 'loc' || key === 'range') continue;
