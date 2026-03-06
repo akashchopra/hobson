@@ -14,12 +14,30 @@ No traditional build system - the project is a single HTML file (`src/bootloader
 - **Safe Mode:** Add `?safe=1` to URL to boot kernel only (no user code items) - useful for recovery
 - **Testing:** Manual testing via the built-in REPL
 
+## System Architecture: Three-Layer Split
+
+Hobson has three distinct layers. **Respect these boundaries strictly** — logic must live in the correct layer.
+
+| Layer | Responsibility | May depend on |
+|-------|---------------|---------------|
+| **Kernel** | Storage, events, code/module loading, bootstrap. **No UI** (except safe-mode fallback). | Nothing — it is the foundation |
+| **Viewport** | Rendering engine, navigation, view resolution, chrome (REPL bar, help dialog). Built from regular items but rarely modified by users. | Kernel |
+| **Userland** | Views, libraries, type definitions, user data, documentation. Everything the user creates or customizes. | Kernel + Viewport |
+
+**The kernel boundary rule:** If it can be built as a userland/viewport item, it **must not** be in the kernel. The kernel provides only what cannot be implemented as items: IndexedDB storage, the event bus, code evaluation, and bootstrap sequencing.
+
+**Rendering is NOT in the kernel.** It lives in `viewport-rendering` (a library item). The kernel has no rendering code.
+
+For full details, read the [System Layers](src/items/c0c0c0c0-0091-0000-0000-000000000000.json) doc.
+
 ## Documentation
 
 All documentation lives in the item system. Read these items for full context:
 
 | Item | ID | Purpose |
 |------|----|---------|
+| [System Layers](src/items/c0c0c0c0-0091-0000-0000-000000000000.json) | `c0c0c0c0-0091-0000-0000-000000000000` | Three-layer architecture (kernel/viewport/userland), boot flow, responsibilities |
+| [Feature Overview](src/items/c0c0c0c0-0092-0000-0000-000000000000.json) | `c0c0c0c0-0092-0000-0000-000000000000` | All user-facing features with descriptions and links |
 | [Architecture Overview](src/items/a0a0a0a0-d0c0-4000-8000-000000000003.json) | `a0a0a0a0-d0c0-4000-8000-000000000003` | System architecture, kernel modules, storage, bootstrap |
 | [Core Concepts](src/items/a0a0a0a0-d0c0-4000-8000-000000000002.json) | `a0a0a0a0-d0c0-4000-8000-000000000002` | Items, types, code, libraries, views |
 | [Project Context](src/items/c0c0c0c0-0030-0000-0000-000000000000.json) | `c0c0c0c0-0030-0000-0000-000000000000` | User preferences, working style, open design tensions |
@@ -40,14 +58,10 @@ CODE: "22222222-0000-0000-0000-000000000000",
 KERNEL_MODULE: "33333333-0000-0000-0000-000000000000",
 KERNEL_CORE: "33333333-1111-0000-0000-000000000000",
 KERNEL_STORAGE: "33333333-2222-0000-0000-000000000000",
-KERNEL_VIEWPORT: "33333333-3333-0000-0000-000000000000",
 KERNEL_MODULE_SYSTEM: "33333333-4444-0000-0000-000000000000",
-KERNEL_REPL: "33333333-6666-0000-0000-000000000000",
 KERNEL_SAFE_MODE: "33333333-7777-0000-0000-000000000000",
 KERNEL_STYLES: "33333333-8888-0000-0000-000000000000",
 LIBRARY: "66666666-0000-0000-0000-000000000000",
-VIEWPORT_TYPE: "77777777-0000-0000-0000-000000000000",
-VIEWPORT: "88888888-0000-0000-0000-000000000000",
 VIEW: "aaaaaaaa-0000-0000-0000-000000000000",
 DEFAULT_VIEW: "aaaaaaaa-1111-0000-0000-000000000000",
 NOTE: "871ae771-b9b1-4f40-8c7f-d9038bfb69c3"
