@@ -3323,6 +3323,30 @@ export function createInterpreter(api, viewApi, eventApi) {
       }
       return item[fieldName] ?? item.content?.[fieldName] ?? null;
     }, { _hobName: 'get-field' }));
+
+    // resolve-body: resolve {{field-name}} references in a template string using get-field
+    const getFieldFn = stdlib.lookup('get-field');
+    stdlib.define('resolve-body', Object.assign(async (s, itemId) => {
+      if (typeof s !== 'string') return s == null ? '' : String(s);
+      if (typeof itemId === 'object' && itemId?.id) itemId = itemId.id;
+      if (itemId?._hobType === 'item-ref') {
+        const resolved = await stdlib.lookup('resolve-ref')(itemId);
+        itemId = resolved?.id;
+      }
+      let result = '';
+      while (true) {
+        const start = s.indexOf('{{');
+        if (start === -1) { result += s; break; }
+        const end = s.indexOf('}}', start);
+        if (end === -1) { result += s; break; }
+        result += s.substring(0, start);
+        const fieldName = s.substring(start + 2, end).trim();
+        const value = await getFieldFn(itemId, fieldName);
+        result += value != null ? String(value) : '';
+        s = s.substring(end + 2);
+      }
+      return result;
+    }, { _hobName: 'resolve-body' }));
   }
 
   if (viewApi) registerViewOps(stdlib, viewApi);
