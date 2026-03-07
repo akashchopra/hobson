@@ -2259,6 +2259,10 @@ function createStdlib() {
   }, { _hobName: 'str/join' }));
   env.define('str/includes?', Object.assign((s, sub) => s.includes(sub), { _hobName: 'str/includes?' }));
   env.define('str/replace', Object.assign((s, match, replacement) => s.split(match).join(replacement), { _hobName: 'str/replace' }));
+  env.define('str/index-of', Object.assign((s, sub, from) => {
+    const i = from !== undefined ? s.indexOf(sub, from) : s.indexOf(sub);
+    return i === -1 ? null : i;
+  }, { _hobName: 'str/index-of' }));
 
   // --- Collections ---
   env.define('count', Object.assign((coll) => {
@@ -3276,6 +3280,51 @@ export function createInterpreter(api, viewApi, eventApi) {
   }, { _hobName: 'clear-timeout!' }));
 
   if (api) registerItemOps(stdlib, api);
+
+  // get-field: unified field access with computed field support
+  // Checks content.computed for Hob formulas, evaluates them, falls back to static fields.
+  // Supports :self (resolves to current computed-field context or current view's item).
+  let _computedFieldSelf = null;
+  const _computingFields = new Set();
+  if (api) {
+    stdlib.define('get-field', Object.assign(async (itemOrRef, fieldKey) => {
+      let item, itemId;
+      if (isKeyword(itemOrRef) && keywordName(itemOrRef) === 'self') {
+        itemId = _computedFieldSelf || api._renderItemId;
+        if (!itemId) throw new Error('get-field :self — no current item context');
+        item = await api.get(itemId);
+      } else if (itemOrRef && itemOrRef._hobType === 'item-ref') {
+        item = await stdlib.lookup('resolve-ref')(itemOrRef);
+        itemId = item?.id;
+      } else if (typeof itemOrRef === 'string') {
+        item = await api.get(itemOrRef);
+        itemId = itemOrRef;
+      } else if (itemOrRef && typeof itemOrRef === 'object' && itemOrRef.id) {
+        item = itemOrRef;
+        itemId = item.id;
+      }
+      if (!item) return null;
+      const fieldName = isKeyword(fieldKey) ? keywordName(fieldKey) : String(fieldKey);
+      const formula = item.content?.computed?.[fieldName];
+      if (formula !== undefined) {
+        const cycleKey = `${itemId}:${fieldName}`;
+        if (_computingFields.has(cycleKey)) {
+          throw new Error(`Circular reference in computed field: ${cycleKey}`);
+        }
+        _computingFields.add(cycleKey);
+        const prevSelf = _computedFieldSelf;
+        _computedFieldSelf = itemId;
+        try {
+          return await evaluate(formula, stdlib, []);
+        } finally {
+          _computedFieldSelf = prevSelf;
+          _computingFields.delete(cycleKey);
+        }
+      }
+      return item[fieldName] ?? item.content?.[fieldName] ?? null;
+    }, { _hobName: 'get-field' }));
+  }
+
   if (viewApi) registerViewOps(stdlib, viewApi);
   if (eventApi) registerEventOps(stdlib, eventApi);
 
