@@ -1,0 +1,140 @@
+
+export function render(value, options, api) {
+  const { mode, onChange, label, exclude } = options;
+  const isEditable = mode === 'editable' && onChange;
+  const content = value || {};
+  const excludeSet = new Set(exclude || []);
+
+  // Extract static fields (everything not excluded)
+  const staticFields = {};
+  for (const [k, v] of Object.entries(content)) {
+    if (!excludeSet.has(k)) staticFields[k] = v;
+  }
+
+  const wrapper = api.createElement('div', { className: 'field-static-fields' });
+  wrapper.style.cssText = 'display: flex; flex-direction: column; gap: 8px;';
+
+  if (label) {
+    const labelEl = api.createElement('label');
+    labelEl.textContent = label;
+    labelEl.style.cssText = 'font-weight: 500; font-size: 0.875rem; color: var(--color-text);';
+    wrapper.appendChild(labelEl);
+  }
+
+  const entries = Object.entries(staticFields);
+
+  if (entries.length === 0 && !isEditable) {
+    return wrapper; // nothing to show
+  }
+
+  const edited = { ...staticFields };
+
+  function emitChange() {
+    if (!onChange) return;
+    // Merge static fields back into full content, preserving reserved keys
+    const merged = { ...content };
+    // Remove old static keys
+    for (const k of Object.keys(merged)) {
+      if (!excludeSet.has(k)) delete merged[k];
+    }
+    // Add current static fields
+    Object.assign(merged, edited);
+    onChange(merged);
+  }
+
+  function createRow(fieldName, fieldValue) {
+    const row = api.createElement('div', { className: 'static-field-row' });
+    row.style.cssText = 'display: flex; align-items: center; gap: 8px;';
+
+    if (isEditable) {
+      const nameInput = api.createElement('input', {
+        type: 'text',
+        value: fieldName,
+        placeholder: 'field name',
+        style: 'width: 120px; padding: 4px 8px; border: 1px solid var(--color-border); border-radius: var(--border-radius); font-size: 0.8125rem; font-family: monospace; background: var(--color-bg-surface); color: var(--color-text);'
+      });
+
+      const valueInput = api.createElement('input', {
+        type: 'text',
+        value: fieldValue != null ? String(fieldValue) : '',
+        placeholder: 'value',
+        style: 'flex: 1; padding: 4px 8px; border: 1px solid var(--color-border); border-radius: var(--border-radius); font-size: 0.8125rem; font-family: monospace; background: var(--color-bg-surface); color: var(--color-text);'
+      });
+
+      let currentName = fieldName;
+
+      nameInput.addEventListener('change', (e) => {
+        const newName = e.target.value.trim();
+        if (newName && newName !== currentName && !edited[newName] && !excludeSet.has(newName)) {
+          const val = edited[currentName];
+          delete edited[currentName];
+          edited[newName] = val;
+          currentName = newName;
+          emitChange();
+        }
+      });
+
+      valueInput.addEventListener('input', (e) => {
+        const raw = e.target.value;
+        // Auto-detect type: number, boolean, null, or string
+        let parsed;
+        if (raw === 'true') parsed = true;
+        else if (raw === 'false') parsed = false;
+        else if (raw === 'null' || raw === 'nil') parsed = null;
+        else if (raw !== '' && !isNaN(Number(raw))) parsed = Number(raw);
+        else parsed = raw;
+        edited[currentName] = parsed;
+        emitChange();
+      });
+
+      const deleteBtn = api.createElement('button');
+      deleteBtn.textContent = '×';
+      deleteBtn.title = 'Remove field';
+      deleteBtn.style.cssText = 'background: none; border: none; color: var(--color-danger); cursor: pointer; font-size: 1.25rem; padding: 0 4px; line-height: 1;';
+      deleteBtn.addEventListener('click', () => {
+        delete edited[currentName];
+        emitChange();
+        row.remove();
+      });
+
+      row.appendChild(nameInput);
+      row.appendChild(valueInput);
+      row.appendChild(deleteBtn);
+    } else {
+      const nameEl = api.createElement('code');
+      nameEl.textContent = fieldName;
+      nameEl.style.cssText = 'font-size: 0.8125rem; color: var(--color-text); font-weight: 500; min-width: 120px;';
+      const valueEl = api.createElement('span');
+      valueEl.textContent = fieldValue != null ? String(fieldValue) : '';
+      valueEl.style.cssText = 'font-size: 0.8125rem; color: var(--color-text); font-family: monospace;';
+      row.appendChild(nameEl);
+      row.appendChild(valueEl);
+    }
+
+    return row;
+  }
+
+  for (const [fieldName, fieldValue] of entries) {
+    wrapper.appendChild(createRow(fieldName, fieldValue));
+  }
+
+  if (isEditable) {
+    const addBtn = api.createElement('button');
+    addBtn.textContent = '+ Add field';
+    addBtn.style.cssText = 'align-self: flex-start; padding: 4px 12px; background: var(--color-bg-surface-alt); border: 1px dashed var(--color-border); border-radius: var(--border-radius); color: var(--color-text-muted); cursor: pointer; font-size: 0.8125rem;';
+    addBtn.addEventListener('click', () => {
+      let i = 1;
+      let name = 'field-' + i;
+      while (edited[name] || excludeSet.has(name)) { i++; name = 'field-' + i; }
+      edited[name] = '';
+      emitChange();
+      const row = createRow(name, '');
+      wrapper.insertBefore(row, addBtn);
+      row.querySelector('input').focus();
+      row.querySelector('input').select();
+    });
+    wrapper.appendChild(addBtn);
+  }
+
+  return wrapper;
+}

@@ -1,4 +1,5 @@
 (do
+  (def reserved-keys {"body" true "computed" true "tags" true "description" true})
   (def resolve-body
     (fn [s item-id]
       (loop [s s result ""]
@@ -18,7 +19,7 @@
         (when clicked
           (let [field (invoke clicked "getAttribute" "data-field")
                 doc (dom-get clicked :ownerDocument)
-                entry (invoke doc "getElementById" (str "computed-field-" field))]
+                entry (invoke doc "getElementById" (str "field-" field))]
             (when entry
               (invoke entry "scrollIntoView" {:behavior "smooth" :block "nearest"})
               (dom-set! (dom-get entry :style) :background "var(--color-warning-light)")
@@ -26,17 +27,31 @@
                 (fn [] (dom-set! (dom-get entry :style) :background "")) 2000)))))))
   (let [body (or (get-in item [:content :body]) "")
         resolved (resolve-body body (:id item))
-        computed (or (get-in item [:content :computed]) {})]
+        content (or (get-in item [:content]) {})
+        computed (or (:computed content) {})
+        static-keys (filter (fn [k] (not (contains? reserved-keys k))) (keys content))
+        has-fields (or (not (empty? static-keys)) (not (empty? (keys computed))))
+        hob-editor (require "field-view-hob-structural")]
     [:div.structured-note-view {:on-click on-click}
      (when (:name item)
        [:h1 (:name item)])
      (render-markdown resolved)
-     (when (not (empty? (keys computed)))
-       [:details.field-summary {:open true}
-        [:summary "Computed Fields"]
-        [:dl.computed-fields-list
-         (map (fn [k]
-           [:div.computed-field-entry {:id (str "computed-field-" k)}
-            [:dt (str k)]
-            [:dd (str (get-field (:id item) k))]])
-           (keys computed))]])]))
+     (when has-fields
+       [:details.field-summary {:open true :style "font-size: 0.8125rem; line-height: 1.6;"}
+        [:summary {:style "font-weight: 500; cursor: pointer;"} "Fields"]
+        (concat
+          (map (fn [k]
+            [:div.field-entry {:id (str "field-" k) :style "padding: 2px 0;"}
+             [:span {:style "font-weight: 500; font-family: monospace;"} (str k)]
+             [:span {:style "color: var(--color-text-muted); margin: 0 6px;"} ":"]
+             [:span (str (get content k))]])
+            static-keys)
+          (map (fn [k]
+            [:div.field-entry {:id (str "field-" k) :style "padding: 4px 0;"}
+             [:span {:style "font-weight: 500; font-family: monospace;"} (str k)]
+             [:span {:style "color: var(--color-text-muted); margin: 0 6px;"} ":"]
+             [:div {:style "max-height: 3em; overflow: auto; margin-left: 16px;"}
+              (invoke hob-editor "render" [(get computed k)] {:mode "readonly"} api)]
+             [:div {:style "margin-left: 16px; color: var(--color-text-muted);"}
+              "→ " (str (get-field (:id item) k))]])
+            (keys computed)))])]))
