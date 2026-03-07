@@ -1,0 +1,42 @@
+(do
+  (def resolve-body
+    (fn [s item-id]
+      (loop [s s result ""]
+        (let [start (str/index-of s "{{")]
+          (if (nil? start)
+            (str result s)
+            (let [end (str/index-of s "}}")
+                  field-name (str/trim (subs s (+ start 2) end))
+                  value (get-field item-id field-name)
+                  rest-str (subs s (+ end 2))
+                  display (if (nil? value) "" (str value))]
+              (recur rest-str (str result (subs s 0 start)
+                "<span class=\"field-ref\" data-field=\"" field-name "\" title=\"" field-name "\" style=\"border-bottom: 1px dashed currentColor; cursor: pointer; opacity: 0.8;\">" display "</span>"))))))))
+  (def on-click
+    (fn [e]
+      (let [clicked (invoke (dom-get e :target) "closest" ".field-ref")]
+        (when clicked
+          (let [field (invoke clicked "getAttribute" "data-field")
+                doc (dom-get clicked :ownerDocument)
+                entry (invoke doc "getElementById" (str "computed-field-" field))]
+            (when entry
+              (invoke entry "scrollIntoView" {:behavior "smooth" :block "nearest"})
+              (dom-set! (dom-get entry :style) :background "var(--color-warning-light)")
+              (invoke (dom-get doc :defaultView) "setTimeout"
+                (fn [] (dom-set! (dom-get entry :style) :background "")) 2000)))))))
+  (let [body (or (get-in item [:content :body]) "")
+        resolved (resolve-body body (:id item))
+        computed (or (get-in item [:content :computed]) {})]
+    [:div.structured-note-view {:on-click on-click}
+     (when (:name item)
+       [:h1 (:name item)])
+     (render-markdown resolved)
+     (when (not (empty? (keys computed)))
+       [:details.field-summary {:open true}
+        [:summary "Computed Fields"]
+        [:dl.computed-fields-list
+         (map (fn [k]
+           [:div.computed-field-entry {:id (str "computed-field-" k)}
+            [:dt (str k)]
+            [:dd (str (get-field (:id item) k))]])
+           (keys computed))]])]))
