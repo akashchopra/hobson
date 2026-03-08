@@ -1,8 +1,10 @@
 
 // Markdown readonly field view
+// Resolves {{field-name}} references when item context is available
+// Handles both string values (injected into markdown) and DOM nodes (mounted after render)
 export async function render(value, options, api) {
-  const { label, scrollToRegion } = options;
-  const markdown = value || '';
+  const { label, scrollToRegion, item } = options;
+  let markdown = value || '';
 
   const wrapper = api.createElement('div', { className: 'field-markdown-readonly' });
   wrapper.style.cssText = 'display: flex; flex-direction: column; gap: 4px;';
@@ -14,11 +16,44 @@ export async function render(value, options, api) {
     wrapper.appendChild(labelEl);
   }
 
+  // Resolve {{field-name}} references if item context is available
+  // domMounts: map of fieldName → DOM node for fields that return DOM instead of strings
+  let domMounts = null;
+  if (item && markdown.includes('{{')) {
+    domMounts = new Map();
+    markdown = await resolveRefsMarkup(markdown, item.id, api, domMounts);
+  }
+
   // Use the hobson-markdown library for rendering
   const hobsonMarkdown = await api.require('hobson-markdown');
   const content = await hobsonMarkdown.render(markdown, api);
 
   wrapper.appendChild(content);
+
+  // Mount DOM nodes into their placeholder spans
+  if (domMounts && domMounts.size > 0) {
+    for (const [fieldName, domNode] of domMounts) {
+      const mount = wrapper.querySelector(`[data-field-mount="${fieldName}"]`);
+      if (mount) mount.appendChild(domNode);
+    }
+  }
+
+  // Click handler for field-ref spans — scroll to field in summary
+  if (item) {
+    wrapper.addEventListener('click', (e) => {
+      const ref = e.target.closest('.field-ref');
+      if (!ref) return;
+      const fieldName = ref.getAttribute('data-field');
+      if (!fieldName) return;
+      const doc = ref.ownerDocument;
+      const entry = doc.getElementById('field-' + fieldName);
+      if (entry) {
+        entry.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        entry.style.background = 'var(--color-warning-light)';
+        setTimeout(() => { entry.style.background = ''; }, 2000);
+      }
+    });
+  }
 
   // Handle scroll-to-region navigation
   // Supports both region markers ([BEGIN:name]) and heading navigation (## Name)
@@ -65,4 +100,43 @@ export async function render(value, options, api) {
   }
 
   return wrapper;
+}
+
+// Resolve {{field-name}} in markdown, wrapping values in clickable spans.
+// DOM node results are stored in domMounts and a placeholder is inserted.
+async function resolveRefsMarkup(s, itemId, api, domMounts) {
+  let result = '';
+  while (true) {
+    const start = s.indexOf('{{');
+    if (start === -1) { result += s; break; }
+    const end = s.indexOf('}}', start);
+    if (end === -1) { result += s; break; }
+    result += s.substring(0, start);
+    const fieldName = s.substring(start + 2, end).trim();
+    try {
+      const value = await api.getField(itemId, fieldName);
+      if (value?.nodeType) {
+        // DOM node — insert a mount placeholder, store the node
+        domMounts.set(fieldName, value);
+        result += '<span class="field-ref" data-field="' + fieldName + '" data-field-mount="' + fieldName
+          + '" title="' + fieldName
+          + '" style="border-bottom: 1px dashed currentColor; cursor: pointer; opacity: 0.8;"></span>';
+      } else {
+        const display = value != null ? String(value) : '';
+        result += '<span class="field-ref" data-field="' + fieldName + '" title="' + fieldName
+          + '" style="border-bottom: 1px dashed currentColor; cursor: pointer; opacity: 0.8;">'
+          + escapeHtml(display) + '</span>';
+      }
+    } catch (e) {
+      console.error('markdown-readonly: error resolving {{' + fieldName + '}}', e);
+      result += '<span class="field-ref" data-field="' + fieldName + '" title="' + fieldName
+        + '" style="border-bottom: 1px dashed currentColor; cursor: pointer; opacity: 0.8;"></span>';
+    }
+    s = s.substring(end + 2);
+  }
+  return result;
+}
+
+function escapeHtml(s) {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }

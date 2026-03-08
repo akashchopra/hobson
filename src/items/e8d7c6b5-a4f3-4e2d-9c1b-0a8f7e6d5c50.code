@@ -1,0 +1,148 @@
+
+// Readonly field summary: shows static fields and computed fields with provenance
+export async function render(value, options, api) {
+  const { exclude, item } = options;
+  const content = value || {};
+  const excludeSet = new Set(exclude || []);
+
+  // Separate static and computed fields
+  const computed = content.computed || {};
+  const staticFields = {};
+  for (const [k, v] of Object.entries(content)) {
+    if (!excludeSet.has(k)) staticFields[k] = v;
+  }
+
+  const staticKeys = Object.keys(staticFields);
+  const computedKeys = Object.keys(computed);
+
+  // Nothing to show — render invisible element
+  if (staticKeys.length === 0 && computedKeys.length === 0) {
+    const empty = api.createElement('div');
+    empty.style.display = 'none';
+    return empty;
+  }
+
+  const wrapper = api.createElement('div', { className: 'field-summary' });
+  wrapper.style.cssText = 'font-size: 0.8125rem; line-height: 1.6;';
+
+  // Static fields
+  for (const k of staticKeys) {
+    const row = api.createElement('div', { className: 'field-entry' });
+    row.id = 'field-' + k;
+    row.style.cssText = 'padding: 2px 0;';
+
+    const nameEl = api.createElement('span');
+    nameEl.textContent = k;
+    nameEl.style.cssText = 'font-weight: 500; font-family: monospace;';
+    row.appendChild(nameEl);
+
+    const sep = api.createElement('span');
+    sep.textContent = ':';
+    sep.style.cssText = 'color: var(--color-text-muted); margin: 0 6px;';
+    row.appendChild(sep);
+
+    const valEl = api.createElement('span');
+    valEl.textContent = String(staticFields[k]);
+    row.appendChild(valEl);
+
+    wrapper.appendChild(row);
+  }
+
+  // Computed fields — show formula + resolved value + provenance links
+  if (computedKeys.length > 0) {
+    let hobStructural;
+    try {
+      hobStructural = await api.require('field-view-hob-structural');
+    } catch (e) { /* structural editor not available */ }
+
+    for (const k of computedKeys) {
+      const formula = computed[k];
+      const row = api.createElement('div', { className: 'field-entry' });
+      row.id = 'field-' + k;
+      row.style.cssText = 'padding: 4px 0;';
+
+      const nameEl = api.createElement('span');
+      nameEl.textContent = k;
+      nameEl.style.cssText = 'font-weight: 500; font-family: monospace; font-style: italic;';
+      row.appendChild(nameEl);
+
+      const sep = api.createElement('span');
+      sep.textContent = ':';
+      sep.style.cssText = 'color: var(--color-text-muted); margin: 0 6px;';
+      row.appendChild(sep);
+
+      // Formula display
+      if (hobStructural) {
+        const formulaEl = await hobStructural.render([formula], { mode: 'readonly' }, api);
+        formulaEl.style.cssText = 'max-height: 3em; overflow: auto; margin-left: 16px;';
+        row.appendChild(formulaEl);
+      }
+
+      // Resolved value
+      const resolvedRow = api.createElement('div');
+      resolvedRow.style.cssText = 'margin-left: 16px; color: var(--color-text-muted);';
+      let resolvedText = '';
+      if (item) {
+        try {
+          const val = await api.getField(item.id, k);
+          resolvedText = val != null ? String(val) : '';
+        } catch (e) {
+          console.error('field-summary: error resolving', k, e);
+          resolvedText = '[error]';
+        }
+      }
+      resolvedRow.textContent = '\u2192 ' + resolvedText;
+      row.appendChild(resolvedRow);
+
+      // Provenance links — extract @-refs from formula AST
+      const refs = extractItemRefs(formula);
+      if (refs.length > 0) {
+        const linksRow = api.createElement('div');
+        linksRow.style.cssText = 'margin-left: 16px; display: flex; gap: 8px; flex-wrap: wrap;';
+        for (const refId of refs) {
+          const link = api.createElement('a');
+          link.style.cssText = 'font-size: 0.75rem; color: var(--color-primary); cursor: pointer; text-decoration: none;';
+          link.href = '#';
+          // Fetch item name
+          try {
+            const refItem = await api.get(refId);
+            link.textContent = refItem?.name || refId.substring(0, 8) + '...';
+            link.title = refItem?.name || refId;
+          } catch (e) {
+            link.textContent = refId.substring(0, 8) + '...';
+            link.title = refId;
+          }
+          link.addEventListener('click', (e) => {
+            e.preventDefault();
+            api.openItem(e, refId);
+          });
+          linksRow.appendChild(link);
+        }
+        row.appendChild(linksRow);
+      }
+
+      wrapper.appendChild(row);
+    }
+  }
+
+  return wrapper;
+}
+
+// Walk JSON AST to find @-prefixed item references
+function extractItemRefs(ast) {
+  const refs = [];
+  const seen = new Set();
+  function walk(node) {
+    if (typeof node === 'string' && node.startsWith('@')) {
+      const id = node.substring(1);
+      if (!seen.has(id)) { seen.add(id); refs.push(id); }
+    } else if (Array.isArray(node)) {
+      for (const child of node) walk(child);
+    } else if (node && typeof node === 'object') {
+      if (node.v) for (const child of node.v) walk(child);
+      if (node.m) for (const child of node.m) walk(child);
+    }
+  }
+  walk(ast);
+  return refs;
+}

@@ -647,6 +647,19 @@ export class RenderingSystem {
       );
     }
 
+    // Computed field evaluation — resolve get-field from JS views
+    api.getField = async (itemId, fieldName) => {
+      await rendering._ensureInterpreter();
+      // Make the rendering API available to formulas during evaluation
+      rendering._hobItemApi._evalApi = api;
+      try {
+        const getFieldFn = rendering._hobInterp.env.lookup('get-field');
+        return await getFieldFn(itemId, fieldName);
+      } finally {
+        rendering._hobItemApi._evalApi = null;
+      }
+    };
+
     // Attachment view management (arity-detecting like attach/detach)
     api.setAttachmentView = async (...args) => {
       const [parentId, itemId, viewId] = args.length === 2 && containerItem
@@ -1554,15 +1567,8 @@ export class RenderingSystem {
     return typeItem.name || typeItem.id.slice(0, 8);
   }
 
-  /** Render a Hob-language view.
-   * @param {Object} view - The view item (has content.hob)
-   * @param {Object} item - The item being rendered
-   * @param {Object} api - The kernel API for this render context
-   * @param {Object} context - Render context
-   * @returns {Promise<{domNode: HTMLElement|null, selectorInfo: Object|null}>}
-   */
-  async renderHobView(view, item, api, context) {
-    // Lazy-load interpreter (cached on this instance)
+  /** Ensure the shared Hob interpreter is loaded (lazy init, cached). */
+  async _ensureInterpreter() {
     if (!this._hobInterp) {
       const hob = await this.kernel.moduleSystem.require('40b00001-0000-4000-8000-000000000000');
       // The interpreter-level API is captured by get-item's closure.
@@ -1573,11 +1579,23 @@ export class RenderingSystem {
         delete: id => this.kernel.deleteItem(id),
         getAll: () => this.kernel.storage.getAll(),
         query: filter => this.kernel.storage.query(filter),
+        require: name => this.kernel.moduleSystem.require(name),
       };
       this._hobInterp = hob.createInterpreter(this._hobItemApi);
       this._hobModule = hob;
       await this._hobInterp.macrosReady;
     }
+  }
+
+  /** Render a Hob-language view.
+   * @param {Object} view - The view item (has content.hob)
+   * @param {Object} item - The item being rendered
+   * @param {Object} api - The kernel API for this render context
+   * @param {Object} context - Render context
+   * @returns {Promise<{domNode: HTMLElement|null, selectorInfo: Object|null}>}
+   */
+  async renderHobView(view, item, api, context) {
+    await this._ensureInterpreter();
 
     // Initialize reactive subscriptions once after first Hob module load
     if (!this._reactiveInit) {
