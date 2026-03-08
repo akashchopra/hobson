@@ -3287,7 +3287,7 @@ export function createInterpreter(api, viewApi, eventApi) {
   let _computedFieldSelf = null;
   const _computingFields = new Set();
   if (api) {
-    stdlib.define('get-field', Object.assign(async (itemOrRef, fieldKey) => {
+    stdlib.define('get-field', Object.assign(async (itemOrRef, fieldKey, _tracker) => {
       let item, itemId;
       if (isKeyword(itemOrRef) && keywordName(itemOrRef) === 'self') {
         itemId = _computedFieldSelf || api._renderItemId;
@@ -3304,6 +3304,8 @@ export function createInterpreter(api, viewApi, eventApi) {
         itemId = item.id;
       }
       if (!item) return null;
+      // Track cross-item access for reactive re-rendering (per-render tracker)
+      if (itemId && _tracker) _tracker.add(itemId);
       const fieldName = isKeyword(fieldKey) ? keywordName(fieldKey) : String(fieldKey);
       const formula = item.content?.computed?.[fieldName];
       if (formula !== undefined) {
@@ -3316,7 +3318,13 @@ export function createInterpreter(api, viewApi, eventApi) {
         _computedFieldSelf = itemId;
         try {
           // Evaluate in a child env with rendering api if available
-          const evalEnv = api._evalApi ? stdlib.extend({ api: api._evalApi }) : stdlib;
+          let evalEnv = api._evalApi ? stdlib.extend({ api: api._evalApi }) : stdlib;
+          // Propagate tracker through recursive formula evaluation
+          if (_tracker) {
+            const innerGF = evalEnv.lookup('get-field');
+            evalEnv = evalEnv.extend({});
+            evalEnv.define('get-field', Object.assign(async (a, b) => innerGF(a, b, _tracker), { _hobName: 'get-field' }));
+          }
           return await evaluate(formula, evalEnv, []);
         } finally {
           _computedFieldSelf = prevSelf;
