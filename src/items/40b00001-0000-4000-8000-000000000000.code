@@ -3311,7 +3311,7 @@ export function createInterpreter(api, viewApi, eventApi) {
       if (formula !== undefined) {
         const cycleKey = `${itemId}:${fieldName}`;
         if (_computingFields.has(cycleKey)) {
-          throw new Error(`Circular reference in computed field: ${cycleKey}`);
+          return { _hobType: 'computed-field-error', itemId, fieldName, message: 'Circular reference: ' + cycleKey };
         }
         _computingFields.add(cycleKey);
         const prevSelf = _computedFieldSelf;
@@ -3326,6 +3326,9 @@ export function createInterpreter(api, viewApi, eventApi) {
             evalEnv.define('get-field', Object.assign(async (a, b) => innerGF(a, b, _tracker), { _hobName: 'get-field' }));
           }
           return await evaluate(formula, evalEnv, []);
+        } catch (e) {
+          console.error(`[get-field] Error evaluating ${cycleKey}:`, e.message);
+          return { _hobType: 'computed-field-error', itemId, fieldName, message: e.message };
         } finally {
           _computedFieldSelf = prevSelf;
           _computingFields.delete(cycleKey);
@@ -3333,6 +3336,12 @@ export function createInterpreter(api, viewApi, eventApi) {
       }
       return item[fieldName] ?? item.content?.[fieldName] ?? null;
     }, { _hobName: 'get-field' }));
+
+    // Predicate: check if a value is a computed field error sentinel
+    stdlib.define('computed-field-error?', Object.assign(
+      (v) => v != null && v._hobType === 'computed-field-error',
+      { _hobName: 'computed-field-error?' }
+    ));
 
     // resolve-refs: resolve {{field-name}} references in a template string using get-field
     const getFieldFn = stdlib.lookup('get-field');
@@ -3352,7 +3361,11 @@ export function createInterpreter(api, viewApi, eventApi) {
         result += s.substring(0, start);
         const fieldName = s.substring(start + 2, end).trim();
         const value = await getFieldFn(itemId, fieldName);
-        result += value != null ? String(value) : '';
+        if (value != null && value._hobType === 'computed-field-error') {
+          result += '[ERR: ' + fieldName + ']';
+        } else {
+          result += value != null ? String(value) : '';
+        }
         s = s.substring(end + 2);
       }
       return result;
