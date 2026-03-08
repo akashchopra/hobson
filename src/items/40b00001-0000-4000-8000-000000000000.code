@@ -2838,6 +2838,35 @@ function registerItemOps(env, api) {
     if (items.length === 0) throw new Error(`Could not resolve item reference @${value}`);
     return items[0];
   }, { _hobName: 'resolve-ref' }));
+
+  // Module loading — available everywhere, not just in views
+  if (api.require) {
+    env.define('require', Object.assign(async (name) => {
+      if (typeof name !== 'string') throw new Error('require: argument must be a string');
+      let item = null;
+      try {
+        const UUID_RE2 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        if (UUID_RE2.test(name)) {
+          item = await api.get(name);
+        } else {
+          const items = await api.query({ name });
+          item = items.find(i => Array.isArray(i.content?.hob)) || items[0] || null;
+        }
+      } catch {}
+      if (item && Array.isArray(item.content?.hob)) {
+        const childEnv = new Environment(env);
+        for (const form of item.content.hob) {
+          await evaluate(form, childEnv, []);
+        }
+        const result = {};
+        for (const [k, v] of childEnv.bindings) {
+          result[`:${k}`] = v;
+        }
+        return result;
+      }
+      return await api.require(name);
+    }, { _hobName: 'require' }));
+  }
 }
 
 // ============================================================
@@ -2934,36 +2963,7 @@ function registerViewOps(env, api) {
     return await api.updateViewConfig(hobToJs(updates));
   }, { _hobName: 'update-view-config!' }));
 
-  env.define('require', Object.assign(async (name) => {
-    if (typeof name !== 'string') throw new Error('require: argument must be a string');
-    // Look up item by name (or UUID)
-    let item = null;
-    try {
-      const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-      if (UUID_RE.test(name)) {
-        item = await api.get(name);
-      } else {
-        const items = await api.query({ name });
-        // Prefer Hob items; fall back to first match
-        item = items.find(i => Array.isArray(i.content?.hob)) || items[0] || null;
-      }
-    } catch {}
-    if (item && Array.isArray(item.content?.hob)) {
-      // Hob module: evaluate in a child env, return local def bindings as a map.
-      // def = public, let = private. Caller gets {:name <fn> :other <fn>}.
-      const childEnv = new Environment(env);
-      for (const form of item.content.hob) {
-        await evaluate(form, childEnv, []);
-      }
-      const result = {};
-      for (const [k, v] of childEnv.bindings) {
-        result[`:${k}`] = v;
-      }
-      return result;
-    }
-    // JS library (or not found as Hob): delegate to kernel module loader
-    return await api.require(name);
-  }, { _hobName: 'require' }));
+  // require is now in registerItemOps (stdlib) — no longer view-only
 
   env.define('search-items!', Object.assign(async (query, options) => {
     const searchLib = await api.require('item-search-lib');
@@ -3315,7 +3315,9 @@ export function createInterpreter(api, viewApi, eventApi) {
         const prevSelf = _computedFieldSelf;
         _computedFieldSelf = itemId;
         try {
-          return await evaluate(formula, stdlib, []);
+          // Evaluate in a child env with rendering api if available
+          const evalEnv = api._evalApi ? stdlib.extend({ api: api._evalApi }) : stdlib;
+          return await evaluate(formula, evalEnv, []);
         } finally {
           _computedFieldSelf = prevSelf;
           _computingFields.delete(cycleKey);
