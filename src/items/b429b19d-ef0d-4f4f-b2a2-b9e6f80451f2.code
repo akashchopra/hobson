@@ -130,8 +130,22 @@ export async function render(item, api) {
     if (isEditable) hasEditableFields = true;
 
     // Create onChange handler if editable
+    // When a field view writes to a parent path (e.g. 'content'), preserve values
+    // at child paths (e.g. 'content.description') that other field views may have edited.
+    const childPaths = isEditable
+      ? Object.keys(uiHints).filter(p => p !== path && p.startsWith(path + '.'))
+      : [];
     const onChange = isEditable
       ? (newValue) => {
+          if (childPaths.length > 0 && typeof newValue === 'object' && newValue !== null) {
+            for (const childPath of childPaths) {
+              const relativePath = childPath.substring(path.length + 1);
+              const childValue = getNestedValue(editedItem, childPath);
+              if (childValue !== undefined) {
+                setNestedValue(newValue, relativePath, childValue);
+              }
+            }
+          }
           setNestedValue(editedItem, path, newValue);
         }
       : null;
@@ -160,6 +174,8 @@ export async function render(item, api) {
         label: hint.collapsible ? null : hint.label,
         // Pass item context so field views can resolve cross-field references
         item,
+        // Allow field views to read the current edited value (not stale closure)
+        getCurrentValue: isEditable ? () => getNestedValue(editedItem, path) : undefined,
       }, api);
     } catch (renderError) {
       console.error('Error rendering field:', path, 'with view:', fieldViewName, renderError);
