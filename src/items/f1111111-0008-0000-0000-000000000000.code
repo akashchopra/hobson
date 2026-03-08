@@ -227,6 +227,7 @@ class RenderInstanceRegistry {
     this.byItemId = new Map();       // itemId -> Set<instanceId>
     this.byViewId = new Map();       // viewId -> Set<instanceId>
     this.byParentId = new Map();     // parentId -> Set<instanceId>
+    this.byCrossItemDep = new Map(); // depItemId -> Set<instanceId>
     this.nextId = 1;
   }
 
@@ -282,6 +283,22 @@ class RenderInstanceRegistry {
     return instanceId;
   }
 
+  /** Register cross-item dependencies for an instance.
+   * @param {number} instanceId
+   * @param {Set<string>} depItemIds - Item GUIDs this instance depends on
+   */
+  registerCrossItemDeps(instanceId, depItemIds) {
+    const info = this.instances.get(instanceId);
+    if (!info) return;
+    info.crossItemDeps = depItemIds;
+    for (const depItemId of depItemIds) {
+      if (!this.byCrossItemDep.has(depItemId)) {
+        this.byCrossItemDep.set(depItemId, new Set());
+      }
+      this.byCrossItemDep.get(depItemId).add(instanceId);
+    }
+  }
+
   /** Unregister a render instance and remove from all indexes.
    * @param {number} instanceId
    * @returns {boolean} True if found and removed
@@ -312,6 +329,16 @@ class RenderInstanceRegistry {
       if (parentSet.size === 0) this.byParentId.delete(parentKey);
     }
 
+    if (info.crossItemDeps) {
+      for (const depItemId of info.crossItemDeps) {
+        const depSet = this.byCrossItemDep.get(depItemId);
+        if (depSet) {
+          depSet.delete(instanceId);
+          if (depSet.size === 0) this.byCrossItemDep.delete(depItemId);
+        }
+      }
+    }
+
     return true;
   }
 
@@ -340,6 +367,7 @@ class RenderInstanceRegistry {
     this.byItemId.clear();
     this.byViewId.clear();
     this.byParentId.clear();
+    this.byCrossItemDep.clear();
     return count;
   }
 
@@ -649,12 +677,15 @@ export class RenderingSystem {
 
     // Computed field evaluation — resolve get-field from JS views
     api.getField = async (itemId, fieldName) => {
+      // Track cross-item dep on the per-render api (synchronous, before any await)
+      if (api._crossItemDeps) api._crossItemDeps.add(itemId);
       await rendering._ensureInterpreter();
       // Make the rendering API available to formulas during evaluation
       rendering._hobItemApi._evalApi = api;
       try {
         const getFieldFn = rendering._hobInterp.env.lookup('get-field');
-        return await getFieldFn(itemId, fieldName);
+        // Pass per-render tracker for recursive formula dep tracking
+        return await getFieldFn(itemId, fieldName, api._crossItemDeps);
       } finally {
         rendering._hobItemApi._evalApi = null;
       }
@@ -1183,6 +1214,8 @@ export class RenderingSystem {
         this.enrichAPI(api, newContext, item);
         // Propagate pageContext from options (e.g. app-page widgets)
         if (options.pageContext) api.pageContext = options.pageContext;
+        // Track cross-item deps on per-render api (safe under concurrent child renders)
+        api._crossItemDeps = new Set();
         const hobResult = await this.renderHobView(view, item, api, newContext);
         if (hobResult.domNode) {
           const parentId = context.parentId || null;
@@ -1196,6 +1229,12 @@ export class RenderingSystem {
             inst.openItemFn = context.openItemFn || null;
             inst.ancestors = context.ancestors || null;
             inst.selector = hobResult.selectorInfo || null;
+          }
+          // Register cross-item deps for reactive re-rendering
+          const hobCrossDeps = api._crossItemDeps;
+          hobCrossDeps.delete(itemId); // own item tracked via byItemId
+          if (hobCrossDeps.size > 0) {
+            this.registry.registerCrossItemDeps(instId, hobCrossDeps);
           }
           // Fill :render-child mount points produced by this Hob view
           if (hobResult.domNode.querySelector?.('[data-render-child]')) {
@@ -1229,6 +1268,8 @@ export class RenderingSystem {
       const api = this.kernel.createAPI(item, newContext);
       this.enrichAPI(api, newContext, item);
 
+      // Track cross-item deps on per-render api (safe under concurrent child renders)
+      api._crossItemDeps = new Set();
       if (isRoot) perf?.mark(`${perfPrefix}-render-exec-start`);
       const domNode = await viewModule.render(item, api);
       if (isRoot) {
@@ -1245,6 +1286,12 @@ export class RenderingSystem {
         // Store context for re-render recovery
         const inst = this.registry.instances.get(instId);
         if (inst) { inst.decorator = context.decorator || null; inst.openIn = context.openIn || null; inst.openItemFn = context.openItemFn || null; }
+        // Register cross-item deps for reactive re-rendering
+        const jsCrossDeps = api._crossItemDeps;
+        jsCrossDeps.delete(itemId);
+        if (jsCrossDeps.size > 0) {
+          this.registry.registerCrossItemDeps(instId, jsCrossDeps);
+        }
         // Fill :render-child mount points produced by this JS view
         if (domNode.querySelector?.('[data-render-child]')) {
           await this.fillMountPoints(domNode, newContext, item);
@@ -1624,6 +1671,14 @@ export class RenderingSystem {
     childEnv.define('item', item);
     childEnv.define('api', api);
 
+    // Shadow get-field to thread per-render cross-item dep tracker
+    // (avoids shared _hobItemApi state which breaks under concurrent child renders)
+    if (api._crossItemDeps) {
+      const tracker = api._crossItemDeps;
+      const origGetField = childEnv.lookup('get-field');
+      childEnv.define('get-field', Object.assign(async (a, b) => origGetField(a, b, tracker), { _hobName: 'get-field' }));
+    }
+
     // Parse Hob view code (cached by view.id + modified)
     const cacheKey = `${view.id}:${view.modified}`;
     if (!this._hobAstCache) this._hobAstCache = new Map();
@@ -1778,6 +1833,11 @@ export class RenderingSystem {
       // Also re-render instances that use the changed item as their view
       const viewInstanceIds = this.registry.byViewId.get(itemId);
       if (viewInstanceIds && viewInstanceIds.size > 0) this._scheduleReRenders(viewInstanceIds, itemId);
+      // Also re-render instances that reference the changed item via computed fields
+      const crossDepIds = this.registry.byCrossItemDep.get(itemId);
+      if (crossDepIds && crossDepIds.size > 0) {
+        this._scheduleReRenders(crossDepIds, itemId);
+      }
     });
     // item:deleted → same
     this.kernel.events.on(EVENT_IDS.ITEM_DELETED, (event) => {
@@ -1787,6 +1847,8 @@ export class RenderingSystem {
       if (instanceIds && instanceIds.size > 0) this._scheduleReRenders(instanceIds, itemId);
       const viewInstanceIds = this.registry.byViewId.get(itemId);
       if (viewInstanceIds && viewInstanceIds.size > 0) this._scheduleReRenders(viewInstanceIds, itemId);
+      const crossDepIds = this.registry.byCrossItemDep.get(itemId);
+      if (crossDepIds && crossDepIds.size > 0) this._scheduleReRenders(crossDepIds, itemId);
     });
   }
 
