@@ -680,14 +680,21 @@ export class RenderingSystem {
       // Track cross-item dep on the per-render api (synchronous, before any await)
       if (api._crossItemDeps) api._crossItemDeps.add(itemId);
       await rendering._ensureInterpreter();
-      // Make the rendering API available to formulas during evaluation
+      // Make the rendering API available to formulas during evaluation.
+      // Ref-counted: multiple concurrent renders can overlap, so only clear
+      // _evalApi when the last one finishes.
+      if (!rendering._evalApiRefCount) rendering._evalApiRefCount = 0;
+      rendering._evalApiRefCount++;
       rendering._hobItemApi._evalApi = api;
       try {
         const getFieldFn = rendering._hobInterp.env.lookup('get-field');
         // Pass per-render tracker for recursive formula dep tracking
         return await getFieldFn(itemId, fieldName, api._crossItemDeps);
       } finally {
-        rendering._hobItemApi._evalApi = null;
+        rendering._evalApiRefCount--;
+        if (rendering._evalApiRefCount === 0) {
+          rendering._hobItemApi._evalApi = null;
+        }
       }
     };
 
