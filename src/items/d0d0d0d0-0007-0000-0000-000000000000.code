@@ -1,0 +1,704 @@
+// field-view-doc-editable — Prose editor for Hob :doc AST
+// Per-block contenteditable. Block structure managed by editor; inline text is native.
+// Formatting (bold/italic/code) handled by browser, synced back to AST.
+// Custom nodes (field-ref, item-ref, link) are non-editable islands.
+
+export async function render(value, options, api) {
+  const { label, mode, onChange, item } = options;
+  const editable = mode === 'editable' && typeof onChange === 'function';
+
+  // Working copy of AST
+  let ast = Array.isArray(value) && typeof value[0] === 'string' && value[0].startsWith(':')
+    ? JSON.parse(JSON.stringify(value))
+    : [':doc', [':p', { s: value != null ? String(value) : '' }]];
+  if (ast.length < 2) ast.push([':p', { s: '' }]);
+
+  const wrapper = api.createElement('div', { className: 'field-doc-editable' });
+  wrapper.style.cssText = 'display: flex; flex-direction: column; gap: 4px;';
+
+  if (label) {
+    const labelEl = api.createElement('label');
+    labelEl.textContent = label;
+    labelEl.style.cssText = 'font-weight: 500; font-size: 0.875rem; color: var(--color-text);';
+    wrapper.appendChild(labelEl);
+  }
+
+  const editor = api.createElement('div', { className: 'doc-editor' });
+  editor.style.cssText = 'line-height: 1.6; font-size: 0.8125rem; min-height: 60px;';
+
+  // --- Helpers ---
+
+  function isText(node) {
+    return node && typeof node === 'object' && !Array.isArray(node) && 's' in node;
+  }
+
+  function textOf(node) {
+    if (isText(node)) return node.s;
+    if (typeof node === 'string') return node;
+    return String(node ?? '');
+  }
+
+  function tagOf(node) {
+    if (Array.isArray(node) && typeof node[0] === 'string' && node[0].startsWith(':')) return node[0];
+    return null;
+  }
+
+  const LEAF_BLOCKS = new Set([':p', ':h1', ':h2', ':h3', ':h4', ':h5', ':h6']);
+  function isLeafBlock(tag) { return LEAF_BLOCKS.has(tag); }
+
+  function blockElTag(astTag) {
+    if (astTag === ':p') return 'p';
+    if (astTag && astTag.startsWith(':h') && astTag.length === 3) return 'h' + astTag[2];
+    return 'div';
+  }
+
+  // --- AST → DOM ---
+
+  function renderAllBlocks() {
+    editor.innerHTML = '';
+    for (let i = 1; i < ast.length; i++) {
+      editor.appendChild(renderBlock(ast[i], i - 1));
+    }
+  }
+
+  function renderBlock(block, index) {
+    const tag = tagOf(block);
+    if (isLeafBlock(tag)) return renderLeafBlock(block, index);
+    if (tag === ':ul' || tag === ':ol') return renderList(block, index);
+    if (tag === ':blockquote') return renderBlockquote(block, index);
+    if (tag === ':code-block') return renderCodeBlock(block, index);
+    return renderFallback(block, index);
+  }
+
+  function renderLeafBlock(block, index) {
+    const tag = tagOf(block);
+    const el = document.createElement(blockElTag(tag));
+    if (editable) el.contentEditable = 'true';
+    el.dataset.blockIndex = String(index);
+    el.style.cssText = tag === ':p'
+      ? 'margin: 0 0 0.5em 0; outline: none; min-height: 1.2em;'
+      : 'margin: 0.5em 0 0.25em 0; outline: none; min-height: 1.2em;';
+
+    renderInlineContent(block.slice(1), el);
+
+    // Ensure cursor can be placed after trailing non-editable elements
+    if (editable && el.lastChild && el.lastChild.nodeType === 1 && el.lastChild.contentEditable === 'false') {
+      el.appendChild(document.createTextNode('\u200B'));
+    }
+    // Empty blocks need a <br> for the browser to show a caret
+    if (editable && el.textContent === '') {
+      el.appendChild(document.createElement('br'));
+    }
+
+    if (editable) {
+      el.addEventListener('input', () => handleInput(el, index));
+      el.addEventListener('keydown', (e) => handleKeyDown(e, el, index));
+    }
+
+    return el;
+  }
+
+  function renderInlineContent(children, parent) {
+    for (const child of children) {
+      if (isText(child)) {
+        if (child.s) parent.appendChild(document.createTextNode(child.s));
+      } else if (Array.isArray(child)) {
+        const tag = child[0];
+        switch (tag) {
+          case ':strong': {
+            const el = document.createElement('strong');
+            for (let i = 1; i < child.length; i++) el.appendChild(document.createTextNode(textOf(child[i])));
+            parent.appendChild(el);
+            break;
+          }
+          case ':em': {
+            const el = document.createElement('em');
+            for (let i = 1; i < child.length; i++) el.appendChild(document.createTextNode(textOf(child[i])));
+            parent.appendChild(el);
+            break;
+          }
+          case ':code': {
+            const el = document.createElement('code');
+            el.style.cssText = 'background: var(--color-bg-surface-alt); padding: 1px 4px; border-radius: 3px; font-size: 0.8125em;';
+            for (let i = 1; i < child.length; i++) el.appendChild(document.createTextNode(textOf(child[i])));
+            parent.appendChild(el);
+            break;
+          }
+          case ':field-ref': {
+            const span = document.createElement('span');
+            span.contentEditable = 'false';
+            span.className = 'doc-field-ref';
+            span.dataset.field = textOf(child[1]);
+            span.textContent = '{{' + textOf(child[1]) + '}}';
+            span.style.cssText = 'display: inline-block; background: var(--color-bg-surface-alt); padding: 1px 6px; border-radius: 3px; border: 1px dashed var(--color-border); font-size: 0.8125em; font-family: monospace; cursor: default; user-select: none;';
+            parent.appendChild(span);
+            break;
+          }
+          case ':item-ref': {
+            const span = document.createElement('span');
+            span.contentEditable = 'false';
+            span.className = 'doc-item-ref';
+            span.dataset.refId = textOf(child[1]);
+            if (child.length > 2) span.dataset.display = textOf(child[2]);
+            span.textContent = child.length > 2 ? textOf(child[2]) : textOf(child[1]).substring(0, 8) + '\u2026';
+            span.style.cssText = 'display: inline-block; color: var(--color-primary); border-bottom: 1px solid var(--color-primary); cursor: default; user-select: none;';
+            parent.appendChild(span);
+            break;
+          }
+          case ':link': {
+            const span = document.createElement('span');
+            span.contentEditable = 'false';
+            span.className = 'doc-link';
+            span.dataset.href = textOf(child[1]);
+            if (child.length > 2) span.dataset.display = textOf(child[2]);
+            span.textContent = child.length > 2 ? textOf(child[2]) : textOf(child[1]);
+            span.style.cssText = 'display: inline; color: var(--color-primary); text-decoration: underline; cursor: default; user-select: none;';
+            parent.appendChild(span);
+            break;
+          }
+          default:
+            for (let i = 1; i < child.length; i++) parent.appendChild(document.createTextNode(textOf(child[i])));
+        }
+      }
+    }
+  }
+
+  // --- Readonly renderers for container blocks ---
+
+  function renderList(block, index) {
+    const tag = tagOf(block);
+    const el = document.createElement(tag === ':ul' ? 'ul' : 'ol');
+    el.dataset.blockIndex = String(index);
+    el.style.cssText = 'margin: 0.25em 0; padding-left: 1.5em;';
+    for (const child of block.slice(1)) {
+      if (tagOf(child) === ':li') {
+        const li = document.createElement('li');
+        li.style.cssText = 'margin: 0.125em 0;';
+        for (const liChild of child.slice(1)) {
+          const liTag = tagOf(liChild);
+          if (isLeafBlock(liTag)) {
+            const span = document.createElement('span');
+            renderInlineContent(liChild.slice(1), span);
+            li.appendChild(span);
+          } else if (liTag === ':ul' || liTag === ':ol') {
+            li.appendChild(renderList(liChild, -1));
+          }
+        }
+        el.appendChild(li);
+      }
+    }
+    return el;
+  }
+
+  function renderBlockquote(block, index) {
+    const el = document.createElement('blockquote');
+    el.dataset.blockIndex = String(index);
+    el.style.cssText = 'margin: 0.5em 0; padding-left: 1em; border-left: 3px solid var(--color-border); color: var(--color-text-secondary);';
+    for (const child of block.slice(1)) {
+      if (isLeafBlock(tagOf(child))) {
+        const p = document.createElement('p');
+        p.style.margin = '0 0 0.25em 0';
+        renderInlineContent(child.slice(1), p);
+        el.appendChild(p);
+      }
+    }
+    return el;
+  }
+
+  function renderCodeBlock(block, index) {
+    const pre = document.createElement('pre');
+    pre.dataset.blockIndex = String(index);
+    pre.style.cssText = 'margin: 0.5em 0; padding: 10px; background: var(--color-bg-surface-alt); border-radius: var(--border-radius); overflow-x: auto; font-family: monospace; font-size: 0.8125rem; line-height: 1.5;';
+    const code = document.createElement('code');
+    for (const child of block.slice(1)) code.appendChild(document.createTextNode(textOf(child)));
+    pre.appendChild(code);
+    return pre;
+  }
+
+  function renderFallback(block, index) {
+    const div = document.createElement('div');
+    div.dataset.blockIndex = String(index);
+    div.style.cssText = 'opacity: 0.6; font-style: italic; font-size: 0.75rem;';
+    div.textContent = JSON.stringify(block);
+    return div;
+  }
+
+  // --- DOM → AST ---
+
+  function domToInlineAst(el) {
+    const result = [];
+    for (const node of el.childNodes) {
+      if (node.nodeType === 3) {
+        const text = node.textContent.replace(/\u200B/g, '');
+        if (text) result.push({ s: text });
+      } else if (node.nodeType === 1) {
+        const tag = node.tagName.toLowerCase();
+        if (tag === 'strong' || tag === 'b') {
+          if (node.textContent) result.push([':strong', { s: node.textContent }]);
+        } else if (tag === 'em' || tag === 'i') {
+          if (node.textContent) result.push([':em', { s: node.textContent }]);
+        } else if (tag === 'code') {
+          if (node.textContent) result.push([':code', { s: node.textContent }]);
+        } else if (node.classList.contains('doc-field-ref')) {
+          result.push([':field-ref', { s: node.dataset.field }]);
+        } else if (node.classList.contains('doc-item-ref')) {
+          const parts = [[':item-ref', { s: node.dataset.refId }]];
+          if (node.dataset.display) parts[0].push({ s: node.dataset.display });
+          result.push(parts[0]);
+        } else if (node.classList.contains('doc-link')) {
+          const parts = [[':link', { s: node.dataset.href }]];
+          if (node.dataset.display) parts[0].push({ s: node.dataset.display });
+          result.push(parts[0]);
+        } else if (tag === 'br') {
+          // Browser inserts <br> in empty blocks — skip
+        } else {
+          // Unknown element — recurse into children
+          result.push(...domToInlineAst(node));
+        }
+      }
+    }
+    return mergeAdjacentText(result);
+  }
+
+  function mergeAdjacentText(nodes) {
+    const merged = [];
+    for (const node of nodes) {
+      if (isText(node) && merged.length > 0 && isText(merged[merged.length - 1])) {
+        merged[merged.length - 1] = { s: merged[merged.length - 1].s + node.s };
+      } else {
+        merged.push(node);
+      }
+    }
+    return merged;
+  }
+
+  // --- Autocomplete ---
+
+  let ac = null; // { type: 'item'|'field', blockEl, blockIndex, anchorNode, anchorOffset, query, results, active }
+  let acTimer = null;
+  const acPopup = document.createElement('div');
+  acPopup.style.cssText = 'position: fixed; z-index: 9999; background: var(--color-bg-surface, #fff); border: 1px solid var(--color-border, #e5e7eb); border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); max-height: 200px; overflow-y: auto; min-width: 180px; display: none; font-size: 0.8125rem;';
+  document.body.appendChild(acPopup);
+
+  function acShow(type, blockEl, blockIndex) {
+    const sel = blockEl.ownerDocument.defaultView.getSelection();
+    if (!sel.rangeCount) return;
+    const range = sel.getRangeAt(0);
+    if (range.startContainer.nodeType !== 3) return;
+    const triggerLen = type === 'field' ? 2 : 1;
+    ac = {
+      type, blockEl, blockIndex,
+      anchorNode: range.startContainer,
+      anchorOffset: range.startOffset - triggerLen,
+      query: '', results: [], active: 0
+    };
+    const rect = range.getBoundingClientRect();
+    acPopup.style.left = rect.left + 'px';
+    acPopup.style.top = (rect.bottom + 4) + 'px';
+    acPopup.style.display = 'block';
+    acUpdate();
+  }
+
+  function acHide() {
+    ac = null;
+    acPopup.style.display = 'none';
+    acPopup.innerHTML = '';
+    if (acTimer) { clearTimeout(acTimer); acTimer = null; }
+  }
+
+  function acUpdateQuery() {
+    if (!ac) return;
+    const sel = ac.blockEl.ownerDocument.defaultView.getSelection();
+    if (!sel.rangeCount) { acHide(); return; }
+    const range = sel.getRangeAt(0);
+    if (range.startContainer !== ac.anchorNode || range.startOffset < ac.anchorOffset) { acHide(); return; }
+    const triggerLen = ac.type === 'field' ? 2 : 1;
+    const query = ac.anchorNode.textContent.substring(ac.anchorOffset + triggerLen, range.startOffset);
+    if (query.includes(' ') || query.includes('\n')) { acHide(); return; }
+    ac.query = query;
+    // Debounce for item search
+    if (ac.type === 'item') {
+      if (acTimer) clearTimeout(acTimer);
+      acTimer = setTimeout(() => acUpdate(), 120);
+    } else {
+      acUpdate();
+    }
+  }
+
+  async function acUpdate() {
+    if (!ac) return;
+    let results = [];
+    if (ac.type === 'field') {
+      const computed = item?.content?.computed || {};
+      results = Object.keys(computed)
+        .filter(k => !ac.query || k.toLowerCase().includes(ac.query.toLowerCase()))
+        .map(k => ({ id: k, label: k, sub: 'computed field' }));
+    } else {
+      try {
+        const all = await api.query({});
+        const q = ac.query.toLowerCase();
+        results = all
+          .filter(it => it.name && (!q || it.name.toLowerCase().includes(q)))
+          .slice(0, 12)
+          .map(it => ({ id: it.id, label: it.name, sub: it.id.substring(0, 8) }));
+      } catch { results = []; }
+    }
+    ac.results = results;
+    ac.active = 0;
+    acRender();
+  }
+
+  function acRender() {
+    acPopup.innerHTML = '';
+    if (!ac || ac.results.length === 0) {
+      const msg = document.createElement('div');
+      msg.style.cssText = 'padding: 8px 12px; color: var(--color-text-secondary, #6b7280); font-style: italic;';
+      msg.textContent = ac?.type === 'item' && ac.query.length < 1 ? 'Type to search\u2026' : 'No results';
+      acPopup.appendChild(msg);
+      return;
+    }
+    ac.results.forEach((r, i) => {
+      const row = document.createElement('div');
+      row.style.cssText = 'padding: 5px 12px; cursor: pointer;' + (i === ac.active ? ' background: var(--color-bg-surface-alt, #f3f4f6);' : '');
+      row.dataset.idx = String(i);
+      const name = document.createElement('div');
+      name.textContent = r.label;
+      row.appendChild(name);
+      if (r.sub) {
+        const sub = document.createElement('div');
+        sub.textContent = r.sub;
+        sub.style.cssText = 'font-size: 0.6875rem; color: var(--color-text-secondary, #999);';
+        row.appendChild(sub);
+      }
+      row.addEventListener('mouseenter', () => { ac.active = i; acRender(); });
+      row.addEventListener('mousedown', (e) => { e.preventDefault(); acSelect(r); });
+      acPopup.appendChild(row);
+    });
+  }
+
+  function acNavigate(dir) {
+    if (!ac || ac.results.length === 0) return;
+    ac.active = (ac.active + dir + ac.results.length) % ac.results.length;
+    acRender();
+    const active = acPopup.querySelector(`[data-idx="${ac.active}"]`);
+    if (active) active.scrollIntoView({ block: 'nearest' });
+  }
+
+  function acSelect(result) {
+    if (!ac) return;
+    if (!result) result = ac.results[ac.active];
+    if (!result) { acHide(); return; }
+
+    const { blockEl, blockIndex, anchorNode, anchorOffset, type } = ac;
+    const sel = blockEl.ownerDocument.defaultView.getSelection();
+
+    // Delete trigger text + query
+    if (sel.rangeCount) {
+      const delRange = document.createRange();
+      delRange.setStart(anchorNode, anchorOffset);
+      delRange.setEnd(sel.getRangeAt(0).startContainer, sel.getRangeAt(0).startOffset);
+      delRange.deleteContents();
+    }
+
+    // Create the non-editable node
+    let node;
+    if (type === 'field') {
+      node = document.createElement('span');
+      node.contentEditable = 'false';
+      node.className = 'doc-field-ref';
+      node.dataset.field = result.id;
+      node.textContent = '{{' + result.id + '}}';
+      node.style.cssText = 'display: inline-block; background: var(--color-bg-surface-alt); padding: 1px 6px; border-radius: 3px; border: 1px dashed var(--color-border); font-size: 0.8125em; font-family: monospace; cursor: default; user-select: none;';
+    } else {
+      node = document.createElement('span');
+      node.contentEditable = 'false';
+      node.className = 'doc-item-ref';
+      node.dataset.refId = result.id;
+      node.dataset.display = result.label;
+      node.textContent = result.label;
+      node.style.cssText = 'display: inline-block; color: var(--color-primary); border-bottom: 1px solid var(--color-primary); cursor: default; user-select: none;';
+    }
+
+    // Insert at cursor
+    const insRange = sel.getRangeAt(0);
+    insRange.insertNode(node);
+
+    // Ensure there's a text node after for cursor placement
+    if (!node.nextSibling || (node.nextSibling.nodeType !== 3)) {
+      node.parentNode.insertBefore(document.createTextNode('\u200B'), node.nextSibling);
+    }
+
+    // Place cursor after the node
+    const afterRange = document.createRange();
+    afterRange.setStartAfter(node);
+    if (node.nextSibling && node.nextSibling.nodeType === 3) {
+      afterRange.setStart(node.nextSibling, node.nextSibling.textContent === '\u200B' ? 1 : 0);
+    }
+    afterRange.collapse(true);
+    sel.removeAllRanges();
+    sel.addRange(afterRange);
+
+    acHide();
+    handleInput(blockEl, blockIndex);
+  }
+
+  function acDetect(blockEl, blockIndex) {
+    const sel = blockEl.ownerDocument.defaultView.getSelection();
+    if (!sel.rangeCount || !sel.isCollapsed) return;
+    const range = sel.getRangeAt(0);
+    if (range.startContainer.nodeType !== 3) return;
+    const text = range.startContainer.textContent;
+    const offset = range.startOffset;
+    const before = text.substring(0, offset);
+
+    // {{ → field ref
+    if (before.endsWith('{{')) {
+      acShow('field', blockEl, blockIndex);
+      return;
+    }
+    // @ → item ref (only after start, space, or punctuation)
+    if (before.endsWith('@') && (before.length === 1 || /[\s(\[{,;:]/.test(before[before.length - 2]))) {
+      acShow('item', blockEl, blockIndex);
+    }
+  }
+
+  // --- Event handlers ---
+
+  // --- Markdown shortcuts ---
+
+  function checkShortcutOnSpace(blockEl, index) {
+    if (tagOf(ast[index + 1]) !== ':p') return false;
+    const sel = blockEl.ownerDocument.defaultView.getSelection();
+    if (!sel.rangeCount || !sel.isCollapsed) return false;
+    const range = sel.getRangeAt(0);
+    if (range.startContainer.nodeType !== 3) return false;
+    const before = range.startContainer.textContent.substring(0, range.startOffset);
+    const match = /^#{1,6}$/.exec(before);
+    if (!match) return false;
+    // Ensure nothing before the # characters in the block
+    const preRange = document.createRange();
+    preRange.setStart(blockEl, 0);
+    preRange.setEnd(range.startContainer, 0);
+    if (preRange.toString().replace(/\u200B/g, '').length > 0) return false;
+
+    const level = match[0].length;
+    // Sync DOM → AST, then strip the # prefix
+    const inlineAst = domToInlineAst(blockEl);
+    if (inlineAst.length > 0 && isText(inlineAst[0])) {
+      const stripped = inlineAst[0].s.substring(level);
+      if (stripped) inlineAst[0] = { s: stripped };
+      else inlineAst.shift();
+    }
+    ast[index + 1] = [':h' + level, ...(inlineAst.length ? inlineAst : [{ s: '' }])];
+    renderAllBlocks();
+    emitChange();
+    requestAnimationFrame(() => focusBlock(index, 0));
+    return true;
+  }
+
+  function handleInput(blockEl, index) {
+    const inlineAst = domToInlineAst(blockEl);
+    const blockTag = ast[index + 1][0];
+    ast[index + 1] = [blockTag, ...(inlineAst.length ? inlineAst : [{ s: '' }])];
+    emitChange();
+
+    // Autocomplete: update query or detect trigger
+    if (ac) {
+      acUpdateQuery();
+    } else {
+      acDetect(blockEl, index);
+    }
+  }
+
+  function handleKeyDown(e, blockEl, index) {
+    // Autocomplete navigation
+    if (ac) {
+      if (e.key === 'ArrowDown') { e.preventDefault(); acNavigate(1); return; }
+      if (e.key === 'ArrowUp') { e.preventDefault(); acNavigate(-1); return; }
+      if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); acSelect(); return; }
+      if (e.key === 'Escape') { e.preventDefault(); acHide(); return; }
+    }
+
+    if (e.key === ' ' && !e.ctrlKey && !e.metaKey && checkShortcutOnSpace(blockEl, index)) {
+      e.preventDefault();
+      return;
+    }
+
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      splitBlock(blockEl, index);
+    } else if (e.key === 'Backspace' && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
+      if (isCursorAtStart(blockEl)) {
+        if (ast.length > 2 && index > 0 && isLeafBlock(tagOf(ast[index]))) {
+          // Merge with previous leaf block
+          e.preventDefault();
+          mergeWithPrevious(blockEl, index);
+        } else {
+          // Can't merge — convert heading to paragraph
+          const blockTag = tagOf(ast[index + 1]);
+          if (blockTag && blockTag !== ':p' && isLeafBlock(blockTag)) {
+            e.preventDefault();
+            ast[index + 1][0] = ':p';
+            renderAllBlocks();
+            emitChange();
+            requestAnimationFrame(() => focusBlock(index, 0));
+          }
+        }
+      }
+    } else if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey) {
+      if (e.key === 'b' || e.key === 'B') {
+        e.preventDefault();
+        document.execCommand('bold', false, null);
+        handleInput(blockEl, index);
+      } else if (e.key === 'i' || e.key === 'I') {
+        e.preventDefault();
+        document.execCommand('italic', false, null);
+        handleInput(blockEl, index);
+      }
+    }
+  }
+
+  function isCursorAtStart(blockEl) {
+    const sel = blockEl.ownerDocument.defaultView.getSelection();
+    if (!sel.rangeCount) return false;
+    const range = sel.getRangeAt(0);
+    if (!range.collapsed) return false;
+    const testRange = document.createRange();
+    testRange.setStart(blockEl, 0);
+    testRange.setEnd(range.startContainer, range.startOffset);
+    return testRange.toString().length === 0;
+  }
+
+  function splitBlock(blockEl, index) {
+    const sel = blockEl.ownerDocument.defaultView.getSelection();
+    if (!sel.rangeCount) return;
+    const range = sel.getRangeAt(0);
+    if (!range.collapsed) range.deleteContents();
+
+    // Clone content before and after cursor
+    const beforeRange = document.createRange();
+    beforeRange.setStart(blockEl, 0);
+    beforeRange.setEnd(range.startContainer, range.startOffset);
+    const afterRange = document.createRange();
+    afterRange.setStart(range.startContainer, range.startOffset);
+    afterRange.setEnd(blockEl, blockEl.childNodes.length);
+
+    const beforeDiv = document.createElement('div');
+    beforeDiv.appendChild(beforeRange.cloneContents());
+    const afterDiv = document.createElement('div');
+    afterDiv.appendChild(afterRange.cloneContents());
+
+    const beforeAst = domToInlineAst(beforeDiv);
+    const afterAst = domToInlineAst(afterDiv);
+    const blockTag = ast[index + 1][0];
+
+    // Original block keeps its tag; new block is always :p
+    ast[index + 1] = [blockTag, ...(beforeAst.length ? beforeAst : [{ s: '' }])];
+    ast.splice(index + 2, 0, [':p', ...(afterAst.length ? afterAst : [{ s: '' }])]);
+
+    renderAllBlocks();
+    emitChange();
+    requestAnimationFrame(() => focusBlock(index + 1, 0));
+  }
+
+  function mergeWithPrevious(blockEl, index) {
+    const prevBlock = ast[index];     // previous block (ast index = blockIndex + 1 - 1)
+    const currBlock = ast[index + 1]; // current block
+
+    const prevInline = prevBlock.slice(1);
+    const cursorOffset = inlineTextLength(prevInline);
+    const currInline = currBlock.slice(1);
+
+    const merged = mergeAdjacentText([...prevInline, ...currInline]);
+    ast[index] = [prevBlock[0], ...(merged.length ? merged : [{ s: '' }])];
+    ast.splice(index + 1, 1);
+
+    renderAllBlocks();
+    emitChange();
+    requestAnimationFrame(() => focusBlockAtOffset(index - 1, cursorOffset));
+  }
+
+  function inlineTextLength(nodes) {
+    let len = 0;
+    for (const node of nodes) {
+      if (isText(node)) {
+        len += node.s.length;
+      } else if (Array.isArray(node)) {
+        const tag = node[0];
+        if (tag === ':strong' || tag === ':em' || tag === ':code') {
+          for (let i = 1; i < node.length; i++) len += textOf(node[i]).length;
+        } else {
+          len += 1; // non-editable island
+        }
+      }
+    }
+    return len;
+  }
+
+  // --- Focus management ---
+
+  function focusBlock(blockIndex, offset) {
+    const el = editor.querySelector(`[data-block-index="${blockIndex}"]`);
+    if (!el) return;
+    el.focus();
+    const sel = el.ownerDocument.defaultView.getSelection();
+    const range = document.createRange();
+    if (offset === 0 && el.childNodes.length > 0 && el.childNodes[0].nodeType === 3) {
+      range.setStart(el.childNodes[0], 0);
+    } else {
+      range.setStart(el, 0);
+    }
+    range.collapse(true);
+    sel.removeAllRanges();
+    sel.addRange(range);
+  }
+
+  function focusBlockAtOffset(blockIndex, textOffset) {
+    const el = editor.querySelector(`[data-block-index="${blockIndex}"]`);
+    if (!el) return;
+    el.focus();
+    const sel = el.ownerDocument.defaultView.getSelection();
+    const range = document.createRange();
+    let remaining = textOffset;
+    let found = false;
+
+    function walk(node) {
+      if (found) return;
+      if (node.nodeType === 3) {
+        if (remaining <= node.textContent.length) {
+          range.setStart(node, remaining);
+          range.collapse(true);
+          found = true;
+          return;
+        }
+        remaining -= node.textContent.length;
+      } else if (node.nodeType === 1) {
+        if (node.contentEditable === 'false') {
+          remaining -= 1;
+          return;
+        }
+        for (const child of node.childNodes) {
+          walk(child);
+          if (found) return;
+        }
+      }
+    }
+
+    walk(el);
+    if (!found) {
+      range.selectNodeContents(el);
+      range.collapse(false);
+    }
+    sel.removeAllRanges();
+    sel.addRange(range);
+  }
+
+  function emitChange() {
+    if (onChange) onChange(JSON.parse(JSON.stringify(ast)));
+  }
+
+  // --- Initialize ---
+  renderAllBlocks();
+  wrapper.appendChild(editor);
+  return wrapper;
+}

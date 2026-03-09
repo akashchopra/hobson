@@ -1,0 +1,299 @@
+// field-view-doc: Renders a Hob :doc AST as rich text DOM
+// The value is a JSON array in compact Hob AST format:
+//   Keywords (:doc, :p, :strong, etc.) are strings starting with ":"
+//   Text content is {s: "..."} string literals
+//   Nodes are arrays: [keyword, ...children]
+
+export async function render(value, options, api) {
+  const { label, item } = options;
+
+  const wrapper = api.createElement('div', { className: 'field-doc' });
+  wrapper.style.cssText = 'display: flex; flex-direction: column; gap: 4px;';
+
+  if (label) {
+    const labelEl = api.createElement('label');
+    labelEl.textContent = label;
+    labelEl.style.cssText = 'font-weight: 500; font-size: 0.875rem; color: var(--color-text);';
+    wrapper.appendChild(labelEl);
+  }
+
+  // If value is not an array (e.g. still a markdown string), fall back to plain text
+  if (!Array.isArray(value)) {
+    const fallback = api.createElement('div');
+    fallback.textContent = value || '';
+    fallback.style.cssText = 'line-height: 1.6; font-size: 0.8125rem; white-space: pre-wrap;';
+    wrapper.appendChild(fallback);
+    return wrapper;
+  }
+
+  const content = api.createElement('div', { className: 'doc-content' });
+  content.style.cssText = 'line-height: 1.6; font-size: 0.8125rem;';
+  content.setAttribute('data-provenance-field', options.fieldPath || 'content.description');
+  content.setAttribute('data-provenance-node', ':doc');
+
+  await renderNode(value, content, api, item);
+
+  wrapper.appendChild(content);
+
+  // Click handler for field-ref spans — scroll to field in summary
+  if (item) {
+    wrapper.addEventListener('click', (e) => {
+      const ref = e.target.closest('.field-ref');
+      if (!ref) return;
+      const fieldName = ref.getAttribute('data-field');
+      if (!fieldName) return;
+      const entry = ref.ownerDocument.getElementById('field-' + fieldName);
+      if (entry) {
+        entry.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        entry.style.background = 'var(--color-warning-light)';
+        setTimeout(() => { entry.style.background = ''; }, 2000);
+      }
+    });
+  }
+
+  return wrapper;
+}
+
+// Extract the string value from a Hob AST text node
+function textOf(node) {
+  if (node && typeof node === 'object' && !Array.isArray(node) && 's' in node) return node.s;
+  if (typeof node === 'string') return node;
+  return String(node ?? '');
+}
+
+// Get the keyword tag from an AST node (first element, string starting with ":")
+function tagOf(node) {
+  if (Array.isArray(node) && typeof node[0] === 'string' && node[0].startsWith(':')) {
+    return node[0];
+  }
+  return null;
+}
+
+// Render a single AST node into a parent DOM element
+async function renderNode(node, parent, api, item) {
+  // String literal {s: "..."} — text node
+  if (node && typeof node === 'object' && !Array.isArray(node) && 's' in node) {
+    parent.appendChild(document.createTextNode(node.s));
+    return;
+  }
+
+  if (!Array.isArray(node)) return;
+
+  const tag = tagOf(node);
+  if (!tag) return;
+
+  const children = node.slice(1);
+
+  switch (tag) {
+    case ':doc':
+      for (const child of children) await renderNode(child, parent, api, item);
+      break;
+
+    // Leaf blocks — contain inline segments
+    case ':p': {
+      const el = api.createElement('p');
+      el.style.cssText = 'margin: 0 0 0.5em 0;';
+      el.setAttribute('data-provenance-node', ':p');
+      await renderInlineChildren(children, el, api, item);
+      parent.appendChild(el);
+      break;
+    }
+    case ':h1': case ':h2': case ':h3': case ':h4': case ':h5': case ':h6': {
+      const level = tag.charAt(2);
+      const el = api.createElement('h' + level);
+      el.style.cssText = 'margin: 0.5em 0 0.25em 0;';
+      el.setAttribute('data-provenance-node', tag);
+      await renderInlineChildren(children, el, api, item);
+      parent.appendChild(el);
+      break;
+    }
+    case ':code-block': {
+      const pre = api.createElement('pre');
+      pre.style.cssText = 'margin: 0.5em 0; padding: 10px; background: var(--color-bg-surface-alt); border-radius: var(--border-radius); overflow-x: auto; font-family: monospace; font-size: 0.8125rem; line-height: 1.5;';
+      pre.setAttribute('data-provenance-node', ':code-block');
+      const code = api.createElement('code');
+      for (const child of children) {
+        code.appendChild(document.createTextNode(textOf(child)));
+      }
+      pre.appendChild(code);
+      parent.appendChild(pre);
+      break;
+    }
+
+    // Container blocks
+    case ':ul': case ':ol': {
+      const listTag = tag === ':ul' ? 'ul' : 'ol';
+      const el = api.createElement(listTag);
+      el.style.cssText = 'margin: 0.25em 0; padding-left: 1.5em;';
+      el.setAttribute('data-provenance-node', tag);
+      for (const child of children) await renderNode(child, el, api, item);
+      parent.appendChild(el);
+      break;
+    }
+    case ':li': {
+      const el = api.createElement('li');
+      el.style.cssText = 'margin: 0.125em 0;';
+      el.setAttribute('data-provenance-node', ':li');
+      for (const child of children) await renderNode(child, el, api, item);
+      parent.appendChild(el);
+      break;
+    }
+    case ':blockquote': {
+      const el = api.createElement('blockquote');
+      el.style.cssText = 'margin: 0.5em 0; padding-left: 1em; border-left: 3px solid var(--color-border); color: var(--color-text-secondary);';
+      el.setAttribute('data-provenance-node', ':blockquote');
+      for (const child of children) await renderNode(child, el, api, item);
+      parent.appendChild(el);
+      break;
+    }
+
+    default:
+      for (const child of children) await renderNode(child, parent, api, item);
+      break;
+  }
+}
+
+// Render inline children (text strings and inline nodes) into a parent element
+async function renderInlineChildren(children, parent, api, item) {
+  for (const child of children) {
+    await renderInlineNode(child, parent, api, item);
+  }
+}
+
+// Render a single inline node
+async function renderInlineNode(node, parent, api, item) {
+  // String literal {s: "..."} — text
+  if (node && typeof node === 'object' && !Array.isArray(node) && 's' in node) {
+    parent.appendChild(document.createTextNode(node.s));
+    return;
+  }
+
+  if (!Array.isArray(node)) return;
+
+  const tag = tagOf(node);
+  if (!tag) return;
+
+  const children = node.slice(1);
+
+  switch (tag) {
+    case ':strong': {
+      const el = api.createElement('strong');
+      el.setAttribute('data-provenance-node', ':strong');
+      for (const child of children) el.appendChild(document.createTextNode(textOf(child)));
+      parent.appendChild(el);
+      break;
+    }
+    case ':em': {
+      const el = api.createElement('em');
+      el.setAttribute('data-provenance-node', ':em');
+      for (const child of children) el.appendChild(document.createTextNode(textOf(child)));
+      parent.appendChild(el);
+      break;
+    }
+    case ':code': {
+      const el = api.createElement('code');
+      el.style.cssText = 'background: var(--color-bg-surface-alt); padding: 1px 4px; border-radius: 3px; font-size: 0.8125em;';
+      el.setAttribute('data-provenance-node', ':code');
+      for (const child of children) el.appendChild(document.createTextNode(textOf(child)));
+      parent.appendChild(el);
+      break;
+    }
+    case ':link': {
+      // [:link href-string display-text-string]
+      const href = textOf(children[0]);
+      const text = children.length > 1 ? textOf(children[1]) : href;
+      const el = api.createElement('a');
+      el.textContent = text;
+      el.setAttribute('data-provenance-node', ':link');
+      el.setAttribute('data-provenance-href', href);
+      if (href.startsWith('item://')) {
+        const itemId = href.replace('item://', '');
+        el.href = '#';
+        el.style.cssText = 'color: var(--color-primary); text-decoration: none; border-bottom: 1px solid var(--color-primary); cursor: pointer;';
+        el.onclick = (e) => { e.preventDefault(); api.openItem(e, itemId); };
+      } else {
+        el.href = href;
+        el.target = '_blank';
+        el.rel = 'noopener noreferrer';
+        el.style.cssText = 'color: var(--color-primary); text-decoration: underline;';
+      }
+      parent.appendChild(el);
+      break;
+    }
+    case ':item-ref': {
+      // [:item-ref item-id-string display-text-string?]
+      const refId = textOf(children[0]);
+      const display = children.length > 1 ? textOf(children[1]) : null;
+      const el = api.createElement('a');
+      el.href = '#';
+      el.style.cssText = 'color: var(--color-primary); text-decoration: none; border-bottom: 1px solid var(--color-primary); cursor: pointer;';
+      el.setAttribute('data-provenance-node', ':item-ref');
+      el.setAttribute('data-provenance-ref-id', refId);
+      if (display) {
+        el.textContent = display;
+      } else {
+        try {
+          const refItem = await api.get(refId);
+          el.textContent = refItem?.name || refId.substring(0, 8) + '...';
+        } catch {
+          el.textContent = refId.substring(0, 8) + '...';
+        }
+      }
+      el.onclick = (e) => { e.preventDefault(); api.openItem(e, refId); };
+      parent.appendChild(el);
+      break;
+    }
+    case ':field-ref': {
+      // [:field-ref field-name-string]
+      const fieldName = textOf(children[0]);
+      const span = api.createElement('span');
+      span.className = 'field-ref';
+      span.setAttribute('data-field', fieldName);
+      span.setAttribute('data-provenance-node', ':field-ref');
+      span.setAttribute('data-provenance-field-name', fieldName);
+      span.style.cssText = 'border-bottom: 1px dashed currentColor; cursor: pointer; opacity: 0.8;';
+      span.title = fieldName;
+      if (item) {
+        // Look up the expression if it's a computed field
+        const computed = item.content?.computed?.[fieldName];
+        if (computed) {
+          span.setAttribute('data-provenance-expression', JSON.stringify(computed));
+        }
+        try {
+          const val = await api.getField(item.id, fieldName);
+          if (val != null && val._hobType === 'computed-field-error') {
+            span.className = 'field-ref field-ref-error';
+            span.style.cssText = 'border-bottom: 1px dashed var(--color-danger); cursor: pointer; color: var(--color-danger); font-size: 0.8125rem;';
+            span.title = val.message;
+            span.textContent = 'ERR';
+            span.setAttribute('data-provenance-error', val.message);
+          } else if (val?.nodeType) {
+            span.appendChild(val);
+            span.setAttribute('data-provenance-resolved', '[DOM node]');
+          } else if (Array.isArray(val) && typeof val[0] === 'string' && val[0].startsWith(':')) {
+            // Resolved to a Hob AST — render it recursively
+            await renderNode(val, span, api, item);
+            span.setAttribute('data-provenance-resolved', '[AST ' + val[0] + ']');
+          } else {
+            const display = val != null ? String(val) : '';
+            span.textContent = display;
+            span.setAttribute('data-provenance-resolved', display);
+          }
+        } catch (e) {
+          span.className = 'field-ref field-ref-error';
+          span.style.cssText = 'border-bottom: 1px dashed var(--color-danger); cursor: pointer; color: var(--color-danger); font-size: 0.8125rem;';
+          span.title = String(e.message || e);
+          span.textContent = 'ERR';
+          span.setAttribute('data-provenance-error', String(e.message || e));
+        }
+      } else {
+        span.textContent = '{{' + fieldName + '}}';
+      }
+      parent.appendChild(span);
+      break;
+    }
+    default:
+      for (const child of children) parent.appendChild(document.createTextNode(textOf(child)));
+      break;
+  }
+}
