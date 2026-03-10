@@ -117,6 +117,7 @@ export async function render(value, options, api) {
     if (tag === ':ul' || tag === ':ol') return renderList(block, path);
     if (tag === ':blockquote') return renderBlockquote(block, path);
     if (tag === ':code-block') return renderCodeBlock(block, path);
+    if (tag === ':hr') return renderHr(block, path);
     return renderFallback(block, path);
   }
 
@@ -276,6 +277,13 @@ export async function render(value, options, api) {
     return pre;
   }
 
+  function renderHr(block, path) {
+    const hr = document.createElement('hr');
+    hr.dataset.blockPath = pathStr(path);
+    hr.style.cssText = 'margin: 1em 0; border: none; border-top: 1px solid var(--color-border);';
+    return hr;
+  }
+
   function renderFallback(block, path) {
     const div = document.createElement('div');
     div.dataset.blockPath = pathStr(path);
@@ -335,7 +343,7 @@ export async function render(value, options, api) {
 
   // --- Autocomplete ---
 
-  let ac = null; // { type: 'item'|'field', blockEl, path, anchorNode, anchorOffset, query, results, active }
+  let ac = null; // { type: 'item'|'field'|'transclusion', step?, targetItem?, blockEl, path, anchorNode, anchorOffset, query, results, active }
   let acTimer = null;
   const acPopup = document.createElement('div');
   acPopup.style.cssText = 'position: fixed; z-index: 9999; background: var(--color-bg-surface, #fff); border: 1px solid var(--color-border, #e5e7eb); border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); max-height: 200px; overflow-y: auto; min-width: 180px; display: none; font-size: 0.8125rem;';
@@ -369,15 +377,25 @@ export async function render(value, options, api) {
 
   function acUpdateQuery() {
     if (!ac) return;
+    // Field picker step doesn't track typing — it's a static list
+    if (ac.type === 'transclusion' && ac.step === 'field') return;
     const sel = ac.blockEl.ownerDocument.defaultView.getSelection();
     if (!sel.rangeCount) { acHide(); return; }
     const range = sel.getRangeAt(0);
     if (range.startContainer !== ac.anchorNode || range.startOffset < ac.anchorOffset) { acHide(); return; }
-    const triggerLen = ac.type === 'field' ? 2 : 1;
+    const triggerLen = ac.type === 'field' ? 2 : ac.type === 'transclusion' ? 2 : 1;
     const query = ac.anchorNode.textContent.substring(ac.anchorOffset + triggerLen, range.startOffset);
+    // @@ transition: first @ triggered item-ref, second @ means transclusion
+    if (ac.type === 'item' && query === '@') {
+      ac.type = 'transclusion';
+      ac.step = 'item';
+      ac.query = '';
+      acUpdate();
+      return;
+    }
     if (query.includes(' ') || query.includes('\n')) { acHide(); return; }
     ac.query = query;
-    if (ac.type === 'item') {
+    if (ac.type === 'item' || (ac.type === 'transclusion' && ac.step === 'item')) {
       if (acTimer) clearTimeout(acTimer);
       acTimer = setTimeout(() => acUpdate(), 120);
     } else {
@@ -393,7 +411,25 @@ export async function render(value, options, api) {
       results = Object.keys(computed)
         .filter(k => !ac.query || k.toLowerCase().includes(ac.query.toLowerCase()))
         .map(k => ({ id: k, label: k, sub: 'computed field' }));
+    } else if (ac.type === 'transclusion' && ac.step === 'field') {
+      // Field picker for transclusion target
+      try {
+        const targetItem = await api.get(ac.targetItem.id);
+        const content = targetItem?.content || {};
+        for (const [k, v] of Object.entries(content)) {
+          if (k === 'computed' || k === 'tags' || k === 'parent') continue;
+          results.push({ id: k, label: k, sub: typeof v === 'string' ? 'text' : typeof v });
+        }
+        if (content.computed) {
+          for (const k of Object.keys(content.computed)) {
+            results.push({ id: k, label: k, sub: 'computed' });
+          }
+        }
+        // Put description first
+        results.sort((a, b) => a.id === 'description' ? -1 : b.id === 'description' ? 1 : 0);
+      } catch { results = []; }
     } else {
+      // Item search (for 'item' and 'transclusion' step='item')
       try {
         const all = await api.query({});
         const q = ac.query.toLowerCase();
@@ -410,10 +446,17 @@ export async function render(value, options, api) {
 
   function acRender() {
     acPopup.innerHTML = '';
+    // Header for transclusion field picker
+    if (ac?.type === 'transclusion' && ac.step === 'field' && ac.targetItem) {
+      const header = document.createElement('div');
+      header.style.cssText = 'padding: 5px 12px; font-size: 0.6875rem; color: var(--color-text-secondary, #6b7280); border-bottom: 1px solid var(--color-border, #e5e7eb);';
+      header.textContent = 'Field from: ' + ac.targetItem.label;
+      acPopup.appendChild(header);
+    }
     if (!ac || ac.results.length === 0) {
       const msg = document.createElement('div');
       msg.style.cssText = 'padding: 8px 12px; color: var(--color-text-secondary, #6b7280); font-style: italic;';
-      msg.textContent = ac?.type === 'item' && ac.query.length < 1 ? 'Type to search\u2026' : 'No results';
+      msg.textContent = (ac?.type === 'item' || (ac?.type === 'transclusion' && ac?.step === 'item')) && ac.query.length < 1 ? 'Type to search\u2026' : 'No results';
       acPopup.appendChild(msg);
       return;
     }
@@ -449,6 +492,22 @@ export async function render(value, options, api) {
     if (!result) result = ac.results[ac.active];
     if (!result) { acHide(); return; }
 
+    // Transclusion step 1: item selected → transition to field picker
+    if (ac.type === 'transclusion' && ac.step === 'item') {
+      ac.targetItem = result;
+      ac.step = 'field';
+      ac.query = '';
+      ac.active = 0;
+      acUpdate();
+      return;
+    }
+
+    // Transclusion step 2: field selected → create computed field + insert ref
+    if (ac.type === 'transclusion' && ac.step === 'field') {
+      acInsertTransclusion(result);
+      return;
+    }
+
     const { blockEl, path, anchorNode, anchorOffset, type } = ac;
     const sel = blockEl.ownerDocument.defaultView.getSelection();
 
@@ -479,6 +538,21 @@ export async function render(value, options, api) {
       node.style.cssText = 'display: inline-block; color: var(--color-primary); border-bottom: 1px solid var(--color-primary); cursor: default; user-select: none;';
     }
 
+    acInsertNode(node);
+  }
+
+  function acInsertNode(node) {
+    const { blockEl, path, anchorNode, anchorOffset } = ac;
+    const sel = blockEl.ownerDocument.defaultView.getSelection();
+
+    // Delete trigger text + query
+    if (sel.rangeCount) {
+      const delRange = document.createRange();
+      delRange.setStart(anchorNode, anchorOffset);
+      delRange.setEnd(sel.getRangeAt(0).startContainer, sel.getRangeAt(0).startOffset);
+      delRange.deleteContents();
+    }
+
     // Insert at cursor
     const insRange = sel.getRangeAt(0);
     insRange.insertNode(node);
@@ -500,6 +574,35 @@ export async function render(value, options, api) {
 
     acHide();
     handleInput(blockEl, path);
+  }
+
+  function acInsertTransclusion(fieldResult) {
+    const { blockEl, path, targetItem } = ac;
+    const fieldName = fieldResult.id;
+
+    // Generate computed field name from target item name
+    const baseName = targetItem.label.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+    let cfName = fieldName === 'description' ? baseName : baseName + '-' + fieldName;
+    if (!item.content) item.content = {};
+    if (!item.content.computed) item.content.computed = {};
+    if (item.content.computed[cfName]) {
+      let i = 2;
+      while (item.content.computed[cfName + '-' + i]) i++;
+      cfName = cfName + '-' + i;
+    }
+
+    // Create the computed field expression
+    item.content.computed[cfName] = '(get-field @' + targetItem.id + ' "' + fieldName + '")';
+
+    // Create and insert the field-ref node
+    const node = document.createElement('span');
+    node.contentEditable = 'false';
+    node.className = 'doc-field-ref';
+    node.dataset.field = cfName;
+    node.textContent = '{{' + cfName + '}}';
+    node.style.cssText = 'display: inline-block; background: var(--color-bg-surface-alt); padding: 1px 6px; border-radius: 3px; border: 1px dashed var(--color-border); font-size: 0.8125em; font-family: monospace; cursor: default; user-select: none;';
+
+    acInsertNode(node);
   }
 
   function acDetect(blockEl, path) {
