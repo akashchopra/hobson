@@ -300,6 +300,34 @@ async function renderInlineNode(node, parent, api, item) {
       parent.appendChild(span);
       break;
     }
+    case ':transclusion': {
+      // [:transclusion item-id field-name display-text?]
+      const refId = textOf(children[0]);
+      const fieldName = children.length > 1 ? textOf(children[1]) : 'description';
+      const display = children.length > 2 ? textOf(children[2]) : null;
+      const span = api.createElement('span');
+      span.setAttribute('data-provenance-node', ':transclusion');
+      span.setAttribute('data-provenance-ref-id', refId);
+      span.setAttribute('data-provenance-field', fieldName);
+      try {
+        const val = await api.getField(refId, fieldName);
+        if (val != null && val._hobType === 'computed-field-error') {
+          span.style.cssText = 'color: var(--color-danger); font-size: 0.8125rem;';
+          span.textContent = 'ERR: ' + val.message;
+        } else if (val?.nodeType) {
+          span.appendChild(val);
+        } else if (Array.isArray(val) && typeof val[0] === 'string' && val[0].startsWith(':')) {
+          await renderNode(val, span, api, item);
+        } else {
+          span.textContent = val != null ? String(val) : (display || refId.substring(0, 8) + '...');
+        }
+      } catch (e) {
+        span.style.cssText = 'color: var(--color-danger); font-size: 0.8125rem;';
+        span.textContent = 'ERR: ' + String(e.message || e);
+      }
+      parent.appendChild(span);
+      break;
+    }
     default:
       for (const child of children) parent.appendChild(document.createTextNode(textOf(child)));
       break;

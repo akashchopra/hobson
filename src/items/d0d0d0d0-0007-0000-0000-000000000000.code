@@ -207,6 +207,18 @@ export async function render(value, options, api) {
             parent.appendChild(span);
             break;
           }
+          case ':transclusion': {
+            const span = document.createElement('span');
+            span.contentEditable = 'false';
+            span.className = 'doc-transclusion';
+            span.dataset.itemId = textOf(child[1]);
+            span.dataset.field = textOf(child[2] || { s: 'description' });
+            if (child.length > 3) span.dataset.display = textOf(child[3]);
+            span.textContent = span.dataset.display || span.dataset.itemId.substring(0, 8) + (span.dataset.field !== 'description' ? '.' + span.dataset.field : '');
+            span.style.cssText = 'display: inline-block; background: var(--color-warning-light, #fef3c7); padding: 1px 6px; border-radius: 3px; border: 1px solid var(--color-warning, #f59e0b); font-size: 0.8125em; cursor: default; user-select: none;';
+            parent.appendChild(span);
+            break;
+          }
           default:
             for (let i = 1; i < child.length; i++) parent.appendChild(document.createTextNode(textOf(child[i])));
         }
@@ -318,6 +330,10 @@ export async function render(value, options, api) {
           const parts = [[':link', { s: node.dataset.href }]];
           if (node.dataset.display) parts[0].push({ s: node.dataset.display });
           result.push(parts[0]);
+        } else if (node.classList.contains('doc-transclusion')) {
+          const t = [':transclusion', { s: node.dataset.itemId }, { s: node.dataset.field || 'description' }];
+          if (node.dataset.display) t.push({ s: node.dataset.display });
+          result.push(t);
         } else if (tag === 'br') {
           // Browser inserts <br> in empty blocks — skip
         } else {
@@ -577,30 +593,18 @@ export async function render(value, options, api) {
   }
 
   function acInsertTransclusion(fieldResult) {
-    const { blockEl, path, targetItem } = ac;
+    const { targetItem } = ac;
     const fieldName = fieldResult.id;
 
-    // Generate computed field name from target item name
-    const baseName = targetItem.label.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
-    let cfName = fieldName === 'description' ? baseName : baseName + '-' + fieldName;
-    if (!item.content) item.content = {};
-    if (!item.content.computed) item.content.computed = {};
-    if (item.content.computed[cfName]) {
-      let i = 2;
-      while (item.content.computed[cfName + '-' + i]) i++;
-      cfName = cfName + '-' + i;
-    }
-
-    // Create the computed field expression
-    item.content.computed[cfName] = '(get-field @' + targetItem.id + ' "' + fieldName + '")';
-
-    // Create and insert the field-ref node
+    // Create a :transclusion node — expression embedded in AST, no computed field needed
     const node = document.createElement('span');
     node.contentEditable = 'false';
-    node.className = 'doc-field-ref';
-    node.dataset.field = cfName;
-    node.textContent = '{{' + cfName + '}}';
-    node.style.cssText = 'display: inline-block; background: var(--color-bg-surface-alt); padding: 1px 6px; border-radius: 3px; border: 1px dashed var(--color-border); font-size: 0.8125em; font-family: monospace; cursor: default; user-select: none;';
+    node.className = 'doc-transclusion';
+    node.dataset.itemId = targetItem.id;
+    node.dataset.field = fieldName;
+    node.dataset.display = targetItem.label;
+    node.textContent = targetItem.label + (fieldName !== 'description' ? '.' + fieldName : '');
+    node.style.cssText = 'display: inline-block; background: var(--color-warning-light, #fef3c7); padding: 1px 6px; border-radius: 3px; border: 1px solid var(--color-warning, #f59e0b); font-size: 0.8125em; cursor: default; user-select: none;';
 
     acInsertNode(node);
   }
