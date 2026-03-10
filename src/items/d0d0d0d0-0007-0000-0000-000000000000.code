@@ -301,23 +301,44 @@ export async function render(value, options, api) {
   function renderEvalBlock(block, path) {
     const container = document.createElement('div');
     container.dataset.blockPath = pathStr(path);
-    container.style.cssText = 'margin: 0.25em 0;';
-    // Evaluate async — fill container when result arrives
-    if (api.evaluateHob) {
-      api.evaluateHob(block, { item }).then(async (result) => {
-        if (result != null) {
-          // Import the readonly renderer to render the result
-          const docView = await api.require('field-view-doc');
-          const rendered = await docView.render(result, { item }, api);
-          container.appendChild(rendered);
+    container.style.cssText = 'margin: 0.25em 0; border: 1px solid var(--color-border); border-radius: var(--border-radius); overflow: hidden;';
+
+    if (editable) {
+      // Edit mode: embed the structural editor
+      (async () => {
+        try {
+          const structEditor = await api.require('field-view-hob-structural');
+          const editorEl = await structEditor.render([block], {
+            onChange: (newValue) => {
+              if (Array.isArray(newValue) && newValue.length > 0) {
+                setBlock(path, newValue[0]);
+                emitChange();
+              }
+            }
+          }, api);
+          container.appendChild(editorEl);
+        } catch (e) {
+          container.style.cssText += 'padding: 8px;';
+          container.textContent = 'Failed to load structural editor: ' + (e.message || e);
         }
-      }).catch((e) => {
-        container.style.cssText += 'color: var(--color-danger); font-size: 0.8125rem; padding: 4px 8px; background: var(--color-danger-light, #fee2e2); border-radius: 4px;';
-        container.textContent = 'Eval error: ' + (e.message || e);
-      });
+      })();
     } else {
-      container.style.cssText += 'opacity: 0.6; font-style: italic; font-size: 0.75rem;';
-      container.textContent = '[Hob expression]';
+      // Readonly mode: evaluate and render the result
+      if (api.evaluateHob) {
+        api.evaluateHob(block, { item }).then(async (result) => {
+          if (result != null) {
+            const docView = await api.require('field-view-doc');
+            const rendered = await docView.render(result, { item }, api);
+            container.appendChild(rendered);
+          }
+        }).catch((e) => {
+          container.style.cssText += 'color: var(--color-danger); font-size: 0.8125rem; padding: 4px 8px; background: var(--color-danger-light, #fee2e2); border-radius: 4px;';
+          container.textContent = 'Eval error: ' + (e.message || e);
+        });
+      } else {
+        container.style.cssText += 'opacity: 0.6; font-style: italic; font-size: 0.75rem; padding: 8px;';
+        container.textContent = '[Hob expression]';
+      }
     }
     return container;
   }
