@@ -118,6 +118,8 @@ export async function render(value, options, api) {
     if (tag === ':blockquote') return renderBlockquote(block, path);
     if (tag === ':code-block') return renderCodeBlock(block, path);
     if (tag === ':hr') return renderHr(block, path);
+    // Non-keyword array — Hob expression to evaluate
+    if (Array.isArray(block) && !tag) return renderEvalBlock(block, path);
     return renderFallback(block, path);
   }
 
@@ -294,6 +296,30 @@ export async function render(value, options, api) {
     hr.dataset.blockPath = pathStr(path);
     hr.style.cssText = 'margin: 1em 0; border: none; border-top: 1px solid var(--color-border);';
     return hr;
+  }
+
+  function renderEvalBlock(block, path) {
+    const container = document.createElement('div');
+    container.dataset.blockPath = pathStr(path);
+    container.style.cssText = 'margin: 0.25em 0;';
+    // Evaluate async — fill container when result arrives
+    if (api.evaluateHob) {
+      api.evaluateHob(block, { item }).then(async (result) => {
+        if (result != null) {
+          // Import the readonly renderer to render the result
+          const docView = await api.require('field-view-doc');
+          const rendered = await docView.render(result, { item }, api);
+          container.appendChild(rendered);
+        }
+      }).catch((e) => {
+        container.style.cssText += 'color: var(--color-danger); font-size: 0.8125rem; padding: 4px 8px; background: var(--color-danger-light, #fee2e2); border-radius: 4px;';
+        container.textContent = 'Eval error: ' + (e.message || e);
+      });
+    } else {
+      container.style.cssText += 'opacity: 0.6; font-style: italic; font-size: 0.75rem;';
+      container.textContent = '[Hob expression]';
+    }
+    return container;
   }
 
   function renderFallback(block, path) {
