@@ -1,0 +1,309 @@
+// markdown-to-doc-ast — Converts markdown description fields to Hob :doc AST
+// Handles: headings, paragraphs, bold, italic, code, code blocks, lists,
+// blockquotes, {{field-ref}}, [text](item://id), [text](url)
+
+export function convert(markdown) {
+  if (!markdown || typeof markdown !== 'string') return [':doc', [':p', { s: '' }]];
+
+  const lines = markdown.split('\n');
+  const blocks = parseBlocks(lines);
+  return [':doc', ...blocks];
+}
+
+// Apply conversion to an item.
+// opts.copy: if true, create a copy with converted AST; otherwise overwrite original.
+// Returns { id, message } where id is the item that was written.
+export async function convertItem(api, itemId, opts) {
+  const item = await api.get(itemId);
+  if (!item) throw new Error('Item not found: ' + itemId);
+  const desc = item.content?.description;
+  if (!desc || typeof desc !== 'string') {
+    return { id: itemId, message: 'Description is not a markdown string — skipping' };
+  }
+  if (Array.isArray(desc) && typeof desc[0] === 'string' && desc[0].startsWith(':')) {
+    return { id: itemId, message: 'Description is already a :doc AST — skipping' };
+  }
+  const ast = convert(desc);
+  const copy = opts?.copy;
+
+  if (copy) {
+    const newId = crypto.randomUUID();
+    const newItem = {
+      ...item,
+      id: newId,
+      name: (item.name || 'Untitled') + ' (doc AST)',
+      content: { ...item.content, description: ast },
+      created: Date.now(),
+      modified: Date.now()
+    };
+    await api.set(newItem);
+    return { id: newId, message: 'Created copy ' + newItem.name + ' — ' + (ast.length - 1) + ' blocks' };
+  } else {
+    const updated = {
+      ...item,
+      content: { ...item.content, description: ast },
+      modified: Date.now()
+    };
+    await api.set(updated);
+    return { id: itemId, message: 'Converted ' + (item.name || itemId) + ' — ' + (ast.length - 1) + ' blocks' };
+  }
+}
+
+// --- Block-level parsing ---
+
+function parseBlocks(lines) {
+  const blocks = [];
+  let i = 0;
+
+  while (i < lines.length) {
+    const line = lines[i];
+
+    // Blank line — skip
+    if (line.trim() === '') { i++; continue; }
+
+    // Code block (fenced)
+    if (line.trimStart().startsWith('```')) {
+      const indent = line.length - line.trimStart().length;
+      const result = parseCodeBlock(lines, i);
+      blocks.push(result.block);
+      i = result.next;
+      continue;
+    }
+
+    // Heading
+    const headingMatch = line.match(/^(#{1,6})\s+(.*)$/);
+    if (headingMatch) {
+      const level = headingMatch[1].length;
+      const inline = parseInline(headingMatch[2].trim());
+      blocks.push([':h' + level, ...inline]);
+      i++;
+      continue;
+    }
+
+    // Blockquote
+    if (line.trimStart().startsWith('> ')) {
+      const result = parseBlockquote(lines, i);
+      blocks.push(result.block);
+      i = result.next;
+      continue;
+    }
+
+    // Unordered list
+    if (/^\s*[-*+]\s/.test(line)) {
+      const result = parseList(lines, i, 'ul');
+      blocks.push(result.block);
+      i = result.next;
+      continue;
+    }
+
+    // Ordered list
+    if (/^\s*\d+\.\s/.test(line)) {
+      const result = parseList(lines, i, 'ol');
+      blocks.push(result.block);
+      i = result.next;
+      continue;
+    }
+
+    // Paragraph — collect consecutive non-blank, non-special lines
+    const result = parseParagraph(lines, i);
+    blocks.push(result.block);
+    i = result.next;
+  }
+
+  return blocks;
+}
+
+function parseCodeBlock(lines, start) {
+  const openLine = lines[start].trimStart();
+  const lang = openLine.slice(3).trim(); // language hint after ```
+  const codeLines = [];
+  let i = start + 1;
+  while (i < lines.length) {
+    if (lines[i].trimStart().startsWith('```')) { i++; break; }
+    codeLines.push(lines[i]);
+    i++;
+  }
+  const block = [':code-block', { s: codeLines.join('\n') }];
+  return { block, next: i };
+}
+
+function parseBlockquote(lines, start) {
+  const contentLines = [];
+  let i = start;
+  while (i < lines.length && (lines[i].trimStart().startsWith('> ') || lines[i].trimStart() === '>')) {
+    contentLines.push(lines[i].replace(/^\s*>\s?/, ''));
+    i++;
+  }
+  const innerBlocks = parseBlocks(contentLines);
+  return { block: [':blockquote', ...innerBlocks], next: i };
+}
+
+function parseList(lines, start, type) {
+  const pattern = type === 'ul' ? /^(\s*)[-*+]\s(.*)$/ : /^(\s*)\d+\.\s(.*)$/;
+  const items = [];
+  let i = start;
+
+  // Determine base indent
+  const baseMatch = lines[start].match(pattern);
+  if (!baseMatch) return { block: [':' + type], next: start + 1 };
+  const baseIndent = baseMatch[1].length;
+  const contentIndent = baseIndent + 2;
+
+  while (i < lines.length) {
+    const line = lines[i];
+    if (line.trim() === '') { i++; continue; }
+
+    const match = line.match(pattern);
+    if (match && match[1].length === baseIndent) {
+      // Same-level list item
+      const inline = parseInline(match[2].trim());
+      const li = [':li', [':p', ...inline]];
+      i++;
+
+      // Collect continuation content for this item (nested lists, continuation paragraphs)
+      while (i < lines.length) {
+        // Blank lines — peek ahead to see if content continues
+        if (lines[i].trim() === '') {
+          let peek = i;
+          while (peek < lines.length && lines[peek].trim() === '') peek++;
+          if (peek >= lines.length) break;
+          const peekLine = lines[peek];
+          const peekMatch = peekLine.match(pattern);
+          if (peekMatch && peekMatch[1].length === baseIndent) break;
+          const peekIndent = peekLine.length - peekLine.trimStart().length;
+          if (peekIndent < contentIndent) break;
+          i = peek;
+          continue;
+        }
+
+        const cl = lines[i];
+
+        // Same-level list item — this item is done
+        const slMatch = cl.match(pattern);
+        if (slMatch && slMatch[1].length === baseIndent) break;
+
+        // Nested list
+        const nestedUl = cl.match(/^(\s*)[-*+]\s/);
+        const nestedOl = cl.match(/^(\s*)\d+\.\s/);
+        if (nestedUl && nestedUl[1].length > baseIndent) {
+          const nested = parseList(lines, i, 'ul');
+          li.push(nested.block);
+          i = nested.next;
+          continue;
+        }
+        if (nestedOl && nestedOl[1].length > baseIndent) {
+          const nested = parseList(lines, i, 'ol');
+          li.push(nested.block);
+          i = nested.next;
+          continue;
+        }
+
+        // Continuation paragraph (indented content)
+        const indent = cl.length - cl.trimStart().length;
+        if (indent >= contentIndent) {
+          const paraLines = [];
+          while (i < lines.length) {
+            const pl = lines[i];
+            if (pl.trim() === '') break;
+            const pi = pl.length - pl.trimStart().length;
+            if (pi < contentIndent) break;
+            if (pl.match(/^(\s*)[-*+]\s/) || pl.match(/^(\s*)\d+\.\s/)) break;
+            paraLines.push(pl.substring(contentIndent));
+            i++;
+          }
+          if (paraLines.length > 0) {
+            const text = paraLines.join(' ');
+            li.push([':p', ...parseInline(text)]);
+          }
+        } else {
+          break;
+        }
+      }
+
+      items.push(li);
+    } else {
+      break;
+    }
+  }
+
+  return { block: [':' + type, ...items], next: i };
+}
+
+function parseParagraph(lines, start) {
+  const paraLines = [];
+  let i = start;
+  while (i < lines.length) {
+    const line = lines[i];
+    if (line.trim() === '') break;
+    if (line.match(/^#{1,6}\s/)) break;
+    if (line.trimStart().startsWith('```')) break;
+    if (line.trimStart().startsWith('> ')) break;
+    if (/^\s*[-*+]\s/.test(line)) break;
+    if (/^\s*\d+\.\s/.test(line)) break;
+    paraLines.push(line);
+    i++;
+  }
+  const text = paraLines.join(' ');
+  const inline = parseInline(text);
+  return { block: [':p', ...inline], next: i };
+}
+
+// --- Inline parsing ---
+
+function parseInline(text) {
+  if (!text) return [{ s: '' }];
+
+  const nodes = [];
+  // Regex for inline patterns: {{field}}, [text](url), **bold**, *italic*, `code`
+  const re = /(\{\{([^}]+)\}\}|\[([^\]]*)\]\(([^)]+)\)|\*\*(.+?)\*\*|\*(.+?)\*|`([^`]+)`)/g;
+
+  let last = 0;
+  let match;
+  while ((match = re.exec(text)) !== null) {
+    // Text before match
+    if (match.index > last) {
+      nodes.push({ s: text.substring(last, match.index) });
+    }
+
+    if (match[2] !== undefined) {
+      // {{field-ref}}
+      nodes.push([':field-ref', { s: match[2].trim() }]);
+    } else if (match[3] !== undefined) {
+      // [text](url)
+      const linkText = match[3];
+      const href = match[4];
+      if (href.startsWith('item://')) {
+        const itemId = href.replace('item://', '');
+        if (linkText) {
+          nodes.push([':item-ref', { s: itemId }, { s: linkText }]);
+        } else {
+          nodes.push([':item-ref', { s: itemId }]);
+        }
+      } else {
+        if (linkText) {
+          nodes.push([':link', { s: href }, { s: linkText }]);
+        } else {
+          nodes.push([':link', { s: href }]);
+        }
+      }
+    } else if (match[5] !== undefined) {
+      // **bold**
+      nodes.push([':strong', { s: match[5] }]);
+    } else if (match[6] !== undefined) {
+      // *italic*
+      nodes.push([':em', { s: match[6] }]);
+    } else if (match[7] !== undefined) {
+      // `code`
+      nodes.push([':code', { s: match[7] }]);
+    }
+
+    last = match.index + match[0].length;
+  }
+
+  // Trailing text
+  if (last < text.length) {
+    nodes.push({ s: text.substring(last) });
+  }
+
+  return nodes.length > 0 ? nodes : [{ s: '' }];
+}

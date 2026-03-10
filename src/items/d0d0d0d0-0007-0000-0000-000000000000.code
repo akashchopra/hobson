@@ -2,6 +2,8 @@
 // Per-block contenteditable. Block structure managed by editor; inline text is native.
 // Formatting (bold/italic/code) handled by browser, synced back to AST.
 // Custom nodes (field-ref, item-ref, link) are non-editable islands.
+// Blocks are addressed by path (array of child indices) to support nested editing
+// in lists and blockquotes.
 
 export async function render(value, options, api) {
   const { label, mode, onChange, item } = options;
@@ -52,29 +54,76 @@ export async function render(value, options, api) {
     return 'div';
   }
 
+  // --- Path-based AST addressing ---
+  // A path [a, b, c] navigates: ast[a+1][b+1][c+1]
+  // Each index is into the children (skipping the tag at position 0)
+
+  function pathStr(path) { return path.join('.'); }
+  function parsePath(str) { return str.split('.').map(Number); }
+
+  function getBlock(path) {
+    let node = ast;
+    for (const idx of path) node = node[idx + 1];
+    return node;
+  }
+
+  function setBlock(path, value) {
+    let node = ast;
+    for (let i = 0; i < path.length - 1; i++) node = node[path[i] + 1];
+    node[path[path.length - 1] + 1] = value;
+  }
+
+  function getParent(path) {
+    let node = ast;
+    for (let i = 0; i < path.length - 1; i++) node = node[path[i] + 1];
+    return node;
+  }
+
+  // Ordered list of paths to editable leaf blocks (document order)
+  let editablePaths = [];
+
+  function rebuildEditablePaths() {
+    editablePaths = [];
+    function walk(node, path) {
+      const tag = tagOf(node);
+      if (!tag) return;
+      if (isLeafBlock(tag)) {
+        editablePaths.push(path);
+      } else {
+        for (let i = 1; i < node.length; i++) {
+          walk(node[i], [...path, i - 1]);
+        }
+      }
+    }
+    for (let i = 1; i < ast.length; i++) {
+      walk(ast[i], [i - 1]);
+    }
+  }
+
   // --- AST → DOM ---
 
   function renderAllBlocks() {
     editor.innerHTML = '';
+    rebuildEditablePaths();
     for (let i = 1; i < ast.length; i++) {
-      editor.appendChild(renderBlock(ast[i], i - 1));
+      editor.appendChild(renderBlock(ast[i], [i - 1]));
     }
   }
 
-  function renderBlock(block, index) {
+  function renderBlock(block, path) {
     const tag = tagOf(block);
-    if (isLeafBlock(tag)) return renderLeafBlock(block, index);
-    if (tag === ':ul' || tag === ':ol') return renderList(block, index);
-    if (tag === ':blockquote') return renderBlockquote(block, index);
-    if (tag === ':code-block') return renderCodeBlock(block, index);
-    return renderFallback(block, index);
+    if (isLeafBlock(tag)) return renderLeafBlock(block, path);
+    if (tag === ':ul' || tag === ':ol') return renderList(block, path);
+    if (tag === ':blockquote') return renderBlockquote(block, path);
+    if (tag === ':code-block') return renderCodeBlock(block, path);
+    return renderFallback(block, path);
   }
 
-  function renderLeafBlock(block, index) {
+  function renderLeafBlock(block, path) {
     const tag = tagOf(block);
     const el = document.createElement(blockElTag(tag));
     if (editable) el.contentEditable = 'true';
-    el.dataset.blockIndex = String(index);
+    el.dataset.blockPath = pathStr(path);
     el.style.cssText = tag === ':p'
       ? 'margin: 0 0 0.5em 0; outline: none; min-height: 1.2em;'
       : 'margin: 0.5em 0 0.25em 0; outline: none; min-height: 1.2em;';
@@ -91,8 +140,8 @@ export async function render(value, options, api) {
     }
 
     if (editable) {
-      el.addEventListener('input', () => handleInput(el, index));
-      el.addEventListener('keydown', (e) => handleKeyDown(e, el, index));
+      el.addEventListener('input', () => handleInput(el, path));
+      el.addEventListener('keydown', (e) => handleKeyDown(e, el, path));
     }
 
     return el;
@@ -163,51 +212,62 @@ export async function render(value, options, api) {
     }
   }
 
-  // --- Readonly renderers for container blocks ---
+  // --- Container block renderers ---
 
-  function renderList(block, index) {
+  function renderList(block, path) {
     const tag = tagOf(block);
     const el = document.createElement(tag === ':ul' ? 'ul' : 'ol');
-    el.dataset.blockIndex = String(index);
+    el.dataset.blockPath = pathStr(path);
     el.style.cssText = 'margin: 0.25em 0; padding-left: 1.5em;';
-    for (const child of block.slice(1)) {
-      if (tagOf(child) === ':li') {
-        const li = document.createElement('li');
-        li.style.cssText = 'margin: 0.125em 0;';
-        for (const liChild of child.slice(1)) {
-          const liTag = tagOf(liChild);
-          if (isLeafBlock(liTag)) {
-            const span = document.createElement('span');
-            renderInlineContent(liChild.slice(1), span);
-            li.appendChild(span);
-          } else if (liTag === ':ul' || liTag === ':ol') {
-            li.appendChild(renderList(liChild, -1));
-          }
+    for (let liIdx = 0; liIdx < block.length - 1; liIdx++) {
+      const liBlock = block[liIdx + 1];
+      if (tagOf(liBlock) !== ':li') continue;
+      const li = document.createElement('li');
+      li.style.cssText = 'margin: 0.125em 0;';
+      for (let childIdx = 0; childIdx < liBlock.length - 1; childIdx++) {
+        const child = liBlock[childIdx + 1];
+        const childPath = [...path, liIdx, childIdx];
+        const childTag = tagOf(child);
+        if (isLeafBlock(childTag)) {
+          li.appendChild(renderLeafBlock(child, childPath));
+        } else if (childTag === ':ul' || childTag === ':ol') {
+          li.appendChild(renderList(child, childPath));
+        } else {
+          li.appendChild(renderBlock(child, childPath));
         }
-        el.appendChild(li);
       }
+      el.appendChild(li);
     }
     return el;
   }
 
-  function renderBlockquote(block, index) {
+  function renderBlockquote(block, path) {
     const el = document.createElement('blockquote');
-    el.dataset.blockIndex = String(index);
+    el.dataset.blockPath = pathStr(path);
     el.style.cssText = 'margin: 0.5em 0; padding-left: 1em; border-left: 3px solid var(--color-border); color: var(--color-text-secondary);';
-    for (const child of block.slice(1)) {
-      if (isLeafBlock(tagOf(child))) {
-        const p = document.createElement('p');
-        p.style.margin = '0 0 0.25em 0';
-        renderInlineContent(child.slice(1), p);
-        el.appendChild(p);
+    for (let i = 1; i < block.length; i++) {
+      const child = block[i];
+      const childPath = [...path, i - 1];
+      const childTag = tagOf(child);
+      if (isLeafBlock(childTag)) {
+        if (editable) {
+          el.appendChild(renderLeafBlock(child, childPath));
+        } else {
+          const p = document.createElement('p');
+          p.style.margin = '0 0 0.25em 0';
+          renderInlineContent(child.slice(1), p);
+          el.appendChild(p);
+        }
+      } else {
+        el.appendChild(renderBlock(child, childPath));
       }
     }
     return el;
   }
 
-  function renderCodeBlock(block, index) {
+  function renderCodeBlock(block, path) {
     const pre = document.createElement('pre');
-    pre.dataset.blockIndex = String(index);
+    pre.dataset.blockPath = pathStr(path);
     pre.style.cssText = 'margin: 0.5em 0; padding: 10px; background: var(--color-bg-surface-alt); border-radius: var(--border-radius); overflow-x: auto; font-family: monospace; font-size: 0.8125rem; line-height: 1.5;';
     const code = document.createElement('code');
     for (const child of block.slice(1)) code.appendChild(document.createTextNode(textOf(child)));
@@ -215,9 +275,9 @@ export async function render(value, options, api) {
     return pre;
   }
 
-  function renderFallback(block, index) {
+  function renderFallback(block, path) {
     const div = document.createElement('div');
-    div.dataset.blockIndex = String(index);
+    div.dataset.blockPath = pathStr(path);
     div.style.cssText = 'opacity: 0.6; font-style: italic; font-size: 0.75rem;';
     div.textContent = JSON.stringify(block);
     return div;
@@ -274,20 +334,20 @@ export async function render(value, options, api) {
 
   // --- Autocomplete ---
 
-  let ac = null; // { type: 'item'|'field', blockEl, blockIndex, anchorNode, anchorOffset, query, results, active }
+  let ac = null; // { type: 'item'|'field', blockEl, path, anchorNode, anchorOffset, query, results, active }
   let acTimer = null;
   const acPopup = document.createElement('div');
   acPopup.style.cssText = 'position: fixed; z-index: 9999; background: var(--color-bg-surface, #fff); border: 1px solid var(--color-border, #e5e7eb); border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); max-height: 200px; overflow-y: auto; min-width: 180px; display: none; font-size: 0.8125rem;';
   document.body.appendChild(acPopup);
 
-  function acShow(type, blockEl, blockIndex) {
+  function acShow(type, blockEl, path) {
     const sel = blockEl.ownerDocument.defaultView.getSelection();
     if (!sel.rangeCount) return;
     const range = sel.getRangeAt(0);
     if (range.startContainer.nodeType !== 3) return;
     const triggerLen = type === 'field' ? 2 : 1;
     ac = {
-      type, blockEl, blockIndex,
+      type, blockEl, path,
       anchorNode: range.startContainer,
       anchorOffset: range.startOffset - triggerLen,
       query: '', results: [], active: 0
@@ -316,7 +376,6 @@ export async function render(value, options, api) {
     const query = ac.anchorNode.textContent.substring(ac.anchorOffset + triggerLen, range.startOffset);
     if (query.includes(' ') || query.includes('\n')) { acHide(); return; }
     ac.query = query;
-    // Debounce for item search
     if (ac.type === 'item') {
       if (acTimer) clearTimeout(acTimer);
       acTimer = setTimeout(() => acUpdate(), 120);
@@ -389,7 +448,7 @@ export async function render(value, options, api) {
     if (!result) result = ac.results[ac.active];
     if (!result) { acHide(); return; }
 
-    const { blockEl, blockIndex, anchorNode, anchorOffset, type } = ac;
+    const { blockEl, path, anchorNode, anchorOffset, type } = ac;
     const sel = blockEl.ownerDocument.defaultView.getSelection();
 
     // Delete trigger text + query
@@ -439,10 +498,10 @@ export async function render(value, options, api) {
     sel.addRange(afterRange);
 
     acHide();
-    handleInput(blockEl, blockIndex);
+    handleInput(blockEl, path);
   }
 
-  function acDetect(blockEl, blockIndex) {
+  function acDetect(blockEl, path) {
     const sel = blockEl.ownerDocument.defaultView.getSelection();
     if (!sel.rangeCount || !sel.isCollapsed) return;
     const range = sel.getRangeAt(0);
@@ -453,12 +512,12 @@ export async function render(value, options, api) {
 
     // {{ → field ref
     if (before.endsWith('{{')) {
-      acShow('field', blockEl, blockIndex);
+      acShow('field', blockEl, path);
       return;
     }
     // @ → item ref (only after start, space, or punctuation)
     if (before.endsWith('@') && (before.length === 1 || /[\s(\[{,;:]/.test(before[before.length - 2]))) {
-      acShow('item', blockEl, blockIndex);
+      acShow('item', blockEl, path);
     }
   }
 
@@ -466,8 +525,11 @@ export async function render(value, options, api) {
 
   // --- Markdown shortcuts ---
 
-  function checkShortcutOnSpace(blockEl, index) {
-    if (tagOf(ast[index + 1]) !== ':p') return false;
+  function checkShortcutOnSpace(blockEl, path) {
+    // Only convert top-level paragraphs to headings
+    if (path.length !== 1) return false;
+    const block = getBlock(path);
+    if (tagOf(block) !== ':p') return false;
     const sel = blockEl.ownerDocument.defaultView.getSelection();
     if (!sel.rangeCount || !sel.isCollapsed) return false;
     const range = sel.getRangeAt(0);
@@ -489,28 +551,29 @@ export async function render(value, options, api) {
       if (stripped) inlineAst[0] = { s: stripped };
       else inlineAst.shift();
     }
-    ast[index + 1] = [':h' + level, ...(inlineAst.length ? inlineAst : [{ s: '' }])];
+    setBlock(path, [':h' + level, ...(inlineAst.length ? inlineAst : [{ s: '' }])]);
     renderAllBlocks();
     emitChange();
-    requestAnimationFrame(() => focusBlock(index, 0));
+    requestAnimationFrame(() => focusBlock(path, 0));
     return true;
   }
 
-  function handleInput(blockEl, index) {
+  function handleInput(blockEl, path) {
     const inlineAst = domToInlineAst(blockEl);
-    const blockTag = ast[index + 1][0];
-    ast[index + 1] = [blockTag, ...(inlineAst.length ? inlineAst : [{ s: '' }])];
+    const block = getBlock(path);
+    const blockTag = block[0];
+    setBlock(path, [blockTag, ...(inlineAst.length ? inlineAst : [{ s: '' }])]);
     emitChange();
 
     // Autocomplete: update query or detect trigger
     if (ac) {
       acUpdateQuery();
     } else {
-      acDetect(blockEl, index);
+      acDetect(blockEl, path);
     }
   }
 
-  function handleKeyDown(e, blockEl, index) {
+  function handleKeyDown(e, blockEl, path) {
     // Autocomplete navigation
     if (ac) {
       if (e.key === 'ArrowDown') { e.preventDefault(); acNavigate(1); return; }
@@ -519,41 +582,46 @@ export async function render(value, options, api) {
       if (e.key === 'Escape') { e.preventDefault(); acHide(); return; }
     }
 
-    if (e.key === ' ' && !e.ctrlKey && !e.metaKey && checkShortcutOnSpace(blockEl, index)) {
+    if (e.key === ' ' && !e.ctrlKey && !e.metaKey && checkShortcutOnSpace(blockEl, path)) {
       e.preventDefault();
       return;
     }
 
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      splitBlock(blockEl, index);
+      splitBlock(blockEl, path);
     } else if (e.key === 'Backspace' && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
       if (isCursorAtStart(blockEl)) {
-        if (ast.length > 2 && index > 0 && isLeafBlock(tagOf(ast[index]))) {
-          // Merge with previous leaf block
-          e.preventDefault();
-          mergeWithPrevious(blockEl, index);
-        } else {
-          // Can't merge — convert heading to paragraph
-          const blockTag = tagOf(ast[index + 1]);
-          if (blockTag && blockTag !== ':p' && isLeafBlock(blockTag)) {
+        const block = getBlock(path);
+        const blockTag = tagOf(block);
+        const childIdx = path[path.length - 1];
+
+        if (childIdx > 0) {
+          // Try to merge with previous sibling in same parent
+          const prevPath = [...path.slice(0, -1), childIdx - 1];
+          const prevBlock = getBlock(prevPath);
+          if (isLeafBlock(tagOf(prevBlock))) {
             e.preventDefault();
-            ast[index + 1][0] = ':p';
-            renderAllBlocks();
-            emitChange();
-            requestAnimationFrame(() => focusBlock(index, 0));
+            mergeWithPrevious(blockEl, path);
           }
+        } else if (path.length === 1 && blockTag && blockTag !== ':p' && isLeafBlock(blockTag)) {
+          // Top-level heading → convert to paragraph
+          e.preventDefault();
+          block[0] = ':p';
+          renderAllBlocks();
+          emitChange();
+          requestAnimationFrame(() => focusBlock(path, 0));
         }
       }
     } else if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey) {
       if (e.key === 'b' || e.key === 'B') {
         e.preventDefault();
         document.execCommand('bold', false, null);
-        handleInput(blockEl, index);
+        handleInput(blockEl, path);
       } else if (e.key === 'i' || e.key === 'I') {
         e.preventDefault();
         document.execCommand('italic', false, null);
-        handleInput(blockEl, index);
+        handleInput(blockEl, path);
       }
     }
   }
@@ -569,7 +637,7 @@ export async function render(value, options, api) {
     return testRange.toString().length === 0;
   }
 
-  function splitBlock(blockEl, index) {
+  function splitBlock(blockEl, path) {
     const sel = blockEl.ownerDocument.defaultView.getSelection();
     if (!sel.rangeCount) return;
     const range = sel.getRangeAt(0);
@@ -590,32 +658,45 @@ export async function render(value, options, api) {
 
     const beforeAst = domToInlineAst(beforeDiv);
     const afterAst = domToInlineAst(afterDiv);
-    const blockTag = ast[index + 1][0];
+    const block = getBlock(path);
+    const blockTag = block[0];
 
-    // Original block keeps its tag; new block is always :p
-    ast[index + 1] = [blockTag, ...(beforeAst.length ? beforeAst : [{ s: '' }])];
-    ast.splice(index + 2, 0, [':p', ...(afterAst.length ? afterAst : [{ s: '' }])]);
+    // Update current block with content before cursor
+    setBlock(path, [blockTag, ...(beforeAst.length ? beforeAst : [{ s: '' }])]);
+
+    // Insert new :p after current block in same parent
+    const parent = getParent(path);
+    const childIdx = path[path.length - 1];
+    parent.splice(childIdx + 2, 0, [':p', ...(afterAst.length ? afterAst : [{ s: '' }])]);
 
     renderAllBlocks();
     emitChange();
-    requestAnimationFrame(() => focusBlock(index + 1, 0));
+    const newPath = [...path.slice(0, -1), childIdx + 1];
+    requestAnimationFrame(() => focusBlock(newPath, 0));
   }
 
-  function mergeWithPrevious(blockEl, index) {
-    const prevBlock = ast[index];     // previous block (ast index = blockIndex + 1 - 1)
-    const currBlock = ast[index + 1]; // current block
+  function mergeWithPrevious(blockEl, path) {
+    const childIdx = path[path.length - 1];
+    if (childIdx === 0) return;
+
+    const prevPath = [...path.slice(0, -1), childIdx - 1];
+    const prevBlock = getBlock(prevPath);
+    const currBlock = getBlock(path);
 
     const prevInline = prevBlock.slice(1);
     const cursorOffset = inlineTextLength(prevInline);
     const currInline = currBlock.slice(1);
 
     const merged = mergeAdjacentText([...prevInline, ...currInline]);
-    ast[index] = [prevBlock[0], ...(merged.length ? merged : [{ s: '' }])];
-    ast.splice(index + 1, 1);
+    setBlock(prevPath, [prevBlock[0], ...(merged.length ? merged : [{ s: '' }])]);
+
+    // Remove current block from parent
+    const parent = getParent(path);
+    parent.splice(childIdx + 1, 1);
 
     renderAllBlocks();
     emitChange();
-    requestAnimationFrame(() => focusBlockAtOffset(index - 1, cursorOffset));
+    requestAnimationFrame(() => focusBlockAtOffset(prevPath, cursorOffset));
   }
 
   function inlineTextLength(nodes) {
@@ -637,8 +718,8 @@ export async function render(value, options, api) {
 
   // --- Focus management ---
 
-  function focusBlock(blockIndex, offset) {
-    const el = editor.querySelector(`[data-block-index="${blockIndex}"]`);
+  function focusBlock(path, offset) {
+    const el = editor.querySelector(`[data-block-path="${pathStr(path)}"]`);
     if (!el) return;
     el.focus();
     const sel = el.ownerDocument.defaultView.getSelection();
@@ -653,8 +734,8 @@ export async function render(value, options, api) {
     sel.addRange(range);
   }
 
-  function focusBlockAtOffset(blockIndex, textOffset) {
-    const el = editor.querySelector(`[data-block-index="${blockIndex}"]`);
+  function focusBlockAtOffset(path, textOffset) {
+    const el = editor.querySelector(`[data-block-path="${pathStr(path)}"]`);
     if (!el) return;
     el.focus();
     const sel = el.ownerDocument.defaultView.getSelection();
