@@ -103,10 +103,44 @@ export async function render(value, options, api) {
 
   // --- AST → DOM ---
 
+  function isEditableBlock(block) {
+    const tag = tagOf(block);
+    return isLeafBlock(tag) || tag === ':ul' || tag === ':ol' || tag === ':blockquote';
+  }
+
   function renderAllBlocks() {
     editor.innerHTML = '';
+
+    // Trailing paragraph guarantee: if last block is non-editable, append an empty :p
+    if (editable && ast.length > 1) {
+      const lastBlock = ast[ast.length - 1];
+      if (!isEditableBlock(lastBlock)) {
+        ast.push([':p', { s: '' }]);
+      }
+    }
+
     rebuildEditablePaths();
+
     for (let i = 1; i < ast.length; i++) {
+      // Insertion gap between adjacent non-editable blocks (edit mode only)
+      if (editable && i > 1 && !isEditableBlock(ast[i]) && !isEditableBlock(ast[i - 1])) {
+        const gap = document.createElement('div');
+        gap.style.cssText = 'height: 8px; cursor: pointer; position: relative;';
+        gap.addEventListener('mouseenter', () => {
+          gap.style.cssText = 'height: 8px; cursor: pointer; position: relative; background: linear-gradient(to bottom, transparent 3px, var(--color-primary) 3px, var(--color-primary) 5px, transparent 5px);';
+        });
+        gap.addEventListener('mouseleave', () => {
+          gap.style.cssText = 'height: 8px; cursor: pointer; position: relative;';
+        });
+        const insertIdx = i; // capture for closure
+        gap.addEventListener('click', () => {
+          ast.splice(insertIdx, 0, [':p', { s: '' }]);
+          renderAllBlocks();
+          emitChange();
+          requestAnimationFrame(() => focusBlock([insertIdx - 1], 0));
+        });
+        editor.appendChild(gap);
+      }
       editor.appendChild(renderBlock(ast[i], [i - 1]));
     }
   }
@@ -681,7 +715,7 @@ export async function render(value, options, api) {
   // --- Markdown shortcuts ---
 
   function checkShortcutOnSpace(blockEl, path) {
-    // Only convert top-level paragraphs to headings
+    // Only convert top-level paragraphs
     if (path.length !== 1) return false;
     const block = getBlock(path);
     if (tagOf(block) !== ':p') return false;
@@ -690,27 +724,103 @@ export async function render(value, options, api) {
     const range = sel.getRangeAt(0);
     if (range.startContainer.nodeType !== 3) return false;
     const before = range.startContainer.textContent.substring(0, range.startOffset);
-    const match = /^#{1,6}$/.exec(before);
-    if (!match) return false;
-    // Ensure nothing before the # characters in the block
+
+    // Ensure nothing before the trigger in the block
     const preRange = document.createRange();
     preRange.setStart(blockEl, 0);
     preRange.setEnd(range.startContainer, 0);
     if (preRange.toString().replace(/\u200B/g, '').length > 0) return false;
 
-    const level = match[0].length;
-    // Sync DOM → AST, then strip the # prefix
+    // Collect remaining content after trigger
     const inlineAst = domToInlineAst(blockEl);
-    if (inlineAst.length > 0 && isText(inlineAst[0])) {
-      const stripped = inlineAst[0].s.substring(level);
-      if (stripped) inlineAst[0] = { s: stripped };
-      else inlineAst.shift();
+    function stripPrefix(len) {
+      if (inlineAst.length > 0 && isText(inlineAst[0])) {
+        const stripped = inlineAst[0].s.substring(len);
+        if (stripped) inlineAst[0] = { s: stripped };
+        else inlineAst.shift();
+      }
+      return inlineAst.length ? inlineAst : [{ s: '' }];
     }
-    setBlock(path, [':h' + level, ...(inlineAst.length ? inlineAst : [{ s: '' }])]);
-    renderAllBlocks();
-    emitChange();
-    requestAnimationFrame(() => focusBlock(path, 0));
-    return true;
+
+    // # through ###### → heading
+    const headingMatch = /^#{1,6}$/.exec(before);
+    if (headingMatch) {
+      const level = headingMatch[0].length;
+      setBlock(path, [':h' + level, ...stripPrefix(level)]);
+      renderAllBlocks();
+      emitChange();
+      requestAnimationFrame(() => focusBlock(path, 0));
+      return true;
+    }
+
+    // >>> → eval block (Hob expression)
+    if (before === '>>>') {
+      setBlock(path, [null]); // nil expression — structural editor renders as hole
+      renderAllBlocks();
+      emitChange();
+      return true;
+    }
+
+    // > → blockquote
+    if (before === '>') {
+      const content = stripPrefix(1);
+      setBlock(path, [':blockquote', [':p', ...content]]);
+      renderAllBlocks();
+      emitChange();
+      const innerPath = [...path, 0];
+      requestAnimationFrame(() => focusBlock(innerPath, 0));
+      return true;
+    }
+
+    // - or * or + → unordered list
+    if (before === '-' || before === '*' || before === '+') {
+      // Make sure it's not --- (hr shortcut, handled on Enter)
+      const content = stripPrefix(1);
+      setBlock(path, [':ul', [':li', [':p', ...content]]]);
+      renderAllBlocks();
+      emitChange();
+      const innerPath = [...path, 0, 0];
+      requestAnimationFrame(() => focusBlock(innerPath, 0));
+      return true;
+    }
+
+    // 1. → ordered list
+    const olMatch = /^\d+\.$/.exec(before);
+    if (olMatch) {
+      const content = stripPrefix(olMatch[0].length);
+      setBlock(path, [':ol', [':li', [':p', ...content]]]);
+      renderAllBlocks();
+      emitChange();
+      const innerPath = [...path, 0, 0];
+      requestAnimationFrame(() => focusBlock(innerPath, 0));
+      return true;
+    }
+
+    return false;
+  }
+
+  function checkShortcutOnEnter(blockEl, path) {
+    // Only convert top-level paragraphs
+    if (path.length !== 1) return false;
+    const block = getBlock(path);
+    if (tagOf(block) !== ':p') return false;
+    // Check if the entire block content is a shortcut trigger
+    const text = blockEl.textContent.replace(/\u200B/g, '').trim();
+
+    // --- or *** or ___ → horizontal rule
+    if (/^-{3,}$|^\*{3,}$|^_{3,}$/.test(text)) {
+      setBlock(path, [':hr']);
+      // Insert an empty paragraph after the hr
+      const parent = getParent(path);
+      const childIdx = path[path.length - 1];
+      parent.splice(childIdx + 2, 0, [':p', { s: '' }]);
+      renderAllBlocks();
+      emitChange();
+      requestAnimationFrame(() => focusBlock([childIdx + 1], 0));
+      return true;
+    }
+
+    return false;
   }
 
   function handleInput(blockEl, path) {
@@ -744,6 +854,7 @@ export async function render(value, options, api) {
 
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
+      if (checkShortcutOnEnter(blockEl, path)) return;
       splitBlock(blockEl, path);
     } else if (e.key === 'Backspace' && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
       if (isCursorAtStart(blockEl)) {
@@ -752,12 +863,20 @@ export async function render(value, options, api) {
         const childIdx = path[path.length - 1];
 
         if (childIdx > 0) {
-          // Try to merge with previous sibling in same parent
           const prevPath = [...path.slice(0, -1), childIdx - 1];
           const prevBlock = getBlock(prevPath);
           if (isLeafBlock(tagOf(prevBlock))) {
+            // Merge with previous editable sibling
             e.preventDefault();
             mergeWithPrevious(blockEl, path);
+          } else if (!isEditableBlock(prevBlock)) {
+            // Delete previous non-editable block (hr, eval, code-block)
+            e.preventDefault();
+            const parent = getParent(path);
+            parent.splice(childIdx, 1); // remove previous block (childIdx = prevBlock's AST position + 1)
+            renderAllBlocks();
+            emitChange();
+            requestAnimationFrame(() => focusBlock([childIdx - 1], 0));
           }
         } else if (path.length === 1 && blockTag && blockTag !== ':p' && isLeafBlock(blockTag)) {
           // Top-level heading → convert to paragraph
@@ -779,6 +898,13 @@ export async function render(value, options, api) {
           if (isLeafBlock(tagOf(nextBlock))) {
             e.preventDefault();
             mergeWithNext(blockEl, path);
+          } else if (!isEditableBlock(nextBlock)) {
+            // Delete next non-editable block (hr, eval, code-block)
+            e.preventDefault();
+            parent.splice(nextIdx + 1, 1);
+            renderAllBlocks();
+            emitChange();
+            requestAnimationFrame(() => focusBlockAtOffset(path, inlineTextLength(getBlock(path).slice(1))));
           }
         }
       }
