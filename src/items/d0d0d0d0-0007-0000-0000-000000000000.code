@@ -721,6 +721,20 @@ export async function render(value, options, api) {
           requestAnimationFrame(() => focusBlock(path, 0));
         }
       }
+    } else if (e.key === 'Delete' && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
+      if (isCursorAtEnd(blockEl)) {
+        const parent = getParent(path);
+        const childIdx = path[path.length - 1];
+        const nextIdx = childIdx + 1;
+        if (nextIdx < parent.length - 1) {
+          const nextPath = [...path.slice(0, -1), nextIdx];
+          const nextBlock = getBlock(nextPath);
+          if (isLeafBlock(tagOf(nextBlock))) {
+            e.preventDefault();
+            mergeWithNext(blockEl, path);
+          }
+        }
+      }
     } else if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey) {
       if (e.key === 'b' || e.key === 'B') {
         e.preventDefault();
@@ -743,6 +757,17 @@ export async function render(value, options, api) {
     testRange.setStart(blockEl, 0);
     testRange.setEnd(range.startContainer, range.startOffset);
     return testRange.toString().length === 0;
+  }
+
+  function isCursorAtEnd(blockEl) {
+    const sel = blockEl.ownerDocument.defaultView.getSelection();
+    if (!sel.rangeCount) return false;
+    const range = sel.getRangeAt(0);
+    if (!range.collapsed) return false;
+    const testRange = document.createRange();
+    testRange.setStart(range.startContainer, range.startOffset);
+    testRange.setEnd(blockEl, blockEl.childNodes.length);
+    return testRange.toString().replace(/\u200B/g, '').length === 0;
   }
 
   function splitBlock(blockEl, path) {
@@ -805,6 +830,31 @@ export async function render(value, options, api) {
     renderAllBlocks();
     emitChange();
     requestAnimationFrame(() => focusBlockAtOffset(prevPath, cursorOffset));
+  }
+
+  function mergeWithNext(blockEl, path) {
+    const parent = getParent(path);
+    const childIdx = path[path.length - 1];
+    const nextIdx = childIdx + 1;
+    if (nextIdx >= parent.length - 1) return;
+
+    const currBlock = getBlock(path);
+    const nextPath = [...path.slice(0, -1), nextIdx];
+    const nextBlock = getBlock(nextPath);
+
+    const currInline = currBlock.slice(1);
+    const cursorOffset = inlineTextLength(currInline);
+    const nextInline = nextBlock.slice(1);
+
+    const merged = mergeAdjacentText([...currInline, ...nextInline]);
+    setBlock(path, [currBlock[0], ...(merged.length ? merged : [{ s: '' }])]);
+
+    // Remove next block from parent
+    parent.splice(nextIdx + 1, 1);
+
+    renderAllBlocks();
+    emitChange();
+    requestAnimationFrame(() => focusBlockAtOffset(path, cursorOffset));
   }
 
   function inlineTextLength(nodes) {
