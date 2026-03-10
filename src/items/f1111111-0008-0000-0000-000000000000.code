@@ -698,6 +698,51 @@ export class RenderingSystem {
       }
     };
 
+    // Evaluate a Hob AST expression (compact JSON format) and return the result
+    // as doc AST (compact JSON). Used by field-view-doc to evaluate code blocks in :doc ASTs.
+    api.evaluateHob = async (hobAst, bindings) => {
+      await rendering._ensureInterpreter();
+      const childEnv = rendering._hobInterp.createEnvironment();
+      // Bind item ops (get-all, get-item, find-items, etc.)
+      // These are already in stdlib via createInterpreter, inherited by child env.
+      // Add any extra bindings (e.g. current item)
+      if (bindings) {
+        for (const [k, v] of Object.entries(bindings)) {
+          childEnv.define(k, v);
+        }
+      }
+      const hob = rendering._hobModule;
+      const result = await hob.evaluate(hobAst, childEnv, []);
+      // Convert Hob runtime values to doc AST format:
+      // - Keywords (\u029e prefix) → ":name" strings
+      // - Vectors and lists → plain arrays (AST nodes are arrays)
+      // - Hob strings → {s: "text"}
+      // - Maps → plain objects (for compatibility)
+      function toDocAst(val) {
+        if (val === null || val === undefined) return null;
+        if (typeof val === 'boolean' || typeof val === 'number') return val;
+        if (typeof val === 'string') {
+          if (hob.isKeyword(val)) return ':' + val.slice(1);
+          return { s: val };
+        }
+        if (Array.isArray(val)) return val.map(toDocAst);
+        if (val && typeof val === 'object') {
+          if (val._hobType === 'item-ref') return '@' + val.value;
+          if (val.nodeType) return val; // DOM node passthrough
+          // Map → plain object
+          const result = {};
+          for (const [k, v] of Object.entries(val)) {
+            if (k === '_isHobVector') continue;
+            const key = hob.isKeyword(k) ? k.slice(1) : k;
+            result[key] = toDocAst(v);
+          }
+          return result;
+        }
+        return val;
+      }
+      return toDocAst(result);
+    };
+
     // Attachment view management (arity-detecting like attach/detach)
     api.setAttachmentView = async (...args) => {
       const [parentId, itemId, viewId] = args.length === 2 && containerItem

@@ -80,7 +80,24 @@ async function renderNode(node, parent, api, item) {
   if (!Array.isArray(node)) return;
 
   const tag = tagOf(node);
-  if (!tag) return;
+
+  // Non-keyword array — evaluate as a Hob expression and render the result
+  if (!tag) {
+    if (api.evaluateHob) {
+      try {
+        const result = await api.evaluateHob(node, { item });
+        if (result != null) {
+          await renderNode(result, parent, api, item);
+        }
+      } catch (e) {
+        const errEl = api.createElement('div');
+        errEl.style.cssText = 'color: var(--color-danger); font-size: 0.8125rem; padding: 4px 8px; background: var(--color-danger-light, #fee2e2); border-radius: 4px; margin: 0.25em 0;';
+        errEl.textContent = 'Eval error: ' + (e.message || e);
+        parent.appendChild(errEl);
+      }
+    }
+    return;
+  }
 
   const children = node.slice(1);
 
