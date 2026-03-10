@@ -728,13 +728,26 @@ export class RenderingSystem {
         if (val === null || val === undefined) return null;
         if (typeof val === 'boolean' || typeof val === 'number') return val;
         if (typeof val === 'string') {
+          // Hob runtime keyword (ʞ prefix) → doc AST keyword (: prefix)
           if (hob.isKeyword(val)) return ':' + val.slice(1);
+          // Already a doc AST keyword or item-ref from storage — pass through
+          if (val.startsWith(':') || val.startsWith('@')) return val;
           return { s: val };
         }
         if (Array.isArray(val)) return val.map(toDocAst);
         if (val && typeof val === 'object') {
           if (val._hobType === 'item-ref') return '@' + val.value;
           if (val.nodeType) return val; // DOM node passthrough
+          // {s: "..."} is already an AST string literal — pass through
+          if ('s' in val && Object.keys(val).length === 1 && typeof val.s === 'string') return val;
+          // {v: [...]} vector literal — convert contents
+          if ('v' in val && Object.keys(val).length === 1 && Array.isArray(val.v)) {
+            return { v: val.v.map(toDocAst) };
+          }
+          // {m: [...]} map literal — convert contents
+          if ('m' in val && Object.keys(val).length === 1 && Array.isArray(val.m)) {
+            return { m: val.m.map(toDocAst) };
+          }
           // Map → plain object
           const result = {};
           for (const [k, v] of Object.entries(val)) {
