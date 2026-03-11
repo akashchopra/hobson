@@ -719,12 +719,12 @@ export class RenderingSystem {
       }
       const hob = rendering._hobModule;
       const result = await hob.evaluate(hobAst, childEnv, []);
-      // Convert Hob runtime values to doc AST format:
+      // Convert Hob runtime values to compact JSON format:
       // - Keywords (\u029e prefix) → ":name" strings
-      // - Vectors and lists → plain arrays (AST nodes are arrays)
+      // - Vectors and lists → plain arrays
       // - Hob strings → {s: "text"}
-      // - Maps → plain objects (for compatibility)
-      function toDocAst(val) {
+      // - Maps → plain objects
+      function toCompactJson(val) {
         if (val === null || val === undefined) return null;
         if (typeof val === 'boolean' || typeof val === 'number') return val;
         if (typeof val === 'string') {
@@ -734,32 +734,34 @@ export class RenderingSystem {
           if (val.startsWith(':') || val.startsWith('@')) return val;
           return { s: val };
         }
-        if (Array.isArray(val)) return val.map(toDocAst);
+        if (Array.isArray(val)) return val.map(toCompactJson);
         if (val && typeof val === 'object') {
           if (val._hobType === 'item-ref') return '@' + val.value;
+          if (val._hobType === 'transclusion') return { _hobType: 'transclusion', value: toCompactJson(val.value), sourceId: val.sourceId, sourceField: val.sourceField, chrome: val.chrome };
+          if (val._hobType === 'computed-field-error') return val;
           if (val.nodeType) return val; // DOM node passthrough
           // {s: "..."} is already an AST string literal — pass through
           if ('s' in val && Object.keys(val).length === 1 && typeof val.s === 'string') return val;
           // {v: [...]} vector literal — convert contents
           if ('v' in val && Object.keys(val).length === 1 && Array.isArray(val.v)) {
-            return { v: val.v.map(toDocAst) };
+            return { v: val.v.map(toCompactJson) };
           }
           // {m: [...]} map literal — convert contents
           if ('m' in val && Object.keys(val).length === 1 && Array.isArray(val.m)) {
-            return { m: val.m.map(toDocAst) };
+            return { m: val.m.map(toCompactJson) };
           }
           // Map → plain object
           const result = {};
           for (const [k, v] of Object.entries(val)) {
             if (k === '_isHobVector') continue;
             const key = hob.isKeyword(k) ? k.slice(1) : k;
-            result[key] = toDocAst(v);
+            result[key] = toCompactJson(v);
           }
           return result;
         }
         return val;
       }
-      return toDocAst(result);
+      return toCompactJson(result);
     };
 
     // Attachment view management (arity-detecting like attach/detach)

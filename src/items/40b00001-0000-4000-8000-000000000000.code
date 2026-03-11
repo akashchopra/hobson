@@ -3374,6 +3374,38 @@ export function createInterpreter(api, viewApi, eventApi) {
       }
       return result;
     }, { _hobName: 'resolve-field-refs' }));
+
+    // transclude: get-field with source attribution metadata
+    // (transclude @item-id :field)                  — default chrome (:full)
+    // (transclude @item-id :field :chrome :subtle)  — small attribution link
+    // (transclude @item-id :field :chrome :none)    — no chrome
+    stdlib.define('transclude', Object.assign(async (...args) => {
+      // Parse args: item, field, then optional :chrome keyword arg
+      let itemOrRef = args[0];
+      let fieldKey = args.length > 1 ? args[1] : ':description';
+      let chrome = 'full';
+      for (let i = 2; i < args.length - 1; i++) {
+        if (isKeyword(args[i]) && keywordName(args[i]) === 'chrome') {
+          const val = args[i + 1];
+          chrome = isKeyword(val) ? keywordName(val) : String(val);
+          i++;
+        }
+      }
+      // Resolve source item ID for attribution
+      let sourceId;
+      if (isKeyword(itemOrRef) && keywordName(itemOrRef) === 'self') {
+        sourceId = _computedFieldSelf || api._renderItemId;
+      } else if (itemOrRef && itemOrRef._hobType === 'item-ref') {
+        sourceId = itemOrRef.value;
+      } else if (typeof itemOrRef === 'string') {
+        sourceId = itemOrRef;
+      } else if (itemOrRef && typeof itemOrRef === 'object' && itemOrRef.id) {
+        sourceId = itemOrRef.id;
+      }
+      const sourceField = isKeyword(fieldKey) ? keywordName(fieldKey) : String(fieldKey);
+      const value = await getFieldFn(itemOrRef, fieldKey);
+      return { _hobType: 'transclusion', value, sourceId, sourceField, chrome };
+    }, { _hobName: 'transclude' }));
   }
 
   if (viewApi) registerViewOps(stdlib, viewApi);
