@@ -3,10 +3,1152 @@
   "name": "Views & Rendering",
   "type": "871ae771-b9b1-4f40-8c7f-d9038bfb69c3",
   "created": 1738368000000,
-  "modified": 1772789557180,
+  "modified": 1773243817178,
   "content": {
     "title": "Views & Rendering",
-    "description": "The rendering system transforms items into DOM trees using views. This document covers everything you need to build views and understand how rendering works. For the architectural context (where rendering lives in the system), see [System Layers](item://c0c0c0c0-0091-0000-0000-000000000000).\n\n---\n\n## What is a View?\n\nA view is a code item that knows how to render a particular type of item. Views have:\n- `type`: [view](item://aaaaaaaa-0000-0000-0000-000000000000)\n- `content.for_type`: GUID of the type this view renders\n- `content.code` (JS) or `content.hob` (Hob): the rendering logic\n\nA type can have many views (editable, readonly, compact, card). Users choose between them via context menus, and preferences are remembered.\n\n### JS Views\n\nExport a `render(item, api)` function that returns a DOM element:\n\n```javascript\nexport async function render(item, api) {\n  return api.createElement('div', { class: 'my-view' }, [\n    item.content.title || 'Untitled'\n  ]);\n}\n```\n\n### Hob Views\n\nHob views are the preferred way to write new views. They use `content.hob` (compact JSON AST) and return hiccup (nested arrays describing DOM). The rendering system converts hiccup to DOM and uses morphdom for efficient updates on re-render.\n\n```\n(defn render [item api]\n  [:div.my-view\n    (or (get-in item [:content :title]) \"Untitled\")])\n```\n\n### View Specs (Declarative)\n\nFor simple views, you can use a view spec instead of writing code. A view spec is a data item with `type: view-spec` containing `ui_hints` that describe which fields to show and how. The [generic-view](item://bbbbbbbb-0000-0000-0000-000000000000) consumes these specs and assembles the UI using [field views](item://cccccccc-0000-0000-0000-000000000000) — reusable components that render individual fields (text, markdown, tags, etc.).\n\n---\n\n## View Resolution\n\nWhen [`renderItem()`](item://f1111111-0008-0000-0000-000000000000#code?region=renderItem) is called, the system finds a view via [`resolveView()`](item://f1111111-0008-0000-0000-000000000000#code?region=resolveView):\n\n1. **Explicit**: `viewId` parameter passed to `renderItem()`\n2. **Item preference**: `item.preferredView` field\n3. **Type preference**: `typeItem.preferredView` field\n4. **Type chain**: Walk up `extends` chain, find first view with matching `for_type`\n5. **Fallback**: [kernel:default-view](item://aaaaaaaa-1111-0000-0000-000000000000) (JSON display)\n\n### Setting Preferences\n\n```javascript\nawait api.setPreferredView(itemId, viewId);      // Item-level\nawait api.setTypePreferredView(typeId, viewId);   // Type-level (all items of type)\nawait api.setAttachmentView(childId, viewId);     // Contextual (in current container)\nawait api.restorePreviousView(childId);           // Undo contextual override\n```\n\n`setAttachmentView` preserves the old view config in a `previousView` field on the [attachment](item://c0c0c0c0-0005-0000-0000-000000000000) entry, allowing toggling back.\n\n---\n\n## Reactive Re-rendering\n\nViews re-render automatically when the items they display change. The pipeline:\n\n1. A view renders an item → the [render instance registry](item://f1111111-0008-0000-0000-000000000000#code?region=RenderInstanceRegistry) records: this DOM node shows item X using view Y inside parent Z\n2. Something saves an item → `item:updated` event fires\n3. The rendering system looks up all instances displaying that item\n4. Each instance is scheduled for re-render (microtask-batched to coalesce rapid changes)\n5. On flush: selector check → re-render if changed → morphdom patches the DOM\n\n### Selectors\n\nBy default, any change to an item triggers re-renders of all views displaying it. For complex views, this is too coarse — you don't want to re-render a spatial canvas when a window's z-index changes.\n\n**Selectors** let a view declare which slice of data it cares about. The re-render only fires when that slice changes (compared via `deepEquals`):\n\n```\n;; Hob: only re-render when the list of child IDs changes\n(get-item (:id item)\n  :select (fn [item] (map :id (:attachments item))))\n```\n\nKey rules:\n- **Selector pins**: Once a view registers a selector for an item, later bare `get-item` calls on the same item don't widen it. The first selector is the intentional reactivity contract.\n- **Bare dep fallback**: Views that don't register any selector get an implicit dependency on their own item — they re-render on any change (backward-compatible with simple views).\n- **View code changes bypass selectors**: If the view item itself is edited, all instances using that view re-render regardless of selectors.\n\n### Nested Rendering\n\nViews can render child items via `api.renderItem()` (JS) or `(render-item id)` (Hob). Each child gets its own render instance with independent dependencies. Editing a child re-renders only that child, not the parent.\n\n### Silent Saves\n\nFor high-frequency updates like drag position, use `api.set(item, { silent: true })` to persist without emitting events. No re-render occurs. The view updates the DOM directly during the interaction and persists the final state normally on completion. See [Silent Update Pattern](item://c0c0c0c0-0010-0000-0000-000000000000).\n\n---\n\n## The View API\n\nViews receive an `api` object built in two layers: [`createAPI()`](item://33333333-1111-0000-0000-000000000000#code?region=createAPI) in kernel:core provides storage, events, and modules. Then [`enrichAPI()`](item://f1111111-0008-0000-0000-000000000000#code?region=enrichAPI) in viewport-rendering adds rendering methods. The REPL gets only the base kernel API; views get the full enriched API.\n\n### Item Operations\n\n```javascript\nconst item = await api.get(itemId);              // Read item\nconst items = await api.query({ type: id });     // Query items\nawait api.set(item);                             // Save (emits item:updated, triggers reactive re-renders)\nawait api.set(item, { silent: true });           // Save without events (for drag/layout)\nawait api.create(item, addAsChild?);             // Create new item\nawait api.delete(itemId);                        // Delete item\n```\n\n### DOM Creation\n\n[`api.createElement()`](item://f1111111-0008-0000-0000-000000000000#code?region=createElement) creates DOM elements with event handler support:\n\n```javascript\napi.createElement('div', { class: 'wrapper', onclick: handler }, [\n  ['h1', {}, ['Title']],       // Nested shorthand\n  ['p', {}, ['Content']]\n]);\n```\n\n### Rendering\n\n```javascript\nconst dom = await api.renderItem(childId, viewId?, options?);  // Render a child item\nawait api.rerenderItem(itemId);           // Manually trigger re-render\nawait api.rerenderByView(viewId);         // Re-render all instances using a view\nawait api.rerenderByType(typeId);         // Re-render all instances of a type\n```\n\nManual re-render calls are rarely needed — the reactive pipeline handles most cases.\n\n### Navigation\n\n```javascript\nawait api.navigate(itemId, params?);      // Navigate to item (replaces root)\nawait api.attach(parentId, childId);      // Add child to container (arity-detecting)\nawait api.detach(parentId, childId);      // Remove child from container\n```\n\n### Render Context\n\n```javascript\nconst parentId = api.getParentId();       // Container this view is rendered inside\nconst viewId = api.getViewId();           // Current view's ID\nconst config = api.getViewConfig();       // Persistent config from parent's attachment entry\nawait api.updateViewConfig({ key: val }); // Persist view state (sort order, collapsed sections, etc.)\n```\n\nThe parent ID enables context-aware behavior — inside a spatial canvas, clicking a link can open the target as a sibling window (`api.attach(parentId, targetId)`) instead of navigating away.\n\n### View Discovery\n\n```javascript\nconst views = await api.getViews(typeId);         // All views for a type\nconst view = await api.findView(typeId);           // Default view for a type\nconst view = await api.getEffectiveView(itemId);   // What view would render this item\n```\n\n---\n\n## Cycle Detection\n\nThe rendering system tracks the render path. If an item appears twice in the ancestor chain, it's a cycle:\n\n```javascript\nawait api.renderItem(itemId, null, {\n  onCycle: (item) => api.createElement('div', {}, [\n    'Already rendering ' + item.name\n  ])\n});\n```\n\nWithout `onCycle`, an error is thrown with the full render path. See [Cycle-Safe Traversal](item://c0c0c0c0-0013-0000-0000-000000000000).\n\n---\n\n## Creating a Custom View\n\n### 1. Create the View Item\n\n```javascript\nawait api.create({\n  id: crypto.randomUUID(),\n  name: 'my-custom-view',\n  type: api.IDS.VIEW,\n  content: {\n    for_type: 'target-type-uuid',\n    displayName: 'My Custom View',\n    description: 'Renders items as...',\n    code: `\nexport async function render(item, api) {\n  const container = api.createElement('div', { class: 'my-view' });\n  container.appendChild(\n    api.createElement('h1', {}, [item.content.title])\n  );\n  return container;\n}\n    `\n  }\n});\n```\n\n### 2. Test It\n\nRight-click an item of the target type > View As > select your view.\n\n### 3. Set as Default (Optional)\n\nUse the View Settings modal, or call `api.setTypePreferredView(typeId, viewId)` from the REPL.\n\n---\n\n## Design Rationale\n\n### Why Unified Views (Not Separate Renderers/Editors)?\n\nThe original system had renderers (display) and editors (modify) as separate item types. A single view concept replaced this because most views naturally want per-field mode control (some fields readonly, others editable), not all-or-nothing.\n\n### Why Separate from Types?\n\nViews are items, not embedded in type definitions. This means you can add a new view without modifying the type, users can create alternative views, and views are inspectable and modifiable like everything else.\n\n### Why Morphdom for Hob Views?\n\nHob views produce a complete DOM tree on every render. Morphdom diffs the new tree against the existing DOM and patches only what changed, preserving scroll positions, form inputs, and focus. Old event handlers are retained (they have correct refs to the kept DOM elements).\n\n---\n\n## Available Views\n\n```query\nconst views = await api.query({ type: api.IDS.VIEW });\nviews.sort((a, b) => (a.name || '').localeCompare(b.name || ''));\nreturn views\n  .filter(v => v.content?.displayName)\n  .map(v => `- **${v.content.displayName}**: ${v.content.description?.split('\\n')[0] || v.name}`)\n  .join('\\n');\n```\n\n---\n\n## See Also\n\n- [System Layers](item://c0c0c0c0-0091-0000-0000-000000000000) — Kernel / viewport / userland split\n- [viewport-rendering](item://f1111111-0008-0000-0000-000000000000) — The rendering engine source code\n- [Attachments](item://c0c0c0c0-0005-0000-0000-000000000000) — Parent-child relationships and view config storage\n- [Silent Update Pattern](item://c0c0c0c0-0010-0000-0000-000000000000) — Save without triggering re-renders\n- [Stale Closure Prevention](item://c0c0c0c0-0011-0000-0000-000000000000) — Fresh data in event handlers\n- [Content Field Conventions](item://c0c0c0c0-0024-0000-0000-000000000000) — Standard field names (`for_type`, `ui_hints`, etc.)"
+    "description": [
+      ":doc",
+      [
+        ":p",
+        {
+          "s": "The rendering system transforms items into DOM trees using views. This document covers everything you need to build views and understand how rendering works. For the architectural context (where rendering lives in the system), see "
+        },
+        [
+          ":item-ref",
+          {
+            "s": "c0c0c0c0-0091-0000-0000-000000000000"
+          },
+          {
+            "s": "System Layers"
+          }
+        ],
+        {
+          "s": "."
+        }
+      ],
+      [
+        ":hr"
+      ],
+      [
+        ":h2",
+        {
+          "s": "What is a View?"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "A view is a code item that knows how to render a particular type of item. Views have:"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":code",
+              {
+                "s": "type"
+              }
+            ],
+            {
+              "s": ": "
+            },
+            [
+              ":item-ref",
+              {
+                "s": "aaaaaaaa-0000-0000-0000-000000000000"
+              },
+              {
+                "s": "view"
+              }
+            ]
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":code",
+              {
+                "s": "content.for_type"
+              }
+            ],
+            {
+              "s": ": GUID of the type this view renders"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":code",
+              {
+                "s": "content.code"
+              }
+            ],
+            {
+              "s": " (JS) or "
+            },
+            [
+              ":code",
+              {
+                "s": "content.hob"
+              }
+            ],
+            {
+              "s": " (Hob): the rendering logic"
+            }
+          ]
+        ]
+      ],
+      [
+        ":p",
+        {
+          "s": "A type can have many views (editable, readonly, compact, card). Users choose between them via context menus, and preferences are remembered."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "JS Views"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Export a "
+        },
+        [
+          ":code",
+          {
+            "s": "render(item, api)"
+          }
+        ],
+        {
+          "s": " function that returns a DOM element:"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": "export async function render(item, api) {\n  return api.createElement('div', { class: 'my-view' }, [\n    item.content.title || 'Untitled'\n  ]);\n}"
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Hob Views"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Hob views are the preferred way to write new views. They use "
+        },
+        [
+          ":code",
+          {
+            "s": "content.hob"
+          }
+        ],
+        {
+          "s": " (compact JSON AST) and return hiccup (nested arrays describing DOM). The rendering system converts hiccup to DOM and uses morphdom for efficient updates on re-render."
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": "(defn render [item api]\n  [:div.my-view\n    (or (get-in item [:content :title]) \"Untitled\")])"
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "View Specs (Declarative)"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "For simple views, you can use a view spec instead of writing code. A view spec is a data item with "
+        },
+        [
+          ":code",
+          {
+            "s": "type: view-spec"
+          }
+        ],
+        {
+          "s": " containing "
+        },
+        [
+          ":code",
+          {
+            "s": "ui_hints"
+          }
+        ],
+        {
+          "s": " that describe which fields to show and how. The "
+        },
+        [
+          ":item-ref",
+          {
+            "s": "bbbbbbbb-0000-0000-0000-000000000000"
+          },
+          {
+            "s": "generic-view"
+          }
+        ],
+        {
+          "s": " consumes these specs and assembles the UI using "
+        },
+        [
+          ":item-ref",
+          {
+            "s": "cccccccc-0000-0000-0000-000000000000"
+          },
+          {
+            "s": "field views"
+          }
+        ],
+        {
+          "s": " — reusable components that render individual fields (text, markdown, tags, etc.)."
+        }
+      ],
+      [
+        ":hr"
+      ],
+      [
+        ":h2",
+        {
+          "s": "View Resolution"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "When "
+        },
+        [
+          ":item-ref",
+          {
+            "s": "f1111111-0008-0000-0000-000000000000#code?region=renderItem"
+          },
+          {
+            "s": "`renderItem()`"
+          }
+        ],
+        {
+          "s": " is called, the system finds a view via "
+        },
+        [
+          ":item-ref",
+          {
+            "s": "f1111111-0008-0000-0000-000000000000#code?region=resolveView"
+          },
+          {
+            "s": "`resolveView()`"
+          }
+        ],
+        {
+          "s": ":"
+        }
+      ],
+      [
+        ":ol",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Explicit"
+              }
+            ],
+            {
+              "s": ": "
+            },
+            [
+              ":code",
+              {
+                "s": "viewId"
+              }
+            ],
+            {
+              "s": " parameter passed to "
+            },
+            [
+              ":code",
+              {
+                "s": "renderItem()"
+              }
+            ]
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Item preference"
+              }
+            ],
+            {
+              "s": ": "
+            },
+            [
+              ":code",
+              {
+                "s": "item.preferredView"
+              }
+            ],
+            {
+              "s": " field"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Type preference"
+              }
+            ],
+            {
+              "s": ": "
+            },
+            [
+              ":code",
+              {
+                "s": "typeItem.preferredView"
+              }
+            ],
+            {
+              "s": " field"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Type chain"
+              }
+            ],
+            {
+              "s": ": Walk up "
+            },
+            [
+              ":code",
+              {
+                "s": "extends"
+              }
+            ],
+            {
+              "s": " chain, find first view with matching "
+            },
+            [
+              ":code",
+              {
+                "s": "for_type"
+              }
+            ]
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Fallback"
+              }
+            ],
+            {
+              "s": ": "
+            },
+            [
+              ":item-ref",
+              {
+                "s": "aaaaaaaa-1111-0000-0000-000000000000"
+              },
+              {
+                "s": "kernel:default-view"
+              }
+            ],
+            {
+              "s": " (JSON display)"
+            }
+          ]
+        ]
+      ],
+      [
+        ":h3",
+        {
+          "s": "Setting Preferences"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": "await api.setPreferredView(itemId, viewId);      // Item-level\nawait api.setTypePreferredView(typeId, viewId);   // Type-level (all items of type)\nawait api.setAttachmentView(childId, viewId);     // Contextual (in current container)\nawait api.restorePreviousView(childId);           // Undo contextual override"
+        }
+      ],
+      [
+        ":p",
+        [
+          ":code",
+          {
+            "s": "setAttachmentView"
+          }
+        ],
+        {
+          "s": " preserves the old view config in a "
+        },
+        [
+          ":code",
+          {
+            "s": "previousView"
+          }
+        ],
+        {
+          "s": " field on the "
+        },
+        [
+          ":item-ref",
+          {
+            "s": "c0c0c0c0-0005-0000-0000-000000000000"
+          },
+          {
+            "s": "attachment"
+          }
+        ],
+        {
+          "s": " entry, allowing toggling back."
+        }
+      ],
+      [
+        ":hr"
+      ],
+      [
+        ":h2",
+        {
+          "s": "Reactive Re-rendering"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Views re-render automatically when the items they display change. The pipeline:"
+        }
+      ],
+      [
+        ":ol",
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "A view renders an item → the "
+            },
+            [
+              ":item-ref",
+              {
+                "s": "f1111111-0008-0000-0000-000000000000#code?region=RenderInstanceRegistry"
+              },
+              {
+                "s": "render instance registry"
+              }
+            ],
+            {
+              "s": " records: this DOM node shows item X using view Y inside parent Z"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Something saves an item → "
+            },
+            [
+              ":code",
+              {
+                "s": "item:updated"
+              }
+            ],
+            {
+              "s": " event fires"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "The rendering system looks up all instances displaying that item"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Each instance is scheduled for re-render (microtask-batched to coalesce rapid changes)"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "On flush: selector check → re-render if changed → morphdom patches the DOM"
+            }
+          ]
+        ]
+      ],
+      [
+        ":h3",
+        {
+          "s": "Selectors"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "By default, any change to an item triggers re-renders of all views displaying it. For complex views, this is too coarse — you don't want to re-render a spatial canvas when a window's z-index changes."
+        }
+      ],
+      [
+        ":p",
+        [
+          ":strong",
+          {
+            "s": "Selectors"
+          }
+        ],
+        {
+          "s": " let a view declare which slice of data it cares about. The re-render only fires when that slice changes (compared via "
+        },
+        [
+          ":code",
+          {
+            "s": "deepEquals"
+          }
+        ],
+        {
+          "s": "):"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": ";; Hob: only re-render when the list of child IDs changes\n(get-item (:id item)\n  :select (fn [item] (map :id (:attachments item))))"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Key rules:"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Selector pins"
+              }
+            ],
+            {
+              "s": ": Once a view registers a selector for an item, later bare "
+            },
+            [
+              ":code",
+              {
+                "s": "get-item"
+              }
+            ],
+            {
+              "s": " calls on the same item don't widen it. The first selector is the intentional reactivity contract."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Bare dep fallback"
+              }
+            ],
+            {
+              "s": ": Views that don't register any selector get an implicit dependency on their own item — they re-render on any change (backward-compatible with simple views)."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "View code changes bypass selectors"
+              }
+            ],
+            {
+              "s": ": If the view item itself is edited, all instances using that view re-render regardless of selectors."
+            }
+          ]
+        ]
+      ],
+      [
+        ":h3",
+        {
+          "s": "Nested Rendering"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Views can render child items via "
+        },
+        [
+          ":code",
+          {
+            "s": "api.renderItem()"
+          }
+        ],
+        {
+          "s": " (JS) or "
+        },
+        [
+          ":code",
+          {
+            "s": "(render-item id)"
+          }
+        ],
+        {
+          "s": " (Hob). Each child gets its own render instance with independent dependencies. Editing a child re-renders only that child, not the parent."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Silent Saves"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "For high-frequency updates like drag position, use "
+        },
+        [
+          ":code",
+          {
+            "s": "api.set(item, { silent: true })"
+          }
+        ],
+        {
+          "s": " to persist without emitting events. No re-render occurs. The view updates the DOM directly during the interaction and persists the final state normally on completion. See "
+        },
+        [
+          ":item-ref",
+          {
+            "s": "c0c0c0c0-0010-0000-0000-000000000000"
+          },
+          {
+            "s": "Silent Update Pattern"
+          }
+        ],
+        {
+          "s": "."
+        }
+      ],
+      [
+        ":hr"
+      ],
+      [
+        ":h2",
+        {
+          "s": "The View API"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Views receive an "
+        },
+        [
+          ":code",
+          {
+            "s": "api"
+          }
+        ],
+        {
+          "s": " object built in two layers: "
+        },
+        [
+          ":item-ref",
+          {
+            "s": "33333333-1111-0000-0000-000000000000#code?region=createAPI"
+          },
+          {
+            "s": "`createAPI()`"
+          }
+        ],
+        {
+          "s": " in kernel:core provides storage, events, and modules. Then "
+        },
+        [
+          ":item-ref",
+          {
+            "s": "f1111111-0008-0000-0000-000000000000#code?region=enrichAPI"
+          },
+          {
+            "s": "`enrichAPI()`"
+          }
+        ],
+        {
+          "s": " in viewport-rendering adds rendering methods. The REPL gets only the base kernel API; views get the full enriched API."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Item Operations"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": "const item = await api.get(itemId);              // Read item\nconst items = await api.query({ type: id });     // Query items\nawait api.set(item);                             // Save (emits item:updated, triggers reactive re-renders)\nawait api.set(item, { silent: true });           // Save without events (for drag/layout)\nawait api.create(item, addAsChild?);             // Create new item\nawait api.delete(itemId);                        // Delete item"
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "DOM Creation"
+        }
+      ],
+      [
+        ":p",
+        [
+          ":item-ref",
+          {
+            "s": "f1111111-0008-0000-0000-000000000000#code?region=createElement"
+          },
+          {
+            "s": "`api.createElement()`"
+          }
+        ],
+        {
+          "s": " creates DOM elements with event handler support:"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": "api.createElement('div', { class: 'wrapper', onclick: handler }, [\n  ['h1', {}, ['Title']],       // Nested shorthand\n  ['p', {}, ['Content']]\n]);"
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Rendering"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": "const dom = await api.renderItem(childId, viewId?, options?);  // Render a child item\nawait api.rerenderItem(itemId);           // Manually trigger re-render\nawait api.rerenderByView(viewId);         // Re-render all instances using a view\nawait api.rerenderByType(typeId);         // Re-render all instances of a type"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Manual re-render calls are rarely needed — the reactive pipeline handles most cases."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Navigation"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": "await api.navigate(itemId, params?);      // Navigate to item (replaces root)\nawait api.attach(parentId, childId);      // Add child to container (arity-detecting)\nawait api.detach(parentId, childId);      // Remove child from container"
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Render Context"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": "const parentId = api.getParentId();       // Container this view is rendered inside\nconst viewId = api.getViewId();           // Current view's ID\nconst config = api.getViewConfig();       // Persistent config from parent's attachment entry\nawait api.updateViewConfig({ key: val }); // Persist view state (sort order, collapsed sections, etc.)"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The parent ID enables context-aware behavior — inside a spatial canvas, clicking a link can open the target as a sibling window ("
+        },
+        [
+          ":code",
+          {
+            "s": "api.attach(parentId, targetId)"
+          }
+        ],
+        {
+          "s": ") instead of navigating away."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "View Discovery"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": "const views = await api.getViews(typeId);         // All views for a type\nconst view = await api.findView(typeId);           // Default view for a type\nconst view = await api.getEffectiveView(itemId);   // What view would render this item"
+        }
+      ],
+      [
+        ":hr"
+      ],
+      [
+        ":h2",
+        {
+          "s": "Cycle Detection"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The rendering system tracks the render path. If an item appears twice in the ancestor chain, it's a cycle:"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": "await api.renderItem(itemId, null, {\n  onCycle: (item) => api.createElement('div', {}, [\n    'Already rendering ' + item.name\n  ])\n});"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Without "
+        },
+        [
+          ":code",
+          {
+            "s": "onCycle"
+          }
+        ],
+        {
+          "s": ", an error is thrown with the full render path. See "
+        },
+        [
+          ":item-ref",
+          {
+            "s": "c0c0c0c0-0013-0000-0000-000000000000"
+          },
+          {
+            "s": "Cycle-Safe Traversal"
+          }
+        ],
+        {
+          "s": "."
+        }
+      ],
+      [
+        ":hr"
+      ],
+      [
+        ":h2",
+        {
+          "s": "Creating a Custom View"
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "1. Create the View Item"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": "await api.create({\n  id: crypto.randomUUID(),\n  name: 'my-custom-view',\n  type: api.IDS.VIEW,\n  content: {\n    for_type: 'target-type-uuid',\n    displayName: 'My Custom View',\n    description: 'Renders items as...',\n    code: `\nexport async function render(item, api) {\n  const container = api.createElement('div', { class: 'my-view' });\n  container.appendChild(\n    api.createElement('h1', {}, [item.content.title])\n  );\n  return container;\n}\n    `\n  }\n});"
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "2. Test It"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Right-click an item of the target type > View As > select your view."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "3. Set as Default (Optional)"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Use the View Settings modal, or call "
+        },
+        [
+          ":code",
+          {
+            "s": "api.setTypePreferredView(typeId, viewId)"
+          }
+        ],
+        {
+          "s": " from the REPL."
+        }
+      ],
+      [
+        ":hr"
+      ],
+      [
+        ":h2",
+        {
+          "s": "Design Rationale"
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Why Unified Views (Not Separate Renderers/Editors)?"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The original system had renderers (display) and editors (modify) as separate item types. A single view concept replaced this because most views naturally want per-field mode control (some fields readonly, others editable), not all-or-nothing."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Why Separate from Types?"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Views are items, not embedded in type definitions. This means you can add a new view without modifying the type, users can create alternative views, and views are inspectable and modifiable like everything else."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Why Morphdom for Hob Views?"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Hob views produce a complete DOM tree on every render. Morphdom diffs the new tree against the existing DOM and patches only what changed, preserving scroll positions, form inputs, and focus. Old event handlers are retained (they have correct refs to the kept DOM elements)."
+        }
+      ],
+      [
+        ":hr"
+      ],
+      [
+        ":h2",
+        {
+          "s": "Available Views"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": "const views = await api.query({ type: api.IDS.VIEW });\nviews.sort((a, b) => (a.name || '').localeCompare(b.name || ''));\nreturn views\n  .filter(v => v.content?.displayName)\n  .map(v => `- **${v.content.displayName}**: ${v.content.description?.split('\\n')[0] || v.name}`)\n  .join('\\n');"
+        }
+      ],
+      [
+        ":hr"
+      ],
+      [
+        ":h2",
+        {
+          "s": "See Also"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":item-ref",
+              {
+                "s": "c0c0c0c0-0091-0000-0000-000000000000"
+              },
+              {
+                "s": "System Layers"
+              }
+            ],
+            {
+              "s": " — Kernel / viewport / userland split"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":item-ref",
+              {
+                "s": "f1111111-0008-0000-0000-000000000000"
+              },
+              {
+                "s": "viewport-rendering"
+              }
+            ],
+            {
+              "s": " — The rendering engine source code"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":item-ref",
+              {
+                "s": "c0c0c0c0-0005-0000-0000-000000000000"
+              },
+              {
+                "s": "Attachments"
+              }
+            ],
+            {
+              "s": " — Parent-child relationships and view config storage"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":item-ref",
+              {
+                "s": "c0c0c0c0-0010-0000-0000-000000000000"
+              },
+              {
+                "s": "Silent Update Pattern"
+              }
+            ],
+            {
+              "s": " — Save without triggering re-renders"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":item-ref",
+              {
+                "s": "c0c0c0c0-0011-0000-0000-000000000000"
+              },
+              {
+                "s": "Stale Closure Prevention"
+              }
+            ],
+            {
+              "s": " — Fresh data in event handlers"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":item-ref",
+              {
+                "s": "c0c0c0c0-0024-0000-0000-000000000000"
+              },
+              {
+                "s": "Content Field Conventions"
+              }
+            ],
+            {
+              "s": " — Standard field names ("
+            },
+            [
+              ":code",
+              {
+                "s": "for_type"
+              }
+            ],
+            {
+              "s": ", "
+            },
+            [
+              ":code",
+              {
+                "s": "ui_hints"
+              }
+            ],
+            {
+              "s": ", etc.)"
+            }
+          ]
+        ]
+      ]
+    ]
   },
   "attachments": []
 }

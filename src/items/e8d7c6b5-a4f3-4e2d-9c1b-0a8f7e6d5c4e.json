@@ -3,10 +3,211 @@
   "name": "field-view-computed-fields",
   "type": "cccccccc-0000-0000-0000-000000000000",
   "created": 1772928000000,
-  "modified": 1772928000000,
+  "modified": 1773243817823,
   "content": {
-    "description": "Field view for editing computed fields on structured notes. Renders content.computed as name/formula pairs, delegating each formula to field-view-hob-structural.",
-    "code": "\nexport async function render(value, options, api) {\n  const { mode, onChange, label } = options;\n  const isEditable = mode === 'editable' && onChange;\n  const computed = value || {};\n\n  const wrapper = api.createElement('div', { className: 'field-computed-fields' });\n  wrapper.style.cssText = 'display: flex; flex-direction: column; gap: 8px;';\n\n  if (label) {\n    const labelEl = api.createElement('label');\n    labelEl.textContent = label;\n    labelEl.style.cssText = 'font-weight: 500; font-size: 0.875rem; color: var(--color-text);';\n    wrapper.appendChild(labelEl);\n  }\n\n  const hobStructural = await api.require('field-view-hob-structural');\n\n  const entries = Object.entries(computed);\n\n  if (entries.length === 0 && !isEditable) {\n    const empty = api.createElement('div');\n    empty.textContent = 'No computed fields';\n    empty.style.cssText = 'color: var(--color-text-muted); font-size: 0.8125rem; font-style: italic;';\n    wrapper.appendChild(empty);\n    return wrapper;\n  }\n\n  // Clone computed map for edits\n  const edited = { ...computed };\n\n  function emitChange() {\n    if (onChange) onChange({ ...edited });\n  }\n\n  for (const [fieldName, formula] of entries) {\n    const row = api.createElement('div', { className: 'computed-field-row' });\n    row.style.cssText = 'display: flex; flex-direction: column; gap: 4px; padding: 8px; background: var(--color-bg-surface-alt); border-radius: var(--border-radius); border: 1px solid var(--color-border);';\n\n    // Header row: field name + delete button\n    const header = api.createElement('div');\n    header.style.cssText = 'display: flex; align-items: center; gap: 8px;';\n\n    if (isEditable) {\n      const nameInput = api.createElement('input', {\n        type: 'text',\n        value: fieldName,\n        placeholder: 'field name',\n        style: 'flex: 1; padding: 4px 8px; border: 1px solid var(--color-border); border-radius: var(--border-radius); font-size: 0.8125rem; font-family: monospace; background: var(--color-bg-surface); color: var(--color-text);'\n      });\n      nameInput.addEventListener('change', (e) => {\n        const newName = e.target.value.trim();\n        if (newName && newName !== fieldName && !edited[newName]) {\n          const val = edited[fieldName];\n          delete edited[fieldName];\n          edited[newName] = val;\n          emitChange();\n        }\n      });\n      header.appendChild(nameInput);\n\n      const deleteBtn = api.createElement('button');\n      deleteBtn.textContent = '\u00d7';\n      deleteBtn.title = 'Remove computed field';\n      deleteBtn.style.cssText = 'background: none; border: none; color: var(--color-danger); cursor: pointer; font-size: 1.25rem; padding: 0 4px; line-height: 1;';\n      deleteBtn.addEventListener('click', () => {\n        delete edited[fieldName];\n        emitChange();\n        row.remove();\n      });\n      header.appendChild(deleteBtn);\n    } else {\n      const nameLabel = api.createElement('code');\n      nameLabel.textContent = fieldName;\n      nameLabel.style.cssText = 'font-size: 0.8125rem; color: var(--color-text); font-weight: 500;';\n      header.appendChild(nameLabel);\n    }\n\n    row.appendChild(header);\n\n    // Formula editor using hob-structural\n    const formulaEl = await hobStructural.render([formula], {\n      mode: isEditable ? 'editable' : 'readonly',\n      onChange: isEditable ? (newFormula) => {\n        edited[fieldName] = newFormula[0];\n        emitChange();\n      } : null,\n    }, api);\n    row.appendChild(formulaEl);\n\n    wrapper.appendChild(row);\n  }\n\n  // Add button\n  if (isEditable) {\n    const addBtn = api.createElement('button');\n    addBtn.textContent = '+ Add computed field';\n    addBtn.style.cssText = 'align-self: flex-start; padding: 4px 12px; background: var(--color-bg-surface-alt); border: 1px dashed var(--color-border); border-radius: var(--border-radius); color: var(--color-text-muted); cursor: pointer; font-size: 0.8125rem;';\n    addBtn.addEventListener('click', async () => {\n      // Find a unique name\n      let i = 1;\n      let name = 'field-' + i;\n      while (edited[name]) { i++; name = 'field-' + i; }\n\n      // Default to empty list \u2014 minimal editable form in structural editor\n      edited[name] = [];\n      emitChange();\n\n      // Re-render the new entry inline\n      const row = api.createElement('div', { className: 'computed-field-row' });\n      row.style.cssText = 'display: flex; flex-direction: column; gap: 4px; padding: 8px; background: var(--color-bg-surface-alt); border-radius: var(--border-radius); border: 1px solid var(--color-border);';\n\n      const header = api.createElement('div');\n      header.style.cssText = 'display: flex; align-items: center; gap: 8px;';\n\n      const nameInput = api.createElement('input', {\n        type: 'text',\n        value: name,\n        placeholder: 'field name',\n        style: 'flex: 1; padding: 4px 8px; border: 1px solid var(--color-border); border-radius: var(--border-radius); font-size: 0.8125rem; font-family: monospace; background: var(--color-bg-surface); color: var(--color-text);'\n      });\n      nameInput.addEventListener('change', (e) => {\n        const newName = e.target.value.trim();\n        if (newName && newName !== name && !edited[newName]) {\n          const val = edited[name];\n          delete edited[name];\n          edited[newName] = val;\n          name = newName;\n          emitChange();\n        }\n      });\n      header.appendChild(nameInput);\n\n      const deleteBtn = api.createElement('button');\n      deleteBtn.textContent = '\u00d7';\n      deleteBtn.title = 'Remove computed field';\n      deleteBtn.style.cssText = 'background: none; border: none; color: var(--color-danger); cursor: pointer; font-size: 1.25rem; padding: 0 4px; line-height: 1;';\n      deleteBtn.addEventListener('click', () => {\n        delete edited[name];\n        emitChange();\n        row.remove();\n      });\n      header.appendChild(deleteBtn);\n      row.appendChild(header);\n\n      const formulaEl = await hobStructural.render([[]], {\n        mode: 'editable',\n        onChange: (newFormula) => {\n          edited[name] = newFormula[0];\n          emitChange();\n        },\n      }, api);\n      row.appendChild(formulaEl);\n\n      wrapper.insertBefore(row, addBtn);\n      nameInput.focus();\n      nameInput.select();\n    });\n    wrapper.appendChild(addBtn);\n  }\n\n  return wrapper;\n}\n"
+    "description": [
+      ":doc",
+      [
+        ":p",
+        {
+          "s": "Field view for editing computed fields on structured notes. Renders content.computed as name/formula pairs, delegating each formula to field-view-hob-structural."
+        }
+      ]
+    ],
+    "code": "\nexport async function render(value, options, api) {\n  const { mode, onChange, label } = options;\n  const isEditable = mode === 'editable' && onChange;\n  const computed = value || {};\n\n  const wrapper = api.createElement('div', { className: 'field-computed-fields' });\n  wrapper.style.cssText = 'display: flex; flex-direction: column; gap: 8px;';\n\n  if (label) {\n    const labelEl = api.createElement('label');\n    labelEl.textContent = label;\n    labelEl.style.cssText = 'font-weight: 500; font-size: 0.875rem; color: var(--color-text);';\n    wrapper.appendChild(labelEl);\n  }\n\n  const hobStructural = await api.require('field-view-hob-structural');\n\n  const entries = Object.entries(computed);\n\n  if (entries.length === 0 && !isEditable) {\n    const empty = api.createElement('div');\n    empty.textContent = 'No computed fields';\n    empty.style.cssText = 'color: var(--color-text-muted); font-size: 0.8125rem; font-style: italic;';\n    wrapper.appendChild(empty);\n    return wrapper;\n  }\n\n  // Clone computed map for edits\n  const edited = { ...computed };\n\n  function emitChange() {\n    if (onChange) onChange({ ...edited });\n  }\n\n  for (const [fieldName, formula] of entries) {\n    const row = api.createElement('div', { className: 'computed-field-row' });\n    row.style.cssText = 'display: flex; flex-direction: column; gap: 4px; padding: 8px; background: var(--color-bg-surface-alt); border-radius: var(--border-radius); border: 1px solid var(--color-border);';\n\n    // Header row: field name + delete button\n    const header = api.createElement('div');\n    header.style.cssText = 'display: flex; align-items: center; gap: 8px;';\n\n    if (isEditable) {\n      const nameInput = api.createElement('input', {\n        type: 'text',\n        value: fieldName,\n        placeholder: 'field name',\n        style: 'flex: 1; padding: 4px 8px; border: 1px solid var(--color-border); border-radius: var(--border-radius); font-size: 0.8125rem; font-family: monospace; background: var(--color-bg-surface); color: var(--color-text);'\n      });\n      nameInput.addEventListener('change', (e) => {\n        const newName = e.target.value.trim();\n        if (newName && newName !== fieldName && !edited[newName]) {\n          const val = edited[fieldName];\n          delete edited[fieldName];\n          edited[newName] = val;\n          emitChange();\n        }\n      });\n      header.appendChild(nameInput);\n\n      const deleteBtn = api.createElement('button');\n      deleteBtn.textContent = '×';\n      deleteBtn.title = 'Remove computed field';\n      deleteBtn.style.cssText = 'background: none; border: none; color: var(--color-danger); cursor: pointer; font-size: 1.25rem; padding: 0 4px; line-height: 1;';\n      deleteBtn.addEventListener('click', () => {\n        delete edited[fieldName];\n        emitChange();\n        row.remove();\n      });\n      header.appendChild(deleteBtn);\n    } else {\n      const nameLabel = api.createElement('code');\n      nameLabel.textContent = fieldName;\n      nameLabel.style.cssText = 'font-size: 0.8125rem; color: var(--color-text); font-weight: 500;';\n      header.appendChild(nameLabel);\n    }\n\n    row.appendChild(header);\n\n    // Formula editor using hob-structural\n    const formulaEl = await hobStructural.render([formula], {\n      mode: isEditable ? 'editable' : 'readonly',\n      onChange: isEditable ? (newFormula) => {\n        edited[fieldName] = newFormula[0];\n        emitChange();\n      } : null,\n    }, api);\n    row.appendChild(formulaEl);\n\n    wrapper.appendChild(row);\n  }\n\n  // Add button\n  if (isEditable) {\n    const addBtn = api.createElement('button');\n    addBtn.textContent = '+ Add computed field';\n    addBtn.style.cssText = 'align-self: flex-start; padding: 4px 12px; background: var(--color-bg-surface-alt); border: 1px dashed var(--color-border); border-radius: var(--border-radius); color: var(--color-text-muted); cursor: pointer; font-size: 0.8125rem;';\n    addBtn.addEventListener('click', async () => {\n      // Find a unique name\n      let i = 1;\n      let name = 'field-' + i;\n      while (edited[name]) { i++; name = 'field-' + i; }\n\n      // Default to empty list — minimal editable form in structural editor\n      edited[name] = [];\n      emitChange();\n\n      // Re-render the new entry inline\n      const row = api.createElement('div', { className: 'computed-field-row' });\n      row.style.cssText = 'display: flex; flex-direction: column; gap: 4px; padding: 8px; background: var(--color-bg-surface-alt); border-radius: var(--border-radius); border: 1px solid var(--color-border);';\n\n      const header = api.createElement('div');\n      header.style.cssText = 'display: flex; align-items: center; gap: 8px;';\n\n      const nameInput = api.createElement('input', {\n        type: 'text',\n        value: name,\n        placeholder: 'field name',\n        style: 'flex: 1; padding: 4px 8px; border: 1px solid var(--color-border); border-radius: var(--border-radius); font-size: 0.8125rem; font-family: monospace; background: var(--color-bg-surface); color: var(--color-text);'\n      });\n      nameInput.addEventListener('change', (e) => {\n        const newName = e.target.value.trim();\n        if (newName && newName !== name && !edited[newName]) {\n          const val = edited[name];\n          delete edited[name];\n          edited[newName] = val;\n          name = newName;\n          emitChange();\n        }\n      });\n      header.appendChild(nameInput);\n\n      const deleteBtn = api.createElement('button');\n      deleteBtn.textContent = '×';\n      deleteBtn.title = 'Remove computed field';\n      deleteBtn.style.cssText = 'background: none; border: none; color: var(--color-danger); cursor: pointer; font-size: 1.25rem; padding: 0 4px; line-height: 1;';\n      deleteBtn.addEventListener('click', () => {\n        delete edited[name];\n        emitChange();\n        row.remove();\n      });\n      header.appendChild(deleteBtn);\n      row.appendChild(header);\n\n      const formulaEl = await hobStructural.render([[]], {\n        mode: 'editable',\n        onChange: (newFormula) => {\n          edited[name] = newFormula[0];\n          emitChange();\n        },\n      }, api);\n      row.appendChild(formulaEl);\n\n      wrapper.insertBefore(row, addBtn);\n      nameInput.focus();\n      nameInput.select();\n    });\n    wrapper.appendChild(addBtn);\n  }\n\n  return wrapper;\n}\n",
+    "_symbols": {
+      "render": {
+        "name": "render",
+        "line": 2,
+        "col": 7,
+        "endLine": 163,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(value, options, api)"
+      },
+      "render.isEditable": {
+        "name": "isEditable",
+        "line": 4,
+        "col": 8,
+        "endLine": 4,
+        "endCol": 52,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.computed": {
+        "name": "computed",
+        "line": 5,
+        "col": 8,
+        "endLine": 5,
+        "endCol": 30,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.wrapper": {
+        "name": "wrapper",
+        "line": 7,
+        "col": 8,
+        "endLine": 7,
+        "endCol": 82,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.labelEl": {
+        "name": "labelEl",
+        "line": 11,
+        "col": 10,
+        "endLine": 11,
+        "endCol": 46,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.hobStructural": {
+        "name": "hobStructural",
+        "line": 17,
+        "col": 8,
+        "endLine": 17,
+        "endCol": 70,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.entries": {
+        "name": "entries",
+        "line": 19,
+        "col": 8,
+        "endLine": 19,
+        "endCol": 42,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.empty": {
+        "name": "empty",
+        "line": 22,
+        "col": 10,
+        "endLine": 22,
+        "endCol": 42,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.edited": {
+        "name": "edited",
+        "line": 30,
+        "col": 8,
+        "endLine": 30,
+        "endCol": 32,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.emitChange": {
+        "name": "emitChange",
+        "line": 32,
+        "col": 2,
+        "endLine": 34,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "render",
+        "signature": "()"
+      },
+      "render.row": {
+        "name": "row",
+        "line": 110,
+        "col": 12,
+        "endLine": 110,
+        "endCol": 79,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.header": {
+        "name": "header",
+        "line": 113,
+        "col": 12,
+        "endLine": 113,
+        "endCol": 45,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.nameInput": {
+        "name": "nameInput",
+        "line": 116,
+        "col": 12,
+        "endLine": 121,
+        "endCol": 8,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.newName": {
+        "name": "newName",
+        "line": 123,
+        "col": 14,
+        "endLine": 123,
+        "endCol": 45,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.val": {
+        "name": "val",
+        "line": 125,
+        "col": 16,
+        "endLine": 125,
+        "endCol": 34,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.deleteBtn": {
+        "name": "deleteBtn",
+        "line": 134,
+        "col": 12,
+        "endLine": 134,
+        "endCol": 51,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.nameLabel": {
+        "name": "nameLabel",
+        "line": 73,
+        "col": 12,
+        "endLine": 73,
+        "endCol": 49,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.formulaEl": {
+        "name": "formulaEl",
+        "line": 146,
+        "col": 12,
+        "endLine": 152,
+        "endCol": 13,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.addBtn": {
+        "name": "addBtn",
+        "line": 96,
+        "col": 10,
+        "endLine": 96,
+        "endCol": 46,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.i": {
+        "name": "i",
+        "line": 101,
+        "col": 10,
+        "endLine": 101,
+        "endCol": 15,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.name": {
+        "name": "name",
+        "line": 102,
+        "col": 10,
+        "endLine": 102,
+        "endCol": 29,
+        "kind": "variable",
+        "scope": "render"
+      }
+    }
   },
   "attachments": []
 }

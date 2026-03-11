@@ -3,9 +3,1091 @@
   "name": "Move Rendering to Viewport",
   "type": "871ae771-b9b1-4f40-8c7f-d9038bfb69c3",
   "created": 1738540800000,
-  "modified": 1772793206600,
+  "modified": 1773243817598,
   "content": {
-    "description": "Explore whether `kernel:rendering` should be a viewport concern rather than a kernel module. The rendering system is already *de facto* viewport-scoped — the kernel touches it in exactly one place (`renderViewport()`), and views access it exclusively through the `api` object, never through `kernel.rendering` directly.\n\n## Current State\n\n`kernel:rendering` (~600 lines) has three clusters of responsibility:\n\n| Cluster | Lines | What it does |\n|---------|-------|--------------|\n| View resolution | ~100 | `resolveView()`, `findView()`, `getViews()`, walks item → type → extends chain → fallback |\n| Render instance registry | ~120 | Tracks every rendered DOM node by item/view/parent ID. Powers `rerenderItem()`, `rerenderByView()`, `rerenderByType()` |\n| Renderer API factory | ~300 | `createAPI()` (now on kernel:core) builds the `api` object views receive — a facade over storage, module system, viewport-manager, selection-manager, events |\n\nThe kernel's only use of rendering is:\n\n```javascript\nasync renderViewport() {\n    this.rendering.cleanupDOMTree(mainView);\n    this.rendering.registry.clear();\n    const dom = await this.rendering.renderItem(IDS.VIEWPORT);\n    mainView.innerHTML = '';\n    mainView.appendChild(dom);\n}\n```\n\n## What Could Move\n\n**Clean moves:**\n\n- **Renderer API factory** — Already viewport-centric. References viewport-manager, selection-manager, navigateTo, decorator, siblingContainer. It's building a \"viewport rendering context\" and calling it a \"renderer API.\"\n- **View resolution** — The preference hierarchy (item → type → extends chain) is a policy decision, not a kernel primitive. Different viewports could resolve views differently.\n- **View discovery** (`getViews()`) — Pure query. Could be a library function.\n\n**Harder moves:**\n\n- **Render instance registry** — Global across all rendered content. `rerenderItem()` must find every instance of an item across the whole DOM tree. Called from many places: REPL API, import, saveItem flows, views themselves. Today it's singleton, but logically it belongs to whoever owns the render tree.\n- **`renderItem()` core loop** — Fetch item → resolve view → load module → call render → register instance. This is what connects the module system to the DOM. If viewport owns this, the kernel would have no concept of \"turning items into DOM.\"\n\n## The Core Question\n\n**Should the kernel know what DOM is?**\n\nIf rendering moves entirely to the viewport:\n\n- **Kernel becomes:** storage + events + module system + safe mode\n- **Viewport becomes:** rendering + view resolution + registry + chrome\n- `renderViewport()` in kernel:core reduces to calling a viewport library's render function\n\nThe key insight is that views don't know or care where `api.renderItem` comes from. They call it as a function on their api object. The implementation could live anywhere — kernel module, library, or viewport internals — as long as the API object provides it.\n\n## Possible Architecture\n\nA `rendering-lib` library that:\n1. Owns the `RenderingSystem` class (registry, renderItem, view resolution)\n2. Is loaded by viewport-view during render\n3. Injects `renderItem`, `rerenderItem`, etc. into the api object it constructs\n4. Exposes a top-level `render(rootId, container)` for kernel:core to call\n\nKernel:core's `renderViewport()` would become:\n\n```javascript\nasync renderViewport() {\n    const renderingLib = await this.moduleSystem.require('rendering-lib');\n    await renderingLib.render(IDS.VIEWPORT, mainView);\n}\n```\n\nThe main thing the kernel provides that's hard to replicate in userland is the `this.kernel` reference that `RenderingSystem` uses to access storage and module system. But a library receives `api` which has the same access — or the kernel could pass a minimal interface (storage + moduleSystem + events) to the library.\n\n## Trade-offs\n\n| For (move to viewport) | Against (keep in kernel) |\n|------------------------|-------------------------|\n| Kernel becomes smaller and DOM-free | One more library to load during boot |\n| View resolution becomes a swappable policy | `renderViewport()` would need to `require()` before first render |\n| Aligns with \"viewport is userland\" principle | Registry needs kernel-level access for partial re-render |\n| Multiple viewports could have separate registries | Safe mode fallback rendering would need different path |\n| Rendering hot-reload becomes possible | More indirection in the boot path |\n\n## Incremental Path\n\n1. **Extract renderer API factory** to a library (lowest risk, highest reward — it's 300 lines of viewport-specific wiring)\n2. **Extract view resolution** to a library (pure functions, easy to test)\n3. **Move registry + renderItem** (the hard part — needs careful API design for the kernel↔library boundary)\n4. **Remove kernel:rendering module** entirely once kernel:core only calls the library\n\n## Priority\n\nLow — the system works fine as-is, and there's no functional limitation. This is an architectural clarity improvement. The right moment is when something *needs* viewport-scoped rendering (e.g., nested Hobson instances with separate view registries, or swappable rendering strategies).\n\n## Epilogue (Feb 2026) — Implemented\n\nThis proposal was fully implemented. The rendering system moved out of the kernel:\n\n- **Old**: `kernel:rendering` (`33333333-5555`) was a kernel module loaded by kernel-core\n- **New**: `viewport-rendering` (`f1111111-0008`) is a userland library loaded by viewport-manager\n\n### Architecture After\n\n- **Kernel** = storage + events + module system + safe mode. No DOM knowledge, no rendering imports.\n- **viewport-manager** loads viewport-rendering at boot (via `onKernelBootComplete`), owns the render lifecycle.\n- **viewport-rendering** provides `enrichAPI()` which adds rendering methods (`renderItem`, `rerenderItem`, `getViews`, `navigate`, `viewport.*`, etc.) to the base kernel API. Views get the enriched API; the REPL gets only kernel primitives.\n- **Safe mode** is the default kernel screen — always rendered first, then replaced by viewport-manager after boot-complete.\n- **Re-renders** are driven by reactive events (`ITEM_UPDATED`/`ITEM_DELETED`), not explicit `renderViewport()` calls from kernel code.\n- **Kernel internal UIs** (item list, raw editor) use direct URL manipulation instead of depending on viewport-manager.\n\nThe incremental path proposed above was followed almost exactly (stages 1–4).",
+    "description": [
+      ":doc",
+      [
+        ":p",
+        {
+          "s": "Explore whether "
+        },
+        [
+          ":code",
+          {
+            "s": "kernel:rendering"
+          }
+        ],
+        {
+          "s": " should be a viewport concern rather than a kernel module. The rendering system is already "
+        },
+        [
+          ":em",
+          {
+            "s": "de facto"
+          }
+        ],
+        {
+          "s": " viewport-scoped — the kernel touches it in exactly one place ("
+        },
+        [
+          ":code",
+          {
+            "s": "renderViewport()"
+          }
+        ],
+        {
+          "s": "), and views access it exclusively through the "
+        },
+        [
+          ":code",
+          {
+            "s": "api"
+          }
+        ],
+        {
+          "s": " object, never through "
+        },
+        [
+          ":code",
+          {
+            "s": "kernel.rendering"
+          }
+        ],
+        {
+          "s": " directly."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Current State"
+        }
+      ],
+      [
+        ":p",
+        [
+          ":code",
+          {
+            "s": "kernel:rendering"
+          }
+        ],
+        {
+          "s": " (~600 lines) has three clusters of responsibility:"
+        }
+      ],
+      [
+        ":table",
+        [
+          ":thead",
+          [
+            ":tr",
+            [
+              ":th",
+              {
+                "s": "Cluster"
+              }
+            ],
+            [
+              ":th",
+              {
+                "s": "Lines"
+              }
+            ],
+            [
+              ":th",
+              {
+                "s": "What it does"
+              }
+            ]
+          ]
+        ],
+        [
+          ":tbody",
+          [
+            ":tr",
+            [
+              ":td",
+              {
+                "s": "View resolution"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "~100"
+              }
+            ],
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "resolveView()"
+                }
+              ],
+              {
+                "s": ", "
+              },
+              [
+                ":code",
+                {
+                  "s": "findView()"
+                }
+              ],
+              {
+                "s": ", "
+              },
+              [
+                ":code",
+                {
+                  "s": "getViews()"
+                }
+              ],
+              {
+                "s": ", walks item → type → extends chain → fallback"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              {
+                "s": "Render instance registry"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "~120"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Tracks every rendered DOM node by item/view/parent ID. Powers "
+              },
+              [
+                ":code",
+                {
+                  "s": "rerenderItem()"
+                }
+              ],
+              {
+                "s": ", "
+              },
+              [
+                ":code",
+                {
+                  "s": "rerenderByView()"
+                }
+              ],
+              {
+                "s": ", "
+              },
+              [
+                ":code",
+                {
+                  "s": "rerenderByType()"
+                }
+              ]
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              {
+                "s": "Renderer API factory"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "~300"
+              }
+            ],
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "createAPI()"
+                }
+              ],
+              {
+                "s": " (now on kernel:core) builds the "
+              },
+              [
+                ":code",
+                {
+                  "s": "api"
+                }
+              ],
+              {
+                "s": " object views receive — a facade over storage, module system, viewport-manager, selection-manager, events"
+              }
+            ]
+          ]
+        ]
+      ],
+      [
+        ":p",
+        {
+          "s": "The kernel's only use of rendering is:"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": "async renderViewport() {\n    this.rendering.cleanupDOMTree(mainView);\n    this.rendering.registry.clear();\n    const dom = await this.rendering.renderItem(IDS.VIEWPORT);\n    mainView.innerHTML = '';\n    mainView.appendChild(dom);\n}"
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "What Could Move"
+        }
+      ],
+      [
+        ":p",
+        [
+          ":strong",
+          {
+            "s": "Clean moves:"
+          }
+        ]
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Renderer API factory"
+              }
+            ],
+            {
+              "s": " — Already viewport-centric. References viewport-manager, selection-manager, navigateTo, decorator, siblingContainer. It's building a \"viewport rendering context\" and calling it a \"renderer API.\""
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "View resolution"
+              }
+            ],
+            {
+              "s": " — The preference hierarchy (item → type → extends chain) is a policy decision, not a kernel primitive. Different viewports could resolve views differently."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "View discovery"
+              }
+            ],
+            {
+              "s": " ("
+            },
+            [
+              ":code",
+              {
+                "s": "getViews()"
+              }
+            ],
+            {
+              "s": ") — Pure query. Could be a library function."
+            }
+          ]
+        ]
+      ],
+      [
+        ":p",
+        [
+          ":strong",
+          {
+            "s": "Harder moves:"
+          }
+        ]
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Render instance registry"
+              }
+            ],
+            {
+              "s": " — Global across all rendered content. "
+            },
+            [
+              ":code",
+              {
+                "s": "rerenderItem()"
+              }
+            ],
+            {
+              "s": " must find every instance of an item across the whole DOM tree. Called from many places: REPL API, import, saveItem flows, views themselves. Today it's singleton, but logically it belongs to whoever owns the render tree."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "`renderItem()` core loop"
+              }
+            ],
+            {
+              "s": " — Fetch item → resolve view → load module → call render → register instance. This is what connects the module system to the DOM. If viewport owns this, the kernel would have no concept of \"turning items into DOM.\""
+            }
+          ]
+        ]
+      ],
+      [
+        ":h2",
+        {
+          "s": "The Core Question"
+        }
+      ],
+      [
+        ":p",
+        [
+          ":strong",
+          {
+            "s": "Should the kernel know what DOM is?"
+          }
+        ]
+      ],
+      [
+        ":p",
+        {
+          "s": "If rendering moves entirely to the viewport:"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Kernel becomes:"
+              }
+            ],
+            {
+              "s": " storage + events + module system + safe mode"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Viewport becomes:"
+              }
+            ],
+            {
+              "s": " rendering + view resolution + registry + chrome"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":code",
+              {
+                "s": "renderViewport()"
+              }
+            ],
+            {
+              "s": " in kernel:core reduces to calling a viewport library's render function"
+            }
+          ]
+        ]
+      ],
+      [
+        ":p",
+        {
+          "s": "The key insight is that views don't know or care where "
+        },
+        [
+          ":code",
+          {
+            "s": "api.renderItem"
+          }
+        ],
+        {
+          "s": " comes from. They call it as a function on their api object. The implementation could live anywhere — kernel module, library, or viewport internals — as long as the API object provides it."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Possible Architecture"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "A "
+        },
+        [
+          ":code",
+          {
+            "s": "rendering-lib"
+          }
+        ],
+        {
+          "s": " library that:"
+        }
+      ],
+      [
+        ":ol",
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Owns the "
+            },
+            [
+              ":code",
+              {
+                "s": "RenderingSystem"
+              }
+            ],
+            {
+              "s": " class (registry, renderItem, view resolution)"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Is loaded by viewport-view during render"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Injects "
+            },
+            [
+              ":code",
+              {
+                "s": "renderItem"
+              }
+            ],
+            {
+              "s": ", "
+            },
+            [
+              ":code",
+              {
+                "s": "rerenderItem"
+              }
+            ],
+            {
+              "s": ", etc. into the api object it constructs"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Exposes a top-level "
+            },
+            [
+              ":code",
+              {
+                "s": "render(rootId, container)"
+              }
+            ],
+            {
+              "s": " for kernel:core to call"
+            }
+          ]
+        ]
+      ],
+      [
+        ":p",
+        {
+          "s": "Kernel:core's "
+        },
+        [
+          ":code",
+          {
+            "s": "renderViewport()"
+          }
+        ],
+        {
+          "s": " would become:"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": "async renderViewport() {\n    const renderingLib = await this.moduleSystem.require('rendering-lib');\n    await renderingLib.render(IDS.VIEWPORT, mainView);\n}"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The main thing the kernel provides that's hard to replicate in userland is the "
+        },
+        [
+          ":code",
+          {
+            "s": "this.kernel"
+          }
+        ],
+        {
+          "s": " reference that "
+        },
+        [
+          ":code",
+          {
+            "s": "RenderingSystem"
+          }
+        ],
+        {
+          "s": " uses to access storage and module system. But a library receives "
+        },
+        [
+          ":code",
+          {
+            "s": "api"
+          }
+        ],
+        {
+          "s": " which has the same access — or the kernel could pass a minimal interface (storage + moduleSystem + events) to the library."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Trade-offs"
+        }
+      ],
+      [
+        ":table",
+        [
+          ":thead",
+          [
+            ":tr",
+            [
+              ":th",
+              {
+                "s": "For (move to viewport)"
+              }
+            ],
+            [
+              ":th",
+              {
+                "s": "Against (keep in kernel)"
+              }
+            ]
+          ]
+        ],
+        [
+          ":tbody",
+          [
+            ":tr",
+            [
+              ":td",
+              {
+                "s": "Kernel becomes smaller and DOM-free"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "One more library to load during boot"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              {
+                "s": "View resolution becomes a swappable policy"
+              }
+            ],
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "renderViewport()"
+                }
+              ],
+              {
+                "s": " would need to "
+              },
+              [
+                ":code",
+                {
+                  "s": "require()"
+                }
+              ],
+              {
+                "s": " before first render"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              {
+                "s": "Aligns with \"viewport is userland\" principle"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Registry needs kernel-level access for partial re-render"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              {
+                "s": "Multiple viewports could have separate registries"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Safe mode fallback rendering would need different path"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              {
+                "s": "Rendering hot-reload becomes possible"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "More indirection in the boot path"
+              }
+            ]
+          ]
+        ]
+      ],
+      [
+        ":h2",
+        {
+          "s": "Incremental Path"
+        }
+      ],
+      [
+        ":ol",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Extract renderer API factory"
+              }
+            ],
+            {
+              "s": " to a library (lowest risk, highest reward — it's 300 lines of viewport-specific wiring)"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Extract view resolution"
+              }
+            ],
+            {
+              "s": " to a library (pure functions, easy to test)"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Move registry + renderItem"
+              }
+            ],
+            {
+              "s": " (the hard part — needs careful API design for the kernel↔library boundary)"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Remove kernel:rendering module"
+              }
+            ],
+            {
+              "s": " entirely once kernel:core only calls the library"
+            }
+          ]
+        ]
+      ],
+      [
+        ":h2",
+        {
+          "s": "Priority"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Low — the system works fine as-is, and there's no functional limitation. This is an architectural clarity improvement. The right moment is when something "
+        },
+        [
+          ":em",
+          {
+            "s": "needs"
+          }
+        ],
+        {
+          "s": " viewport-scoped rendering (e.g., nested Hobson instances with separate view registries, or swappable rendering strategies)."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Epilogue (Feb 2026) — Implemented"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "This proposal was fully implemented. The rendering system moved out of the kernel:"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Old"
+              }
+            ],
+            {
+              "s": ": "
+            },
+            [
+              ":code",
+              {
+                "s": "kernel:rendering"
+              }
+            ],
+            {
+              "s": " ("
+            },
+            [
+              ":code",
+              {
+                "s": "33333333-5555"
+              }
+            ],
+            {
+              "s": ") was a kernel module loaded by kernel-core"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "New"
+              }
+            ],
+            {
+              "s": ": "
+            },
+            [
+              ":code",
+              {
+                "s": "viewport-rendering"
+              }
+            ],
+            {
+              "s": " ("
+            },
+            [
+              ":code",
+              {
+                "s": "f1111111-0008"
+              }
+            ],
+            {
+              "s": ") is a userland library loaded by viewport-manager"
+            }
+          ]
+        ]
+      ],
+      [
+        ":h3",
+        {
+          "s": "Architecture After"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Kernel"
+              }
+            ],
+            {
+              "s": " = storage + events + module system + safe mode. No DOM knowledge, no rendering imports."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "viewport-manager"
+              }
+            ],
+            {
+              "s": " loads viewport-rendering at boot (via "
+            },
+            [
+              ":code",
+              {
+                "s": "onKernelBootComplete"
+              }
+            ],
+            {
+              "s": "), owns the render lifecycle."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "viewport-rendering"
+              }
+            ],
+            {
+              "s": " provides "
+            },
+            [
+              ":code",
+              {
+                "s": "enrichAPI()"
+              }
+            ],
+            {
+              "s": " which adds rendering methods ("
+            },
+            [
+              ":code",
+              {
+                "s": "renderItem"
+              }
+            ],
+            {
+              "s": ", "
+            },
+            [
+              ":code",
+              {
+                "s": "rerenderItem"
+              }
+            ],
+            {
+              "s": ", "
+            },
+            [
+              ":code",
+              {
+                "s": "getViews"
+              }
+            ],
+            {
+              "s": ", "
+            },
+            [
+              ":code",
+              {
+                "s": "navigate"
+              }
+            ],
+            {
+              "s": ", "
+            },
+            [
+              ":code",
+              {
+                "s": "viewport.*"
+              }
+            ],
+            {
+              "s": ", etc.) to the base kernel API. Views get the enriched API; the REPL gets only kernel primitives."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Safe mode"
+              }
+            ],
+            {
+              "s": " is the default kernel screen — always rendered first, then replaced by viewport-manager after boot-complete."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Re-renders"
+              }
+            ],
+            {
+              "s": " are driven by reactive events ("
+            },
+            [
+              ":code",
+              {
+                "s": "ITEM_UPDATED"
+              }
+            ],
+            {
+              "s": "/"
+            },
+            [
+              ":code",
+              {
+                "s": "ITEM_DELETED"
+              }
+            ],
+            {
+              "s": "), not explicit "
+            },
+            [
+              ":code",
+              {
+                "s": "renderViewport()"
+              }
+            ],
+            {
+              "s": " calls from kernel code."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Kernel internal UIs"
+              }
+            ],
+            {
+              "s": " (item list, raw editor) use direct URL manipulation instead of depending on viewport-manager."
+            }
+          ]
+        ]
+      ],
+      [
+        ":p",
+        {
+          "s": "The incremental path proposed above was followed almost exactly (stages 1–4)."
+        }
+      ]
+    ],
     "tags": [
       "c0c0c0c0-0040-0000-0000-000000000000",
       "c0c0c0c0-0080-0000-0000-000000000000",

@@ -3,10 +3,18 @@
   "name": "event-tests",
   "type": "22222222-0000-0000-0000-000000000000",
   "created": 1770672283343,
-  "modified": 1770673250963,
+  "modified": 1773243816886,
   "content": {
     "code": "export async function run(api) {\n  const { createSuite, assert, assertEquals } = await api.require('test-lib');\n  const { testAsync, getResults } = createSuite('Events');\n\n  const ITEM_UPDATED = 'e0e00000-0001-0002-0000-000000000000';\n\n  async function onReceivesEmitted() {\n    let received = null;\n    const unsub = api.events.on(ITEM_UPDATED, (event) => {\n      if (event.content?._testMarker === 'events-test-1') received = event;\n    });\n    try {\n      api.events.emit({\n        type: ITEM_UPDATED,\n        content: { _testMarker: 'events-test-1', value: 42 }\n      });\n      assert(received, 'Handler should have been called');\n      assertEquals(received.content.value, 42);\n      assert(received.timestamp, 'Event should have a timestamp');\n    } finally {\n      unsub();\n    }\n  }\n\n  async function offUnsubscribes() {\n    let callCount = 0;\n    const handler = () => { callCount++; };\n    api.events.on(ITEM_UPDATED, handler);\n\n    api.events.emit({ type: ITEM_UPDATED, content: { _testMarker: 'events-test-2' } });\n    assertEquals(callCount, 1, 'Handler should be called once');\n\n    api.events.off(ITEM_UPDATED, handler);\n    api.events.emit({ type: ITEM_UPDATED, content: { _testMarker: 'events-test-3' } });\n    assertEquals(callCount, 1, 'Handler should not be called after off()');\n  }\n\n  async function returnedUnsubscribeWorks() {\n    let callCount = 0;\n    const unsub = api.events.on(ITEM_UPDATED, () => { callCount++; });\n\n    api.events.emit({ type: ITEM_UPDATED, content: { _testMarker: 'events-test-4' } });\n    assertEquals(callCount, 1);\n\n    unsub();\n    api.events.emit({ type: ITEM_UPDATED, content: { _testMarker: 'events-test-5' } });\n    assertEquals(callCount, 1, 'Handler should not fire after unsubscribe');\n  }\n\n  async function typeHierarchyDispatch() {\n    const PARENT_TYPE = 'e0e00000-0001-0000-0000-000000000000'; // item-event\n    let received = false;\n    const unsub = api.events.on(PARENT_TYPE, (event) => {\n      if (event.content?._testMarker === 'events-test-hierarchy') received = true;\n    });\n    try {\n      api.events.emit({\n        type: ITEM_UPDATED,\n        content: { _testMarker: 'events-test-hierarchy' }\n      });\n      assert(received, 'Parent event listener should receive child event');\n    } finally {\n      unsub();\n    }\n  }\n\n  await testAsync('on() receives emitted events', onReceivesEmitted);\n  await testAsync('off() unsubscribes handler', offUnsubscribes);\n  await testAsync('on() returns unsubscribe function', returnedUnsubscribeWorks);\n  await testAsync('event type hierarchy dispatch', typeHierarchyDispatch);\n\n  return getResults();\n}\n",
-    "description": "Tests for the event system: on/off/emit, unsubscribe, and type hierarchy dispatch.",
+    "description": [
+      ":doc",
+      [
+        ":p",
+        {
+          "s": "Tests for the event system: on/off/emit, unsubscribe, and type hierarchy dispatch."
+        }
+      ]
+    ],
     "tags": [
       "c0c0c0c0-0070-0000-0000-000000000000"
     ],

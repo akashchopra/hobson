@@ -3,9 +3,1769 @@
   "name": "Reactive Computed Fields",
   "type": "871ae771-b9b1-4f40-8c7f-d9038bfb69c3",
   "created": 1740700800000,
-  "modified": 1772928000000,
+  "modified": 1773243817649,
   "content": {
-    "description": "**Status:** Complete (core mechanism, cross-item reactivity, error sentinels). Caching deferred as a future optimisation.\n\n## Summary\n\nItems can have computed fields — fields whose values are Hob expressions rather than static data. When accessed via `get-field`, the expression is evaluated lazily, and the caller inherits reactive dependencies on whatever the formula references. This gives Hobson spreadsheet-like reactive calculations where formulas reference item properties (both local and cross-item) instead of cell addresses.\n\nThis mechanism also unifies transclusions: a transclusion is simply a computed field whose formula is `(get-field @other-item :some-field)`. Functional transclusions (previously `?call=`) are computed fields whose formulas call module exports that return DOM elements, e.g. `(invoke (require \\\\\\\"module\\\\\\\") \\\\\\\"fn\\\\\\\" api params)`. One mechanism covers static values, transclusions, calculations, aggregations, and embedded UI components.\n\n## Motivation\n\nHobson items store structured data in `content` fields. Today, all field values are static — if you want a derived value, you compute it at display time (in a view) or manually keep it in sync. There's no way to say \"this field's value is always X times Y\" and have the system maintain that invariant.\n\nSpreadsheets solved this decades ago: a cell can contain a formula that references other cells, and the system evaluates it lazily, caches the result, and recomputes when dependencies change. Hobson's item model is richer than a grid of cells, but the same idea applies: a field can contain a formula that references other fields, on the same item or on other items.\n\nStructured notes have been [merged into the regular note type](item://c0c0c0c0-0073-0000-0000-000000000000) — any note can use computed fields for transclusions, inline computed values, and reactive references. Any code path that calls `get-field` — a view, an event watcher, a REPL expression, or another computed field — triggers evaluation and inherits reactive dependencies.\n\n## Design\n\n### Storage: `content.computed`\n\nComputed fields live in a separate `content.computed` map. Keys are field names, values are Hob expressions stored as JSON AST.\n\n```json\n{\n  \"id\": \"...\",\n  \"content\": {\n    \"portfolio-value\": 100000,\n    \"computed\": {\n      \"year-end-value\": [\"*\",\n        [\"get-field\", \"@financial-data\", \":portfolio-value\"],\n        [\"+\", 1, [\"get-field\", \"@market-assumptions\", \":rate-of-return\"]]]\n    }\n  }\n}\n```\n\nThis keeps static data and formulas clearly separated. You can enumerate an item's formulas by inspecting `content.computed`, and static fields are never ambiguous.\n\n### Evaluation: lazy, not render-tied\n\n`get-field` is the single evaluation trigger. When `get-field` encounters a key that exists in `content.computed`, it evaluates the Hob expression and returns the result. The caller doesn't need to know whether a field is static or computed — `get-field` is the uniform access point.\n\nCrucially, evaluation is **not tied to rendering**. Any code path that calls `get-field` triggers evaluation. For JS code, `api.getField(itemId, fieldName)` provides a JS-callable wrapper that delegates to the Hob `get-field` function — field views and generic-view delegates can resolve computed fields without needing the Hob interpreter directly.\n\n- A view rendering a page with `(val (get-field @item :year-end-value))`\n- An event watcher checking `(get-field @budget :remaining)`\n- A REPL expression `(get-field @plan :projected-growth)`\n- Another computed field referencing this one\n\nIf a dependency tracker context is active (e.g., during a view render), the reactive dependencies are recorded — changes to referenced fields will trigger re-evaluation. If no tracker context is active (e.g., a one-shot REPL query), the formula evaluates and returns without setting up subscriptions.\n\n### Caching\n\nComputed fields cache their result. The cache is invalidated when any dependency changes (detected via the existing dependency tracking system). Multiple accesses within the same tick return the cached value without re-evaluation.\n\nThe cache lifecycle:\n1. First `get-field` access evaluates the formula, caches the result, records dependencies\n2. Subsequent accesses return the cached value\n3. When a dependency changes, the cache is marked stale (dirty flag)\n4. Next access re-evaluates, re-caches, re-records dependencies\n\nThis is the standard lazy-with-dirty-flag pattern. The dependency tracker already knows when deps change — it marks the cache stale rather than eagerly re-evaluating.\n\n### Cross-item references\n\nFormulas reference other items' fields via `get-field` with an item reference:\n\n```clojure\n(get-field @other-item :some-field)\n```\n\nThis works identically to how views reference item data today. The dependency tracker records that this computed field depends on `other-item.some-field`. When that field changes (whether it's static or itself computed), the cache is invalidated.\n\n### Formula DAG\n\nBecause computed fields can reference other computed fields (on the same or different items), formulas form a directed acyclic graph — exactly like a spreadsheet. Evaluation is demand-driven: accessing a computed field that depends on another computed field triggers evaluation of the dependency first.\n\n### Cycle detection\n\nCircular references must be detected and reported. During evaluation of a computed field, if `get-field` encounters a field that is already being evaluated (on the current evaluation stack), it raises an error rather than recursing infinitely.\n\nImplementation: a thread-local (or evaluation-context-local) set of `(itemId, fieldName)` pairs currently being evaluated. If a pair is already in the set when evaluation starts, it's a cycle.\n\n### Error handling\n\nWhen a formula fails (evaluation error, cycle detection, type error, missing reference):\n\n1. An `error-event` is emitted through the standard event bus, letting existing error handling mechanisms process it (e.g., creating an error item, logging)\n2. The error item captures the source item ID, the computed field name, and the exception\n3. `get-field` returns an error sentinel that views can detect and render as a clickable `ERR` link pointing to the error item\n\nThis follows the Hobson pattern: errors are items, inspectable and queryable. A \"broken formulas\" view could query for formula-error items across the system.\n\n## Examples\n\n### Simple local computation\n\n```json\n{\n  \"content\": {\n    \"quantity\": 10,\n    \"unit-price\": 25.50,\n    \"computed\": {\n      \"total\": [\"*\", [\"get-field\", \":self\", \":quantity\"],\n                     [\"get-field\", \":self\", \":unit-price\"]]\n    }\n  }\n}\n```\n\n### Cross-item financial projection\n\n```json\n{\n  \"content\": {\n    \"computed\": {\n      \"year-end-value\": [\"*\",\n        [\"get-field\", \"@financial-data\", \":portfolio-value\"],\n        [\"+\", 1, [\"get-field\", \"@market-assumptions\", \":rate-of-return\"]]],\n      \"five-year-value\": [\"*\",\n        [\"get-field\", \"@financial-data\", \":portfolio-value\"],\n        [\"pow\",\n          [\"+\", 1, [\"get-field\", \"@market-assumptions\", \":rate-of-return\"]],\n          5]]\n    }\n  }\n}\n```\n\n### Aggregation across items\n\n```json\n{\n  \"content\": {\n    \"computed\": {\n      \"total-budget\": [\"reduce\", \"+\", 0,\n        [\"map\",\n          [\"fn\", [\"item\"], [\"get-field\", \"item\", \":amount\"]],\n          [\"query-tagged\", \"@expense-tag\"]]]\n    }\n  }\n}\n```\n\n## Self-reference: `:self`\n\nFormulas that reference other fields on the same item use a `:self` pseudo-reference rather than hardcoding the item's own ID. This keeps formulas portable (the item can be duplicated without broken self-references) and readable.\n\n```clojure\n(get-field :self :quantity)   ;; this item's quantity field\n(get-field @other :quantity)  ;; another item's quantity field\n```\n\n`get-field` resolves `:self` to the item whose `content.computed` contains the formula being evaluated.\n\n## Editing\n\nInitially, computed fields are edited via the Hob structural editor — the same editor used for Hob code and structured pages. A formula is a Hob expression; the structural editor already knows how to edit those.\n\nFuture UX improvements (deferred):\n- A field editor that shows the formula when focused and the result when blurred (spreadsheet-style)\n- Formula bar in the inspector showing the expression for the selected field\n- Autocomplete for field names and item references within formulas\n\n## Relationship to Notes\n\nStructured notes have been [merged into the regular note type](item://c0c0c0c0-0073-0000-0000-000000000000). Any note can have `content.computed` fields and `{{field-name}}` references in its `content.description`. Computed fields are the single system for all reactive data:\n\n- A **transclusion** is a computed field: `(get-field @other-note :description)`\n- A **functional transclusion** is a computed field: `(invoke (require \\\\\\\"module\\\\\\\") \\\\\\\"fn\\\\\\\" api params)` — returns a DOM element\n- An **inline computed value** is a computed field: `(* (get-field :self :quantity) (get-field :self :price))`\n- An **aggregation** is a computed field: `(reduce + 0 (map ...))`\n\nThe note `content.description` contains `{{field-name}}` references that resolve via `get-field` (or `api.getField` from JS). The note doesn't know or care whether a field is static or computed — `get-field` is the uniform access point. Notes without computed fields or `{{` references render exactly as before.\n\n### Runtime Environment for Formulas\n\n`require` is available in stdlib (not just view contexts), so computed field formulas can load modules. During `api.getField` evaluation, the rendering `api` is temporarily available in the formula's environment via `_evalApi`, giving formulas access to `createElement`, `openItem`, and other rendering APIs needed for functional transclusions.\n\n## What This Enables\n\n- **Spreadsheet-like calculations** across the item graph — budgets, projections, aggregations, derived metrics\n- **Live dashboards** where computed fields aggregate data from tagged items, displayed via structured notes\n- **Constraint propagation** — a change to one field ripples through dependent computed fields across items\n- **Formula inspection** — because formulas are Hob AST (JSON), you can query \"what depends on this field?\" by walking the AST of all computed fields\n- **Portable formulas** — `:self` references make formulas work regardless of which item they're on, enabling template items with pre-defined calculations\n\n## Cross-Item Reactivity (Implemented)\n\nWhen a computed field references another item (e.g. `(get-field @other-item :name)`), the view automatically re-renders when the referenced item changes.\n\n### Architecture\n\nThe `RenderInstanceRegistry` has a `byCrossItemDep` index (`Map<depItemId, Set<instanceId>>`) alongside the existing `byItemId` and `byViewId` indexes. The `item:updated` and `item:deleted` handlers check all three indexes to schedule re-renders.\n\n### Dependency Tracking: Per-Render Tracker Pattern\n\nThe key challenge was concurrent child rendering: `fillMountPoints` renders siblings in parallel via `Promise.all`, so any shared mutable state (like a field on the singleton `_hobItemApi`) gets clobbered by interleaving async renders.\n\nThe solution uses a **per-render tracker** threaded through `get-field` as an internal parameter:\n\n1. **In `renderItem`**, `api._crossItemDeps = new Set()` is set on the per-render enriched API (not on the shared `_hobItemApi`).\n2. **`get-field`** accepts an optional 3rd `_tracker` parameter. When present, it adds the accessed `itemId` to the tracker Set. For recursive formula evaluation, it shadows `get-field` in the eval environment to propagate the same tracker.\n3. **For Hob views**, `renderHobView` shadows `get-field` in the per-render child env with a wrapper that passes `api._crossItemDeps` as the tracker.\n4. **For JS views**, `api.getField` tracks the `itemId` synchronously (before any await) and passes `api._crossItemDeps` as the tracker to the underlying `get-field`.\n5. **After render**, the collected deps (minus the item's own ID) are registered via `registry.registerCrossItemDeps`. On re-render, old deps are cleaned up and new ones registered.\n\nThis avoids all shared mutable state — each concurrent render tracks its own deps in its own Set, threaded through function parameters rather than global/singleton fields.\n\n## Error Sentinels (Implemented)\n\nWhen a computed field formula fails (evaluation error, circular reference, type error, missing reference), `get-field` returns an error sentinel instead of throwing:\n\n```javascript\n{ _hobType: 'computed-field-error', itemId, fieldName, message }\n```\n\nThis follows the existing `_hobType` sentinel pattern used by item-refs, symbols, and atoms.\n\n### Behaviour\n\n- **`get-field`**: Formula evaluation is wrapped in try/catch. Errors (including circular references) return a sentinel. The error is logged to console for debugging.\n- **`resolve-field-refs`** (Hob stdlib): Detects sentinels and renders `[ERR: fieldName]` in the resolved string.\n- **`resolveRefsMarkup`** (field-view-markdown-readonly): Detects sentinels and renders a red `ERR` span with the error message in the tooltip.\n- **`computed-field-error?`**: Stdlib predicate for checking if a value is an error sentinel.\n- **Transitive errors**: If field A depends on field B and B returns an error sentinel, the formula for A will likely fail trying to compute with the sentinel object. The try/catch around A's evaluation catches this and returns its own sentinel — errors propagate naturally.\n- **Catch handler in markdown view**: The existing try/catch also renders a styled `ERR` span for any errors that still throw (e.g. from `api.getField` itself).\n\n## Open Questions\n\n- **Performance at scale.** A large DAG of computed fields with deep cross-item dependencies could be expensive. The lazy + caching approach mitigates this (only evaluate what's accessed), but pathological cases (a dashboard aggregating thousands of items) may need batching or incremental computation.\n- **Persistence of cached values.** Should computed results be persisted (for offline access or faster cold start), or always recomputed from the formula? Persisting adds staleness concerns; recomputing adds startup cost.\n- **Type annotations for computed fields.** Should a computed field declare its expected return type? This could enable validation and richer editor support, but adds complexity.\n- **`:self` in nested contexts.** If a computed field's formula is evaluated in the context of a different item (e.g., a template applied to a target), what does `:self` resolve to? The item containing the formula, or the target item?\n\n## References\n\n- [Structured Notes](item://c0c0c0c0-0073-0000-0000-000000000000) — Merged into the note type. Uses computed fields as the single mechanism for transclusions, inline computed values, and reactive references.\n- [Hob Language Design Direction](item://c0c0c0c0-0058-0000-0000-000000000000) — Hob as the primary user-programming language in Hobson.\n- [JSON AST as Canonical Code Representation](item://c0c0c0c0-0051-0000-0000-000000000000) — The foundation: formulas stored as queryable, structured JSON AST.",
+    "description": [
+      ":doc",
+      [
+        ":p",
+        [
+          ":strong",
+          {
+            "s": "Status:"
+          }
+        ],
+        {
+          "s": " Complete (core mechanism, cross-item reactivity, error sentinels). Caching deferred as a future optimisation."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Summary"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Items can have computed fields — fields whose values are Hob expressions rather than static data. When accessed via "
+        },
+        [
+          ":code",
+          {
+            "s": "get-field"
+          }
+        ],
+        {
+          "s": ", the expression is evaluated lazily, and the caller inherits reactive dependencies on whatever the formula references. This gives Hobson spreadsheet-like reactive calculations where formulas reference item properties (both local and cross-item) instead of cell addresses."
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "This mechanism also unifies transclusions: a transclusion is simply a computed field whose formula is "
+        },
+        [
+          ":code",
+          {
+            "s": "(get-field @other-item :some-field)"
+          }
+        ],
+        {
+          "s": ". Functional transclusions (previously "
+        },
+        [
+          ":code",
+          {
+            "s": "?call="
+          }
+        ],
+        {
+          "s": ") are computed fields whose formulas call module exports that return DOM elements, e.g. "
+        },
+        [
+          ":code",
+          {
+            "s": "(invoke (require \\\\\\\"module\\\\\\\") \\\\\\\"fn\\\\\\\" api params)"
+          }
+        ],
+        {
+          "s": ". One mechanism covers static values, transclusions, calculations, aggregations, and embedded UI components."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Motivation"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Hobson items store structured data in "
+        },
+        [
+          ":code",
+          {
+            "s": "content"
+          }
+        ],
+        {
+          "s": " fields. Today, all field values are static — if you want a derived value, you compute it at display time (in a view) or manually keep it in sync. There's no way to say \"this field's value is always X times Y\" and have the system maintain that invariant."
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Spreadsheets solved this decades ago: a cell can contain a formula that references other cells, and the system evaluates it lazily, caches the result, and recomputes when dependencies change. Hobson's item model is richer than a grid of cells, but the same idea applies: a field can contain a formula that references other fields, on the same item or on other items."
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Structured notes have been "
+        },
+        [
+          ":item-ref",
+          {
+            "s": "c0c0c0c0-0073-0000-0000-000000000000"
+          },
+          {
+            "s": "merged into the regular note type"
+          }
+        ],
+        {
+          "s": " — any note can use computed fields for transclusions, inline computed values, and reactive references. Any code path that calls "
+        },
+        [
+          ":code",
+          {
+            "s": "get-field"
+          }
+        ],
+        {
+          "s": " — a view, an event watcher, a REPL expression, or another computed field — triggers evaluation and inherits reactive dependencies."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Design"
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Storage: "
+        },
+        [
+          ":code",
+          {
+            "s": "content.computed"
+          }
+        ]
+      ],
+      [
+        ":p",
+        {
+          "s": "Computed fields live in a separate "
+        },
+        [
+          ":code",
+          {
+            "s": "content.computed"
+          }
+        ],
+        {
+          "s": " map. Keys are field names, values are Hob expressions stored as JSON AST."
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": "{\n  \"id\": \"...\",\n  \"content\": {\n    \"portfolio-value\": 100000,\n    \"computed\": {\n      \"year-end-value\": [\"*\",\n        [\"get-field\", \"@financial-data\", \":portfolio-value\"],\n        [\"+\", 1, [\"get-field\", \"@market-assumptions\", \":rate-of-return\"]]]\n    }\n  }\n}"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "This keeps static data and formulas clearly separated. You can enumerate an item's formulas by inspecting "
+        },
+        [
+          ":code",
+          {
+            "s": "content.computed"
+          }
+        ],
+        {
+          "s": ", and static fields are never ambiguous."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Evaluation: lazy, not render-tied"
+        }
+      ],
+      [
+        ":p",
+        [
+          ":code",
+          {
+            "s": "get-field"
+          }
+        ],
+        {
+          "s": " is the single evaluation trigger. When "
+        },
+        [
+          ":code",
+          {
+            "s": "get-field"
+          }
+        ],
+        {
+          "s": " encounters a key that exists in "
+        },
+        [
+          ":code",
+          {
+            "s": "content.computed"
+          }
+        ],
+        {
+          "s": ", it evaluates the Hob expression and returns the result. The caller doesn't need to know whether a field is static or computed — "
+        },
+        [
+          ":code",
+          {
+            "s": "get-field"
+          }
+        ],
+        {
+          "s": " is the uniform access point."
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Crucially, evaluation is "
+        },
+        [
+          ":strong",
+          {
+            "s": "not tied to rendering"
+          }
+        ],
+        {
+          "s": ". Any code path that calls "
+        },
+        [
+          ":code",
+          {
+            "s": "get-field"
+          }
+        ],
+        {
+          "s": " triggers evaluation. For JS code, "
+        },
+        [
+          ":code",
+          {
+            "s": "api.getField(itemId, fieldName)"
+          }
+        ],
+        {
+          "s": " provides a JS-callable wrapper that delegates to the Hob "
+        },
+        [
+          ":code",
+          {
+            "s": "get-field"
+          }
+        ],
+        {
+          "s": " function — field views and generic-view delegates can resolve computed fields without needing the Hob interpreter directly."
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "A view rendering a page with "
+            },
+            [
+              ":code",
+              {
+                "s": "(val (get-field @item :year-end-value))"
+              }
+            ]
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "An event watcher checking "
+            },
+            [
+              ":code",
+              {
+                "s": "(get-field @budget :remaining)"
+              }
+            ]
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "A REPL expression "
+            },
+            [
+              ":code",
+              {
+                "s": "(get-field @plan :projected-growth)"
+              }
+            ]
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Another computed field referencing this one"
+            }
+          ]
+        ]
+      ],
+      [
+        ":p",
+        {
+          "s": "If a dependency tracker context is active (e.g., during a view render), the reactive dependencies are recorded — changes to referenced fields will trigger re-evaluation. If no tracker context is active (e.g., a one-shot REPL query), the formula evaluates and returns without setting up subscriptions."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Caching"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Computed fields cache their result. The cache is invalidated when any dependency changes (detected via the existing dependency tracking system). Multiple accesses within the same tick return the cached value without re-evaluation."
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The cache lifecycle:"
+        }
+      ],
+      [
+        ":ol",
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "First "
+            },
+            [
+              ":code",
+              {
+                "s": "get-field"
+              }
+            ],
+            {
+              "s": " access evaluates the formula, caches the result, records dependencies"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Subsequent accesses return the cached value"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "When a dependency changes, the cache is marked stale (dirty flag)"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Next access re-evaluates, re-caches, re-records dependencies"
+            }
+          ]
+        ]
+      ],
+      [
+        ":p",
+        {
+          "s": "This is the standard lazy-with-dirty-flag pattern. The dependency tracker already knows when deps change — it marks the cache stale rather than eagerly re-evaluating."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Cross-item references"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Formulas reference other items' fields via "
+        },
+        [
+          ":code",
+          {
+            "s": "get-field"
+          }
+        ],
+        {
+          "s": " with an item reference:"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": "(get-field @other-item :some-field)"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "This works identically to how views reference item data today. The dependency tracker records that this computed field depends on "
+        },
+        [
+          ":code",
+          {
+            "s": "other-item.some-field"
+          }
+        ],
+        {
+          "s": ". When that field changes (whether it's static or itself computed), the cache is invalidated."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Formula DAG"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Because computed fields can reference other computed fields (on the same or different items), formulas form a directed acyclic graph — exactly like a spreadsheet. Evaluation is demand-driven: accessing a computed field that depends on another computed field triggers evaluation of the dependency first."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Cycle detection"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Circular references must be detected and reported. During evaluation of a computed field, if "
+        },
+        [
+          ":code",
+          {
+            "s": "get-field"
+          }
+        ],
+        {
+          "s": " encounters a field that is already being evaluated (on the current evaluation stack), it raises an error rather than recursing infinitely."
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Implementation: a thread-local (or evaluation-context-local) set of "
+        },
+        [
+          ":code",
+          {
+            "s": "(itemId, fieldName)"
+          }
+        ],
+        {
+          "s": " pairs currently being evaluated. If a pair is already in the set when evaluation starts, it's a cycle."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Error handling"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "When a formula fails (evaluation error, cycle detection, type error, missing reference):"
+        }
+      ],
+      [
+        ":ol",
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "An "
+            },
+            [
+              ":code",
+              {
+                "s": "error-event"
+              }
+            ],
+            {
+              "s": " is emitted through the standard event bus, letting existing error handling mechanisms process it (e.g., creating an error item, logging)"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "The error item captures the source item ID, the computed field name, and the exception"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":code",
+              {
+                "s": "get-field"
+              }
+            ],
+            {
+              "s": " returns an error sentinel that views can detect and render as a clickable "
+            },
+            [
+              ":code",
+              {
+                "s": "ERR"
+              }
+            ],
+            {
+              "s": " link pointing to the error item"
+            }
+          ]
+        ]
+      ],
+      [
+        ":p",
+        {
+          "s": "This follows the Hobson pattern: errors are items, inspectable and queryable. A \"broken formulas\" view could query for formula-error items across the system."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Examples"
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Simple local computation"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": "{\n  \"content\": {\n    \"quantity\": 10,\n    \"unit-price\": 25.50,\n    \"computed\": {\n      \"total\": [\"*\", [\"get-field\", \":self\", \":quantity\"],\n                     [\"get-field\", \":self\", \":unit-price\"]]\n    }\n  }\n}"
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Cross-item financial projection"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": "{\n  \"content\": {\n    \"computed\": {\n      \"year-end-value\": [\"*\",\n        [\"get-field\", \"@financial-data\", \":portfolio-value\"],\n        [\"+\", 1, [\"get-field\", \"@market-assumptions\", \":rate-of-return\"]]],\n      \"five-year-value\": [\"*\",\n        [\"get-field\", \"@financial-data\", \":portfolio-value\"],\n        [\"pow\",\n          [\"+\", 1, [\"get-field\", \"@market-assumptions\", \":rate-of-return\"]],\n          5]]\n    }\n  }\n}"
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Aggregation across items"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": "{\n  \"content\": {\n    \"computed\": {\n      \"total-budget\": [\"reduce\", \"+\", 0,\n        [\"map\",\n          [\"fn\", [\"item\"], [\"get-field\", \"item\", \":amount\"]],\n          [\"query-tagged\", \"@expense-tag\"]]]\n    }\n  }\n}"
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Self-reference: "
+        },
+        [
+          ":code",
+          {
+            "s": ":self"
+          }
+        ]
+      ],
+      [
+        ":p",
+        {
+          "s": "Formulas that reference other fields on the same item use a "
+        },
+        [
+          ":code",
+          {
+            "s": ":self"
+          }
+        ],
+        {
+          "s": " pseudo-reference rather than hardcoding the item's own ID. This keeps formulas portable (the item can be duplicated without broken self-references) and readable."
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": "(get-field :self :quantity)   ;; this item's quantity field\n(get-field @other :quantity)  ;; another item's quantity field"
+        }
+      ],
+      [
+        ":p",
+        [
+          ":code",
+          {
+            "s": "get-field"
+          }
+        ],
+        {
+          "s": " resolves "
+        },
+        [
+          ":code",
+          {
+            "s": ":self"
+          }
+        ],
+        {
+          "s": " to the item whose "
+        },
+        [
+          ":code",
+          {
+            "s": "content.computed"
+          }
+        ],
+        {
+          "s": " contains the formula being evaluated."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Editing"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Initially, computed fields are edited via the Hob structural editor — the same editor used for Hob code and structured pages. A formula is a Hob expression; the structural editor already knows how to edit those."
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Future UX improvements (deferred):"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "A field editor that shows the formula when focused and the result when blurred (spreadsheet-style)"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Formula bar in the inspector showing the expression for the selected field"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Autocomplete for field names and item references within formulas"
+            }
+          ]
+        ]
+      ],
+      [
+        ":h2",
+        {
+          "s": "Relationship to Notes"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Structured notes have been "
+        },
+        [
+          ":item-ref",
+          {
+            "s": "c0c0c0c0-0073-0000-0000-000000000000"
+          },
+          {
+            "s": "merged into the regular note type"
+          }
+        ],
+        {
+          "s": ". Any note can have "
+        },
+        [
+          ":code",
+          {
+            "s": "content.computed"
+          }
+        ],
+        {
+          "s": " fields and "
+        },
+        [
+          ":code",
+          {
+            "s": "{{field-name}}"
+          }
+        ],
+        {
+          "s": " references in its "
+        },
+        [
+          ":code",
+          {
+            "s": "content.description"
+          }
+        ],
+        {
+          "s": ". Computed fields are the single system for all reactive data:"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "A "
+            },
+            [
+              ":strong",
+              {
+                "s": "transclusion"
+              }
+            ],
+            {
+              "s": " is a computed field: "
+            },
+            [
+              ":code",
+              {
+                "s": "(get-field @other-note :description)"
+              }
+            ]
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "A "
+            },
+            [
+              ":strong",
+              {
+                "s": "functional transclusion"
+              }
+            ],
+            {
+              "s": " is a computed field: "
+            },
+            [
+              ":code",
+              {
+                "s": "(invoke (require \\\\\\\"module\\\\\\\") \\\\\\\"fn\\\\\\\" api params)"
+              }
+            ],
+            {
+              "s": " — returns a DOM element"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "An "
+            },
+            [
+              ":strong",
+              {
+                "s": "inline computed value"
+              }
+            ],
+            {
+              "s": " is a computed field: "
+            },
+            [
+              ":code",
+              {
+                "s": "(* (get-field :self :quantity) (get-field :self :price))"
+              }
+            ]
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "An "
+            },
+            [
+              ":strong",
+              {
+                "s": "aggregation"
+              }
+            ],
+            {
+              "s": " is a computed field: "
+            },
+            [
+              ":code",
+              {
+                "s": "(reduce + 0 (map ...))"
+              }
+            ]
+          ]
+        ]
+      ],
+      [
+        ":p",
+        {
+          "s": "The note "
+        },
+        [
+          ":code",
+          {
+            "s": "content.description"
+          }
+        ],
+        {
+          "s": " contains "
+        },
+        [
+          ":code",
+          {
+            "s": "{{field-name}}"
+          }
+        ],
+        {
+          "s": " references that resolve via "
+        },
+        [
+          ":code",
+          {
+            "s": "get-field"
+          }
+        ],
+        {
+          "s": " (or "
+        },
+        [
+          ":code",
+          {
+            "s": "api.getField"
+          }
+        ],
+        {
+          "s": " from JS). The note doesn't know or care whether a field is static or computed — "
+        },
+        [
+          ":code",
+          {
+            "s": "get-field"
+          }
+        ],
+        {
+          "s": " is the uniform access point. Notes without computed fields or "
+        },
+        [
+          ":code",
+          {
+            "s": "{{"
+          }
+        ],
+        {
+          "s": " references render exactly as before."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Runtime Environment for Formulas"
+        }
+      ],
+      [
+        ":p",
+        [
+          ":code",
+          {
+            "s": "require"
+          }
+        ],
+        {
+          "s": " is available in stdlib (not just view contexts), so computed field formulas can load modules. During "
+        },
+        [
+          ":code",
+          {
+            "s": "api.getField"
+          }
+        ],
+        {
+          "s": " evaluation, the rendering "
+        },
+        [
+          ":code",
+          {
+            "s": "api"
+          }
+        ],
+        {
+          "s": " is temporarily available in the formula's environment via "
+        },
+        [
+          ":code",
+          {
+            "s": "_evalApi"
+          }
+        ],
+        {
+          "s": ", giving formulas access to "
+        },
+        [
+          ":code",
+          {
+            "s": "createElement"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "openItem"
+          }
+        ],
+        {
+          "s": ", and other rendering APIs needed for functional transclusions."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "What This Enables"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Spreadsheet-like calculations"
+              }
+            ],
+            {
+              "s": " across the item graph — budgets, projections, aggregations, derived metrics"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Live dashboards"
+              }
+            ],
+            {
+              "s": " where computed fields aggregate data from tagged items, displayed via structured notes"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Constraint propagation"
+              }
+            ],
+            {
+              "s": " — a change to one field ripples through dependent computed fields across items"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Formula inspection"
+              }
+            ],
+            {
+              "s": " — because formulas are Hob AST (JSON), you can query \"what depends on this field?\" by walking the AST of all computed fields"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Portable formulas"
+              }
+            ],
+            {
+              "s": " — "
+            },
+            [
+              ":code",
+              {
+                "s": ":self"
+              }
+            ],
+            {
+              "s": " references make formulas work regardless of which item they're on, enabling template items with pre-defined calculations"
+            }
+          ]
+        ]
+      ],
+      [
+        ":h2",
+        {
+          "s": "Cross-Item Reactivity (Implemented)"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "When a computed field references another item (e.g. "
+        },
+        [
+          ":code",
+          {
+            "s": "(get-field @other-item :name)"
+          }
+        ],
+        {
+          "s": "), the view automatically re-renders when the referenced item changes."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Architecture"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The "
+        },
+        [
+          ":code",
+          {
+            "s": "RenderInstanceRegistry"
+          }
+        ],
+        {
+          "s": " has a "
+        },
+        [
+          ":code",
+          {
+            "s": "byCrossItemDep"
+          }
+        ],
+        {
+          "s": " index ("
+        },
+        [
+          ":code",
+          {
+            "s": "Map<depItemId, Set<instanceId>>"
+          }
+        ],
+        {
+          "s": ") alongside the existing "
+        },
+        [
+          ":code",
+          {
+            "s": "byItemId"
+          }
+        ],
+        {
+          "s": " and "
+        },
+        [
+          ":code",
+          {
+            "s": "byViewId"
+          }
+        ],
+        {
+          "s": " indexes. The "
+        },
+        [
+          ":code",
+          {
+            "s": "item:updated"
+          }
+        ],
+        {
+          "s": " and "
+        },
+        [
+          ":code",
+          {
+            "s": "item:deleted"
+          }
+        ],
+        {
+          "s": " handlers check all three indexes to schedule re-renders."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Dependency Tracking: Per-Render Tracker Pattern"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The key challenge was concurrent child rendering: "
+        },
+        [
+          ":code",
+          {
+            "s": "fillMountPoints"
+          }
+        ],
+        {
+          "s": " renders siblings in parallel via "
+        },
+        [
+          ":code",
+          {
+            "s": "Promise.all"
+          }
+        ],
+        {
+          "s": ", so any shared mutable state (like a field on the singleton "
+        },
+        [
+          ":code",
+          {
+            "s": "_hobItemApi"
+          }
+        ],
+        {
+          "s": ") gets clobbered by interleaving async renders."
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The solution uses a "
+        },
+        [
+          ":strong",
+          {
+            "s": "per-render tracker"
+          }
+        ],
+        {
+          "s": " threaded through "
+        },
+        [
+          ":code",
+          {
+            "s": "get-field"
+          }
+        ],
+        {
+          "s": " as an internal parameter:"
+        }
+      ],
+      [
+        ":ol",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "In `renderItem`"
+              }
+            ],
+            {
+              "s": ", "
+            },
+            [
+              ":code",
+              {
+                "s": "api._crossItemDeps = new Set()"
+              }
+            ],
+            {
+              "s": " is set on the per-render enriched API (not on the shared "
+            },
+            [
+              ":code",
+              {
+                "s": "_hobItemApi"
+              }
+            ],
+            {
+              "s": ")."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "`get-field`"
+              }
+            ],
+            {
+              "s": " accepts an optional 3rd "
+            },
+            [
+              ":code",
+              {
+                "s": "_tracker"
+              }
+            ],
+            {
+              "s": " parameter. When present, it adds the accessed "
+            },
+            [
+              ":code",
+              {
+                "s": "itemId"
+              }
+            ],
+            {
+              "s": " to the tracker Set. For recursive formula evaluation, it shadows "
+            },
+            [
+              ":code",
+              {
+                "s": "get-field"
+              }
+            ],
+            {
+              "s": " in the eval environment to propagate the same tracker."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "For Hob views"
+              }
+            ],
+            {
+              "s": ", "
+            },
+            [
+              ":code",
+              {
+                "s": "renderHobView"
+              }
+            ],
+            {
+              "s": " shadows "
+            },
+            [
+              ":code",
+              {
+                "s": "get-field"
+              }
+            ],
+            {
+              "s": " in the per-render child env with a wrapper that passes "
+            },
+            [
+              ":code",
+              {
+                "s": "api._crossItemDeps"
+              }
+            ],
+            {
+              "s": " as the tracker."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "For JS views"
+              }
+            ],
+            {
+              "s": ", "
+            },
+            [
+              ":code",
+              {
+                "s": "api.getField"
+              }
+            ],
+            {
+              "s": " tracks the "
+            },
+            [
+              ":code",
+              {
+                "s": "itemId"
+              }
+            ],
+            {
+              "s": " synchronously (before any await) and passes "
+            },
+            [
+              ":code",
+              {
+                "s": "api._crossItemDeps"
+              }
+            ],
+            {
+              "s": " as the tracker to the underlying "
+            },
+            [
+              ":code",
+              {
+                "s": "get-field"
+              }
+            ],
+            {
+              "s": "."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "After render"
+              }
+            ],
+            {
+              "s": ", the collected deps (minus the item's own ID) are registered via "
+            },
+            [
+              ":code",
+              {
+                "s": "registry.registerCrossItemDeps"
+              }
+            ],
+            {
+              "s": ". On re-render, old deps are cleaned up and new ones registered."
+            }
+          ]
+        ]
+      ],
+      [
+        ":p",
+        {
+          "s": "This avoids all shared mutable state — each concurrent render tracks its own deps in its own Set, threaded through function parameters rather than global/singleton fields."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Error Sentinels (Implemented)"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "When a computed field formula fails (evaluation error, circular reference, type error, missing reference), "
+        },
+        [
+          ":code",
+          {
+            "s": "get-field"
+          }
+        ],
+        {
+          "s": " returns an error sentinel instead of throwing:"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": "{ _hobType: 'computed-field-error', itemId, fieldName, message }"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "This follows the existing "
+        },
+        [
+          ":code",
+          {
+            "s": "_hobType"
+          }
+        ],
+        {
+          "s": " sentinel pattern used by item-refs, symbols, and atoms."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Behaviour"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "`get-field`"
+              }
+            ],
+            {
+              "s": ": Formula evaluation is wrapped in try/catch. Errors (including circular references) return a sentinel. The error is logged to console for debugging."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "`resolve-field-refs`"
+              }
+            ],
+            {
+              "s": " (Hob stdlib): Detects sentinels and renders "
+            },
+            [
+              ":code",
+              {
+                "s": "[ERR: fieldName]"
+              }
+            ],
+            {
+              "s": " in the resolved string."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "`resolveRefsMarkup`"
+              }
+            ],
+            {
+              "s": " (field-view-markdown-readonly): Detects sentinels and renders a red "
+            },
+            [
+              ":code",
+              {
+                "s": "ERR"
+              }
+            ],
+            {
+              "s": " span with the error message in the tooltip."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "`computed-field-error?`"
+              }
+            ],
+            {
+              "s": ": Stdlib predicate for checking if a value is an error sentinel."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Transitive errors"
+              }
+            ],
+            {
+              "s": ": If field A depends on field B and B returns an error sentinel, the formula for A will likely fail trying to compute with the sentinel object. The try/catch around A's evaluation catches this and returns its own sentinel — errors propagate naturally."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Catch handler in markdown view"
+              }
+            ],
+            {
+              "s": ": The existing try/catch also renders a styled "
+            },
+            [
+              ":code",
+              {
+                "s": "ERR"
+              }
+            ],
+            {
+              "s": " span for any errors that still throw (e.g. from "
+            },
+            [
+              ":code",
+              {
+                "s": "api.getField"
+              }
+            ],
+            {
+              "s": " itself)."
+            }
+          ]
+        ]
+      ],
+      [
+        ":h2",
+        {
+          "s": "Open Questions"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Performance at scale."
+              }
+            ],
+            {
+              "s": " A large DAG of computed fields with deep cross-item dependencies could be expensive. The lazy + caching approach mitigates this (only evaluate what's accessed), but pathological cases (a dashboard aggregating thousands of items) may need batching or incremental computation."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Persistence of cached values."
+              }
+            ],
+            {
+              "s": " Should computed results be persisted (for offline access or faster cold start), or always recomputed from the formula? Persisting adds staleness concerns; recomputing adds startup cost."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Type annotations for computed fields."
+              }
+            ],
+            {
+              "s": " Should a computed field declare its expected return type? This could enable validation and richer editor support, but adds complexity."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "`:self` in nested contexts."
+              }
+            ],
+            {
+              "s": " If a computed field's formula is evaluated in the context of a different item (e.g., a template applied to a target), what does "
+            },
+            [
+              ":code",
+              {
+                "s": ":self"
+              }
+            ],
+            {
+              "s": " resolve to? The item containing the formula, or the target item?"
+            }
+          ]
+        ]
+      ],
+      [
+        ":h2",
+        {
+          "s": "References"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":item-ref",
+              {
+                "s": "c0c0c0c0-0073-0000-0000-000000000000"
+              },
+              {
+                "s": "Structured Notes"
+              }
+            ],
+            {
+              "s": " — Merged into the note type. Uses computed fields as the single mechanism for transclusions, inline computed values, and reactive references."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":item-ref",
+              {
+                "s": "c0c0c0c0-0058-0000-0000-000000000000"
+              },
+              {
+                "s": "Hob Language Design Direction"
+              }
+            ],
+            {
+              "s": " — Hob as the primary user-programming language in Hobson."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":item-ref",
+              {
+                "s": "c0c0c0c0-0051-0000-0000-000000000000"
+              },
+              {
+                "s": "JSON AST as Canonical Code Representation"
+              }
+            ],
+            {
+              "s": " — The foundation: formulas stored as queryable, structured JSON AST."
+            }
+          ]
+        ]
+      ]
+    ],
     "tags": [
       "c0c0c0c0-0040-0000-0000-000000000000"
     ]

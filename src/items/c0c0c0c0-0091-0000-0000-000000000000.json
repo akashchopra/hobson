@@ -3,9 +3,1154 @@
   "name": "System Layers",
   "type": "871ae771-b9b1-4f40-8c7f-d9038bfb69c3",
   "created": 1741219200000,
-  "modified": 1772788537485,
+  "modified": 1773243817663,
   "content": {
-    "description": "Hobson has three layers: the **kernel**, the **viewport**, and **userland**. Each layer builds on the one below it. Understanding this split is the key to knowing where things live and where to look when you want to change something.\n\n## The Three Layers\n\n| Layer | Role | Can you modify it? |\n|-------|------|--------------------|\n| **Kernel** | Data, events, code loading | Possible but risky — use [safe mode](item://33333333-7777-0000-0000-000000000000) to recover |\n| **Viewport** | Rendering, navigation, all UI | Yes — these are regular items, hot-reloadable |\n| **Userland** | Views, libraries, types, your data | Yes — this is where you work |\n\n## Kernel\n\nThe kernel is the smallest possible runtime that makes everything else work. It has no UI (except a [safe mode](item://33333333-7777-0000-0000-000000000000) fallback screen). It provides four things:\n\n| Responsibility | Module | What it does |\n|----------------|--------|--------------|\n| **Storage** | [kernel:storage](item://33333333-2222-0000-0000-000000000000) | Persists items in IndexedDB, validates type chains, handles queries |\n| **Events** | [kernel:core](item://33333333-1111-0000-0000-000000000000) | Type-hierarchy-aware event bus — `item:updated`, `item:created`, `item:deleted`, and custom events |\n| **Code loading** | [kernel:module-system](item://33333333-4444-0000-0000-000000000000) | `api.require('name')` loads code items as ES modules with caching and circular dependency detection |\n| **Bootstrap** | [kernel:core](item://33333333-1111-0000-0000-000000000000) | Initializes storage, applies [styles](item://33333333-8888-0000-0000-000000000000), emits `kernel:boot-complete` so the viewport can take over |\n\nThe kernel also defines the base [API object](item://33333333-1111-0000-0000-000000000000#code?region=createAPI) that all other code uses — item CRUD, events, `require()`, parent-child operations. This is the API you see in the [REPL](item://c0c0c0c0-0008-0000-0000-000000000000).\n\nThe kernel's design principle: **if it can be built as a userland item, it should be.** See [Kernel](item://c0c0c0c0-0001-0000-0000-000000000000) for the full philosophy.\n\n## Viewport\n\nThe viewport is the application shell — everything you see on screen. It is built entirely from regular items (not kernel code), but most users will never need to modify it.\n\nThe viewport handles two broad concerns:\n\n### Rendering\n\nThe [viewport-rendering](item://f1111111-0008-0000-0000-000000000000) library is the rendering engine. It turns items into DOM:\n\n- **View resolution** — decides which view to use for an item (preference hierarchy, type chain lookup, fallback). See [Views & Rendering](item://a0a0a0a0-d0c0-4000-8000-000000000004).\n- **Render instance registry** — tracks every rendered DOM node so the system can do partial re-renders when items change\n- **Enriched API** — adds rendering methods (`renderItem`, `rerenderItem`, `navigate`, `getViews`, etc.) on top of the kernel's base API. Views receive this enriched API; the REPL gets only the kernel primitives.\n- **Reactive re-rendering** — listens for `item:updated` events and re-renders affected views, filtered by [selectors](item://c0c0c0c0-0062-0000-0000-000000000000) so only relevant changes trigger work\n\n### Chrome\n\nThe remaining viewport items provide the application frame:\n\n| Item | What it does |\n|------|--------------|\n| [viewport-manager](item://f1111111-0002-0000-0000-000000000000) | Navigation (URL sync, history, root item management) |\n| [viewport-view](item://bd74da77-a459-454a-b001-48685d4b536d) | The top-level view — renders chrome, decorates items, manages selection highlighting |\n| [selection-manager](item://f1111111-0001-0000-0000-000000000000) | Tracks which item is selected and its parent |\n| [keyboard-shortcuts](item://f1111111-0004-0000-0000-000000000000) | Global shortcuts (Ctrl+K, Ctrl+?) |\n| [item-palette](item://f1111111-0005-0000-0000-000000000000) | The Ctrl+K search/navigation dialog |\n| [repl-ui](item://f1111111-0003-0000-0000-000000000000) | The REPL panel (Ctrl+\\\\) |\n| [help-dialog](item://f1111111-0006-0000-0000-000000000000) | The Ctrl+? shortcut reference |\n\nSee [Viewport](item://c0c0c0c0-0033-0000-0000-000000000000) for full details.\n\n## Userland\n\nEverything else. This is where the system's real value lives:\n\n- **[Views](item://aaaaaaaa-0000-0000-0000-000000000000)** — how items get displayed (note view, spatial canvas, list view, etc.)\n- **[Libraries](item://66666666-0000-0000-0000-000000000000)** — reusable code loaded via `api.require()`\n- **[Type definitions](item://11111111-0000-0000-0000-000000000000)** — what kinds of items exist (note, tag, container, etc.)\n- **Your items** — notes, tasks, workspaces, anything you create\n\nUserland items are fully inspectable and modifiable. You can change how notes render, create new types, add libraries — the system is designed for this. See [Core Concepts](item://a0a0a0a0-d0c0-4000-8000-000000000002) for how items, types, views, and libraries fit together.\n\n## How They Connect\n\nAt boot, the flow is:\n\n1. The [bootloader](item://c0c0c0c0-0002-0000-0000-000000000000) (the HTML file) loads `kernel:core` from IndexedDB\n2. The kernel initializes storage, loads styles, renders the safe mode screen as a fallback\n3. The kernel emits `kernel:boot-complete`\n4. `viewport-manager` (listening for that event) takes over — loads the rendering engine, resolves the root item from the URL, and renders the full UI\n5. From here, everything is reactive — item changes trigger targeted re-renders via the event system\n\nAt runtime, the dependency flows downward:\n\n```\n  Userland (views, libraries, your items)\n      |\n      | uses enriched API (renderItem, navigate, ...)\n      v\n  Viewport (rendering engine, navigation, chrome)\n      |\n      | uses base API (get, set, query, require, events)\n      v\n  Kernel (storage, events, module system)\n```\n\n## Where to Go From Here\n\n- New to Hobson? Start with [New Users](item://fa99b548-f705-45fd-8e31-53f4e0818a66)\n- Want to understand items, types, views? See [Core Concepts](item://a0a0a0a0-d0c0-4000-8000-000000000002)\n- Want to build views? See [Views & Rendering](item://a0a0a0a0-d0c0-4000-8000-000000000004)\n- Want to understand events and reactivity? See [Event System](item://c0c0c0c0-0006-0000-0000-000000000000)\n- Want the full architecture? See [Architecture Overview](item://a0a0a0a0-d0c0-4000-8000-000000000003)\n- Want the philosophy? See [Philosophy & Inspirations](item://a0a0a0a0-d0c0-4000-8000-000000000001)",
+    "description": [
+      ":doc",
+      [
+        ":p",
+        {
+          "s": "Hobson has three layers: the "
+        },
+        [
+          ":strong",
+          {
+            "s": "kernel"
+          }
+        ],
+        {
+          "s": ", the "
+        },
+        [
+          ":strong",
+          {
+            "s": "viewport"
+          }
+        ],
+        {
+          "s": ", and "
+        },
+        [
+          ":strong",
+          {
+            "s": "userland"
+          }
+        ],
+        {
+          "s": ". Each layer builds on the one below it. Understanding this split is the key to knowing where things live and where to look when you want to change something."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "The Three Layers"
+        }
+      ],
+      [
+        ":table",
+        [
+          ":thead",
+          [
+            ":tr",
+            [
+              ":th",
+              {
+                "s": "Layer"
+              }
+            ],
+            [
+              ":th",
+              {
+                "s": "Role"
+              }
+            ],
+            [
+              ":th",
+              {
+                "s": "Can you modify it?"
+              }
+            ]
+          ]
+        ],
+        [
+          ":tbody",
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":strong",
+                {
+                  "s": "Kernel"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Data, events, code loading"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Possible but risky — use "
+              },
+              [
+                ":item-ref",
+                {
+                  "s": "33333333-7777-0000-0000-000000000000"
+                },
+                {
+                  "s": "safe mode"
+                }
+              ],
+              {
+                "s": " to recover"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":strong",
+                {
+                  "s": "Viewport"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Rendering, navigation, all UI"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Yes — these are regular items, hot-reloadable"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":strong",
+                {
+                  "s": "Userland"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Views, libraries, types, your data"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Yes — this is where you work"
+              }
+            ]
+          ]
+        ]
+      ],
+      [
+        ":h2",
+        {
+          "s": "Kernel"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The kernel is the smallest possible runtime that makes everything else work. It has no UI (except a "
+        },
+        [
+          ":item-ref",
+          {
+            "s": "33333333-7777-0000-0000-000000000000"
+          },
+          {
+            "s": "safe mode"
+          }
+        ],
+        {
+          "s": " fallback screen). It provides four things:"
+        }
+      ],
+      [
+        ":table",
+        [
+          ":thead",
+          [
+            ":tr",
+            [
+              ":th",
+              {
+                "s": "Responsibility"
+              }
+            ],
+            [
+              ":th",
+              {
+                "s": "Module"
+              }
+            ],
+            [
+              ":th",
+              {
+                "s": "What it does"
+              }
+            ]
+          ]
+        ],
+        [
+          ":tbody",
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":strong",
+                {
+                  "s": "Storage"
+                }
+              ]
+            ],
+            [
+              ":td",
+              [
+                ":item-ref",
+                {
+                  "s": "33333333-2222-0000-0000-000000000000"
+                },
+                {
+                  "s": "kernel:storage"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Persists items in IndexedDB, validates type chains, handles queries"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":strong",
+                {
+                  "s": "Events"
+                }
+              ]
+            ],
+            [
+              ":td",
+              [
+                ":item-ref",
+                {
+                  "s": "33333333-1111-0000-0000-000000000000"
+                },
+                {
+                  "s": "kernel:core"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Type-hierarchy-aware event bus — "
+              },
+              [
+                ":code",
+                {
+                  "s": "item:updated"
+                }
+              ],
+              {
+                "s": ", "
+              },
+              [
+                ":code",
+                {
+                  "s": "item:created"
+                }
+              ],
+              {
+                "s": ", "
+              },
+              [
+                ":code",
+                {
+                  "s": "item:deleted"
+                }
+              ],
+              {
+                "s": ", and custom events"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":strong",
+                {
+                  "s": "Code loading"
+                }
+              ]
+            ],
+            [
+              ":td",
+              [
+                ":item-ref",
+                {
+                  "s": "33333333-4444-0000-0000-000000000000"
+                },
+                {
+                  "s": "kernel:module-system"
+                }
+              ]
+            ],
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "api.require('name')"
+                }
+              ],
+              {
+                "s": " loads code items as ES modules with caching and circular dependency detection"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":strong",
+                {
+                  "s": "Bootstrap"
+                }
+              ]
+            ],
+            [
+              ":td",
+              [
+                ":item-ref",
+                {
+                  "s": "33333333-1111-0000-0000-000000000000"
+                },
+                {
+                  "s": "kernel:core"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Initializes storage, applies "
+              },
+              [
+                ":item-ref",
+                {
+                  "s": "33333333-8888-0000-0000-000000000000"
+                },
+                {
+                  "s": "styles"
+                }
+              ],
+              {
+                "s": ", emits "
+              },
+              [
+                ":code",
+                {
+                  "s": "kernel:boot-complete"
+                }
+              ],
+              {
+                "s": " so the viewport can take over"
+              }
+            ]
+          ]
+        ]
+      ],
+      [
+        ":p",
+        {
+          "s": "The kernel also defines the base "
+        },
+        [
+          ":item-ref",
+          {
+            "s": "33333333-1111-0000-0000-000000000000#code?region=createAPI"
+          },
+          {
+            "s": "API object"
+          }
+        ],
+        {
+          "s": " that all other code uses — item CRUD, events, "
+        },
+        [
+          ":code",
+          {
+            "s": "require()"
+          }
+        ],
+        {
+          "s": ", parent-child operations. This is the API you see in the "
+        },
+        [
+          ":item-ref",
+          {
+            "s": "c0c0c0c0-0008-0000-0000-000000000000"
+          },
+          {
+            "s": "REPL"
+          }
+        ],
+        {
+          "s": "."
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The kernel's design principle: "
+        },
+        [
+          ":strong",
+          {
+            "s": "if it can be built as a userland item, it should be."
+          }
+        ],
+        {
+          "s": " See "
+        },
+        [
+          ":item-ref",
+          {
+            "s": "c0c0c0c0-0001-0000-0000-000000000000"
+          },
+          {
+            "s": "Kernel"
+          }
+        ],
+        {
+          "s": " for the full philosophy."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Viewport"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The viewport is the application shell — everything you see on screen. It is built entirely from regular items (not kernel code), but most users will never need to modify it."
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The viewport handles two broad concerns:"
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Rendering"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The "
+        },
+        [
+          ":item-ref",
+          {
+            "s": "f1111111-0008-0000-0000-000000000000"
+          },
+          {
+            "s": "viewport-rendering"
+          }
+        ],
+        {
+          "s": " library is the rendering engine. It turns items into DOM:"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "View resolution"
+              }
+            ],
+            {
+              "s": " — decides which view to use for an item (preference hierarchy, type chain lookup, fallback). See "
+            },
+            [
+              ":item-ref",
+              {
+                "s": "a0a0a0a0-d0c0-4000-8000-000000000004"
+              },
+              {
+                "s": "Views & Rendering"
+              }
+            ],
+            {
+              "s": "."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Render instance registry"
+              }
+            ],
+            {
+              "s": " — tracks every rendered DOM node so the system can do partial re-renders when items change"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Enriched API"
+              }
+            ],
+            {
+              "s": " — adds rendering methods ("
+            },
+            [
+              ":code",
+              {
+                "s": "renderItem"
+              }
+            ],
+            {
+              "s": ", "
+            },
+            [
+              ":code",
+              {
+                "s": "rerenderItem"
+              }
+            ],
+            {
+              "s": ", "
+            },
+            [
+              ":code",
+              {
+                "s": "navigate"
+              }
+            ],
+            {
+              "s": ", "
+            },
+            [
+              ":code",
+              {
+                "s": "getViews"
+              }
+            ],
+            {
+              "s": ", etc.) on top of the kernel's base API. Views receive this enriched API; the REPL gets only the kernel primitives."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Reactive re-rendering"
+              }
+            ],
+            {
+              "s": " — listens for "
+            },
+            [
+              ":code",
+              {
+                "s": "item:updated"
+              }
+            ],
+            {
+              "s": " events and re-renders affected views, filtered by "
+            },
+            [
+              ":item-ref",
+              {
+                "s": "c0c0c0c0-0062-0000-0000-000000000000"
+              },
+              {
+                "s": "selectors"
+              }
+            ],
+            {
+              "s": " so only relevant changes trigger work"
+            }
+          ]
+        ]
+      ],
+      [
+        ":h3",
+        {
+          "s": "Chrome"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The remaining viewport items provide the application frame:"
+        }
+      ],
+      [
+        ":table",
+        [
+          ":thead",
+          [
+            ":tr",
+            [
+              ":th",
+              {
+                "s": "Item"
+              }
+            ],
+            [
+              ":th",
+              {
+                "s": "What it does"
+              }
+            ]
+          ]
+        ],
+        [
+          ":tbody",
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":item-ref",
+                {
+                  "s": "f1111111-0002-0000-0000-000000000000"
+                },
+                {
+                  "s": "viewport-manager"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Navigation (URL sync, history, root item management)"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":item-ref",
+                {
+                  "s": "bd74da77-a459-454a-b001-48685d4b536d"
+                },
+                {
+                  "s": "viewport-view"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "The top-level view — renders chrome, decorates items, manages selection highlighting"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":item-ref",
+                {
+                  "s": "f1111111-0001-0000-0000-000000000000"
+                },
+                {
+                  "s": "selection-manager"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Tracks which item is selected and its parent"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":item-ref",
+                {
+                  "s": "f1111111-0004-0000-0000-000000000000"
+                },
+                {
+                  "s": "keyboard-shortcuts"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Global shortcuts (Ctrl+K, Ctrl+?)"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":item-ref",
+                {
+                  "s": "f1111111-0005-0000-0000-000000000000"
+                },
+                {
+                  "s": "item-palette"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "The Ctrl+K search/navigation dialog"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":item-ref",
+                {
+                  "s": "f1111111-0003-0000-0000-000000000000"
+                },
+                {
+                  "s": "repl-ui"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "The REPL panel (Ctrl+\\\\)"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":item-ref",
+                {
+                  "s": "f1111111-0006-0000-0000-000000000000"
+                },
+                {
+                  "s": "help-dialog"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "The Ctrl+? shortcut reference"
+              }
+            ]
+          ]
+        ]
+      ],
+      [
+        ":p",
+        {
+          "s": "See "
+        },
+        [
+          ":item-ref",
+          {
+            "s": "c0c0c0c0-0033-0000-0000-000000000000"
+          },
+          {
+            "s": "Viewport"
+          }
+        ],
+        {
+          "s": " for full details."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Userland"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Everything else. This is where the system's real value lives:"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "[Views](item://aaaaaaaa-0000-0000-0000-000000000000)"
+              }
+            ],
+            {
+              "s": " — how items get displayed (note view, spatial canvas, list view, etc.)"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "[Libraries](item://66666666-0000-0000-0000-000000000000)"
+              }
+            ],
+            {
+              "s": " — reusable code loaded via "
+            },
+            [
+              ":code",
+              {
+                "s": "api.require()"
+              }
+            ]
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "[Type definitions](item://11111111-0000-0000-0000-000000000000)"
+              }
+            ],
+            {
+              "s": " — what kinds of items exist (note, tag, container, etc.)"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Your items"
+              }
+            ],
+            {
+              "s": " — notes, tasks, workspaces, anything you create"
+            }
+          ]
+        ]
+      ],
+      [
+        ":p",
+        {
+          "s": "Userland items are fully inspectable and modifiable. You can change how notes render, create new types, add libraries — the system is designed for this. See "
+        },
+        [
+          ":item-ref",
+          {
+            "s": "a0a0a0a0-d0c0-4000-8000-000000000002"
+          },
+          {
+            "s": "Core Concepts"
+          }
+        ],
+        {
+          "s": " for how items, types, views, and libraries fit together."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "How They Connect"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "At boot, the flow is:"
+        }
+      ],
+      [
+        ":ol",
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "The "
+            },
+            [
+              ":item-ref",
+              {
+                "s": "c0c0c0c0-0002-0000-0000-000000000000"
+              },
+              {
+                "s": "bootloader"
+              }
+            ],
+            {
+              "s": " (the HTML file) loads "
+            },
+            [
+              ":code",
+              {
+                "s": "kernel:core"
+              }
+            ],
+            {
+              "s": " from IndexedDB"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "The kernel initializes storage, loads styles, renders the safe mode screen as a fallback"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "The kernel emits "
+            },
+            [
+              ":code",
+              {
+                "s": "kernel:boot-complete"
+              }
+            ]
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":code",
+              {
+                "s": "viewport-manager"
+              }
+            ],
+            {
+              "s": " (listening for that event) takes over — loads the rendering engine, resolves the root item from the URL, and renders the full UI"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "From here, everything is reactive — item changes trigger targeted re-renders via the event system"
+            }
+          ]
+        ]
+      ],
+      [
+        ":p",
+        {
+          "s": "At runtime, the dependency flows downward:"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": "  Userland (views, libraries, your items)\n      |\n      | uses enriched API (renderItem, navigate, ...)\n      v\n  Viewport (rendering engine, navigation, chrome)\n      |\n      | uses base API (get, set, query, require, events)\n      v\n  Kernel (storage, events, module system)"
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Where to Go From Here"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "New to Hobson? Start with "
+            },
+            [
+              ":item-ref",
+              {
+                "s": "fa99b548-f705-45fd-8e31-53f4e0818a66"
+              },
+              {
+                "s": "New Users"
+              }
+            ]
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Want to understand items, types, views? See "
+            },
+            [
+              ":item-ref",
+              {
+                "s": "a0a0a0a0-d0c0-4000-8000-000000000002"
+              },
+              {
+                "s": "Core Concepts"
+              }
+            ]
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Want to build views? See "
+            },
+            [
+              ":item-ref",
+              {
+                "s": "a0a0a0a0-d0c0-4000-8000-000000000004"
+              },
+              {
+                "s": "Views & Rendering"
+              }
+            ]
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Want to understand events and reactivity? See "
+            },
+            [
+              ":item-ref",
+              {
+                "s": "c0c0c0c0-0006-0000-0000-000000000000"
+              },
+              {
+                "s": "Event System"
+              }
+            ]
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Want the full architecture? See "
+            },
+            [
+              ":item-ref",
+              {
+                "s": "a0a0a0a0-d0c0-4000-8000-000000000003"
+              },
+              {
+                "s": "Architecture Overview"
+              }
+            ]
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Want the philosophy? See "
+            },
+            [
+              ":item-ref",
+              {
+                "s": "a0a0a0a0-d0c0-4000-8000-000000000001"
+              },
+              {
+                "s": "Philosophy & Inspirations"
+              }
+            ]
+          ]
+        ]
+      ]
+    ],
     "tags": [
       "bff75873-edb8-412e-81c9-c744e68fe29f"
     ]

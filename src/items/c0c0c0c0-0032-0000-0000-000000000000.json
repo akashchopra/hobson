@@ -3,9 +3,4826 @@
   "name": "Hob Language Tutorial",
   "type": "871ae771-b9b1-4f40-8c7f-d9038bfb69c3",
   "created": 1739750400000,
-  "modified": 1771241166119,
+  "modified": 1773243817557,
   "content": {
-    "description": "# Hob Language Tutorial\n\nHob is a Lisp dialect designed for the Hobson item system. It's inspired by Clojure and tailored for working with items, views, and the Hobson API. This tutorial takes you from zero to writing Hob views, covering every feature along the way.\n\n## 1. Getting Started\n\n### Quick evaluation with :h\n\nThe REPL has a built-in `:h` (or `:hob`) prefix for evaluating Hob expressions. Just type:\n\n```\n:h (+ 1 2)\n```\n\nThis is the fastest way to try things. Each `:h` call creates a **fresh interpreter**, so definitions don't persist between calls — `:h (def x 42)` followed by `:h x` won't work because `x` is gone.\n\nFor self-contained expressions, `:h` is all you need. Most examples in this tutorial use it.\n\n### Persistent sessions with hob()\n\nWhen you want to build up definitions incrementally — define a function, then call it, then compose it with something else — paste this setup block once per session:\n\n```js\nconst _hobLib = await api.require('hob-interpreter')\nconst _interp = _hobLib.createInterpreter(api)\nasync function hob(code) {\n  const result = await _interp.eval(code)\n  console.log(_interp.print(result))\n  return result\n}\n```\n\nNow `hob('(def x 42)')` followed by `hob('x')` works — the interpreter is shared. The REPL auto-awaits the returned promise, so no `await` is needed. Examples that build on prior definitions use `hob()`.\n\nLines starting with `;;` are Hob comments (ignored by the interpreter).\n\n---\n\n## 2. Primitives\n\nHob has six primitive types:\n\n```\n:h 42              ;; number\n:h 3.14            ;; number (all numbers are doubles)\n:h \"hello\"         ;; string\n:h true            ;; boolean\n:h false           ;; boolean\n:h nil             ;; nil (absence of value)\n:h :name           ;; keyword (self-evaluating identifier)\n```\n\n**Keywords** start with `:` and evaluate to themselves. They're used as map keys, option names, and — uniquely — as getter functions (more on this later).\n\n**Strings** support escape sequences: `\\n`, `\\t`, `\\\\`, `\\\"`.\n\n```\n:h \"line one\\nline two\"    ;; string with newline\n:h :on-click               ;; keyword with hyphens\n```\n\n---\n\n## 3. Calling Functions\n\nHob uses S-expression syntax: `(function arg1 arg2 ...)`. The first element of a list is called as a function, the rest are arguments.\n\n```\n:h (+ 1 2)            ;; => 3\n:h (+ 1 2 3 4 5)      ;; => 15  (variadic)\n:h (* 3 4)            ;; => 12\n:h (- 10 3)           ;; => 7\n:h (/ 10 3)           ;; => 3.333...\n:h (mod 10 3)         ;; => 1\n:h (inc 5)            ;; => 6\n:h (dec 5)            ;; => 4\n```\n\nNesting works naturally — inner expressions evaluate first:\n\n```\n:h (+ (* 2 3) (- 10 4))   ;; => 12  (6 + 6)\n```\n\n---\n\n## 4. Comparison and Logic\n\n```\n:h (= 1 1)            ;; => true\n:h (= 1 2)            ;; => false\n:h (not= 1 2)         ;; => true\n:h (< 1 2)            ;; => true\n:h (> 5 3)            ;; => true\n:h (<= 3 3)           ;; => true\n:h (>= 4 5)           ;; => false\n```\n\n**Truthiness:** Only `false` and `nil` are falsy. Everything else (including `0`, `\"\"`, and `[]`) is truthy.\n\n```\n:h (not false)         ;; => true\n:h (not nil)           ;; => true\n:h (not 0)            ;; => false  (0 is truthy!)\n:h (not \"\")           ;; => false  (\"\" is truthy!)\n```\n\nShort-circuit logic:\n\n```\n:h (and true true)     ;; => true\n:h (and true false)    ;; => false\n:h (and nil \"hello\")   ;; => nil  (stops at first falsy)\n:h (or false nil 42)   ;; => 42   (returns first truthy)\n:h (or false nil)      ;; => nil   (all falsy)\n```\n\n---\n\n## 5. Strings\n\n```\n:h (str \"Hello\" \" \" \"World\")      ;; => \"Hello World\"\n:h (str \"count: \" 42)             ;; => \"count: 42\"\n:h (count \"hello\")                ;; => 5\n:h (subs \"hello\" 1 3)             ;; => \"el\"\n:h (str/upper-case \"hello\")       ;; => \"HELLO\"\n:h (str/lower-case \"Hello\")       ;; => \"hello\"\n:h (str/trim \"  hi  \")            ;; => \"hi\"\n:h (str/split \"a,b,c\" \",\")        ;; => [\"a\" \"b\" \"c\"]\n:h (str/join \", \" [\"a\" \"b\" \"c\"])   ;; => \"a, b, c\"\n:h (str/includes? \"hello\" \"ell\")   ;; => true\n:h (str/replace \"hello\" \"l\" \"r\")   ;; => \"herro\"\n```\n\nThere is no string interpolation. Use `str` to build strings:\n\n```\n:h (let [name \"Alice\" age 30] (str name \" is \" age \" years old\"))\n;; => \"Alice is 30 years old\"\n```\n\n---\n\n## 6. Defining Variables\n\n`def` creates a binding in the current environment. Since `:h` creates a fresh environment each time, use `hob()` to see definitions persist:\n\n```js\nhob('(def x 42)')\nhob('x')                          ;; => 42\nhob('(def greeting \"hi\")')\nhob('(str greeting \" there\")')    ;; => \"hi there\"\n```\n\nWith `:h`, you can still use `def` — it just only lasts for that one evaluation. Combine with `do` to define-and-use in one shot:\n\n```\n:h (do (def x 42) (+ x 8))    ;; => 50\n```\n\n---\n\n## 7. Functions\n\n### Anonymous functions with `fn`\n\n```\n:h (fn [x] (* x x))            ;; => <fn>\n:h ((fn [x] (* x x)) 5)        ;; => 25  (immediate call)\n```\n\n### Named functions with `defn`\n\n`defn` is a macro that expands to `(def name (fn ...))`. Use `hob()` for define-then-call:\n\n```js\nhob('(defn double [x] (* x 2))')\nhob('(double 21)')              ;; => 42\n```\n\nMulti-expression body — last expression is the return value:\n\n```js\nhob(`(defn greet [name]\n       (log (str \"Greeting \" name))\n       (str \"Hello, \" name \"!\"))`)\nhob('(greet \"Bob\")')            ;; => \"Hello, Bob!\"\n```\n\nOr self-contained with `:h`:\n\n```\n:h (do\n     (defn double [x] (* x 2))\n     (double 21))\n;; => 42\n```\n\n### Multi-arity functions\n\nA function can have different bodies for different argument counts:\n\n```\n:h (do\n     (defn add\n       ([x] x)\n       ([x y] (+ x y))\n       ([x y z] (+ x y z)))\n     [(add 1) (add 1 2) (add 1 2 3)])\n;; => [1 3 6]\n```\n\n### Variadic functions\n\n`&` captures remaining arguments:\n\n```\n:h (do\n     (defn my-sum [first & rest] (reduce + first rest))\n     (my-sum 1 2 3 4))\n;; => 10\n```\n\n### Anonymous function shorthand\n\n`#(...)` creates a compact anonymous function. `%` (or `%1`) is the first argument, `%2` is the second, etc.:\n\n```\n:h (map #(* % %) [1 2 3 4])        ;; => [1 4 9 16]\n:h (map #(+ %1 %2) [1 2] [10 20])  ;; => [11 22]\n:h (filter #(> % 3) [1 5 2 7 3])   ;; => [5 7]\n```\n\n### Keywords as functions\n\nKeywords act as getter functions when used in function position:\n\n```\n:h (:name {:name \"Alice\" :age 30})             ;; => \"Alice\"\n:h (map :name [{:name \"A\"} {:name \"B\"}])       ;; => [\"A\" \"B\"]\n```\n\nThis is one of Hob's most useful idioms.\n\n---\n\n## 8. Collections\n\n### Vectors\n\nOrdered, indexed collections (like arrays):\n\n```\n:h [1 2 3]                     ;; => [1 2 3]\n:h (vec (list 1 2 3))          ;; => [1 2 3]\n:h (count [10 20 30])          ;; => 3\n:h (first [10 20 30])          ;; => 10\n:h (rest [10 20 30])           ;; => (20 30)\n:h (nth [10 20 30] 1)          ;; => 20\n:h (conj [1 2] 3)              ;; => [1 2 3]\n:h (concat [1 2] [3 4])        ;; => (1 2 3 4)\n:h (into [1 2] [3 4])          ;; => [1 2 3 4]\n:h (empty? [])                 ;; => true\n:h (empty? [1])                ;; => false\n```\n\n### Lists\n\nCreated with `list` or `'(...)`. Functionally similar to vectors but used mainly in macro contexts:\n\n```\n:h (list 1 2 3)               ;; => (1 2 3)\n:h '(1 2 3)                   ;; => (1 2 3)\n:h (cons 0 [1 2 3])           ;; => (0 1 2 3)\n```\n\n### Maps\n\nKey-value associations (like objects):\n\n```\n:h {:name \"Alice\" :age 30}                ;; => {:name \"Alice\", :age 30}\n:h (get {:name \"Alice\"} :name)            ;; => \"Alice\"\n:h (get {:a 1} :b \"default\")             ;; => \"default\"\n:h (assoc {:a 1} :b 2)                   ;; => {:a 1, :b 2}\n:h (dissoc {:a 1 :b 2} :b)              ;; => {:a 1}\n:h (update {:count 1} :count inc)        ;; => {:count 2}\n:h (keys {:a 1 :b 2})                    ;; => (:a :b)\n:h (vals {:a 1 :b 2})                    ;; => (1 2)\n:h (merge {:a 1} {:b 2} {:a 3})         ;; => {:a 3, :b 2}\n:h (contains? {:a 1} :a)                ;; => true\n```\n\n### Nested access\n\n```\n:h (let [person {:name \"Alice\" :address {:city \"NYC\" :zip \"10001\"}}]\n     (get-in person [:address :city]))\n;; => \"NYC\"\n\n:h (let [person {:name \"Alice\" :address {:city \"NYC\" :zip \"10001\"}}]\n     (assoc-in person [:address :zip] \"10002\"))\n;; => {:name \"Alice\", :address {:city \"NYC\", :zip \"10002\"}}\n```\n\n---\n\n## 9. Higher-Order Collection Functions\n\nThese are the workhorses of Hob code:\n\n```\n;; map — transform each element\n:h (map inc [1 2 3])               ;; => [2 3 4]\n:h (map str/upper-case [\"a\" \"b\"])  ;; => [\"A\" \"B\"]\n\n;; filter — keep elements matching predicate\n:h (filter #(> % 3) [1 5 2 7 3])  ;; => [5 7]\n\n;; reduce — fold a collection to a single value\n:h (reduce + [1 2 3 4])            ;; => 10\n:h (reduce + 100 [1 2 3])          ;; => 106 (with initial value)\n\n;; some — find first truthy result\n:h (some #(> % 3) [1 2 5 3])      ;; => true\n:h (some #(> % 10) [1 2 3])       ;; => nil\n\n;; every? — all elements satisfy predicate?\n:h (every? #(> % 0) [1 2 3])      ;; => true\n:h (every? #(> % 2) [1 2 3])      ;; => false\n\n;; sort and sort-by\n:h (sort [3 1 4 1 5])              ;; => [1 1 3 4 5]\n:h (sort-by count [\"bb\" \"a\" \"ccc\"]) ;; => [\"a\" \"bb\" \"ccc\"]\n\n;; distinct, reverse, take\n:h (distinct [1 2 1 3 2])          ;; => [1 2 3]\n:h (reverse [1 2 3])               ;; => [3 2 1]\n:h (take 2 [10 20 30 40])          ;; => [10 20]\n\n;; mapcat — map then flatten one level\n:h (mapcat #(list % %) [1 2 3])    ;; => (1 1 2 2 3 3)\n```\n\n---\n\n## 10. Control Flow\n\n### if\n\n`(if test then else?)` — evaluates `then` if test is truthy, `else` otherwise:\n\n```\n:h (if true \"yes\" \"no\")        ;; => \"yes\"\n:h (if false \"yes\" \"no\")       ;; => \"no\"\n:h (if nil \"yes\" \"no\")         ;; => \"no\"\n:h (if nil \"yes\")              ;; => nil  (no else branch)\n```\n\n### when\n\n`(when test body...)` — like `if` with no else branch, but allows multiple body expressions:\n\n```\n:h (when true (log \"side effect\") \"result\")  ;; => \"result\"\n:h (when false \"never\")                       ;; => nil\n```\n\n### cond\n\n`(cond test1 expr1 test2 expr2 ... :else default)` — multi-branch conditional:\n\n```\n:h (do\n     (defn classify [n]\n       (cond\n         (< n 0) \"negative\"\n         (= n 0) \"zero\"\n         :else   \"positive\"))\n     [(classify -5) (classify 0) (classify 42)])\n;; => [\"negative\" \"zero\" \"positive\"]\n```\n\n### when-let\n\n`(when-let [name expr] body...)` — bind and execute body only if the value is truthy:\n\n```\n:h (when-let [x (get {:a 1} :a)] (str \"found: \" x))  ;; => \"found: 1\"\n:h (when-let [x (get {:a 1} :b)] (str \"found: \" x))  ;; => nil\n```\n\n---\n\n## 11. Let Bindings\n\n`(let [name1 val1 name2 val2 ...] body...)` creates local bindings:\n\n```\n:h (let [x 10\n         y 20\n         sum (+ x y)]\n     (str \"sum is \" sum))\n;; => \"sum is 30\"\n```\n\nBindings are sequential — later bindings can reference earlier ones. Bindings are scoped to the let block.\n\n### Auto-parallel let\n\nHob analyzes let bindings for dependencies. Independent bindings run concurrently:\n\n```\n;; x and y have no dependencies on each other — they evaluate in parallel.\n;; z depends on both — it waits for them.\n:h (let [x (do (log \"computing x\") 1)\n         y (do (log \"computing y\") 2)\n         z (+ x y)]\n     z)\n;; => 3\n```\n\n### Explicit parallel let: plet\n\n`(plet [bindings] body)` forces all bindings to evaluate concurrently, regardless of apparent dependencies:\n\n```\n:h (plet [a 1 b 2 c 3] (+ a b c))  ;; => 6\n```\n\n---\n\n## 12. Destructuring\n\nDestructuring extracts values from collections directly in binding positions. It works in `let`, `fn`, `defn`, and `loop`.\n\n### Vector destructuring\n\n```\n:h (let [[a b c] [1 2 3]] (str a \", \" b \", \" c))\n;; => \"1, 2, 3\"\n\n;; Rest elements with &\n:h (let [[head & tail] [1 2 3 4]] tail)\n;; => (2 3 4)\n\n;; Skip elements with _\n:h (let [[_ second _] [1 2 3]] second)\n;; => 2\n```\n\n### Map destructuring\n\n```\n;; :keys extracts keyword keys by name\n:h (let [{:keys [name age]} {:name \"Alice\" :age 30}] (str name \" is \" age))\n;; => \"Alice is 30\"\n\n;; :strs extracts string keys\n:h (let [{:strs [name]} {\"name\" \"Bob\"}] name)\n;; => \"Bob\"\n\n;; :or provides defaults\n:h (let [{:keys [x y] :or {x 0 y 0}} {:x 5}] [x y])\n;; => [5 0]\n\n;; :as binds the whole map\n:h (let [{:keys [name] :as person} {:name \"Alice\" :age 30}] [name person])\n;; => [\"Alice\" {:name \"Alice\", :age 30}]\n\n;; Direct key binding\n:h (let [{city :city} {:city \"NYC\"}] city)\n;; => \"NYC\"\n```\n\n### Destructuring in function parameters\n\n```\n:h (do\n     (defn full-name [{:keys [first last]}]\n       (str first \" \" last))\n     (full-name {:first \"Jane\" :last \"Doe\"}))\n;; => \"Jane Doe\"\n\n:h (do\n     (defn sum-pair [[a b]] (+ a b))\n     (sum-pair [3 4]))\n;; => 7\n```\n\n---\n\n## 13. Loops\n\n### loop/recur\n\n`loop` defines bindings and a body. `recur` jumps back to the loop head with new values — this is tail recursion with no stack growth:\n\n```\n:h (loop [i 0 sum 0]\n     (if (> i 10)\n       sum\n       (recur (inc i) (+ sum i))))\n;; => 55  (sum of 0..10)\n```\n\n`recur` also works in `fn`/`defn` for tail-recursive functions:\n\n```\n:h (do\n     (defn factorial [n]\n       (loop [i n acc 1]\n         (if (<= i 1)\n           acc\n           (recur (dec i) (* acc i)))))\n     (factorial 10))\n;; => 3628800\n```\n\n### for (list comprehension)\n\n`(for [x coll] expr)` maps over a collection:\n\n```\n:h (for [x [1 2 3]] (* x x))\n;; => [1 4 9]\n```\n\n### doseq (side-effect loop)\n\n`(doseq [x coll] body...)` iterates for side effects, returns nil:\n\n```\n:h (doseq [x [1 2 3]] (log (str \"x = \" x)))\n;; logs: x = 1, x = 2, x = 3\n;; => nil\n```\n\n---\n\n## 14. Threading Macros\n\nThreading macros help avoid deeply nested function calls.\n\n### Thread-first: ->\n\nInserts the result as the **first** argument of each form:\n\n```\n;; Without threading:\n:h (str/upper-case (subs (str/trim \"  hello world  \") 0 5))\n\n;; With ->:\n:h (-> \"  hello world  \" str/trim (subs 0 5) str/upper-case)\n;; => \"HELLO\"\n```\n\nThe macro rewrites `(-> x (f a))` to `(f x a)`.\n\n### Thread-last: ->>\n\nInserts the result as the **last** argument:\n\n```\n:h (->> [1 2 3 4 5] (filter #(> % 2)) (map #(* % 10)))\n;; => [30 40 50]\n```\n\nThe macro rewrites `(->> x (f a))` to `(f a x)`.\n\n---\n\n## 15. Atoms (Mutable State)\n\nAtoms hold mutable state. They're the primary way to manage state in Hob views. Since atoms are stateful, use `hob()` to explore them interactively:\n\n```js\nhob('(def counter (atom 0))')\nhob('(deref counter)')              ;; => 0\nhob('(swap! counter inc)')          ;; => 1\nhob('(swap! counter + 10)')         ;; => 11  (applies (+ current 10))\nhob('(reset! counter 0)')           ;; => 0\nhob('(deref counter)')              ;; => 0\n```\n\nOr self-contained with `:h`:\n\n```\n:h (let [counter (atom 0)]\n     (swap! counter inc)\n     (swap! counter + 10)\n     (deref counter))\n;; => 11\n```\n\n**Important:** There is NO `@` deref shorthand in Hob. `@name` is an *item reference* (see section 17), not `(deref name)`. Always write `(deref atom-name)`.\n\n### Atoms with complex values\n\n```js\nhob('(def state (atom {:count 0 :items []}))')\nhob('(swap! state update :count inc)')\nhob('(swap! state update :items conj \"new item\")')\nhob('(deref state)')\n;; => {:count 1, :items [\"new item\"]}\n```\n\nIn Hob views, atoms are automatically tracked for reactivity — when an atom that a view depends on changes, the view re-renders.\n\n---\n\n## 16. Error Handling\n\n### try / catch / finally\n\n```\n:h (try\n     (/ 1 0)\n     (catch e\n       (str \"Error: \" e)))\n;; => \"Error: Division by zero\"  (or similar)\n\n:h (try\n     (throw \"something went wrong\")\n     (catch e\n       (str \"Caught: \" e))\n     (finally\n       (log \"cleanup runs always\")))\n;; => \"Caught: something went wrong\"\n```\n\n### throw\n\n```\n:h (do\n     (defn positive! [n]\n       (when (< n 0)\n         (throw (str \"Expected positive, got \" n)))\n       n)\n     (try (positive! -3)\n       (catch e (str \"Oops: \" e))))\n;; => \"Oops: Expected positive, got -3\"\n```\n\n---\n\n## 17. Item References\n\nThe `@` prefix creates an **item reference** — a lightweight pointer to a Hobson item by name or UUID:\n\n```\n:h @note\n;; => {name: \"note\", type: \"871ae771-...\", ...}  (the resolved item!)\n\n:h (resolve-ref @note)\n;; => same thing — explicitly resolves a ref to its item\n```\n\nItem references with UUIDs work too:\n\n```\n:h @871ae771-b9b1-4f40-8c7f-d9038bfb69c3\n;; => the Note type-definition item\n```\n\n### The auto-resolve gotcha\n\nThe REPL auto-resolves item refs when they're the **final result** of an evaluation. But inside nested expressions, `@ref` is still an unresolved marker object — *not* the item. This means:\n\n```\n:h @871ae771-b9b1-4f40-8c7f-d9038bfb69c3\n;; => the full item (auto-resolved because it's the top-level result)\n\n:h (:name @871ae771-b9b1-4f40-8c7f-d9038bfb69c3)\n;; => nil!  (@ref is an unresolved marker here, not the item)\n```\n\nWhen using `@ref` inside an expression, always wrap it with `resolve-ref`:\n\n```\n:h (:name (resolve-ref @871ae771-b9b1-4f40-8c7f-d9038bfb69c3))\n;; => \"note\"\n```\n\nOr just use `get-item` with the ID string directly:\n\n```\n:h (:name (get-item \"871ae771-b9b1-4f40-8c7f-d9038bfb69c3\"))\n;; => \"note\"\n```\n\nIn view code, `@ref` is typically used as data (e.g. in `def-watch` specs) rather than as an item lookup, so this rarely bites you there. It's mainly a REPL surprise.\n\n### Type predicates for refs\n\n```\n:h (item-ref? @something)  ;; => true\n:h (item-ref? \"hello\")     ;; => false\n```\n\n---\n\n## 18. Working with Items\n\nThese operations interact with Hobson's IndexedDB storage. They're the core of what makes Hob a Hobson-native language.\n\n### Reading items\n\n```\n;; Get an item by GUID\n:h (:name (get-item \"871ae771-b9b1-4f40-8c7f-d9038bfb69c3\"))\n;; => \"note\"\n\n;; Get nested content\n:h (get-in (get-item \"871ae771-b9b1-4f40-8c7f-d9038bfb69c3\") [:content :description])\n```\n\n### Querying items\n\n```\n;; Find all items of a given type\n:h (count (find-items {:type \"871ae771-b9b1-4f40-8c7f-d9038bfb69c3\"}))\n\n;; Find by name\n:h (find-items {:name \"hob-interpreter\"})\n\n;; Get ALL items (use sparingly)\n:h (count (get-all))\n```\n\n### Creating and updating items\n\n```\n:h (set-item! {:id \"test-1234-0000-0000-000000000000\"\n               :name \"REPL Test Note\"\n               :type \"871ae771-b9b1-4f40-8c7f-d9038bfb69c3\"\n               :created (now)\n               :modified (now)\n               :content {:description \"Created from the Hob REPL!\"}\n               :attachments []})\n```\n\n### Updating an existing item\n\n```\n:h (let [item (get-item \"test-1234-0000-0000-000000000000\")]\n     (set-item! (assoc-in item [:content :description] \"Updated from Hob!\")))\n```\n\n### Deleting items\n\n```\n:h (delete-item! \"test-1234-0000-0000-000000000000\")\n```\n\n---\n\n## 19. Navigation and UI\n\nThese operations control the Hobson viewport.\n\n```\n;; Navigate the viewport to an item\n:h (navigate! \"871ae771-b9b1-4f40-8c7f-d9038bfb69c3\")\n\n;; Open an item in a panel/overlay\n:h (open-item! \"871ae771-b9b1-4f40-8c7f-d9038bfb69c3\")\n\n;; Search for items by query string\n:h (map :name (search-items! \"note\"))\n\n;; Get starred items\n:h (map :name (get-starred-items!))\n\n;; Get related items (type, tags, attachments, etc.)\n:h (get-related! \"871ae771-b9b1-4f40-8c7f-d9038bfb69c3\")\n\n;; Render markdown to HTML string\n:h (render-markdown \"**bold** and *italic*\")\n```\n\n---\n\n## 20. JS Interop\n\n### invoke\n\n`invoke` calls a method on a JavaScript object:\n\n```\n:h (invoke console \"log\" \"Hello from Hob!\")\n;; logs \"Hello from Hob!\" to the browser console\n```\n\n**Syntax:** `(invoke object \"method-name\" arg1 arg2 ...)`\n\nHob automatically converts keyword-keyed maps to plain JS objects when passing arguments via `invoke`, and awaits any returned Promises.\n\n### require\n\nLoad a Hobson library module:\n\n```js\nhob('(def md (require \"hobson-markdown\"))')\n;; md is now the module's export object\n```\n\n### The api object\n\nThe `api` symbol is bound directly to the Hobson API object, useful as a last resort for functionality not yet wrapped as Hob operations:\n\n```\n:h (invoke api \"getType\" \"871ae771-b9b1-4f40-8c7f-d9038bfb69c3\")\n```\n\n---\n\n## 21. Type Predicates\n\n```\n:h (number? 42)        ;; => true\n:h (string? \"hi\")      ;; => true\n:h (keyword? :foo)     ;; => true\n:h (boolean? true)     ;; => true\n:h (nil? nil)          ;; => true\n:h (list? (list 1))    ;; => true\n:h (vector? [1 2])     ;; => true\n:h (map? {:a 1})       ;; => true\n:h (fn? inc)           ;; => true\n:h (atom? (atom 0))    ;; => true\n:h (sequential? [1])   ;; => true (vectors and lists)\n:h (empty? [])         ;; => true\n:h (seq [])            ;; => nil  (empty -> nil)\n:h (seq [1])           ;; => (1)  (non-empty -> sequence)\n```\n\n---\n\n## 22. Utility Functions\n\n```\n;; identity — returns its argument unchanged\n:h (identity 42)                          ;; => 42\n\n;; constantly — returns a function that always returns the same value\n:h (map (constantly \"x\") [1 2 3])         ;; => [\"x\" \"x\" \"x\"]\n\n;; comp — function composition (right to left)\n:h ((comp str/upper-case str/trim) \"  hello  \")   ;; => \"HELLO\"\n\n;; partial — partial application\n:h (let [add5 (partial + 5)] (add5 10))   ;; => 15\n\n;; apply — apply function to argument list\n:h (apply + [1 2 3 4])                    ;; => 10\n:h (apply str \"a\" \"b\" [\"c\" \"d\"])          ;; => \"abcd\"\n\n;; type-of — get type name\n:h (type-of 42)         ;; => \"number\"\n:h (type-of [1 2])      ;; => \"vector\"\n:h (type-of {:a 1})     ;; => \"map\"\n:h (type-of :kw)        ;; => \"keyword\"\n\n;; I/O\n:h (log \"info message\")\n:h (log/warn \"warning!\")\n:h (log/error \"error!\")\n\n;; Date/time\n:h (now)                 ;; => current timestamp (ms)\n:h (format-date (now))   ;; => locale date string\n\n;; Symbols and keywords (for macro writing)\n:h (gensym \"temp\")       ;; => temp__123 (unique symbol)\n:h (symbol \"my-var\")     ;; => my-var\n:h (keyword \"my-key\")    ;; => :my-key\n:h (name :my-key)        ;; => \"my-key\"\n```\n\n---\n\n## 23. Writing Macros\n\nMacros transform code at expansion time, before evaluation. They receive unevaluated arguments as data and return new code. Use `hob()` for this section since macros need to persist.\n\n### Quote and quasiquote\n\n`quote` (or `'`) prevents evaluation:\n\n```\n:h '(+ 1 2)          ;; => (+ 1 2)  (a list, not 3)\n:h 'foo               ;; => foo  (a symbol, not its value)\n```\n\nQuasiquote (`` ` ``) is like quote but allows \"unquoting\" with `~`:\n\n```\n:h (let [x 42] `(the answer is ~x))\n;; => (the answer is 42)\n```\n\nUnquote-splicing `~@` splices a list into the surrounding list:\n\n```\n:h (let [nums [1 2 3]] `(before ~@nums after))\n;; => (before 1 2 3 after)\n```\n\n### defmacro\n\n```js\nhob(`(defmacro unless [test & body]\n       \\`(if (not ~test) (do ~@body) nil))`)\nhob('(unless false \"executed!\")')   ;; => \"executed!\"\nhob('(unless true \"skipped\")')      ;; => nil\n```\n\n### Example: a debugging macro\n\n```js\nhob(`(defmacro dbg [expr]\n       (let [s (pr-str expr)]\n         \\`(let [result ~expr]\n            (log (str ~s \" => \" (pr-str result)))\n            result)))`)\nhob('(dbg (+ 1 2))')\n;; logs: (+ 1 2) => 3\n;; => 3\n```\n\nOr self-contained with `:h`:\n\n```\n:h (do\n     (defmacro dbg [expr]\n       (let [s (pr-str expr)]\n         `(let [result ~expr]\n            (log (str ~s \" => \" (pr-str result)))\n            result)))\n     (dbg (+ 1 2)))\n;; logs: (+ 1 2) => 3\n;; => 3\n```\n\n### Built-in macros\n\nThese are pre-loaded and available everywhere:\n\n| Macro | Expands to | Example |\n|-------|-----------|---------|\n| `defn` | `def` + `fn` | `(defn f [x] x)` |\n| `when` | `if` + `do` | `(when true body)` |\n| `when-let` | `let` + `if` | `(when-let [x val] body)` |\n| `cond` | nested `if` | `(cond test1 val1 :else default)` |\n| `->` | thread-first | `(-> x f g)` |\n| `->>` | thread-last | `(->> x f g)` |\n| `for` | `map` + `fn` | `(for [x coll] expr)` |\n| `doseq` | `map` for effects | `(doseq [x coll] body)` |\n| `and` | short-circuit and | `(and a b c)` |\n| `or` | short-circuit or | `(or a b c)` |\n| `def-view` | view definition | see next section |\n| `def-watch` | watch definition | see Events section |\n\n---\n\n## 24. Hiccup: Building UI\n\nHob views render UI using **hiccup** — a Lisp-friendly way to describe HTML as nested vectors. The examples in this section are pure Hob (not REPL commands) — they show the syntax you'd write inside a `.hob` view file.\n\n### Basic syntax\n\n```\n[:tag-name optional-attrs-map child1 child2 ...]\n```\n\nExamples:\n\n```clojure\n[:div \"Hello\"]                              ;; <div>Hello</div>\n[:p \"A paragraph\"]                          ;; <p>A paragraph</p>\n[:div [:p \"nested\"]]                        ;; <div><p>nested</p></div>\n[:span {:style {:color \"red\"}} \"Red text\"]  ;; styled span\n```\n\n### IDs and classes in the tag\n\n```clojure\n[:div#my-id \"with id\"]                    ;; <div id=\"my-id\">\n[:div.highlight \"with class\"]             ;; <div class=\"highlight\">\n[:div#main.container.dark \"both\"]         ;; <div id=\"main\" class=\"container dark\">\n```\n\n### Attributes\n\nThe optional second element can be a map of attributes:\n\n```clojure\n[:input {:type \"text\" :value \"hello\" :placeholder \"Type here...\"}]\n[:a {:href \"#\" :title \"Click me\"} \"Link\"]\n[:div {:class \"box\" :style {:padding \"10px\" :border \"1px solid #ccc\"}} \"Styled\"]\n[:button {:disabled true} \"Can't click\"]  ;; boolean attributes\n```\n\n### Event handlers\n\n```clojure\n[:button {:on-click (fn [e] (log \"clicked!\"))} \"Click me\"]\n[:input {:on-input (fn [e] (log (invoke e \"target.value\")))}]\n[:div {:on-mouseenter (fn [e] (log \"hover!\"))} \"Hover me\"]\n```\n\nAny DOM event works: `:on-click`, `:on-input`, `:on-change`, `:on-keydown`, `:on-submit`, `:on-mouseenter`, `:on-mouseleave`, `:on-focus`, `:on-blur`, etc.\n\n### Debounce and throttle\n\nFor performance, wrap handlers in an object with `:debounce` or `:throttle`:\n\n```clojure\n[:input {:on-input {:handler (fn [e] (search! (invoke e \"target.value\")))\n                    :debounce 300}}]   ;; waits 300ms after last keystroke\n\n[:div {:on-scroll {:handler (fn [e] (update-position!))\n                   :throttle 100}}]    ;; fires at most every 100ms\n```\n\n### Refs\n\nUse `:ref` to get a handle to a DOM element:\n\n```clojure\n;; With hiccup->dom+ (returns [dom-node refs-map])\n(let [[dom refs] (hiccup->dom+\n                   [:div\n                     [:input {:ref \"my-input\" :type \"text\"}]\n                     [:button {:ref \"my-btn\"} \"Go\"]])]\n  ;; refs is a map: {\"my-input\" <input-element>, \"my-btn\" <button-element>}\n  (dom-on! (get refs \"my-btn\") :click\n    (fn [e] (log (dom-get (get refs \"my-input\") :value))))\n  dom)\n```\n\n### Sortable lists\n\nUse the `:sortable` attribute to enable drag-and-drop:\n\n```clojure\n[:div {:sortable {:handle \".drag-handle\"\n                  :on-reorder (fn [from to] (reorder-attachments! from to))}}\n  (for [item items]\n    [:div.item\n      [:span.drag-handle \"⠿\"]\n      [:span (:name item)]])]\n```\n\n### Conditional rendering\n\nHob views are just functions returning hiccup. Use normal control flow:\n\n```clojure\n[:div\n  (if loading?\n    [:span \"Loading...\"]\n    [:span (str count \" items\")])\n  (when error\n    [:div.error error])\n  (for [item items]\n    [:div.item (:name item)])]\n```\n\n`nil` values in hiccup children are silently ignored, so `(when ...)` returning `nil` simply renders nothing.\n\n---\n\n## 25. Writing a Hob View\n\nA Hob view is a code item with `content.hob` that defines how to render a particular item type. The view code receives `item` (the item being displayed) as a binding.\n\n### Simple view\n\n```clojure\n;; A view that shows an item's name and description\n(let [name (or (:name item) \"Unnamed\")\n      desc (get-in item [:content :description])\n      tags (get-in item [:content :tags] [])]\n  [:div {:style {:padding \"16px\"}}\n    [:h2 name]\n    (when (seq desc)\n      [:div {:style {:margin-top \"8px\"}}\n        (render-markdown desc)])\n    (when (seq tags)\n      [:div {:style {:margin-top \"12px\" :display \"flex\" :gap \"4px\"}}\n        (for [tag-id tags]\n          (let [tag (get-item tag-id)]\n            [:span {:style {:background \"#e0e0e0\" :padding \"2px 8px\"\n                            :border-radius \"4px\" :font-size \"12px\"}}\n              (or (:name tag) \"?\")]))])])\n```\n\n### View with state (atoms)\n\n```clojure\n(let [expanded (atom false)\n      name (:name item)\n      desc (get-in item [:content :description] \"\")]\n  [:div {:style {:padding \"16px\"}}\n    [:div {:style {:display \"flex\" :align-items \"center\" :gap \"8px\"}}\n      [:button {:on-click (fn [e] (swap! expanded not))\n                :style {:border \"none\" :background \"none\" :cursor \"pointer\"}}\n        (if (deref expanded) \"▼\" \"▶\")]\n      [:h3 {:style {:margin \"0\"}} name]]\n    (when (deref expanded)\n      [:div {:style {:margin-top \"8px\" :padding-left \"24px\"}}\n        (if (seq desc)\n          (render-markdown desc)\n          [:em \"No description\"])])])\n```\n\nBecause atoms are reactively tracked, clicking the button triggers a re-render that shows/hides the description.\n\n---\n\n## 26. DOM Operations (Imperative Style)\n\nSometimes declarative hiccup isn't enough. Hob provides imperative DOM primitives for when you need fine-grained control:\n\n```clojure\n;; Build DOM with refs, then wire up events imperatively\n(let [[dom refs] (hiccup->dom+\n                   [:div\n                     [:input {:ref \"input\" :type \"text\" :placeholder \"Type here\"}]\n                     [:button {:ref \"btn\"} \"Greet\"]\n                     [:div {:ref \"output\"}]])\n      input-el (get refs \"input\")\n      btn-el (get refs \"btn\")\n      output-el (get refs \"output\")]\n\n  (dom-on! btn-el :click\n    (fn [e]\n      (let [name (dom-get input-el :value)]\n        (dom-set-content! output-el\n          [:p {:style {:color \"green\"}}\n            (str \"Hello, \" name \"!\")]))))\n\n  dom)  ;; Return the DOM node for rendering\n```\n\n**DOM operation reference:**\n\n| Function | Purpose |\n|----------|---------|\n| `(hiccup->dom hiccup)` | Convert hiccup to DOM node |\n| `(hiccup->dom+ hiccup)` | Convert with refs -> `[dom refs-map]` |\n| `(dom-on! el :event fn)` | Attach event listener |\n| `(dom-get el :prop)` | Read DOM property |\n| `(dom-set! el :prop val)` | Set DOM property |\n| `(dom-set-content! el content)` | Replace element's children |\n| `(stop-propagation! event)` | Stop event bubbling |\n| `(prevent-default! event)` | Prevent default behavior |\n| `(set-timeout! fn ms)` | Schedule delayed execution |\n| `(clear-timeout! timer-id)` | Cancel scheduled execution |\n\n---\n\n## 27. Events\n\n### Emitting events\n\n```clojure\n(emit! {:type \"some-event-id\" :content {:message \"hello\"}})\n```\n\n### Watching events with def-watch\n\n`def-watch` creates a handler that runs when a specific event fires. This is used in handler code items (not view items):\n\n```clojure\n(def-watch my-handler @some-event [event]\n  (log (str \"Event fired: \" (get-in event [:content :message]))))\n```\n\n---\n\n## 28. Concurrency\n\n### pmap (parallel map)\n\nLike `map` but evaluates all function calls concurrently:\n\n```\n:h (pmap #(do (log %) %) [1 2 3 4 5])\n;; All 5 log calls fire concurrently\n;; => [1 2 3 4 5]\n```\n\nUseful when mapping over async operations like `get-item`:\n\n```clojure\n;; Fetch multiple items in parallel\n(pmap get-item item-ids)\n```\n\n---\n\n## 29. Complete Example: Creating a Hob View Item\n\nThis REPL script creates a working Hob view that displays a \"Hello Hob\" card with a click counter. Paste this into the Hobson REPL:\n\n```js\nconst viewId = 'c0c0c0c0-0099-0000-0000-000000000000'\n\nconst hobCode = `\n;; Hello Hob — a demo view with a click counter\n(let [clicks (atom 0)\n      name (or (:name item) \"World\")]\n  [:div {:style {:padding \"20px\"\n                 :border \"2px solid #6366f1\"\n                 :border-radius \"12px\"\n                 :max-width \"400px\"\n                 :font-family \"system-ui, sans-serif\"}}\n    [:h2 {:style {:margin \"0 0 12px 0\" :color \"#6366f1\"}}\n      (str \"Hello, \" name \"!\")]\n    [:p {:style {:color \"#666\" :margin \"0 0 16px 0\"}}\n      (str \"This view has been clicked \" (deref clicks) \" time\"\n           (if (= (deref clicks) 1) \"\" \"s\") \".\")]\n    [:button {:on-click (fn [e] (swap! clicks inc))\n              :style {:background \"#6366f1\" :color \"white\"\n                      :border \"none\" :padding \"8px 20px\"\n                      :border-radius \"6px\" :cursor \"pointer\"\n                      :font-size \"14px\"}}\n      \"Click me!\"]\n    [:div {:style {:margin-top \"16px\" :padding-top \"12px\"\n                   :border-top \"1px solid #e5e7eb\"\n                   :font-size \"12px\" :color \"#999\"}}\n      (str \"Item ID: \" (subs (:id item) 0 8) \"...\")]])`\n\nawait api.put({\n  id: viewId,\n  name: 'hello-hob-view',\n  type: '22222222-0000-0000-0000-000000000000',\n  created: Date.now(),\n  modified: Date.now(),\n  content: {\n    code: '',\n    hob: hobCode,\n    contentType: 'view',\n  },\n  attachments: [],\n})\n\nconsole.log('Created hello-hob-view! Navigate to any item and select it from the view picker.')\n```\n\n---\n\n## 30. Quick Reference Card\n\n### Special Forms\n`def`, `fn`, `let`, `if`, `do`, `quote`, `loop`, `recur`, `try`, `catch`, `finally`, `throw`, `defmacro`, `plet`, `and`, `or`\n\n### Macros\n`defn`, `when`, `when-let`, `cond`, `->`, `->>`, `for`, `doseq`, `def-view`, `def-watch`\n\n### Arithmetic\n`+`, `-`, `*`, `/`, `mod`, `inc`, `dec`\n\n### Comparison\n`=`, `not=`, `<`, `>`, `<=`, `>=`, `not`\n\n### Strings\n`str`, `pr-str`, `subs`, `count`, `str/upper-case`, `str/lower-case`, `str/trim`, `str/split`, `str/join`, `str/includes?`, `str/replace`\n\n### Collections\n`first`, `rest`, `cons`, `conj`, `concat`, `nth`, `get`, `assoc`, `dissoc`, `update`, `get-in`, `assoc-in`, `update-in`, `keys`, `vals`, `merge`, `into`, `empty?`, `seq`, `vec`, `contains?`, `count`, `distinct`, `reverse`, `take`\n\n### Higher-Order\n`map`, `mapcat`, `filter`, `reduce`, `some`, `every?`, `sort`, `sort-by`, `apply`, `comp`, `partial`, `identity`, `constantly`, `pmap`\n\n### Atoms\n`atom`, `deref`, `swap!`, `reset!`\n\n### Type Checks\n`nil?`, `number?`, `string?`, `keyword?`, `symbol?`, `boolean?`, `list?`, `vector?`, `sequential?`, `map?`, `fn?`, `atom?`, `item-ref?`\n\n### Items\n`get-item`, `set-item!`, `delete-item!`, `find-items`, `get-all`, `resolve-ref`\n\n### View/Navigation\n`navigate!`, `open-item!`, `render-item`, `render-markdown`, `search-items!`, `get-starred-items!`, `get-related!`, `get-fqn!`, `rerender!`, `copy-to-clipboard!`, `clear-selection!`, `detach!`, `reorder-attachments!`, `get-selection!`, `get-viewport-root`, `emit!`, `require`\n\n### DOM\n`hiccup->dom`, `hiccup->dom+`, `dom-on!`, `dom-get`, `dom-set!`, `dom-set-content!`, `stop-propagation!`, `prevent-default!`, `set-timeout!`, `clear-timeout!`\n\n### I/O\n`log`, `log/warn`, `log/error`, `confirm`, `alert`, `now`, `format-date`\n\n### Interop\n`invoke`, `api`\n\n### Meta\n`type-of`, `gensym`, `symbol`, `keyword`, `name`, `list`\n",
+    "description": [
+      ":doc",
+      [
+        ":h1",
+        {
+          "s": "Hob Language Tutorial"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Hob is a Lisp dialect designed for the Hobson item system. It's inspired by Clojure and tailored for working with items, views, and the Hobson API. This tutorial takes you from zero to writing Hob views, covering every feature along the way."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "1. Getting Started"
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Quick evaluation with :h"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The REPL has a built-in "
+        },
+        [
+          ":code",
+          {
+            "s": ":h"
+          }
+        ],
+        {
+          "s": " (or "
+        },
+        [
+          ":code",
+          {
+            "s": ":hob"
+          }
+        ],
+        {
+          "s": ") prefix for evaluating Hob expressions. Just type:"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": ":h (+ 1 2)"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "This is the fastest way to try things. Each "
+        },
+        [
+          ":code",
+          {
+            "s": ":h"
+          }
+        ],
+        {
+          "s": " call creates a "
+        },
+        [
+          ":strong",
+          {
+            "s": "fresh interpreter"
+          }
+        ],
+        {
+          "s": ", so definitions don't persist between calls — "
+        },
+        [
+          ":code",
+          {
+            "s": ":h (def x 42)"
+          }
+        ],
+        {
+          "s": " followed by "
+        },
+        [
+          ":code",
+          {
+            "s": ":h x"
+          }
+        ],
+        {
+          "s": " won't work because "
+        },
+        [
+          ":code",
+          {
+            "s": "x"
+          }
+        ],
+        {
+          "s": " is gone."
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "For self-contained expressions, "
+        },
+        [
+          ":code",
+          {
+            "s": ":h"
+          }
+        ],
+        {
+          "s": " is all you need. Most examples in this tutorial use it."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Persistent sessions with hob()"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "When you want to build up definitions incrementally — define a function, then call it, then compose it with something else — paste this setup block once per session:"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": "const _hobLib = await api.require('hob-interpreter')\nconst _interp = _hobLib.createInterpreter(api)\nasync function hob(code) {\n  const result = await _interp.eval(code)\n  console.log(_interp.print(result))\n  return result\n}"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Now "
+        },
+        [
+          ":code",
+          {
+            "s": "hob('(def x 42)')"
+          }
+        ],
+        {
+          "s": " followed by "
+        },
+        [
+          ":code",
+          {
+            "s": "hob('x')"
+          }
+        ],
+        {
+          "s": " works — the interpreter is shared. The REPL auto-awaits the returned promise, so no "
+        },
+        [
+          ":code",
+          {
+            "s": "await"
+          }
+        ],
+        {
+          "s": " is needed. Examples that build on prior definitions use "
+        },
+        [
+          ":code",
+          {
+            "s": "hob()"
+          }
+        ],
+        {
+          "s": "."
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Lines starting with "
+        },
+        [
+          ":code",
+          {
+            "s": ";;"
+          }
+        ],
+        {
+          "s": " are Hob comments (ignored by the interpreter)."
+        }
+      ],
+      [
+        ":hr"
+      ],
+      [
+        ":h2",
+        {
+          "s": "2. Primitives"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Hob has six primitive types:"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": ":h 42              ;; number\n:h 3.14            ;; number (all numbers are doubles)\n:h \"hello\"         ;; string\n:h true            ;; boolean\n:h false           ;; boolean\n:h nil             ;; nil (absence of value)\n:h :name           ;; keyword (self-evaluating identifier)"
+        }
+      ],
+      [
+        ":p",
+        [
+          ":strong",
+          {
+            "s": "Keywords"
+          }
+        ],
+        {
+          "s": " start with "
+        },
+        [
+          ":code",
+          {
+            "s": ":"
+          }
+        ],
+        {
+          "s": " and evaluate to themselves. They're used as map keys, option names, and — uniquely — as getter functions (more on this later)."
+        }
+      ],
+      [
+        ":p",
+        [
+          ":strong",
+          {
+            "s": "Strings"
+          }
+        ],
+        {
+          "s": " support escape sequences: "
+        },
+        [
+          ":code",
+          {
+            "s": "\\n"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "\\t"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "\\\\"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "\\\""
+          }
+        ],
+        {
+          "s": "."
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": ":h \"line one\\nline two\"    ;; string with newline\n:h :on-click               ;; keyword with hyphens"
+        }
+      ],
+      [
+        ":hr"
+      ],
+      [
+        ":h2",
+        {
+          "s": "3. Calling Functions"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Hob uses S-expression syntax: "
+        },
+        [
+          ":code",
+          {
+            "s": "(function arg1 arg2 ...)"
+          }
+        ],
+        {
+          "s": ". The first element of a list is called as a function, the rest are arguments."
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": ":h (+ 1 2)            ;; => 3\n:h (+ 1 2 3 4 5)      ;; => 15  (variadic)\n:h (* 3 4)            ;; => 12\n:h (- 10 3)           ;; => 7\n:h (/ 10 3)           ;; => 3.333...\n:h (mod 10 3)         ;; => 1\n:h (inc 5)            ;; => 6\n:h (dec 5)            ;; => 4"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Nesting works naturally — inner expressions evaluate first:"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": ":h (+ (* 2 3) (- 10 4))   ;; => 12  (6 + 6)"
+        }
+      ],
+      [
+        ":hr"
+      ],
+      [
+        ":h2",
+        {
+          "s": "4. Comparison and Logic"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": ":h (= 1 1)            ;; => true\n:h (= 1 2)            ;; => false\n:h (not= 1 2)         ;; => true\n:h (< 1 2)            ;; => true\n:h (> 5 3)            ;; => true\n:h (<= 3 3)           ;; => true\n:h (>= 4 5)           ;; => false"
+        }
+      ],
+      [
+        ":p",
+        [
+          ":strong",
+          {
+            "s": "Truthiness:"
+          }
+        ],
+        {
+          "s": " Only "
+        },
+        [
+          ":code",
+          {
+            "s": "false"
+          }
+        ],
+        {
+          "s": " and "
+        },
+        [
+          ":code",
+          {
+            "s": "nil"
+          }
+        ],
+        {
+          "s": " are falsy. Everything else (including "
+        },
+        [
+          ":code",
+          {
+            "s": "0"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "\"\""
+          }
+        ],
+        {
+          "s": ", and "
+        },
+        [
+          ":code",
+          {
+            "s": "[]"
+          }
+        ],
+        {
+          "s": ") is truthy."
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": ":h (not false)         ;; => true\n:h (not nil)           ;; => true\n:h (not 0)            ;; => false  (0 is truthy!)\n:h (not \"\")           ;; => false  (\"\" is truthy!)"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Short-circuit logic:"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": ":h (and true true)     ;; => true\n:h (and true false)    ;; => false\n:h (and nil \"hello\")   ;; => nil  (stops at first falsy)\n:h (or false nil 42)   ;; => 42   (returns first truthy)\n:h (or false nil)      ;; => nil   (all falsy)"
+        }
+      ],
+      [
+        ":hr"
+      ],
+      [
+        ":h2",
+        {
+          "s": "5. Strings"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": ":h (str \"Hello\" \" \" \"World\")      ;; => \"Hello World\"\n:h (str \"count: \" 42)             ;; => \"count: 42\"\n:h (count \"hello\")                ;; => 5\n:h (subs \"hello\" 1 3)             ;; => \"el\"\n:h (str/upper-case \"hello\")       ;; => \"HELLO\"\n:h (str/lower-case \"Hello\")       ;; => \"hello\"\n:h (str/trim \"  hi  \")            ;; => \"hi\"\n:h (str/split \"a,b,c\" \",\")        ;; => [\"a\" \"b\" \"c\"]\n:h (str/join \", \" [\"a\" \"b\" \"c\"])   ;; => \"a, b, c\"\n:h (str/includes? \"hello\" \"ell\")   ;; => true\n:h (str/replace \"hello\" \"l\" \"r\")   ;; => \"herro\""
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "There is no string interpolation. Use "
+        },
+        [
+          ":code",
+          {
+            "s": "str"
+          }
+        ],
+        {
+          "s": " to build strings:"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": ":h (let [name \"Alice\" age 30] (str name \" is \" age \" years old\"))\n;; => \"Alice is 30 years old\""
+        }
+      ],
+      [
+        ":hr"
+      ],
+      [
+        ":h2",
+        {
+          "s": "6. Defining Variables"
+        }
+      ],
+      [
+        ":p",
+        [
+          ":code",
+          {
+            "s": "def"
+          }
+        ],
+        {
+          "s": " creates a binding in the current environment. Since "
+        },
+        [
+          ":code",
+          {
+            "s": ":h"
+          }
+        ],
+        {
+          "s": " creates a fresh environment each time, use "
+        },
+        [
+          ":code",
+          {
+            "s": "hob()"
+          }
+        ],
+        {
+          "s": " to see definitions persist:"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": "hob('(def x 42)')\nhob('x')                          ;; => 42\nhob('(def greeting \"hi\")')\nhob('(str greeting \" there\")')    ;; => \"hi there\""
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "With "
+        },
+        [
+          ":code",
+          {
+            "s": ":h"
+          }
+        ],
+        {
+          "s": ", you can still use "
+        },
+        [
+          ":code",
+          {
+            "s": "def"
+          }
+        ],
+        {
+          "s": " — it just only lasts for that one evaluation. Combine with "
+        },
+        [
+          ":code",
+          {
+            "s": "do"
+          }
+        ],
+        {
+          "s": " to define-and-use in one shot:"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": ":h (do (def x 42) (+ x 8))    ;; => 50"
+        }
+      ],
+      [
+        ":hr"
+      ],
+      [
+        ":h2",
+        {
+          "s": "7. Functions"
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Anonymous functions with "
+        },
+        [
+          ":code",
+          {
+            "s": "fn"
+          }
+        ]
+      ],
+      [
+        ":code-block",
+        {
+          "s": ":h (fn [x] (* x x))            ;; => <fn>\n:h ((fn [x] (* x x)) 5)        ;; => 25  (immediate call)"
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Named functions with "
+        },
+        [
+          ":code",
+          {
+            "s": "defn"
+          }
+        ]
+      ],
+      [
+        ":p",
+        [
+          ":code",
+          {
+            "s": "defn"
+          }
+        ],
+        {
+          "s": " is a macro that expands to "
+        },
+        [
+          ":code",
+          {
+            "s": "(def name (fn ...))"
+          }
+        ],
+        {
+          "s": ". Use "
+        },
+        [
+          ":code",
+          {
+            "s": "hob()"
+          }
+        ],
+        {
+          "s": " for define-then-call:"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": "hob('(defn double [x] (* x 2))')\nhob('(double 21)')              ;; => 42"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Multi-expression body — last expression is the return value:"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": "hob(`(defn greet [name]\n       (log (str \"Greeting \" name))\n       (str \"Hello, \" name \"!\"))`)\nhob('(greet \"Bob\")')            ;; => \"Hello, Bob!\""
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Or self-contained with "
+        },
+        [
+          ":code",
+          {
+            "s": ":h"
+          }
+        ],
+        {
+          "s": ":"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": ":h (do\n     (defn double [x] (* x 2))\n     (double 21))\n;; => 42"
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Multi-arity functions"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "A function can have different bodies for different argument counts:"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": ":h (do\n     (defn add\n       ([x] x)\n       ([x y] (+ x y))\n       ([x y z] (+ x y z)))\n     [(add 1) (add 1 2) (add 1 2 3)])\n;; => [1 3 6]"
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Variadic functions"
+        }
+      ],
+      [
+        ":p",
+        [
+          ":code",
+          {
+            "s": "&"
+          }
+        ],
+        {
+          "s": " captures remaining arguments:"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": ":h (do\n     (defn my-sum [first & rest] (reduce + first rest))\n     (my-sum 1 2 3 4))\n;; => 10"
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Anonymous function shorthand"
+        }
+      ],
+      [
+        ":p",
+        [
+          ":code",
+          {
+            "s": "#(...)"
+          }
+        ],
+        {
+          "s": " creates a compact anonymous function. "
+        },
+        [
+          ":code",
+          {
+            "s": "%"
+          }
+        ],
+        {
+          "s": " (or "
+        },
+        [
+          ":code",
+          {
+            "s": "%1"
+          }
+        ],
+        {
+          "s": ") is the first argument, "
+        },
+        [
+          ":code",
+          {
+            "s": "%2"
+          }
+        ],
+        {
+          "s": " is the second, etc.:"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": ":h (map #(* % %) [1 2 3 4])        ;; => [1 4 9 16]\n:h (map #(+ %1 %2) [1 2] [10 20])  ;; => [11 22]\n:h (filter #(> % 3) [1 5 2 7 3])   ;; => [5 7]"
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Keywords as functions"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Keywords act as getter functions when used in function position:"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": ":h (:name {:name \"Alice\" :age 30})             ;; => \"Alice\"\n:h (map :name [{:name \"A\"} {:name \"B\"}])       ;; => [\"A\" \"B\"]"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "This is one of Hob's most useful idioms."
+        }
+      ],
+      [
+        ":hr"
+      ],
+      [
+        ":h2",
+        {
+          "s": "8. Collections"
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Vectors"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Ordered, indexed collections (like arrays):"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": ":h [1 2 3]                     ;; => [1 2 3]\n:h (vec (list 1 2 3))          ;; => [1 2 3]\n:h (count [10 20 30])          ;; => 3\n:h (first [10 20 30])          ;; => 10\n:h (rest [10 20 30])           ;; => (20 30)\n:h (nth [10 20 30] 1)          ;; => 20\n:h (conj [1 2] 3)              ;; => [1 2 3]\n:h (concat [1 2] [3 4])        ;; => (1 2 3 4)\n:h (into [1 2] [3 4])          ;; => [1 2 3 4]\n:h (empty? [])                 ;; => true\n:h (empty? [1])                ;; => false"
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Lists"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Created with "
+        },
+        [
+          ":code",
+          {
+            "s": "list"
+          }
+        ],
+        {
+          "s": " or "
+        },
+        [
+          ":code",
+          {
+            "s": "'(...)"
+          }
+        ],
+        {
+          "s": ". Functionally similar to vectors but used mainly in macro contexts:"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": ":h (list 1 2 3)               ;; => (1 2 3)\n:h '(1 2 3)                   ;; => (1 2 3)\n:h (cons 0 [1 2 3])           ;; => (0 1 2 3)"
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Maps"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Key-value associations (like objects):"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": ":h {:name \"Alice\" :age 30}                ;; => {:name \"Alice\", :age 30}\n:h (get {:name \"Alice\"} :name)            ;; => \"Alice\"\n:h (get {:a 1} :b \"default\")             ;; => \"default\"\n:h (assoc {:a 1} :b 2)                   ;; => {:a 1, :b 2}\n:h (dissoc {:a 1 :b 2} :b)              ;; => {:a 1}\n:h (update {:count 1} :count inc)        ;; => {:count 2}\n:h (keys {:a 1 :b 2})                    ;; => (:a :b)\n:h (vals {:a 1 :b 2})                    ;; => (1 2)\n:h (merge {:a 1} {:b 2} {:a 3})         ;; => {:a 3, :b 2}\n:h (contains? {:a 1} :a)                ;; => true"
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Nested access"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": ":h (let [person {:name \"Alice\" :address {:city \"NYC\" :zip \"10001\"}}]\n     (get-in person [:address :city]))\n;; => \"NYC\"\n\n:h (let [person {:name \"Alice\" :address {:city \"NYC\" :zip \"10001\"}}]\n     (assoc-in person [:address :zip] \"10002\"))\n;; => {:name \"Alice\", :address {:city \"NYC\", :zip \"10002\"}}"
+        }
+      ],
+      [
+        ":hr"
+      ],
+      [
+        ":h2",
+        {
+          "s": "9. Higher-Order Collection Functions"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "These are the workhorses of Hob code:"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": ";; map — transform each element\n:h (map inc [1 2 3])               ;; => [2 3 4]\n:h (map str/upper-case [\"a\" \"b\"])  ;; => [\"A\" \"B\"]\n\n;; filter — keep elements matching predicate\n:h (filter #(> % 3) [1 5 2 7 3])  ;; => [5 7]\n\n;; reduce — fold a collection to a single value\n:h (reduce + [1 2 3 4])            ;; => 10\n:h (reduce + 100 [1 2 3])          ;; => 106 (with initial value)\n\n;; some — find first truthy result\n:h (some #(> % 3) [1 2 5 3])      ;; => true\n:h (some #(> % 10) [1 2 3])       ;; => nil\n\n;; every? — all elements satisfy predicate?\n:h (every? #(> % 0) [1 2 3])      ;; => true\n:h (every? #(> % 2) [1 2 3])      ;; => false\n\n;; sort and sort-by\n:h (sort [3 1 4 1 5])              ;; => [1 1 3 4 5]\n:h (sort-by count [\"bb\" \"a\" \"ccc\"]) ;; => [\"a\" \"bb\" \"ccc\"]\n\n;; distinct, reverse, take\n:h (distinct [1 2 1 3 2])          ;; => [1 2 3]\n:h (reverse [1 2 3])               ;; => [3 2 1]\n:h (take 2 [10 20 30 40])          ;; => [10 20]\n\n;; mapcat — map then flatten one level\n:h (mapcat #(list % %) [1 2 3])    ;; => (1 1 2 2 3 3)"
+        }
+      ],
+      [
+        ":hr"
+      ],
+      [
+        ":h2",
+        {
+          "s": "10. Control Flow"
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "if"
+        }
+      ],
+      [
+        ":p",
+        [
+          ":code",
+          {
+            "s": "(if test then else?)"
+          }
+        ],
+        {
+          "s": " — evaluates "
+        },
+        [
+          ":code",
+          {
+            "s": "then"
+          }
+        ],
+        {
+          "s": " if test is truthy, "
+        },
+        [
+          ":code",
+          {
+            "s": "else"
+          }
+        ],
+        {
+          "s": " otherwise:"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": ":h (if true \"yes\" \"no\")        ;; => \"yes\"\n:h (if false \"yes\" \"no\")       ;; => \"no\"\n:h (if nil \"yes\" \"no\")         ;; => \"no\"\n:h (if nil \"yes\")              ;; => nil  (no else branch)"
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "when"
+        }
+      ],
+      [
+        ":p",
+        [
+          ":code",
+          {
+            "s": "(when test body...)"
+          }
+        ],
+        {
+          "s": " — like "
+        },
+        [
+          ":code",
+          {
+            "s": "if"
+          }
+        ],
+        {
+          "s": " with no else branch, but allows multiple body expressions:"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": ":h (when true (log \"side effect\") \"result\")  ;; => \"result\"\n:h (when false \"never\")                       ;; => nil"
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "cond"
+        }
+      ],
+      [
+        ":p",
+        [
+          ":code",
+          {
+            "s": "(cond test1 expr1 test2 expr2 ... :else default)"
+          }
+        ],
+        {
+          "s": " — multi-branch conditional:"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": ":h (do\n     (defn classify [n]\n       (cond\n         (< n 0) \"negative\"\n         (= n 0) \"zero\"\n         :else   \"positive\"))\n     [(classify -5) (classify 0) (classify 42)])\n;; => [\"negative\" \"zero\" \"positive\"]"
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "when-let"
+        }
+      ],
+      [
+        ":p",
+        [
+          ":code",
+          {
+            "s": "(when-let [name expr] body...)"
+          }
+        ],
+        {
+          "s": " — bind and execute body only if the value is truthy:"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": ":h (when-let [x (get {:a 1} :a)] (str \"found: \" x))  ;; => \"found: 1\"\n:h (when-let [x (get {:a 1} :b)] (str \"found: \" x))  ;; => nil"
+        }
+      ],
+      [
+        ":hr"
+      ],
+      [
+        ":h2",
+        {
+          "s": "11. Let Bindings"
+        }
+      ],
+      [
+        ":p",
+        [
+          ":code",
+          {
+            "s": "(let [name1 val1 name2 val2 ...] body...)"
+          }
+        ],
+        {
+          "s": " creates local bindings:"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": ":h (let [x 10\n         y 20\n         sum (+ x y)]\n     (str \"sum is \" sum))\n;; => \"sum is 30\""
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Bindings are sequential — later bindings can reference earlier ones. Bindings are scoped to the let block."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Auto-parallel let"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Hob analyzes let bindings for dependencies. Independent bindings run concurrently:"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": ";; x and y have no dependencies on each other — they evaluate in parallel.\n;; z depends on both — it waits for them.\n:h (let [x (do (log \"computing x\") 1)\n         y (do (log \"computing y\") 2)\n         z (+ x y)]\n     z)\n;; => 3"
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Explicit parallel let: plet"
+        }
+      ],
+      [
+        ":p",
+        [
+          ":code",
+          {
+            "s": "(plet [bindings] body)"
+          }
+        ],
+        {
+          "s": " forces all bindings to evaluate concurrently, regardless of apparent dependencies:"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": ":h (plet [a 1 b 2 c 3] (+ a b c))  ;; => 6"
+        }
+      ],
+      [
+        ":hr"
+      ],
+      [
+        ":h2",
+        {
+          "s": "12. Destructuring"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Destructuring extracts values from collections directly in binding positions. It works in "
+        },
+        [
+          ":code",
+          {
+            "s": "let"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "fn"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "defn"
+          }
+        ],
+        {
+          "s": ", and "
+        },
+        [
+          ":code",
+          {
+            "s": "loop"
+          }
+        ],
+        {
+          "s": "."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Vector destructuring"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": ":h (let [[a b c] [1 2 3]] (str a \", \" b \", \" c))\n;; => \"1, 2, 3\"\n\n;; Rest elements with &\n:h (let [[head & tail] [1 2 3 4]] tail)\n;; => (2 3 4)\n\n;; Skip elements with _\n:h (let [[_ second _] [1 2 3]] second)\n;; => 2"
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Map destructuring"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": ";; :keys extracts keyword keys by name\n:h (let [{:keys [name age]} {:name \"Alice\" :age 30}] (str name \" is \" age))\n;; => \"Alice is 30\"\n\n;; :strs extracts string keys\n:h (let [{:strs [name]} {\"name\" \"Bob\"}] name)\n;; => \"Bob\"\n\n;; :or provides defaults\n:h (let [{:keys [x y] :or {x 0 y 0}} {:x 5}] [x y])\n;; => [5 0]\n\n;; :as binds the whole map\n:h (let [{:keys [name] :as person} {:name \"Alice\" :age 30}] [name person])\n;; => [\"Alice\" {:name \"Alice\", :age 30}]\n\n;; Direct key binding\n:h (let [{city :city} {:city \"NYC\"}] city)\n;; => \"NYC\""
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Destructuring in function parameters"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": ":h (do\n     (defn full-name [{:keys [first last]}]\n       (str first \" \" last))\n     (full-name {:first \"Jane\" :last \"Doe\"}))\n;; => \"Jane Doe\"\n\n:h (do\n     (defn sum-pair [[a b]] (+ a b))\n     (sum-pair [3 4]))\n;; => 7"
+        }
+      ],
+      [
+        ":hr"
+      ],
+      [
+        ":h2",
+        {
+          "s": "13. Loops"
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "loop/recur"
+        }
+      ],
+      [
+        ":p",
+        [
+          ":code",
+          {
+            "s": "loop"
+          }
+        ],
+        {
+          "s": " defines bindings and a body. "
+        },
+        [
+          ":code",
+          {
+            "s": "recur"
+          }
+        ],
+        {
+          "s": " jumps back to the loop head with new values — this is tail recursion with no stack growth:"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": ":h (loop [i 0 sum 0]\n     (if (> i 10)\n       sum\n       (recur (inc i) (+ sum i))))\n;; => 55  (sum of 0..10)"
+        }
+      ],
+      [
+        ":p",
+        [
+          ":code",
+          {
+            "s": "recur"
+          }
+        ],
+        {
+          "s": " also works in "
+        },
+        [
+          ":code",
+          {
+            "s": "fn"
+          }
+        ],
+        {
+          "s": "/"
+        },
+        [
+          ":code",
+          {
+            "s": "defn"
+          }
+        ],
+        {
+          "s": " for tail-recursive functions:"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": ":h (do\n     (defn factorial [n]\n       (loop [i n acc 1]\n         (if (<= i 1)\n           acc\n           (recur (dec i) (* acc i)))))\n     (factorial 10))\n;; => 3628800"
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "for (list comprehension)"
+        }
+      ],
+      [
+        ":p",
+        [
+          ":code",
+          {
+            "s": "(for [x coll] expr)"
+          }
+        ],
+        {
+          "s": " maps over a collection:"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": ":h (for [x [1 2 3]] (* x x))\n;; => [1 4 9]"
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "doseq (side-effect loop)"
+        }
+      ],
+      [
+        ":p",
+        [
+          ":code",
+          {
+            "s": "(doseq [x coll] body...)"
+          }
+        ],
+        {
+          "s": " iterates for side effects, returns nil:"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": ":h (doseq [x [1 2 3]] (log (str \"x = \" x)))\n;; logs: x = 1, x = 2, x = 3\n;; => nil"
+        }
+      ],
+      [
+        ":hr"
+      ],
+      [
+        ":h2",
+        {
+          "s": "14. Threading Macros"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Threading macros help avoid deeply nested function calls."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Thread-first: ->"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Inserts the result as the "
+        },
+        [
+          ":strong",
+          {
+            "s": "first"
+          }
+        ],
+        {
+          "s": " argument of each form:"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": ";; Without threading:\n:h (str/upper-case (subs (str/trim \"  hello world  \") 0 5))\n\n;; With ->:\n:h (-> \"  hello world  \" str/trim (subs 0 5) str/upper-case)\n;; => \"HELLO\""
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The macro rewrites "
+        },
+        [
+          ":code",
+          {
+            "s": "(-> x (f a))"
+          }
+        ],
+        {
+          "s": " to "
+        },
+        [
+          ":code",
+          {
+            "s": "(f x a)"
+          }
+        ],
+        {
+          "s": "."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Thread-last: ->>"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Inserts the result as the "
+        },
+        [
+          ":strong",
+          {
+            "s": "last"
+          }
+        ],
+        {
+          "s": " argument:"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": ":h (->> [1 2 3 4 5] (filter #(> % 2)) (map #(* % 10)))\n;; => [30 40 50]"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The macro rewrites "
+        },
+        [
+          ":code",
+          {
+            "s": "(->> x (f a))"
+          }
+        ],
+        {
+          "s": " to "
+        },
+        [
+          ":code",
+          {
+            "s": "(f a x)"
+          }
+        ],
+        {
+          "s": "."
+        }
+      ],
+      [
+        ":hr"
+      ],
+      [
+        ":h2",
+        {
+          "s": "15. Atoms (Mutable State)"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Atoms hold mutable state. They're the primary way to manage state in Hob views. Since atoms are stateful, use "
+        },
+        [
+          ":code",
+          {
+            "s": "hob()"
+          }
+        ],
+        {
+          "s": " to explore them interactively:"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": "hob('(def counter (atom 0))')\nhob('(deref counter)')              ;; => 0\nhob('(swap! counter inc)')          ;; => 1\nhob('(swap! counter + 10)')         ;; => 11  (applies (+ current 10))\nhob('(reset! counter 0)')           ;; => 0\nhob('(deref counter)')              ;; => 0"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Or self-contained with "
+        },
+        [
+          ":code",
+          {
+            "s": ":h"
+          }
+        ],
+        {
+          "s": ":"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": ":h (let [counter (atom 0)]\n     (swap! counter inc)\n     (swap! counter + 10)\n     (deref counter))\n;; => 11"
+        }
+      ],
+      [
+        ":p",
+        [
+          ":strong",
+          {
+            "s": "Important:"
+          }
+        ],
+        {
+          "s": " There is NO "
+        },
+        [
+          ":code",
+          {
+            "s": "@"
+          }
+        ],
+        {
+          "s": " deref shorthand in Hob. "
+        },
+        [
+          ":code",
+          {
+            "s": "@name"
+          }
+        ],
+        {
+          "s": " is an "
+        },
+        [
+          ":em",
+          {
+            "s": "item reference"
+          }
+        ],
+        {
+          "s": " (see section 17), not "
+        },
+        [
+          ":code",
+          {
+            "s": "(deref name)"
+          }
+        ],
+        {
+          "s": ". Always write "
+        },
+        [
+          ":code",
+          {
+            "s": "(deref atom-name)"
+          }
+        ],
+        {
+          "s": "."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Atoms with complex values"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": "hob('(def state (atom {:count 0 :items []}))')\nhob('(swap! state update :count inc)')\nhob('(swap! state update :items conj \"new item\")')\nhob('(deref state)')\n;; => {:count 1, :items [\"new item\"]}"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "In Hob views, atoms are automatically tracked for reactivity — when an atom that a view depends on changes, the view re-renders."
+        }
+      ],
+      [
+        ":hr"
+      ],
+      [
+        ":h2",
+        {
+          "s": "16. Error Handling"
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "try / catch / finally"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": ":h (try\n     (/ 1 0)\n     (catch e\n       (str \"Error: \" e)))\n;; => \"Error: Division by zero\"  (or similar)\n\n:h (try\n     (throw \"something went wrong\")\n     (catch e\n       (str \"Caught: \" e))\n     (finally\n       (log \"cleanup runs always\")))\n;; => \"Caught: something went wrong\""
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "throw"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": ":h (do\n     (defn positive! [n]\n       (when (< n 0)\n         (throw (str \"Expected positive, got \" n)))\n       n)\n     (try (positive! -3)\n       (catch e (str \"Oops: \" e))))\n;; => \"Oops: Expected positive, got -3\""
+        }
+      ],
+      [
+        ":hr"
+      ],
+      [
+        ":h2",
+        {
+          "s": "17. Item References"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The "
+        },
+        [
+          ":code",
+          {
+            "s": "@"
+          }
+        ],
+        {
+          "s": " prefix creates an "
+        },
+        [
+          ":strong",
+          {
+            "s": "item reference"
+          }
+        ],
+        {
+          "s": " — a lightweight pointer to a Hobson item by name or UUID:"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": ":h @note\n;; => {name: \"note\", type: \"871ae771-...\", ...}  (the resolved item!)\n\n:h (resolve-ref @note)\n;; => same thing — explicitly resolves a ref to its item"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Item references with UUIDs work too:"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": ":h @871ae771-b9b1-4f40-8c7f-d9038bfb69c3\n;; => the Note type-definition item"
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "The auto-resolve gotcha"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The REPL auto-resolves item refs when they're the "
+        },
+        [
+          ":strong",
+          {
+            "s": "final result"
+          }
+        ],
+        {
+          "s": " of an evaluation. But inside nested expressions, "
+        },
+        [
+          ":code",
+          {
+            "s": "@ref"
+          }
+        ],
+        {
+          "s": " is still an unresolved marker object — "
+        },
+        [
+          ":em",
+          {
+            "s": "not"
+          }
+        ],
+        {
+          "s": " the item. This means:"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": ":h @871ae771-b9b1-4f40-8c7f-d9038bfb69c3\n;; => the full item (auto-resolved because it's the top-level result)\n\n:h (:name @871ae771-b9b1-4f40-8c7f-d9038bfb69c3)\n;; => nil!  (@ref is an unresolved marker here, not the item)"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "When using "
+        },
+        [
+          ":code",
+          {
+            "s": "@ref"
+          }
+        ],
+        {
+          "s": " inside an expression, always wrap it with "
+        },
+        [
+          ":code",
+          {
+            "s": "resolve-ref"
+          }
+        ],
+        {
+          "s": ":"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": ":h (:name (resolve-ref @871ae771-b9b1-4f40-8c7f-d9038bfb69c3))\n;; => \"note\""
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Or just use "
+        },
+        [
+          ":code",
+          {
+            "s": "get-item"
+          }
+        ],
+        {
+          "s": " with the ID string directly:"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": ":h (:name (get-item \"871ae771-b9b1-4f40-8c7f-d9038bfb69c3\"))\n;; => \"note\""
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "In view code, "
+        },
+        [
+          ":code",
+          {
+            "s": "@ref"
+          }
+        ],
+        {
+          "s": " is typically used as data (e.g. in "
+        },
+        [
+          ":code",
+          {
+            "s": "def-watch"
+          }
+        ],
+        {
+          "s": " specs) rather than as an item lookup, so this rarely bites you there. It's mainly a REPL surprise."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Type predicates for refs"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": ":h (item-ref? @something)  ;; => true\n:h (item-ref? \"hello\")     ;; => false"
+        }
+      ],
+      [
+        ":hr"
+      ],
+      [
+        ":h2",
+        {
+          "s": "18. Working with Items"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "These operations interact with Hobson's IndexedDB storage. They're the core of what makes Hob a Hobson-native language."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Reading items"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": ";; Get an item by GUID\n:h (:name (get-item \"871ae771-b9b1-4f40-8c7f-d9038bfb69c3\"))\n;; => \"note\"\n\n;; Get nested content\n:h (get-in (get-item \"871ae771-b9b1-4f40-8c7f-d9038bfb69c3\") [:content :description])"
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Querying items"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": ";; Find all items of a given type\n:h (count (find-items {:type \"871ae771-b9b1-4f40-8c7f-d9038bfb69c3\"}))\n\n;; Find by name\n:h (find-items {:name \"hob-interpreter\"})\n\n;; Get ALL items (use sparingly)\n:h (count (get-all))"
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Creating and updating items"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": ":h (set-item! {:id \"test-1234-0000-0000-000000000000\"\n               :name \"REPL Test Note\"\n               :type \"871ae771-b9b1-4f40-8c7f-d9038bfb69c3\"\n               :created (now)\n               :modified (now)\n               :content {:description \"Created from the Hob REPL!\"}\n               :attachments []})"
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Updating an existing item"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": ":h (let [item (get-item \"test-1234-0000-0000-000000000000\")]\n     (set-item! (assoc-in item [:content :description] \"Updated from Hob!\")))"
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Deleting items"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": ":h (delete-item! \"test-1234-0000-0000-000000000000\")"
+        }
+      ],
+      [
+        ":hr"
+      ],
+      [
+        ":h2",
+        {
+          "s": "19. Navigation and UI"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "These operations control the Hobson viewport."
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": ";; Navigate the viewport to an item\n:h (navigate! \"871ae771-b9b1-4f40-8c7f-d9038bfb69c3\")\n\n;; Open an item in a panel/overlay\n:h (open-item! \"871ae771-b9b1-4f40-8c7f-d9038bfb69c3\")\n\n;; Search for items by query string\n:h (map :name (search-items! \"note\"))\n\n;; Get starred items\n:h (map :name (get-starred-items!))\n\n;; Get related items (type, tags, attachments, etc.)\n:h (get-related! \"871ae771-b9b1-4f40-8c7f-d9038bfb69c3\")\n\n;; Render markdown to HTML string\n:h (render-markdown \"**bold** and *italic*\")"
+        }
+      ],
+      [
+        ":hr"
+      ],
+      [
+        ":h2",
+        {
+          "s": "20. JS Interop"
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "invoke"
+        }
+      ],
+      [
+        ":p",
+        [
+          ":code",
+          {
+            "s": "invoke"
+          }
+        ],
+        {
+          "s": " calls a method on a JavaScript object:"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": ":h (invoke console \"log\" \"Hello from Hob!\")\n;; logs \"Hello from Hob!\" to the browser console"
+        }
+      ],
+      [
+        ":p",
+        [
+          ":strong",
+          {
+            "s": "Syntax:"
+          }
+        ],
+        {
+          "s": " "
+        },
+        [
+          ":code",
+          {
+            "s": "(invoke object \"method-name\" arg1 arg2 ...)"
+          }
+        ]
+      ],
+      [
+        ":p",
+        {
+          "s": "Hob automatically converts keyword-keyed maps to plain JS objects when passing arguments via "
+        },
+        [
+          ":code",
+          {
+            "s": "invoke"
+          }
+        ],
+        {
+          "s": ", and awaits any returned Promises."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "require"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Load a Hobson library module:"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": "hob('(def md (require \"hobson-markdown\"))')\n;; md is now the module's export object"
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "The api object"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The "
+        },
+        [
+          ":code",
+          {
+            "s": "api"
+          }
+        ],
+        {
+          "s": " symbol is bound directly to the Hobson API object, useful as a last resort for functionality not yet wrapped as Hob operations:"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": ":h (invoke api \"getType\" \"871ae771-b9b1-4f40-8c7f-d9038bfb69c3\")"
+        }
+      ],
+      [
+        ":hr"
+      ],
+      [
+        ":h2",
+        {
+          "s": "21. Type Predicates"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": ":h (number? 42)        ;; => true\n:h (string? \"hi\")      ;; => true\n:h (keyword? :foo)     ;; => true\n:h (boolean? true)     ;; => true\n:h (nil? nil)          ;; => true\n:h (list? (list 1))    ;; => true\n:h (vector? [1 2])     ;; => true\n:h (map? {:a 1})       ;; => true\n:h (fn? inc)           ;; => true\n:h (atom? (atom 0))    ;; => true\n:h (sequential? [1])   ;; => true (vectors and lists)\n:h (empty? [])         ;; => true\n:h (seq [])            ;; => nil  (empty -> nil)\n:h (seq [1])           ;; => (1)  (non-empty -> sequence)"
+        }
+      ],
+      [
+        ":hr"
+      ],
+      [
+        ":h2",
+        {
+          "s": "22. Utility Functions"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": ";; identity — returns its argument unchanged\n:h (identity 42)                          ;; => 42\n\n;; constantly — returns a function that always returns the same value\n:h (map (constantly \"x\") [1 2 3])         ;; => [\"x\" \"x\" \"x\"]\n\n;; comp — function composition (right to left)\n:h ((comp str/upper-case str/trim) \"  hello  \")   ;; => \"HELLO\"\n\n;; partial — partial application\n:h (let [add5 (partial + 5)] (add5 10))   ;; => 15\n\n;; apply — apply function to argument list\n:h (apply + [1 2 3 4])                    ;; => 10\n:h (apply str \"a\" \"b\" [\"c\" \"d\"])          ;; => \"abcd\"\n\n;; type-of — get type name\n:h (type-of 42)         ;; => \"number\"\n:h (type-of [1 2])      ;; => \"vector\"\n:h (type-of {:a 1})     ;; => \"map\"\n:h (type-of :kw)        ;; => \"keyword\"\n\n;; I/O\n:h (log \"info message\")\n:h (log/warn \"warning!\")\n:h (log/error \"error!\")\n\n;; Date/time\n:h (now)                 ;; => current timestamp (ms)\n:h (format-date (now))   ;; => locale date string\n\n;; Symbols and keywords (for macro writing)\n:h (gensym \"temp\")       ;; => temp__123 (unique symbol)\n:h (symbol \"my-var\")     ;; => my-var\n:h (keyword \"my-key\")    ;; => :my-key\n:h (name :my-key)        ;; => \"my-key\""
+        }
+      ],
+      [
+        ":hr"
+      ],
+      [
+        ":h2",
+        {
+          "s": "23. Writing Macros"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Macros transform code at expansion time, before evaluation. They receive unevaluated arguments as data and return new code. Use "
+        },
+        [
+          ":code",
+          {
+            "s": "hob()"
+          }
+        ],
+        {
+          "s": " for this section since macros need to persist."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Quote and quasiquote"
+        }
+      ],
+      [
+        ":p",
+        [
+          ":code",
+          {
+            "s": "quote"
+          }
+        ],
+        {
+          "s": " (or "
+        },
+        [
+          ":code",
+          {
+            "s": "'"
+          }
+        ],
+        {
+          "s": ") prevents evaluation:"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": ":h '(+ 1 2)          ;; => (+ 1 2)  (a list, not 3)\n:h 'foo               ;; => foo  (a symbol, not its value)"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Quasiquote (`"
+        },
+        [
+          ":code",
+          {
+            "s": " "
+          }
+        ],
+        {
+          "s": " `"
+        },
+        [
+          ":code",
+          {
+            "s": ") is like quote but allows \"unquoting\" with "
+          }
+        ],
+        {
+          "s": "~`:"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": ":h (let [x 42] `(the answer is ~x))\n;; => (the answer is 42)"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Unquote-splicing "
+        },
+        [
+          ":code",
+          {
+            "s": "~@"
+          }
+        ],
+        {
+          "s": " splices a list into the surrounding list:"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": ":h (let [nums [1 2 3]] `(before ~@nums after))\n;; => (before 1 2 3 after)"
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "defmacro"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": "hob(`(defmacro unless [test & body]\n       \\`(if (not ~test) (do ~@body) nil))`)\nhob('(unless false \"executed!\")')   ;; => \"executed!\"\nhob('(unless true \"skipped\")')      ;; => nil"
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Example: a debugging macro"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": "hob(`(defmacro dbg [expr]\n       (let [s (pr-str expr)]\n         \\`(let [result ~expr]\n            (log (str ~s \" => \" (pr-str result)))\n            result)))`)\nhob('(dbg (+ 1 2))')\n;; logs: (+ 1 2) => 3\n;; => 3"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Or self-contained with "
+        },
+        [
+          ":code",
+          {
+            "s": ":h"
+          }
+        ],
+        {
+          "s": ":"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": ":h (do\n     (defmacro dbg [expr]\n       (let [s (pr-str expr)]\n         `(let [result ~expr]\n            (log (str ~s \" => \" (pr-str result)))\n            result)))\n     (dbg (+ 1 2)))\n;; logs: (+ 1 2) => 3\n;; => 3"
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Built-in macros"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "These are pre-loaded and available everywhere:"
+        }
+      ],
+      [
+        ":table",
+        [
+          ":thead",
+          [
+            ":tr",
+            [
+              ":th",
+              {
+                "s": "Macro"
+              }
+            ],
+            [
+              ":th",
+              {
+                "s": "Expands to"
+              }
+            ],
+            [
+              ":th",
+              {
+                "s": "Example"
+              }
+            ]
+          ]
+        ],
+        [
+          ":tbody",
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "defn"
+                }
+              ]
+            ],
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "def"
+                }
+              ],
+              {
+                "s": " + "
+              },
+              [
+                ":code",
+                {
+                  "s": "fn"
+                }
+              ]
+            ],
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "(defn f [x] x)"
+                }
+              ]
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "when"
+                }
+              ]
+            ],
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "if"
+                }
+              ],
+              {
+                "s": " + "
+              },
+              [
+                ":code",
+                {
+                  "s": "do"
+                }
+              ]
+            ],
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "(when true body)"
+                }
+              ]
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "when-let"
+                }
+              ]
+            ],
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "let"
+                }
+              ],
+              {
+                "s": " + "
+              },
+              [
+                ":code",
+                {
+                  "s": "if"
+                }
+              ]
+            ],
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "(when-let [x val] body)"
+                }
+              ]
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "cond"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "nested "
+              },
+              [
+                ":code",
+                {
+                  "s": "if"
+                }
+              ]
+            ],
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "(cond test1 val1 :else default)"
+                }
+              ]
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "->"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "thread-first"
+              }
+            ],
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "(-> x f g)"
+                }
+              ]
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "->>"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "thread-last"
+              }
+            ],
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "(->> x f g)"
+                }
+              ]
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "for"
+                }
+              ]
+            ],
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "map"
+                }
+              ],
+              {
+                "s": " + "
+              },
+              [
+                ":code",
+                {
+                  "s": "fn"
+                }
+              ]
+            ],
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "(for [x coll] expr)"
+                }
+              ]
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "doseq"
+                }
+              ]
+            ],
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "map"
+                }
+              ],
+              {
+                "s": " for effects"
+              }
+            ],
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "(doseq [x coll] body)"
+                }
+              ]
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "and"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "short-circuit and"
+              }
+            ],
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "(and a b c)"
+                }
+              ]
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "or"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "short-circuit or"
+              }
+            ],
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "(or a b c)"
+                }
+              ]
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "def-view"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "view definition"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "see next section"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "def-watch"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "watch definition"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "see Events section"
+              }
+            ]
+          ]
+        ]
+      ],
+      [
+        ":hr"
+      ],
+      [
+        ":h2",
+        {
+          "s": "24. Hiccup: Building UI"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Hob views render UI using "
+        },
+        [
+          ":strong",
+          {
+            "s": "hiccup"
+          }
+        ],
+        {
+          "s": " — a Lisp-friendly way to describe HTML as nested vectors. The examples in this section are pure Hob (not REPL commands) — they show the syntax you'd write inside a "
+        },
+        [
+          ":code",
+          {
+            "s": ".hob"
+          }
+        ],
+        {
+          "s": " view file."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Basic syntax"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": "[:tag-name optional-attrs-map child1 child2 ...]"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Examples:"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": "[:div \"Hello\"]                              ;; <div>Hello</div>\n[:p \"A paragraph\"]                          ;; <p>A paragraph</p>\n[:div [:p \"nested\"]]                        ;; <div><p>nested</p></div>\n[:span {:style {:color \"red\"}} \"Red text\"]  ;; styled span"
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "IDs and classes in the tag"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": "[:div#my-id \"with id\"]                    ;; <div id=\"my-id\">\n[:div.highlight \"with class\"]             ;; <div class=\"highlight\">\n[:div#main.container.dark \"both\"]         ;; <div id=\"main\" class=\"container dark\">"
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Attributes"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The optional second element can be a map of attributes:"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": "[:input {:type \"text\" :value \"hello\" :placeholder \"Type here...\"}]\n[:a {:href \"#\" :title \"Click me\"} \"Link\"]\n[:div {:class \"box\" :style {:padding \"10px\" :border \"1px solid #ccc\"}} \"Styled\"]\n[:button {:disabled true} \"Can't click\"]  ;; boolean attributes"
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Event handlers"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": "[:button {:on-click (fn [e] (log \"clicked!\"))} \"Click me\"]\n[:input {:on-input (fn [e] (log (invoke e \"target.value\")))}]\n[:div {:on-mouseenter (fn [e] (log \"hover!\"))} \"Hover me\"]"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Any DOM event works: "
+        },
+        [
+          ":code",
+          {
+            "s": ":on-click"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": ":on-input"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": ":on-change"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": ":on-keydown"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": ":on-submit"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": ":on-mouseenter"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": ":on-mouseleave"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": ":on-focus"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": ":on-blur"
+          }
+        ],
+        {
+          "s": ", etc."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Debounce and throttle"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "For performance, wrap handlers in an object with "
+        },
+        [
+          ":code",
+          {
+            "s": ":debounce"
+          }
+        ],
+        {
+          "s": " or "
+        },
+        [
+          ":code",
+          {
+            "s": ":throttle"
+          }
+        ],
+        {
+          "s": ":"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": "[:input {:on-input {:handler (fn [e] (search! (invoke e \"target.value\")))\n                    :debounce 300}}]   ;; waits 300ms after last keystroke\n\n[:div {:on-scroll {:handler (fn [e] (update-position!))\n                   :throttle 100}}]    ;; fires at most every 100ms"
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Refs"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Use "
+        },
+        [
+          ":code",
+          {
+            "s": ":ref"
+          }
+        ],
+        {
+          "s": " to get a handle to a DOM element:"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": ";; With hiccup->dom+ (returns [dom-node refs-map])\n(let [[dom refs] (hiccup->dom+\n                   [:div\n                     [:input {:ref \"my-input\" :type \"text\"}]\n                     [:button {:ref \"my-btn\"} \"Go\"]])]\n  ;; refs is a map: {\"my-input\" <input-element>, \"my-btn\" <button-element>}\n  (dom-on! (get refs \"my-btn\") :click\n    (fn [e] (log (dom-get (get refs \"my-input\") :value))))\n  dom)"
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Sortable lists"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Use the "
+        },
+        [
+          ":code",
+          {
+            "s": ":sortable"
+          }
+        ],
+        {
+          "s": " attribute to enable drag-and-drop:"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": "[:div {:sortable {:handle \".drag-handle\"\n                  :on-reorder (fn [from to] (reorder-attachments! from to))}}\n  (for [item items]\n    [:div.item\n      [:span.drag-handle \"⠿\"]\n      [:span (:name item)]])]"
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Conditional rendering"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Hob views are just functions returning hiccup. Use normal control flow:"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": "[:div\n  (if loading?\n    [:span \"Loading...\"]\n    [:span (str count \" items\")])\n  (when error\n    [:div.error error])\n  (for [item items]\n    [:div.item (:name item)])]"
+        }
+      ],
+      [
+        ":p",
+        [
+          ":code",
+          {
+            "s": "nil"
+          }
+        ],
+        {
+          "s": " values in hiccup children are silently ignored, so "
+        },
+        [
+          ":code",
+          {
+            "s": "(when ...)"
+          }
+        ],
+        {
+          "s": " returning "
+        },
+        [
+          ":code",
+          {
+            "s": "nil"
+          }
+        ],
+        {
+          "s": " simply renders nothing."
+        }
+      ],
+      [
+        ":hr"
+      ],
+      [
+        ":h2",
+        {
+          "s": "25. Writing a Hob View"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "A Hob view is a code item with "
+        },
+        [
+          ":code",
+          {
+            "s": "content.hob"
+          }
+        ],
+        {
+          "s": " that defines how to render a particular item type. The view code receives "
+        },
+        [
+          ":code",
+          {
+            "s": "item"
+          }
+        ],
+        {
+          "s": " (the item being displayed) as a binding."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Simple view"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": ";; A view that shows an item's name and description\n(let [name (or (:name item) \"Unnamed\")\n      desc (get-in item [:content :description])\n      tags (get-in item [:content :tags] [])]\n  [:div {:style {:padding \"16px\"}}\n    [:h2 name]\n    (when (seq desc)\n      [:div {:style {:margin-top \"8px\"}}\n        (render-markdown desc)])\n    (when (seq tags)\n      [:div {:style {:margin-top \"12px\" :display \"flex\" :gap \"4px\"}}\n        (for [tag-id tags]\n          (let [tag (get-item tag-id)]\n            [:span {:style {:background \"#e0e0e0\" :padding \"2px 8px\"\n                            :border-radius \"4px\" :font-size \"12px\"}}\n              (or (:name tag) \"?\")]))])])"
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "View with state (atoms)"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": "(let [expanded (atom false)\n      name (:name item)\n      desc (get-in item [:content :description] \"\")]\n  [:div {:style {:padding \"16px\"}}\n    [:div {:style {:display \"flex\" :align-items \"center\" :gap \"8px\"}}\n      [:button {:on-click (fn [e] (swap! expanded not))\n                :style {:border \"none\" :background \"none\" :cursor \"pointer\"}}\n        (if (deref expanded) \"▼\" \"▶\")]\n      [:h3 {:style {:margin \"0\"}} name]]\n    (when (deref expanded)\n      [:div {:style {:margin-top \"8px\" :padding-left \"24px\"}}\n        (if (seq desc)\n          (render-markdown desc)\n          [:em \"No description\"])])])"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Because atoms are reactively tracked, clicking the button triggers a re-render that shows/hides the description."
+        }
+      ],
+      [
+        ":hr"
+      ],
+      [
+        ":h2",
+        {
+          "s": "26. DOM Operations (Imperative Style)"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Sometimes declarative hiccup isn't enough. Hob provides imperative DOM primitives for when you need fine-grained control:"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": ";; Build DOM with refs, then wire up events imperatively\n(let [[dom refs] (hiccup->dom+\n                   [:div\n                     [:input {:ref \"input\" :type \"text\" :placeholder \"Type here\"}]\n                     [:button {:ref \"btn\"} \"Greet\"]\n                     [:div {:ref \"output\"}]])\n      input-el (get refs \"input\")\n      btn-el (get refs \"btn\")\n      output-el (get refs \"output\")]\n\n  (dom-on! btn-el :click\n    (fn [e]\n      (let [name (dom-get input-el :value)]\n        (dom-set-content! output-el\n          [:p {:style {:color \"green\"}}\n            (str \"Hello, \" name \"!\")]))))\n\n  dom)  ;; Return the DOM node for rendering"
+        }
+      ],
+      [
+        ":p",
+        [
+          ":strong",
+          {
+            "s": "DOM operation reference:"
+          }
+        ]
+      ],
+      [
+        ":table",
+        [
+          ":thead",
+          [
+            ":tr",
+            [
+              ":th",
+              {
+                "s": "Function"
+              }
+            ],
+            [
+              ":th",
+              {
+                "s": "Purpose"
+              }
+            ]
+          ]
+        ],
+        [
+          ":tbody",
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "(hiccup->dom hiccup)"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Convert hiccup to DOM node"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "(hiccup->dom+ hiccup)"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Convert with refs -> "
+              },
+              [
+                ":code",
+                {
+                  "s": "[dom refs-map]"
+                }
+              ]
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "(dom-on! el :event fn)"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Attach event listener"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "(dom-get el :prop)"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Read DOM property"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "(dom-set! el :prop val)"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Set DOM property"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "(dom-set-content! el content)"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Replace element's children"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "(stop-propagation! event)"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Stop event bubbling"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "(prevent-default! event)"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Prevent default behavior"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "(set-timeout! fn ms)"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Schedule delayed execution"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "(clear-timeout! timer-id)"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Cancel scheduled execution"
+              }
+            ]
+          ]
+        ]
+      ],
+      [
+        ":hr"
+      ],
+      [
+        ":h2",
+        {
+          "s": "27. Events"
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Emitting events"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": "(emit! {:type \"some-event-id\" :content {:message \"hello\"}})"
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Watching events with def-watch"
+        }
+      ],
+      [
+        ":p",
+        [
+          ":code",
+          {
+            "s": "def-watch"
+          }
+        ],
+        {
+          "s": " creates a handler that runs when a specific event fires. This is used in handler code items (not view items):"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": "(def-watch my-handler @some-event [event]\n  (log (str \"Event fired: \" (get-in event [:content :message]))))"
+        }
+      ],
+      [
+        ":hr"
+      ],
+      [
+        ":h2",
+        {
+          "s": "28. Concurrency"
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "pmap (parallel map)"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Like "
+        },
+        [
+          ":code",
+          {
+            "s": "map"
+          }
+        ],
+        {
+          "s": " but evaluates all function calls concurrently:"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": ":h (pmap #(do (log %) %) [1 2 3 4 5])\n;; All 5 log calls fire concurrently\n;; => [1 2 3 4 5]"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Useful when mapping over async operations like "
+        },
+        [
+          ":code",
+          {
+            "s": "get-item"
+          }
+        ],
+        {
+          "s": ":"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": ";; Fetch multiple items in parallel\n(pmap get-item item-ids)"
+        }
+      ],
+      [
+        ":hr"
+      ],
+      [
+        ":h2",
+        {
+          "s": "29. Complete Example: Creating a Hob View Item"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "This REPL script creates a working Hob view that displays a \"Hello Hob\" card with a click counter. Paste this into the Hobson REPL:"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": "const viewId = 'c0c0c0c0-0099-0000-0000-000000000000'\n\nconst hobCode = `\n;; Hello Hob — a demo view with a click counter\n(let [clicks (atom 0)\n      name (or (:name item) \"World\")]\n  [:div {:style {:padding \"20px\"\n                 :border \"2px solid #6366f1\"\n                 :border-radius \"12px\"\n                 :max-width \"400px\"\n                 :font-family \"system-ui, sans-serif\"}}\n    [:h2 {:style {:margin \"0 0 12px 0\" :color \"#6366f1\"}}\n      (str \"Hello, \" name \"!\")]\n    [:p {:style {:color \"#666\" :margin \"0 0 16px 0\"}}\n      (str \"This view has been clicked \" (deref clicks) \" time\"\n           (if (= (deref clicks) 1) \"\" \"s\") \".\")]\n    [:button {:on-click (fn [e] (swap! clicks inc))\n              :style {:background \"#6366f1\" :color \"white\"\n                      :border \"none\" :padding \"8px 20px\"\n                      :border-radius \"6px\" :cursor \"pointer\"\n                      :font-size \"14px\"}}\n      \"Click me!\"]\n    [:div {:style {:margin-top \"16px\" :padding-top \"12px\"\n                   :border-top \"1px solid #e5e7eb\"\n                   :font-size \"12px\" :color \"#999\"}}\n      (str \"Item ID: \" (subs (:id item) 0 8) \"...\")]])`\n\nawait api.put({\n  id: viewId,\n  name: 'hello-hob-view',\n  type: '22222222-0000-0000-0000-000000000000',\n  created: Date.now(),\n  modified: Date.now(),\n  content: {\n    code: '',\n    hob: hobCode,\n    contentType: 'view',\n  },\n  attachments: [],\n})\n\nconsole.log('Created hello-hob-view! Navigate to any item and select it from the view picker.')"
+        }
+      ],
+      [
+        ":hr"
+      ],
+      [
+        ":h2",
+        {
+          "s": "30. Quick Reference Card"
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Special Forms"
+        }
+      ],
+      [
+        ":p",
+        [
+          ":code",
+          {
+            "s": "def"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "fn"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "let"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "if"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "do"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "quote"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "loop"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "recur"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "try"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "catch"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "finally"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "throw"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "defmacro"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "plet"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "and"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "or"
+          }
+        ]
+      ],
+      [
+        ":h3",
+        {
+          "s": "Macros"
+        }
+      ],
+      [
+        ":p",
+        [
+          ":code",
+          {
+            "s": "defn"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "when"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "when-let"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "cond"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "->"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "->>"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "for"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "doseq"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "def-view"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "def-watch"
+          }
+        ]
+      ],
+      [
+        ":h3",
+        {
+          "s": "Arithmetic"
+        }
+      ],
+      [
+        ":p",
+        [
+          ":code",
+          {
+            "s": "+"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "-"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "*"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "/"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "mod"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "inc"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "dec"
+          }
+        ]
+      ],
+      [
+        ":h3",
+        {
+          "s": "Comparison"
+        }
+      ],
+      [
+        ":p",
+        [
+          ":code",
+          {
+            "s": "="
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "not="
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "<"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": ">"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "<="
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": ">="
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "not"
+          }
+        ]
+      ],
+      [
+        ":h3",
+        {
+          "s": "Strings"
+        }
+      ],
+      [
+        ":p",
+        [
+          ":code",
+          {
+            "s": "str"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "pr-str"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "subs"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "count"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "str/upper-case"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "str/lower-case"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "str/trim"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "str/split"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "str/join"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "str/includes?"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "str/replace"
+          }
+        ]
+      ],
+      [
+        ":h3",
+        {
+          "s": "Collections"
+        }
+      ],
+      [
+        ":p",
+        [
+          ":code",
+          {
+            "s": "first"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "rest"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "cons"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "conj"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "concat"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "nth"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "get"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "assoc"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "dissoc"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "update"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "get-in"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "assoc-in"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "update-in"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "keys"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "vals"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "merge"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "into"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "empty?"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "seq"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "vec"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "contains?"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "count"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "distinct"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "reverse"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "take"
+          }
+        ]
+      ],
+      [
+        ":h3",
+        {
+          "s": "Higher-Order"
+        }
+      ],
+      [
+        ":p",
+        [
+          ":code",
+          {
+            "s": "map"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "mapcat"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "filter"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "reduce"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "some"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "every?"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "sort"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "sort-by"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "apply"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "comp"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "partial"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "identity"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "constantly"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "pmap"
+          }
+        ]
+      ],
+      [
+        ":h3",
+        {
+          "s": "Atoms"
+        }
+      ],
+      [
+        ":p",
+        [
+          ":code",
+          {
+            "s": "atom"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "deref"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "swap!"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "reset!"
+          }
+        ]
+      ],
+      [
+        ":h3",
+        {
+          "s": "Type Checks"
+        }
+      ],
+      [
+        ":p",
+        [
+          ":code",
+          {
+            "s": "nil?"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "number?"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "string?"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "keyword?"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "symbol?"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "boolean?"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "list?"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "vector?"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "sequential?"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "map?"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "fn?"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "atom?"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "item-ref?"
+          }
+        ]
+      ],
+      [
+        ":h3",
+        {
+          "s": "Items"
+        }
+      ],
+      [
+        ":p",
+        [
+          ":code",
+          {
+            "s": "get-item"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "set-item!"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "delete-item!"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "find-items"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "get-all"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "resolve-ref"
+          }
+        ]
+      ],
+      [
+        ":h3",
+        {
+          "s": "View/Navigation"
+        }
+      ],
+      [
+        ":p",
+        [
+          ":code",
+          {
+            "s": "navigate!"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "open-item!"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "render-item"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "render-markdown"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "search-items!"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "get-starred-items!"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "get-related!"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "get-fqn!"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "rerender!"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "copy-to-clipboard!"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "clear-selection!"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "detach!"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "reorder-attachments!"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "get-selection!"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "get-viewport-root"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "emit!"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "require"
+          }
+        ]
+      ],
+      [
+        ":h3",
+        {
+          "s": "DOM"
+        }
+      ],
+      [
+        ":p",
+        [
+          ":code",
+          {
+            "s": "hiccup->dom"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "hiccup->dom+"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "dom-on!"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "dom-get"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "dom-set!"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "dom-set-content!"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "stop-propagation!"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "prevent-default!"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "set-timeout!"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "clear-timeout!"
+          }
+        ]
+      ],
+      [
+        ":h3",
+        {
+          "s": "I/O"
+        }
+      ],
+      [
+        ":p",
+        [
+          ":code",
+          {
+            "s": "log"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "log/warn"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "log/error"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "confirm"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "alert"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "now"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "format-date"
+          }
+        ]
+      ],
+      [
+        ":h3",
+        {
+          "s": "Interop"
+        }
+      ],
+      [
+        ":p",
+        [
+          ":code",
+          {
+            "s": "invoke"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "api"
+          }
+        ]
+      ],
+      [
+        ":h3",
+        {
+          "s": "Meta"
+        }
+      ],
+      [
+        ":p",
+        [
+          ":code",
+          {
+            "s": "type-of"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "gensym"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "symbol"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "keyword"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "name"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "list"
+          }
+        ]
+      ]
+    ],
     "tags": [
       "bff75873-edb8-412e-81c9-c744e68fe29f"
     ]

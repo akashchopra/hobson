@@ -4,9 +4,635 @@
   "type": "11111111-0000-0000-0000-000000000000",
   "extends": "00000000-0000-0000-0000-000000000000",
   "created": 1770302367077,
-  "modified": 1770469068703,
+  "modified": 1773243816710,
   "content": {
-    "description": "A widget that displays all relationships for the currently selected item. Shows forward relationships (type, tags, parent, etc.) and inverse relationships (instances, children, linked from, etc.) using the [related-items-lib](item://f5f8535c-8db9-4bff-a810-28174b77235c) indexes.\n\n## Architecture\n\n- **Type**: `related-items-widget` — instances are placed in the viewport like any item\n- **View**: [related-items-view](item://34237dbd-ce58-46f7-ab19-2213c4ae0a51) — renders the widget, watches `viewport:selection-changed` to reactively update\n- **Data**: [related-items-lib](item://f5f8535c-8db9-4bff-a810-28174b77235c) provides `getRelated(itemId, api)` returning all forward and inverse relationships\n\nThe view watches selection changes via a declarative watch on `e0e00000-0003-0001-0000-000000000000` and calls `api.rerenderByType()` to refresh all widget instances. It skips re-rendering when the widget itself is selected.\n\n## Relationship Groups\n\n**Forward** (read from the item): Type, Tags, Parent, Extends, For Type, Preferred View, Attachments, Links To\n\n**Inverse** (from indexes): Instances, Tagged With, Children, Subtypes, Contained In, Linked From, Views For, Preferred By\n\nOnly non-empty groups are shown. Groups with >10 items are truncated.\n\n## Changes Made Alongside This Widget\n\n### Kernel: Unified Event Dispatch\n\n`setupDeclarativeWatches` was split into two paths — one for `ITEM_EVENT` and one for `SYSTEM_EVENT`. The widget needed viewport events (which are neither), exposing a design issue: `evaluateWatchFilter` returned `false` when no item was present, even for watches with no filters. This blocked filterless watches (like viewport events) from ever matching.\n\n**Fix**: Single `EVENT_DEFINITION` subscription receives all events. `evaluateWatchFilter` now returns `true` when no filters are specified. `dispatchToSystemWatchers` and `findSystemEventHandlers` removed (~54 lines). System error fallback folded into the unified path.\n\n### selection-manager: Event GUID Fix\n\nWas using `api.EVENT_IDS.VIEWPORT_SELECTION_CHANGED` which was `undefined` (removed from kernel EVENT_IDS as \"defined by userland\"). Every `select()` call emitted an event with `type: undefined` — a silent no-op. Fixed by using a local GUID constant.\n\n### related-items-lib: globalThis State\n\nIndex Maps and the `built` flag moved from module scope to `globalThis.__relatedItemsLib__` so they survive `moduleSystem.clearCache()`. Event handlers call `ensureBuilt(api)` instead of bailing when `!built`.\n\n## Known Issues\n\n### Stale indexes after code item import\n\nAfter importing code items, the widget sometimes gets stuck showing stale or empty data despite the `globalThis` fix and `ensureBuilt` recovery. The root cause is not yet fully understood — it may involve `clearCache()` interacting with the declarative watch dispatch (the lib's own event handler runs on a module instance that is about to be discarded), the `selection-manager` losing its `selectedItemId` (also module-scoped state that doesn't survive cache clears), or a rendering system timing issue where the widget re-renders before the new module code is loaded.\n\n**Workaround**: Refresh the page (F5).\n\n**Partially addressed**: `selection-manager` state moved to `globalThis` (same pattern as related-items-lib), so `selectedItemId` and `api` survive `clearCache()`. This fixes the widget getting stuck after item deletion. Remaining staleness after code item import may still occur due to other factors:\n- Investigate whether `clearCache()` should be more targeted (invalidate only the changed module, not all modules)\n- Add a `system:module-cache-cleared` event that stateful libraries can watch to rebuild\n- Trace the exact sequence during import to identify the specific failure point\n\n## See Also\n\n- [Architecture Overview](item://a0a0a0a0-d0c0-4000-8000-000000000003)\n- [Module Cache Gotcha](item://c0c0c0c0-0016-0000-0000-000000000000)",
+    "description": [
+      ":doc",
+      [
+        ":p",
+        {
+          "s": "A widget that displays all relationships for the currently selected item. Shows forward relationships (type, tags, parent, etc.) and inverse relationships (instances, children, linked from, etc.) using the "
+        },
+        [
+          ":item-ref",
+          {
+            "s": "f5f8535c-8db9-4bff-a810-28174b77235c"
+          },
+          {
+            "s": "related-items-lib"
+          }
+        ],
+        {
+          "s": " indexes."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Architecture"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Type"
+              }
+            ],
+            {
+              "s": ": "
+            },
+            [
+              ":code",
+              {
+                "s": "related-items-widget"
+              }
+            ],
+            {
+              "s": " — instances are placed in the viewport like any item"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "View"
+              }
+            ],
+            {
+              "s": ": "
+            },
+            [
+              ":item-ref",
+              {
+                "s": "34237dbd-ce58-46f7-ab19-2213c4ae0a51"
+              },
+              {
+                "s": "related-items-view"
+              }
+            ],
+            {
+              "s": " — renders the widget, watches "
+            },
+            [
+              ":code",
+              {
+                "s": "viewport:selection-changed"
+              }
+            ],
+            {
+              "s": " to reactively update"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Data"
+              }
+            ],
+            {
+              "s": ": "
+            },
+            [
+              ":item-ref",
+              {
+                "s": "f5f8535c-8db9-4bff-a810-28174b77235c"
+              },
+              {
+                "s": "related-items-lib"
+              }
+            ],
+            {
+              "s": " provides "
+            },
+            [
+              ":code",
+              {
+                "s": "getRelated(itemId, api)"
+              }
+            ],
+            {
+              "s": " returning all forward and inverse relationships"
+            }
+          ]
+        ]
+      ],
+      [
+        ":p",
+        {
+          "s": "The view watches selection changes via a declarative watch on "
+        },
+        [
+          ":code",
+          {
+            "s": "e0e00000-0003-0001-0000-000000000000"
+          }
+        ],
+        {
+          "s": " and calls "
+        },
+        [
+          ":code",
+          {
+            "s": "api.rerenderByType()"
+          }
+        ],
+        {
+          "s": " to refresh all widget instances. It skips re-rendering when the widget itself is selected."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Relationship Groups"
+        }
+      ],
+      [
+        ":p",
+        [
+          ":strong",
+          {
+            "s": "Forward"
+          }
+        ],
+        {
+          "s": " (read from the item): Type, Tags, Parent, Extends, For Type, Preferred View, Attachments, Links To"
+        }
+      ],
+      [
+        ":p",
+        [
+          ":strong",
+          {
+            "s": "Inverse"
+          }
+        ],
+        {
+          "s": " (from indexes): Instances, Tagged With, Children, Subtypes, Contained In, Linked From, Views For, Preferred By"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Only non-empty groups are shown. Groups with >10 items are truncated."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Changes Made Alongside This Widget"
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Kernel: Unified Event Dispatch"
+        }
+      ],
+      [
+        ":p",
+        [
+          ":code",
+          {
+            "s": "setupDeclarativeWatches"
+          }
+        ],
+        {
+          "s": " was split into two paths — one for "
+        },
+        [
+          ":code",
+          {
+            "s": "ITEM_EVENT"
+          }
+        ],
+        {
+          "s": " and one for "
+        },
+        [
+          ":code",
+          {
+            "s": "SYSTEM_EVENT"
+          }
+        ],
+        {
+          "s": ". The widget needed viewport events (which are neither), exposing a design issue: "
+        },
+        [
+          ":code",
+          {
+            "s": "evaluateWatchFilter"
+          }
+        ],
+        {
+          "s": " returned "
+        },
+        [
+          ":code",
+          {
+            "s": "false"
+          }
+        ],
+        {
+          "s": " when no item was present, even for watches with no filters. This blocked filterless watches (like viewport events) from ever matching."
+        }
+      ],
+      [
+        ":p",
+        [
+          ":strong",
+          {
+            "s": "Fix"
+          }
+        ],
+        {
+          "s": ": Single "
+        },
+        [
+          ":code",
+          {
+            "s": "EVENT_DEFINITION"
+          }
+        ],
+        {
+          "s": " subscription receives all events. "
+        },
+        [
+          ":code",
+          {
+            "s": "evaluateWatchFilter"
+          }
+        ],
+        {
+          "s": " now returns "
+        },
+        [
+          ":code",
+          {
+            "s": "true"
+          }
+        ],
+        {
+          "s": " when no filters are specified. "
+        },
+        [
+          ":code",
+          {
+            "s": "dispatchToSystemWatchers"
+          }
+        ],
+        {
+          "s": " and "
+        },
+        [
+          ":code",
+          {
+            "s": "findSystemEventHandlers"
+          }
+        ],
+        {
+          "s": " removed (~54 lines). System error fallback folded into the unified path."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "selection-manager: Event GUID Fix"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Was using "
+        },
+        [
+          ":code",
+          {
+            "s": "api.EVENT_IDS.VIEWPORT_SELECTION_CHANGED"
+          }
+        ],
+        {
+          "s": " which was "
+        },
+        [
+          ":code",
+          {
+            "s": "undefined"
+          }
+        ],
+        {
+          "s": " (removed from kernel EVENT_IDS as \"defined by userland\"). Every "
+        },
+        [
+          ":code",
+          {
+            "s": "select()"
+          }
+        ],
+        {
+          "s": " call emitted an event with "
+        },
+        [
+          ":code",
+          {
+            "s": "type: undefined"
+          }
+        ],
+        {
+          "s": " — a silent no-op. Fixed by using a local GUID constant."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "related-items-lib: globalThis State"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Index Maps and the "
+        },
+        [
+          ":code",
+          {
+            "s": "built"
+          }
+        ],
+        {
+          "s": " flag moved from module scope to "
+        },
+        [
+          ":code",
+          {
+            "s": "globalThis.__relatedItemsLib__"
+          }
+        ],
+        {
+          "s": " so they survive "
+        },
+        [
+          ":code",
+          {
+            "s": "moduleSystem.clearCache()"
+          }
+        ],
+        {
+          "s": ". Event handlers call "
+        },
+        [
+          ":code",
+          {
+            "s": "ensureBuilt(api)"
+          }
+        ],
+        {
+          "s": " instead of bailing when "
+        },
+        [
+          ":code",
+          {
+            "s": "!built"
+          }
+        ],
+        {
+          "s": "."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Known Issues"
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Stale indexes after code item import"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "After importing code items, the widget sometimes gets stuck showing stale or empty data despite the "
+        },
+        [
+          ":code",
+          {
+            "s": "globalThis"
+          }
+        ],
+        {
+          "s": " fix and "
+        },
+        [
+          ":code",
+          {
+            "s": "ensureBuilt"
+          }
+        ],
+        {
+          "s": " recovery. The root cause is not yet fully understood — it may involve "
+        },
+        [
+          ":code",
+          {
+            "s": "clearCache()"
+          }
+        ],
+        {
+          "s": " interacting with the declarative watch dispatch (the lib's own event handler runs on a module instance that is about to be discarded), the "
+        },
+        [
+          ":code",
+          {
+            "s": "selection-manager"
+          }
+        ],
+        {
+          "s": " losing its "
+        },
+        [
+          ":code",
+          {
+            "s": "selectedItemId"
+          }
+        ],
+        {
+          "s": " (also module-scoped state that doesn't survive cache clears), or a rendering system timing issue where the widget re-renders before the new module code is loaded."
+        }
+      ],
+      [
+        ":p",
+        [
+          ":strong",
+          {
+            "s": "Workaround"
+          }
+        ],
+        {
+          "s": ": Refresh the page (F5)."
+        }
+      ],
+      [
+        ":p",
+        [
+          ":strong",
+          {
+            "s": "Partially addressed"
+          }
+        ],
+        {
+          "s": ": "
+        },
+        [
+          ":code",
+          {
+            "s": "selection-manager"
+          }
+        ],
+        {
+          "s": " state moved to "
+        },
+        [
+          ":code",
+          {
+            "s": "globalThis"
+          }
+        ],
+        {
+          "s": " (same pattern as related-items-lib), so "
+        },
+        [
+          ":code",
+          {
+            "s": "selectedItemId"
+          }
+        ],
+        {
+          "s": " and "
+        },
+        [
+          ":code",
+          {
+            "s": "api"
+          }
+        ],
+        {
+          "s": " survive "
+        },
+        [
+          ":code",
+          {
+            "s": "clearCache()"
+          }
+        ],
+        {
+          "s": ". This fixes the widget getting stuck after item deletion. Remaining staleness after code item import may still occur due to other factors:"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Investigate whether "
+            },
+            [
+              ":code",
+              {
+                "s": "clearCache()"
+              }
+            ],
+            {
+              "s": " should be more targeted (invalidate only the changed module, not all modules)"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Add a "
+            },
+            [
+              ":code",
+              {
+                "s": "system:module-cache-cleared"
+              }
+            ],
+            {
+              "s": " event that stateful libraries can watch to rebuild"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Trace the exact sequence during import to identify the specific failure point"
+            }
+          ]
+        ]
+      ],
+      [
+        ":h2",
+        {
+          "s": "See Also"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":item-ref",
+              {
+                "s": "a0a0a0a0-d0c0-4000-8000-000000000003"
+              },
+              {
+                "s": "Architecture Overview"
+              }
+            ]
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":item-ref",
+              {
+                "s": "c0c0c0c0-0016-0000-0000-000000000000"
+              },
+              {
+                "s": "Module Cache Gotcha"
+              }
+            ]
+          ]
+        ]
+      ]
+    ],
     "tags": [
       "a63eadd8-ec56-4163-acf2-207aa392069b"
     ]

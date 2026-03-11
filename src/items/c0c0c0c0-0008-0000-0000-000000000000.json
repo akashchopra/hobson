@@ -3,9 +3,893 @@
   "name": "REPL",
   "type": "871ae771-b9b1-4f40-8c7f-d9038bfb69c3",
   "created": 1738454400000,
-  "modified": 1772302130170,
+  "modified": 1773243817432,
   "content": {
-    "description": "The REPL (Read-Eval-Print Loop) is Hobson's interactive JavaScript console for querying, scripting, and extending the system at runtime.\n\n## Overview\n\nThe REPL provides direct access to Hobson's API, letting you:\n\n- Query and inspect items in storage\n- Create, modify, and delete items\n- Test code before packaging it as libraries or views\n- Debug renderers and system behavior\n- Import and export data\n\n## Accessing the REPL\n\n| Action | Keyboard |\n|--------|----------|\n| Toggle REPL | `Ctrl+\\` |\n\nThe REPL appears as a collapsible panel at the bottom of the viewport. It persists across page reloads.\n\n## The `api` Object\n\nThe REPL provides an `api` object with full access to the system:\n\n![](item://33333333-1111-0000-0000-000000000000?symbol=Kernel.createAPI.get)\n\n```query\nconst core = await api.get('33333333-1111-0000-0000-000000000000');\nconst symbols = core.content._symbols || {};\n\n// Filter to REPL API methods (direct children only)\nconst apiMethods = Object.entries(symbols)\n  .filter(([key, info]) => {\n    return key.startsWith('Kernel.createAPI.') &&\n           key.split('.').length === 3 &&\n           info.kind.includes('function');\n  })\n  .sort((a, b) => a[1].line - b[1].line);\n\n// Generate markdown table with linked method names\nlet md = '| Method | Signature |\\n|--------|----------|\\n';\nfor (const [key, info] of apiMethods) {\n  // Put full method name inside the link text to avoid markdown parsing issues\n  const link = `[\\`api.${info.name}\\`](item://33333333-1111-0000-0000-000000000000?symbol=${key})`;\n  md += `| ${link} | \\`${info.signature || '()'}\\` |\\n`;\n}\nreturn md;\n```\n\n\n```javascript\n// Storage operations                  \nawait api.get(id)                // Get item by ID\nawait api.set(item)              // Save item (no re-render)\nawait api.update(item)           // Save item and re-render\nawait api.delete(id)             // Delete item\nawait api.query({ name: 'foo' }) // Find items by properties\nawait api.getAll()               // Get all items\n\n// Code loading\nawait api.require('library-name') // Load a library by name\n\n// Events (use EVENT_IDS GUIDs, not string names)\napi.events.on(api.EVENT_IDS.ITEM_UPDATED, handler) // Subscribe\napi.events.emit({ type: eventTypeGuid, content })  // Emit\n\n// Import/Export\nawait api.import()                // Import items from JSON file\nawait api.export()                // Export all items to JSON\n```\n\n## Keyboard Shortcuts\n\n| Shortcut | Action |\n|----------|--------|\n| `Ctrl+Enter` | Run code |\n| `Up/Down` | Navigate history |\n| `Tab` | Insert indentation |\n\n## Examples\n\n### Find an item by name\n```javascript\nconst item = await api.helpers.findByName('my-library');\nreturn item;\n```\n\n### Create a new note\n```javascript\nawait api.set({\n  id: crypto.randomUUID(),\n  name: 'My Note',\n  type: '871ae771-b9b1-4f40-8c7f-d9038bfb69c3', // note type\n  attachments: [],\n  content: { description: 'Hello world' }\n});\n```\n\n### List all views\n```javascript\nconst views = await api.query({ type: api.IDS.VIEW });\nreturn views.map(v => v.name);\n```\n\n### Navigate by URL\n```javascript\n// The REPL has no navigate() — use direct URL manipulation\nwindow.location.search = '?root=' + itemId;\n```\n\n## Architecture\n\nThe REPL has two parts:\n\n| Component | Location | Purpose |\n|-----------|----------|--------|\n| REPL API | [kernel:core](item://33333333-1111-0000-0000-000000000000) | The `api` object and `createAPI()` function |\n| REPL UI | [repl-ui](item://f1111111-0003-0000-0000-000000000000) | Collapsible panel, transcript, history |\n\nThe base API is defined in the kernel because it's used everywhere.\n\n## Two-Layer API\n\nThe REPL receives the base kernel API from `createAPI()` — storage, events, modules, parent-child operations, and import/export.\n\nViews receive an **enriched** API: `createAPI()` base + rendering methods added by [`enrichAPI()`](item://f1111111-0008-0000-0000-000000000000#code?region=enrichAPI) in viewport-rendering. This adds `renderItem`, `rerenderItem`, `getViews`, `navigate`, `viewport.*`, `instances.*`, and context methods (`getViewConfig`, `updateViewConfig`, `restorePreviousView`). The 1-param forms of `attach(itemId)` and `detach(itemId)` also use the container context.\n\n## Tips\n\n- **Multiline code**: The input is a textarea—write functions, loops, anything\n- **Async/await**: Top-level `await` works automatically\n- **Return values**: Use `return` to display results in the transcript\n- **No return**: Executes silently (useful for side effects)\n- **String escaping**: When creating code items, be careful with nested quotes\n\n## Common Gotchas\n\n| Issue | Solution |\n|-------|----------|\n| \"Module not found\" | Check the library name matches exactly |\n| Changes not visible | Use `api.update()` (in views) or reload the page (in REPL) |\n| Code item not updating | Call `api.require()` again—modules are cached |\n\n## See Also\n\n- [kernel:core](item://33333333-1111-0000-0000-000000000000) — Where the unified API is defined\n- [repl-ui](item://f1111111-0003-0000-0000-000000000000) — The REPL panel implementation\n- [Import/Export System](item://c0c0c0c0-0027-0000-0000-000000000000) — `api.import()` and `api.export()` details\n- [concept:safe-mode](item://c0c0c0c0-0007-0000-0000-000000000000) — Recovery when code breaks (REPL disabled in safe mode)",
+    "description": [
+      ":doc",
+      [
+        ":p",
+        {
+          "s": "The REPL (Read-Eval-Print Loop) is Hobson's interactive JavaScript console for querying, scripting, and extending the system at runtime."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Overview"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The REPL provides direct access to Hobson's API, letting you:"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Query and inspect items in storage"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Create, modify, and delete items"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Test code before packaging it as libraries or views"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Debug renderers and system behavior"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Import and export data"
+            }
+          ]
+        ]
+      ],
+      [
+        ":h2",
+        {
+          "s": "Accessing the REPL"
+        }
+      ],
+      [
+        ":table",
+        [
+          ":thead",
+          [
+            ":tr",
+            [
+              ":th",
+              {
+                "s": "Action"
+              }
+            ],
+            [
+              ":th",
+              {
+                "s": "Keyboard"
+              }
+            ]
+          ]
+        ],
+        [
+          ":tbody",
+          [
+            ":tr",
+            [
+              ":td",
+              {
+                "s": "Toggle REPL"
+              }
+            ],
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "Ctrl+\\"
+                }
+              ]
+            ]
+          ]
+        ]
+      ],
+      [
+        ":p",
+        {
+          "s": "The REPL appears as a collapsible panel at the bottom of the viewport. It persists across page reloads."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "The "
+        },
+        [
+          ":code",
+          {
+            "s": "api"
+          }
+        ],
+        {
+          "s": " Object"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The REPL provides an "
+        },
+        [
+          ":code",
+          {
+            "s": "api"
+          }
+        ],
+        {
+          "s": " object with full access to the system:"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "!"
+        },
+        [
+          ":item-ref",
+          {
+            "s": "33333333-1111-0000-0000-000000000000?symbol=Kernel.createAPI"
+          }
+        ]
+      ],
+      [
+        ":code-block",
+        {
+          "s": "const core = await api.get('33333333-1111-0000-0000-000000000000');\nconst symbols = core.content._symbols || {};\n\n// Filter to REPL API methods (direct children only)\nconst apiMethods = Object.entries(symbols)\n  .filter(([key, info]) => {\n    return key.startsWith('Kernel.createAPI.') &&\n           key.split('.').length === 3 &&\n           info.kind.includes('function');\n  })\n  .sort((a, b) => a[1].line - b[1].line);\n\n// Generate markdown table with linked method names\nlet md = '| Method | Signature |\\n|--------|----------|\\n';\nfor (const [key, info] of apiMethods) {\n  // Put full method name inside the link text to avoid markdown parsing issues\n  const link = `[\\`api.${info.name}\\`](item://33333333-1111-0000-0000-000000000000?symbol=${key})`;\n  md += `| ${link} | \\`${info.signature || '()'}\\` |\\n`;\n}\nreturn md;"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": "// Storage operations                  \nawait api.get(id)                // Get item by ID\nawait api.set(item)              // Save item (no re-render)\nawait api.update(item)           // Save item and re-render\nawait api.delete(id)             // Delete item\nawait api.query({ name: 'foo' }) // Find items by properties\nawait api.getAll()               // Get all items\n\n// Code loading\nawait api.require('library-name') // Load a library by name\n\n// Events (use EVENT_IDS GUIDs, not string names)\napi.events.on(api.EVENT_IDS.ITEM_UPDATED, handler) // Subscribe\napi.events.emit({ type: eventTypeGuid, content })  // Emit\n\n// Import/Export\nawait api.import()                // Import items from JSON file\nawait api.export()                // Export all items to JSON"
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Keyboard Shortcuts"
+        }
+      ],
+      [
+        ":table",
+        [
+          ":thead",
+          [
+            ":tr",
+            [
+              ":th",
+              {
+                "s": "Shortcut"
+              }
+            ],
+            [
+              ":th",
+              {
+                "s": "Action"
+              }
+            ]
+          ]
+        ],
+        [
+          ":tbody",
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "Ctrl+Enter"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Run code"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "Up/Down"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Navigate history"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "Tab"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Insert indentation"
+              }
+            ]
+          ]
+        ]
+      ],
+      [
+        ":h2",
+        {
+          "s": "Examples"
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Find an item by name"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": "const item = await api.helpers.findByName('my-library');\nreturn item;"
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Create a new note"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": "await api.set({\n  id: crypto.randomUUID(),\n  name: 'My Note',\n  type: '871ae771-b9b1-4f40-8c7f-d9038bfb69c3', // note type\n  attachments: [],\n  content: { description: 'Hello world' }\n});"
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "List all views"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": "const views = await api.query({ type: api.IDS.VIEW });\nreturn views.map(v => v.name);"
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Navigate by URL"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": "// The REPL has no navigate() — use direct URL manipulation\nwindow.location.search = '?root=' + itemId;"
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Architecture"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The REPL has two parts:"
+        }
+      ],
+      [
+        ":table",
+        [
+          ":thead",
+          [
+            ":tr",
+            [
+              ":th",
+              {
+                "s": "Component"
+              }
+            ],
+            [
+              ":th",
+              {
+                "s": "Location"
+              }
+            ],
+            [
+              ":th",
+              {
+                "s": "Purpose"
+              }
+            ]
+          ]
+        ],
+        [
+          ":tbody",
+          [
+            ":tr",
+            [
+              ":td",
+              {
+                "s": "REPL API"
+              }
+            ],
+            [
+              ":td",
+              [
+                ":item-ref",
+                {
+                  "s": "33333333-1111-0000-0000-000000000000"
+                },
+                {
+                  "s": "kernel:core"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "The "
+              },
+              [
+                ":code",
+                {
+                  "s": "api"
+                }
+              ],
+              {
+                "s": " object and "
+              },
+              [
+                ":code",
+                {
+                  "s": "createAPI()"
+                }
+              ],
+              {
+                "s": " function"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              {
+                "s": "REPL UI"
+              }
+            ],
+            [
+              ":td",
+              [
+                ":item-ref",
+                {
+                  "s": "f1111111-0003-0000-0000-000000000000"
+                },
+                {
+                  "s": "repl-ui"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Collapsible panel, transcript, history"
+              }
+            ]
+          ]
+        ]
+      ],
+      [
+        ":p",
+        {
+          "s": "The base API is defined in the kernel because it's used everywhere."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Two-Layer API"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The REPL receives the base kernel API from "
+        },
+        [
+          ":code",
+          {
+            "s": "createAPI()"
+          }
+        ],
+        {
+          "s": " — storage, events, modules, parent-child operations, and import/export."
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Views receive an "
+        },
+        [
+          ":strong",
+          {
+            "s": "enriched"
+          }
+        ],
+        {
+          "s": " API: "
+        },
+        [
+          ":code",
+          {
+            "s": "createAPI()"
+          }
+        ],
+        {
+          "s": " base + rendering methods added by "
+        },
+        [
+          ":item-ref",
+          {
+            "s": "f1111111-0008-0000-0000-000000000000#code?region=enrichAPI"
+          },
+          {
+            "s": "`enrichAPI()`"
+          }
+        ],
+        {
+          "s": " in viewport-rendering. This adds "
+        },
+        [
+          ":code",
+          {
+            "s": "renderItem"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "rerenderItem"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "getViews"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "navigate"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "viewport.*"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "instances.*"
+          }
+        ],
+        {
+          "s": ", and context methods ("
+        },
+        [
+          ":code",
+          {
+            "s": "getViewConfig"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "updateViewConfig"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "restorePreviousView"
+          }
+        ],
+        {
+          "s": "). The 1-param forms of "
+        },
+        [
+          ":code",
+          {
+            "s": "attach(itemId)"
+          }
+        ],
+        {
+          "s": " and "
+        },
+        [
+          ":code",
+          {
+            "s": "detach(itemId)"
+          }
+        ],
+        {
+          "s": " also use the container context."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Tips"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Multiline code"
+              }
+            ],
+            {
+              "s": ": The input is a textarea—write functions, loops, anything"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Async/await"
+              }
+            ],
+            {
+              "s": ": Top-level "
+            },
+            [
+              ":code",
+              {
+                "s": "await"
+              }
+            ],
+            {
+              "s": " works automatically"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Return values"
+              }
+            ],
+            {
+              "s": ": Use "
+            },
+            [
+              ":code",
+              {
+                "s": "return"
+              }
+            ],
+            {
+              "s": " to display results in the transcript"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "No return"
+              }
+            ],
+            {
+              "s": ": Executes silently (useful for side effects)"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "String escaping"
+              }
+            ],
+            {
+              "s": ": When creating code items, be careful with nested quotes"
+            }
+          ]
+        ]
+      ],
+      [
+        ":h2",
+        {
+          "s": "Common Gotchas"
+        }
+      ],
+      [
+        ":table",
+        [
+          ":thead",
+          [
+            ":tr",
+            [
+              ":th",
+              {
+                "s": "Issue"
+              }
+            ],
+            [
+              ":th",
+              {
+                "s": "Solution"
+              }
+            ]
+          ]
+        ],
+        [
+          ":tbody",
+          [
+            ":tr",
+            [
+              ":td",
+              {
+                "s": "\"Module not found\""
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Check the library name matches exactly"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              {
+                "s": "Changes not visible"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Use "
+              },
+              [
+                ":code",
+                {
+                  "s": "api.update()"
+                }
+              ],
+              {
+                "s": " (in views) or reload the page (in REPL)"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              {
+                "s": "Code item not updating"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Call "
+              },
+              [
+                ":code",
+                {
+                  "s": "api.require()"
+                }
+              ],
+              {
+                "s": " again—modules are cached"
+              }
+            ]
+          ]
+        ]
+      ],
+      [
+        ":h2",
+        {
+          "s": "See Also"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":item-ref",
+              {
+                "s": "33333333-1111-0000-0000-000000000000"
+              },
+              {
+                "s": "kernel:core"
+              }
+            ],
+            {
+              "s": " — Where the unified API is defined"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":item-ref",
+              {
+                "s": "f1111111-0003-0000-0000-000000000000"
+              },
+              {
+                "s": "repl-ui"
+              }
+            ],
+            {
+              "s": " — The REPL panel implementation"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":item-ref",
+              {
+                "s": "c0c0c0c0-0027-0000-0000-000000000000"
+              },
+              {
+                "s": "Import/Export System"
+              }
+            ],
+            {
+              "s": " — "
+            },
+            [
+              ":code",
+              {
+                "s": "api.import()"
+              }
+            ],
+            {
+              "s": " and "
+            },
+            [
+              ":code",
+              {
+                "s": "api.export()"
+              }
+            ],
+            {
+              "s": " details"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":item-ref",
+              {
+                "s": "c0c0c0c0-0007-0000-0000-000000000000"
+              },
+              {
+                "s": "concept:safe-mode"
+              }
+            ],
+            {
+              "s": " — Recovery when code breaks (REPL disabled in safe mode)"
+            }
+          ]
+        ]
+      ]
+    ],
     "tags": [
       "a63eadd8-ec56-4163-acf2-207aa392069b",
       "c0c0c0c0-0001-0000-0000-000000000000"

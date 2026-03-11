@@ -3,9 +3,2063 @@
   "name": "App Pages and Widgets",
   "type": "871ae771-b9b1-4f40-8c7f-d9038bfb69c3",
   "created": 1739308800000,
-  "modified": 1772791802386,
+  "modified": 1773243817566,
   "content": {
-    "description": "# App Pages and Widgets\n\n[App Pages](item://c4563df8-2eb4-4ad6-9502-5bf35b28e410) are grid-based interactive pages composed from widget items. They use Hobson's existing item and attachment infrastructure — a page is an item, each widget is an item, and the page holds widgets as attachments with grid positioning.\n\n## Architecture\n\nThe system uses three existing mechanisms:\n\n1. **Attachments array** — widget items are attachments of the page item, exactly as spatial container children are\n2. **Per-attachment view configuration** — the `view` object on each attachment stores grid position (`col`, `row`, `colSpan`, `rowSpan`) rather than spatial coordinates\n3. **View rendering** — each widget is rendered by its own view, resolved through the standard preference hierarchy\n\nThis is architecturally analogous to the spatial container, but with a CSS grid layout model and a shared state mechanism for inter-widget communication.\n\n### Items\n\n| Item | Type | Purpose |\n|------|------|---------|\n| `app-page` | type-def | The page type (`c4563df8-2eb4-4ad6-9502-5bf35b28e410`) |\n| `app-page-view` | view | Renders grid, manages shared state, design mode (`ef977316-0496-487a-b662-0ba07e40eea2`) |\n| `app-page-design-lib` | library | Design mode UI logic (`9e0953dc-b75c-4015-9c6f-79afad34d5a1`) |\n| `widget-markdown` | type-def | Markdown text block |\n| `widget-button` | type-def | Clickable button with inline code |\n| `widget-radio-group` | type-def | Single-selection radio buttons |\n| `widget-checkbox-group` | type-def | Checkboxes populated from a code query |\n| `note-widget-view` | view | Compact markdown render of notes for page embedding (`b7f3a1d2-8e5c-4f6a-9d0b-1c2e3f4a5b6c`) |\n| `page-widget` | tag | Tag on type-defs that appear in the Create New widget picker (`c0c0c0c0-0071-0000-0000-000000000000`) |\n\nEach widget type has a corresponding `*-view` item. New widget types can be added incrementally (one type-def + one view) without modifying any existing code.\n\n## Page Data Model\n\nAn app-page item has:\n\n- `content.columns` (number, default 12) — grid column count\n- `content.gap` (number, default 8) — gap between cells in pixels\n- `content.rowHeight` (number, default 40) — fixed row height in pixels. Uses `grid-auto-rows` with `row-gap: 0`; vertical spacing comes from cell padding. Widgets use `rowSpan` to occupy multiple rows. Cells have `overflow: auto` so tall content scrolls within its allocated space\n\nAttachments use the standard `{ id, view }` format with grid-specific view properties:\n\n```\n{ id: \"<widget-id>\", view: { col: 1, row: 1, colSpan: 12, rowSpan: 1, viewId?: \"<view-guid>\" } }\n```\n\nAll positions are 1-based, matching CSS Grid convention. The optional `viewId` field overrides the standard view resolution for this attachment, allowing a specific view to be used without changing the item's global preferred view.\n\n## Shared State (pageContext)\n\nWidgets communicate through a runtime key-value state object maintained by the page view. This state is **not persisted** — it exists only while the page is rendered.\n\nThe page view creates a `pageContext` object and passes it to widget views via an augmented API (`Object.create(api)` with `pageContext` added). Widget views access it through `api.pageContext`.\n\n### API\n\n- `pageContext.getState(key)` — read a value\n- `pageContext.setState(key, value)` — write a value and notify listeners\n- `pageContext.onStateChange(key, callback)` — subscribe to changes; returns unsubscribe function\n\n### How Widgets Use State\n\n**Producers** (radio groups, checkbox groups) write to state via their `stateKey` content field:\n```javascript\npageContext.setState(widget.content.stateKey, selectedValue);\n```\n\n**Consumers** (buttons) read state in their `content.code`:\n```javascript\nconst selected = pageContext.getState('selectedItems');\n```\n\nWidgets that don't use `pageContext` work fine standalone — they're just normal views.\n\n## Widget Types\n\n### widget-markdown\n\n| Field | Type | Description |\n|-------|------|-------------|\n| `body` | string | Markdown content to render |\n\nUses `hobson-markdown` library with fallback to `<pre>` if unavailable.\n\n### widget-button\n\n| Field | Type | Description |\n|-------|------|-------------|\n| `label` | string | Button text |\n| `variant` | string | `primary`, `secondary`, or `danger` |\n| `code` | string | JavaScript executed on click with `api` and `pageContext` in scope |\n\nShows \"Working...\" during execution and displays errors inline.\n\n### widget-radio-group\n\n| Field | Type | Description |\n|-------|------|-------------|\n| `label` | string | Group heading |\n| `options` | array | `[{ value, label }]` objects |\n| `defaultValue` | string | Initially selected value |\n| `stateKey` | string | Key to write selection to in page state |\n| `layout` | string | `vertical` (default) or `horizontal` |\n\n### widget-checkbox-group\n\n| Field | Type | Description |\n|-------|------|-------------|\n| `label` | string | Group heading |\n| `source` | string | JavaScript that returns an array (has `api` in scope) |\n| `labelField` | string | Dot-path field on source items to use as label |\n| `stateKey` | string | Key to write selected IDs to in page state |\n\n## Design Mode\n\nThe app-page-view includes a visual design mode for editing layout without manually editing JSON. A small \"Design\" button in the top-right corner of the page toggles between modes.\n\n### Live Mode\n\nWidgets are fully interactive. No design UI is visible (except the toggle button).\n\n### Design Mode\n\nA toolbar appears with:\n- **Live Mode** button — switch back to live mode\n- **+ Add Widget** button — opens a picker listing all `widget-*` type-defs\n- Grid settings display (column count, gap, row height)\n\nEach widget shows:\n- **Header bar** with drag handle, widget name, position label (`c1 r2 12×3`), edit button, delete button\n- **Content** rendered but non-interactive (`pointer-events: none`)\n- **Resize handle** at bottom-right corner for changing `colSpan` and `rowSpan`\n- **Selection border** on click\n\n### Design Operations\n\n| Operation | Mechanism |\n|-----------|----------|\n| **Reposition** | Drag the handle; floating label shows target `col, row`; persisted via `updateSilent` |\n| **Resize** | Drag bottom-right corner; `colSpan` and `rowSpan` update live; position label shows both dimensions during drag |\n| **Edit properties** | Opens the item in its standard editable view via `api.navigate()` |\n| **Add widget** | Two-tab modal: **Attach Existing** searches all items (reuses `item-search-lib`); **Create New** lists type-defs tagged with `page-widget`. Attaching a note auto-sets `viewId` to `note-widget-view` for compact rendering |\n| **Remove widget** | Three-way modal: Remove from Page (detach only), Delete Permanently (`api.delete`), or Cancel |\n\nAll design operations use the `updateSilent` pattern (fresh-read → modify attachments → save) to avoid race conditions. The page always fresh-reads on re-render so design changes are immediately visible in both modes.\n\n### Design Mode Implementation\n\nDesign logic lives in `app-page-design-lib` (loaded only in design mode) to keep the view code manageable. It exports:\n\n- `renderToolbar(pageItem, api, callbacks)` — the design toolbar\n- `wrapWidgetForDesign(widgetElement, childSpec, childItem, pageItem, api, callbacks)` — design overlay per widget\n- `renderColumnOverlay(gridEl, columns)` — semi-transparent column lines\n- `showWidgetPicker(api)` — two-tab modal (Attach Existing / Create New) returning `{ mode, typeId|item }` or `null`\n- `showPropertyEditor` — removed; edit button now uses `api.navigate()` to open the item in its standard view\n\n## Creating a New Widget Type\n\n1. Create a **type-definition** item named `widget-<name>`. Document content fields in the description using the `- \\`fieldName\\` (type)` format (the property editor parses this to seed forms for new instances).\n2. Create a **view** item named `widget-<name>-view` with `for_type` pointing to the type-def. Export an async `render(item, api)` function. Access shared state via `api.pageContext` if needed.\n3. Set `preferredView` on the type-def to point to the view.\n\n4. Tag the type-def with `page-widget` (`c0c0c0c0-0071-0000-0000-000000000000`) so it appears in the Create New widget picker.\n\nTo make any existing type embeddable on a page without creating a dedicated widget type, use the **Attach Existing** tab in the picker. For notes, the page automatically assigns `note-widget-view` which renders the markdown body compactly without the standard note chrome.",
+    "description": [
+      ":doc",
+      [
+        ":h1",
+        {
+          "s": "App Pages and Widgets"
+        }
+      ],
+      [
+        ":p",
+        [
+          ":item-ref",
+          {
+            "s": "c4563df8-2eb4-4ad6-9502-5bf35b28e410"
+          },
+          {
+            "s": "App Pages"
+          }
+        ],
+        {
+          "s": " are grid-based interactive pages composed from widget items. They use Hobson's existing item and attachment infrastructure — a page is an item, each widget is an item, and the page holds widgets as attachments with grid positioning."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Architecture"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The system uses three existing mechanisms:"
+        }
+      ],
+      [
+        ":ol",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Attachments array"
+              }
+            ],
+            {
+              "s": " — widget items are attachments of the page item, exactly as spatial container children are"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Per-attachment view configuration"
+              }
+            ],
+            {
+              "s": " — the "
+            },
+            [
+              ":code",
+              {
+                "s": "view"
+              }
+            ],
+            {
+              "s": " object on each attachment stores grid position ("
+            },
+            [
+              ":code",
+              {
+                "s": "col"
+              }
+            ],
+            {
+              "s": ", "
+            },
+            [
+              ":code",
+              {
+                "s": "row"
+              }
+            ],
+            {
+              "s": ", "
+            },
+            [
+              ":code",
+              {
+                "s": "colSpan"
+              }
+            ],
+            {
+              "s": ", "
+            },
+            [
+              ":code",
+              {
+                "s": "rowSpan"
+              }
+            ],
+            {
+              "s": ") rather than spatial coordinates"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "View rendering"
+              }
+            ],
+            {
+              "s": " — each widget is rendered by its own view, resolved through the standard preference hierarchy"
+            }
+          ]
+        ]
+      ],
+      [
+        ":p",
+        {
+          "s": "This is architecturally analogous to the spatial container, but with a CSS grid layout model and a shared state mechanism for inter-widget communication."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Items"
+        }
+      ],
+      [
+        ":table",
+        [
+          ":thead",
+          [
+            ":tr",
+            [
+              ":th",
+              {
+                "s": "Item"
+              }
+            ],
+            [
+              ":th",
+              {
+                "s": "Type"
+              }
+            ],
+            [
+              ":th",
+              {
+                "s": "Purpose"
+              }
+            ]
+          ]
+        ],
+        [
+          ":tbody",
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "app-page"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "type-def"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "The page type ("
+              },
+              [
+                ":code",
+                {
+                  "s": "c4563df8-2eb4-4ad6-9502-5bf35b28e410"
+                }
+              ],
+              {
+                "s": ")"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "app-page-view"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "view"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Renders grid, manages shared state, design mode ("
+              },
+              [
+                ":code",
+                {
+                  "s": "ef977316-0496-487a-b662-0ba07e40eea2"
+                }
+              ],
+              {
+                "s": ")"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "app-page-design-lib"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "library"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Design mode UI logic ("
+              },
+              [
+                ":code",
+                {
+                  "s": "9e0953dc-b75c-4015-9c6f-79afad34d5a1"
+                }
+              ],
+              {
+                "s": ")"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "widget-markdown"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "type-def"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Markdown text block"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "widget-button"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "type-def"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Clickable button with inline code"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "widget-radio-group"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "type-def"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Single-selection radio buttons"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "widget-checkbox-group"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "type-def"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Checkboxes populated from a code query"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "note-widget-view"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "view"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Compact markdown render of notes for page embedding ("
+              },
+              [
+                ":code",
+                {
+                  "s": "b7f3a1d2-8e5c-4f6a-9d0b-1c2e3f4a5b6c"
+                }
+              ],
+              {
+                "s": ")"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "page-widget"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "tag"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Tag on type-defs that appear in the Create New widget picker ("
+              },
+              [
+                ":code",
+                {
+                  "s": "c0c0c0c0-0071-0000-0000-000000000000"
+                }
+              ],
+              {
+                "s": ")"
+              }
+            ]
+          ]
+        ]
+      ],
+      [
+        ":p",
+        {
+          "s": "Each widget type has a corresponding "
+        },
+        [
+          ":code",
+          {
+            "s": "*-view"
+          }
+        ],
+        {
+          "s": " item. New widget types can be added incrementally (one type-def + one view) without modifying any existing code."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Page Data Model"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "An app-page item has:"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":code",
+              {
+                "s": "content.columns"
+              }
+            ],
+            {
+              "s": " (number, default 12) — grid column count"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":code",
+              {
+                "s": "content.gap"
+              }
+            ],
+            {
+              "s": " (number, default 8) — gap between cells in pixels"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":code",
+              {
+                "s": "content.rowHeight"
+              }
+            ],
+            {
+              "s": " (number, default 40) — fixed row height in pixels. Uses "
+            },
+            [
+              ":code",
+              {
+                "s": "grid-auto-rows"
+              }
+            ],
+            {
+              "s": " with "
+            },
+            [
+              ":code",
+              {
+                "s": "row-gap: 0"
+              }
+            ],
+            {
+              "s": "; vertical spacing comes from cell padding. Widgets use "
+            },
+            [
+              ":code",
+              {
+                "s": "rowSpan"
+              }
+            ],
+            {
+              "s": " to occupy multiple rows. Cells have "
+            },
+            [
+              ":code",
+              {
+                "s": "overflow: auto"
+              }
+            ],
+            {
+              "s": " so tall content scrolls within its allocated space"
+            }
+          ]
+        ]
+      ],
+      [
+        ":p",
+        {
+          "s": "Attachments use the standard "
+        },
+        [
+          ":code",
+          {
+            "s": "{ id, view }"
+          }
+        ],
+        {
+          "s": " format with grid-specific view properties:"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": "{ id: \"<widget-id>\", view: { col: 1, row: 1, colSpan: 12, rowSpan: 1, viewId?: \"<view-guid>\" } }"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "All positions are 1-based, matching CSS Grid convention. The optional "
+        },
+        [
+          ":code",
+          {
+            "s": "viewId"
+          }
+        ],
+        {
+          "s": " field overrides the standard view resolution for this attachment, allowing a specific view to be used without changing the item's global preferred view."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Shared State (pageContext)"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Widgets communicate through a runtime key-value state object maintained by the page view. This state is "
+        },
+        [
+          ":strong",
+          {
+            "s": "not persisted"
+          }
+        ],
+        {
+          "s": " — it exists only while the page is rendered."
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The page view creates a "
+        },
+        [
+          ":code",
+          {
+            "s": "pageContext"
+          }
+        ],
+        {
+          "s": " object and passes it to widget views via an augmented API ("
+        },
+        [
+          ":code",
+          {
+            "s": "Object.create(api)"
+          }
+        ],
+        {
+          "s": " with "
+        },
+        [
+          ":code",
+          {
+            "s": "pageContext"
+          }
+        ],
+        {
+          "s": " added). Widget views access it through "
+        },
+        [
+          ":code",
+          {
+            "s": "api.pageContext"
+          }
+        ],
+        {
+          "s": "."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "API"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":code",
+              {
+                "s": "pageContext.getState(key)"
+              }
+            ],
+            {
+              "s": " — read a value"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":code",
+              {
+                "s": "pageContext.setState(key, value)"
+              }
+            ],
+            {
+              "s": " — write a value and notify listeners"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":code",
+              {
+                "s": "pageContext.onStateChange(key, callback)"
+              }
+            ],
+            {
+              "s": " — subscribe to changes; returns unsubscribe function"
+            }
+          ]
+        ]
+      ],
+      [
+        ":h3",
+        {
+          "s": "How Widgets Use State"
+        }
+      ],
+      [
+        ":p",
+        [
+          ":strong",
+          {
+            "s": "Producers"
+          }
+        ],
+        {
+          "s": " (radio groups, checkbox groups) write to state via their "
+        },
+        [
+          ":code",
+          {
+            "s": "stateKey"
+          }
+        ],
+        {
+          "s": " content field:"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": "pageContext.setState(widget.content.stateKey, selectedValue);"
+        }
+      ],
+      [
+        ":p",
+        [
+          ":strong",
+          {
+            "s": "Consumers"
+          }
+        ],
+        {
+          "s": " (buttons) read state in their "
+        },
+        [
+          ":code",
+          {
+            "s": "content.code"
+          }
+        ],
+        {
+          "s": ":"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": "const selected = pageContext.getState('selectedItems');"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Widgets that don't use "
+        },
+        [
+          ":code",
+          {
+            "s": "pageContext"
+          }
+        ],
+        {
+          "s": " work fine standalone — they're just normal views."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Widget Types"
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "widget-markdown"
+        }
+      ],
+      [
+        ":table",
+        [
+          ":thead",
+          [
+            ":tr",
+            [
+              ":th",
+              {
+                "s": "Field"
+              }
+            ],
+            [
+              ":th",
+              {
+                "s": "Type"
+              }
+            ],
+            [
+              ":th",
+              {
+                "s": "Description"
+              }
+            ]
+          ]
+        ],
+        [
+          ":tbody",
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "body"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "string"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Markdown content to render"
+              }
+            ]
+          ]
+        ]
+      ],
+      [
+        ":p",
+        {
+          "s": "Uses "
+        },
+        [
+          ":code",
+          {
+            "s": "hobson-markdown"
+          }
+        ],
+        {
+          "s": " library with fallback to "
+        },
+        [
+          ":code",
+          {
+            "s": "<pre>"
+          }
+        ],
+        {
+          "s": " if unavailable."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "widget-button"
+        }
+      ],
+      [
+        ":table",
+        [
+          ":thead",
+          [
+            ":tr",
+            [
+              ":th",
+              {
+                "s": "Field"
+              }
+            ],
+            [
+              ":th",
+              {
+                "s": "Type"
+              }
+            ],
+            [
+              ":th",
+              {
+                "s": "Description"
+              }
+            ]
+          ]
+        ],
+        [
+          ":tbody",
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "label"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "string"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Button text"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "variant"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "string"
+              }
+            ],
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "primary"
+                }
+              ],
+              {
+                "s": ", "
+              },
+              [
+                ":code",
+                {
+                  "s": "secondary"
+                }
+              ],
+              {
+                "s": ", or "
+              },
+              [
+                ":code",
+                {
+                  "s": "danger"
+                }
+              ]
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "code"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "string"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "JavaScript executed on click with "
+              },
+              [
+                ":code",
+                {
+                  "s": "api"
+                }
+              ],
+              {
+                "s": " and "
+              },
+              [
+                ":code",
+                {
+                  "s": "pageContext"
+                }
+              ],
+              {
+                "s": " in scope"
+              }
+            ]
+          ]
+        ]
+      ],
+      [
+        ":p",
+        {
+          "s": "Shows \"Working...\" during execution and displays errors inline."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "widget-radio-group"
+        }
+      ],
+      [
+        ":table",
+        [
+          ":thead",
+          [
+            ":tr",
+            [
+              ":th",
+              {
+                "s": "Field"
+              }
+            ],
+            [
+              ":th",
+              {
+                "s": "Type"
+              }
+            ],
+            [
+              ":th",
+              {
+                "s": "Description"
+              }
+            ]
+          ]
+        ],
+        [
+          ":tbody",
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "label"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "string"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Group heading"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "options"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "array"
+              }
+            ],
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "[{ value, label }]"
+                }
+              ],
+              {
+                "s": " objects"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "defaultValue"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "string"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Initially selected value"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "stateKey"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "string"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Key to write selection to in page state"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "layout"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "string"
+              }
+            ],
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "vertical"
+                }
+              ],
+              {
+                "s": " (default) or "
+              },
+              [
+                ":code",
+                {
+                  "s": "horizontal"
+                }
+              ]
+            ]
+          ]
+        ]
+      ],
+      [
+        ":h3",
+        {
+          "s": "widget-checkbox-group"
+        }
+      ],
+      [
+        ":table",
+        [
+          ":thead",
+          [
+            ":tr",
+            [
+              ":th",
+              {
+                "s": "Field"
+              }
+            ],
+            [
+              ":th",
+              {
+                "s": "Type"
+              }
+            ],
+            [
+              ":th",
+              {
+                "s": "Description"
+              }
+            ]
+          ]
+        ],
+        [
+          ":tbody",
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "label"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "string"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Group heading"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "source"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "string"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "JavaScript that returns an array (has "
+              },
+              [
+                ":code",
+                {
+                  "s": "api"
+                }
+              ],
+              {
+                "s": " in scope)"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "labelField"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "string"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Dot-path field on source items to use as label"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "stateKey"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "string"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Key to write selected IDs to in page state"
+              }
+            ]
+          ]
+        ]
+      ],
+      [
+        ":h2",
+        {
+          "s": "Design Mode"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The app-page-view includes a visual design mode for editing layout without manually editing JSON. A small \"Design\" button in the top-right corner of the page toggles between modes."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Live Mode"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Widgets are fully interactive. No design UI is visible (except the toggle button)."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Design Mode"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "A toolbar appears with:"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Live Mode"
+              }
+            ],
+            {
+              "s": " button — switch back to live mode"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "+ Add Widget"
+              }
+            ],
+            {
+              "s": " button — opens a picker listing all "
+            },
+            [
+              ":code",
+              {
+                "s": "widget-*"
+              }
+            ],
+            {
+              "s": " type-defs"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Grid settings display (column count, gap, row height)"
+            }
+          ]
+        ]
+      ],
+      [
+        ":p",
+        {
+          "s": "Each widget shows:"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Header bar"
+              }
+            ],
+            {
+              "s": " with drag handle, widget name, position label ("
+            },
+            [
+              ":code",
+              {
+                "s": "c1 r2 12×3"
+              }
+            ],
+            {
+              "s": "), edit button, delete button"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Content"
+              }
+            ],
+            {
+              "s": " rendered but non-interactive ("
+            },
+            [
+              ":code",
+              {
+                "s": "pointer-events: none"
+              }
+            ],
+            {
+              "s": ")"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Resize handle"
+              }
+            ],
+            {
+              "s": " at bottom-right corner for changing "
+            },
+            [
+              ":code",
+              {
+                "s": "colSpan"
+              }
+            ],
+            {
+              "s": " and "
+            },
+            [
+              ":code",
+              {
+                "s": "rowSpan"
+              }
+            ]
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Selection border"
+              }
+            ],
+            {
+              "s": " on click"
+            }
+          ]
+        ]
+      ],
+      [
+        ":h3",
+        {
+          "s": "Design Operations"
+        }
+      ],
+      [
+        ":table",
+        [
+          ":thead",
+          [
+            ":tr",
+            [
+              ":th",
+              {
+                "s": "Operation"
+              }
+            ],
+            [
+              ":th",
+              {
+                "s": "Mechanism"
+              }
+            ]
+          ]
+        ],
+        [
+          ":tbody",
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":strong",
+                {
+                  "s": "Reposition"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Drag the handle; floating label shows target "
+              },
+              [
+                ":code",
+                {
+                  "s": "col, row"
+                }
+              ],
+              {
+                "s": "; persisted via "
+              },
+              [
+                ":code",
+                {
+                  "s": "updateSilent"
+                }
+              ]
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":strong",
+                {
+                  "s": "Resize"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Drag bottom-right corner; "
+              },
+              [
+                ":code",
+                {
+                  "s": "colSpan"
+                }
+              ],
+              {
+                "s": " and "
+              },
+              [
+                ":code",
+                {
+                  "s": "rowSpan"
+                }
+              ],
+              {
+                "s": " update live; position label shows both dimensions during drag"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":strong",
+                {
+                  "s": "Edit properties"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Opens the item in its standard editable view via "
+              },
+              [
+                ":code",
+                {
+                  "s": "api.navigate()"
+                }
+              ]
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":strong",
+                {
+                  "s": "Add widget"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Two-tab modal: "
+              },
+              [
+                ":strong",
+                {
+                  "s": "Attach Existing"
+                }
+              ],
+              {
+                "s": " searches all items (reuses "
+              },
+              [
+                ":code",
+                {
+                  "s": "item-search-lib"
+                }
+              ],
+              {
+                "s": "); "
+              },
+              [
+                ":strong",
+                {
+                  "s": "Create New"
+                }
+              ],
+              {
+                "s": " lists type-defs tagged with "
+              },
+              [
+                ":code",
+                {
+                  "s": "page-widget"
+                }
+              ],
+              {
+                "s": ". Attaching a note auto-sets "
+              },
+              [
+                ":code",
+                {
+                  "s": "viewId"
+                }
+              ],
+              {
+                "s": " to "
+              },
+              [
+                ":code",
+                {
+                  "s": "note-widget-view"
+                }
+              ],
+              {
+                "s": " for compact rendering"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":strong",
+                {
+                  "s": "Remove widget"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Three-way modal: Remove from Page (detach only), Delete Permanently ("
+              },
+              [
+                ":code",
+                {
+                  "s": "api.delete"
+                }
+              ],
+              {
+                "s": "), or Cancel"
+              }
+            ]
+          ]
+        ]
+      ],
+      [
+        ":p",
+        {
+          "s": "All design operations use the "
+        },
+        [
+          ":code",
+          {
+            "s": "updateSilent"
+          }
+        ],
+        {
+          "s": " pattern (fresh-read → modify attachments → save) to avoid race conditions. The page always fresh-reads on re-render so design changes are immediately visible in both modes."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Design Mode Implementation"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Design logic lives in "
+        },
+        [
+          ":code",
+          {
+            "s": "app-page-design-lib"
+          }
+        ],
+        {
+          "s": " (loaded only in design mode) to keep the view code manageable. It exports:"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":code",
+              {
+                "s": "renderToolbar(pageItem, api, callbacks)"
+              }
+            ],
+            {
+              "s": " — the design toolbar"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":code",
+              {
+                "s": "wrapWidgetForDesign(widgetElement, childSpec, childItem, pageItem, api, callbacks)"
+              }
+            ],
+            {
+              "s": " — design overlay per widget"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":code",
+              {
+                "s": "renderColumnOverlay(gridEl, columns)"
+              }
+            ],
+            {
+              "s": " — semi-transparent column lines"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":code",
+              {
+                "s": "showWidgetPicker(api)"
+              }
+            ],
+            {
+              "s": " — two-tab modal (Attach Existing / Create New) returning "
+            },
+            [
+              ":code",
+              {
+                "s": "{ mode, typeId|item }"
+              }
+            ],
+            {
+              "s": " or "
+            },
+            [
+              ":code",
+              {
+                "s": "null"
+              }
+            ]
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":code",
+              {
+                "s": "showPropertyEditor"
+              }
+            ],
+            {
+              "s": " — removed; edit button now uses "
+            },
+            [
+              ":code",
+              {
+                "s": "api.navigate()"
+              }
+            ],
+            {
+              "s": " to open the item in its standard view"
+            }
+          ]
+        ]
+      ],
+      [
+        ":h2",
+        {
+          "s": "Creating a New Widget Type"
+        }
+      ],
+      [
+        ":ol",
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Create a "
+            },
+            [
+              ":strong",
+              {
+                "s": "type-definition"
+              }
+            ],
+            {
+              "s": " item named "
+            },
+            [
+              ":code",
+              {
+                "s": "widget-<name>"
+              }
+            ],
+            {
+              "s": ". Document content fields in the description using the "
+            },
+            [
+              ":code",
+              {
+                "s": "- \\"
+              }
+            ],
+            {
+              "s": "fieldName\\"
+            },
+            [
+              ":code",
+              {
+                "s": " (type)"
+              }
+            ],
+            {
+              "s": " format (the property editor parses this to seed forms for new instances)."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Create a "
+            },
+            [
+              ":strong",
+              {
+                "s": "view"
+              }
+            ],
+            {
+              "s": " item named "
+            },
+            [
+              ":code",
+              {
+                "s": "widget-<name>-view"
+              }
+            ],
+            {
+              "s": " with "
+            },
+            [
+              ":code",
+              {
+                "s": "for_type"
+              }
+            ],
+            {
+              "s": " pointing to the type-def. Export an async "
+            },
+            [
+              ":code",
+              {
+                "s": "render(item, api)"
+              }
+            ],
+            {
+              "s": " function. Access shared state via "
+            },
+            [
+              ":code",
+              {
+                "s": "api.pageContext"
+              }
+            ],
+            {
+              "s": " if needed."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Set "
+            },
+            [
+              ":code",
+              {
+                "s": "preferredView"
+              }
+            ],
+            {
+              "s": " on the type-def to point to the view."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Tag the type-def with "
+            },
+            [
+              ":code",
+              {
+                "s": "page-widget"
+              }
+            ],
+            {
+              "s": " ("
+            },
+            [
+              ":code",
+              {
+                "s": "c0c0c0c0-0071-0000-0000-000000000000"
+              }
+            ],
+            {
+              "s": ") so it appears in the Create New widget picker."
+            }
+          ]
+        ]
+      ],
+      [
+        ":p",
+        {
+          "s": "To make any existing type embeddable on a page without creating a dedicated widget type, use the "
+        },
+        [
+          ":strong",
+          {
+            "s": "Attach Existing"
+          }
+        ],
+        {
+          "s": " tab in the picker. For notes, the page automatically assigns "
+        },
+        [
+          ":code",
+          {
+            "s": "note-widget-view"
+          }
+        ],
+        {
+          "s": " which renders the markdown body compactly without the standard note chrome."
+        }
+      ]
+    ],
     "tags": [
       "bff75873-edb8-412e-81c9-c744e68fe29f",
       "a63eadd8-ec56-4163-acf2-207aa392069b"

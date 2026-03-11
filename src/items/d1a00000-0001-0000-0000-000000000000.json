@@ -3,9 +3,140 @@
   "name": "diagram-lib",
   "type": "66666666-0000-0000-0000-000000000000",
   "created": 1741219200000,
-  "modified": 1772806911962,
+  "modified": 1773243817740,
   "content": {
-    "description": "Library for auto-generating SVG diagrams from item metadata. Returns DOM nodes for use with functional transclusion.\n\n## Usage\n\nEmbed in any markdown document:\n\n```markdown\n![](item://diagram-lib?call=eventFlow)\n```\n\n## Exports\n\n- `eventFlow(api, params)` — Declarative event flow diagram showing all `content.watches` wiring. Events on the left, subscriber items on the right, curved paths with filter annotations. Click any box to navigate to that item.\n\n## See Also\n\n- [Auto-Generated Diagrams](item://c0c0c0c0-005a-0000-0000-000000000000) — Idea item with full design notes\n- [Event System](item://c0c0c0c0-0006-0000-0000-000000000000) — Declarative watches\n- [Transclusion](item://c0c0c0c0-0035-0000-0000-000000000000) — Functional transclusion (`?call=`)",
+    "description": [
+      ":doc",
+      [
+        ":p",
+        {
+          "s": "Library for auto-generating SVG diagrams from item metadata. Returns DOM nodes for use with functional transclusion."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Usage"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Embed in any markdown document:"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": "![](item://diagram-lib?call=eventFlow)"
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Exports"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":code",
+              {
+                "s": "eventFlow(api, params)"
+              }
+            ],
+            {
+              "s": " — Declarative event flow diagram showing all "
+            },
+            [
+              ":code",
+              {
+                "s": "content.watches"
+              }
+            ],
+            {
+              "s": " wiring. Events on the left, subscriber items on the right, curved paths with filter annotations. Click any box to navigate to that item."
+            }
+          ]
+        ]
+      ],
+      [
+        ":h2",
+        {
+          "s": "See Also"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":item-ref",
+              {
+                "s": "c0c0c0c0-005a-0000-0000-000000000000"
+              },
+              {
+                "s": "Auto-Generated Diagrams"
+              }
+            ],
+            {
+              "s": " — Idea item with full design notes"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":item-ref",
+              {
+                "s": "c0c0c0c0-0006-0000-0000-000000000000"
+              },
+              {
+                "s": "Event System"
+              }
+            ],
+            {
+              "s": " — Declarative watches"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":item-ref",
+              {
+                "s": "c0c0c0c0-0035-0000-0000-000000000000"
+              },
+              {
+                "s": "Transclusion"
+              }
+            ],
+            {
+              "s": " — Functional transclusion ("
+            },
+            [
+              ":code",
+              {
+                "s": "?call="
+              }
+            ],
+            {
+              "s": ")"
+            }
+          ]
+        ]
+      ]
+    ],
     "code": "// diagram-lib — Auto-generated SVG diagrams from item metadata\n// See: item://c0c0c0c0-005a-0000-0000-000000000000\n\n// [BEGIN:eventFlow]\n/** Render declarative event flow as an interactive SVG diagram.\n * Usage in markdown: ![](item://diagram-lib?call=eventFlow)\n * @param {Object} api - Hobson API\n * @param {Object} params - URL query params (unused)\n * @returns {Element} SVG element\n */\nexport async function eventFlow(api, params) {\n  const allItems = await api.getAll();\n\n  // Name lookup for resolving GUIDs to human names\n  const nameOf = new Map();\n  for (const it of allItems) nameOf.set(it.id, it.name || '');\n\n  // Collect declarative watches → edges\n  const edges = [];\n  const eventSet = new Set();\n  const subs = new Map(); // subscriber id → name\n\n  for (const it of allItems) {\n    const watches = it.watches || it.content?.watches;\n    if (!watches?.length) continue;\n    for (const w of watches) {\n      if (!w.event) continue;\n      eventSet.add(w.event);\n      subs.set(it.id, it.name || it.id.slice(0, 12));\n      const filters = [];\n      if (w.type) filters.push('type=' + shortName(nameOf, w.type));\n      if (w.typeExtends) filters.push('ext=' + shortName(nameOf, w.typeExtends));\n      if (w.id) filters.push('id=' + shortName(nameOf, w.id));\n      // Derive handler name: \"item:deleted\" → \"onItemDeleted\"\n      const handlerName = eventToHandlerName(nameOf.get(w.event) || '');\n      edges.push({ event: w.event, sub: it.id, filters, handlerName });\n    }\n  }\n\n  if (!edges.length) return textEl('No declarative watches found.');\n\n  // Sort events by GUID (encodes category-then-specificity)\n  const events = [...eventSet].sort();\n\n  // Sort subscribers: group by primary event, then alphabetically\n  const primary = new Map();       // sub id → primary event id\n  const primaryHandler = new Map(); // sub id → primary handler name\n  for (const e of edges) {\n    if (!primary.has(e.sub)) {\n      primary.set(e.sub, e.event);\n      primaryHandler.set(e.sub, e.handlerName);\n    }\n  }\n  const subList = [...subs.keys()].sort((a, b) => {\n    const d = events.indexOf(primary.get(a)) - events.indexOf(primary.get(b));\n    return d || (subs.get(a) || '').localeCompare(subs.get(b) || '');\n  });\n\n  // --- Layout ---\n  const P = 24;       // padding\n  const BH = 28;      // box height\n  const BR = 5;       // border radius\n  const VG = 8;       // vertical gap\n  const EW = 210;     // event box width\n  const SW = 210;     // subscriber box width\n  const MID = 200;    // gap between columns (for curves + filter labels)\n  const HEADER = 20;  // space for column labels\n  const RX = P + EW + MID;  // right column x\n  const W = RX + SW + P;    // total width\n\n  const nE = events.length;\n  const nS = subList.length;\n  const span = Math.max(nE, nS) * (BH + VG) - VG;\n  const eStep = nE > 1 ? (span - BH) / (nE - 1) : 0;\n  const sStep = nS > 1 ? (span - BH) / (nS - 1) : 0;\n  const topY = P + HEADER;\n  const ey = i => topY + i * eStep;\n  const sy = i => topY + i * sStep;\n  const H = topY + span + P;\n\n  const evtY = new Map();\n  events.forEach((id, i) => evtY.set(id, ey(i)));\n  const subY = new Map();\n  subList.forEach((id, i) => subY.set(id, sy(i)));\n\n  // --- Colors: solid boxes with white text (works on any background) ---\n  const cat = id => {\n    if (id.startsWith('e0e00000-0001')) return { bg: '#3b82f6', ln: '#60a5fa' }; // item events – blue\n    if (id.startsWith('e0e00000-0002')) return { bg: '#d97706', ln: '#fbbf24' }; // system events – amber\n    if (id.startsWith('e0e00000-0003')) return { bg: '#059669', ln: '#34d399' }; // viewport events – green\n    return { bg: '#6b7280', ln: '#9ca3af' };\n  };\n\n  // --- Build SVG ---\n  const o = [];\n  o.push(`<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 ${W} ${H}\" style=\"font-family:system-ui,sans-serif;font-size:11px;max-width:100%\">`);\n  o.push(`<style>g[data-id]:hover rect{filter:brightness(1.3)}g[data-id]{cursor:pointer}path[data-sub]{cursor:pointer}path[data-sub]:hover+path{opacity:0.9;stroke-width:2.5}</style>`);\n\n  // Column labels\n  o.push(`<text x=\"${P + EW / 2}\" y=\"${P + 10}\" text-anchor=\"middle\" fill=\"#64748b\" font-size=\"10\" font-weight=\"600\" letter-spacing=\"0.05em\">EVENTS</text>`);\n  o.push(`<text x=\"${RX + SW / 2}\" y=\"${P + 10}\" text-anchor=\"middle\" fill=\"#64748b\" font-size=\"10\" font-weight=\"600\" letter-spacing=\"0.05em\">WATCHERS</text>`);\n\n  // Edges (drawn first so boxes render on top)\n  // Each edge is clickable: opens the subscriber scrolled to its handler\n  for (const e of edges) {\n    const y1 = evtY.get(e.event) + BH / 2;\n    const y2 = subY.get(e.sub) + BH / 2;\n    const x1 = P + EW;\n    const x2 = RX;\n    const c = cat(e.event);\n    // Invisible wider hit area for the path\n    o.push(`<path data-sub=\"${e.sub}\" data-handler=\"${e.handlerName}\" d=\"M${x1} ${y1} C${x1 + MID * 0.4} ${y1} ${x2 - MID * 0.4} ${y2} ${x2} ${y2}\" fill=\"none\" stroke=\"transparent\" stroke-width=\"12\" style=\"cursor:pointer\"/>`);\n    // Visible path\n    o.push(`<path d=\"M${x1} ${y1} C${x1 + MID * 0.4} ${y1} ${x2 - MID * 0.4} ${y2} ${x2} ${y2}\" fill=\"none\" stroke=\"${c.ln}\" stroke-width=\"1.5\" opacity=\"0.4\" pointer-events=\"none\"/>`);\n\n    // Filter annotation along the curve\n    if (e.filters.length) {\n      const mx = (x1 + x2) / 2;\n      const my = (y1 + y2) / 2;\n      o.push(`<text x=\"${mx}\" y=\"${my - 4}\" text-anchor=\"middle\" font-size=\"9\" fill=\"#94a3b8\" pointer-events=\"none\">${esc(e.filters.join(', '))}</text>`);\n    }\n  }\n\n  // Event boxes (left column)\n  events.forEach(id => {\n    const y = evtY.get(id);\n    const c = cat(id);\n    const name = nameOf.get(id) || id.slice(0, 12);\n    o.push(`<g data-id=\"${id}\">`);\n    o.push(`<rect x=\"${P}\" y=\"${y}\" width=\"${EW}\" height=\"${BH}\" rx=\"${BR}\" fill=\"${c.bg}\"/>`);\n    o.push(`<text x=\"${P + EW / 2}\" y=\"${y + BH / 2 + 4}\" text-anchor=\"middle\" fill=\"#fff\" font-weight=\"600\">${esc(name)}</text>`);\n    o.push(`</g>`);\n  });\n\n  // Subscriber boxes (right column)\n  subList.forEach(id => {\n    const y = subY.get(id);\n    const handler = primaryHandler.get(id) || '';\n    o.push(`<g data-id=\"${id}\" data-handler=\"${handler}\">`);\n    o.push(`<rect x=\"${RX}\" y=\"${y}\" width=\"${SW}\" height=\"${BH}\" rx=\"${BR}\" fill=\"#475569\"/>`);\n    o.push(`<text x=\"${RX + SW / 2}\" y=\"${y + BH / 2 + 4}\" text-anchor=\"middle\" fill=\"#fff\">${esc(subs.get(id))}</text>`);\n    o.push(`</g>`);\n  });\n\n  o.push('</svg>');\n\n  // Parse to DOM and add interactivity\n  const div = document.createElement('div');\n  div.innerHTML = o.join('\\n');\n  const svgEl = div.firstElementChild;\n\n  // Click boxes: open item scrolled to handler symbol\n  for (const g of svgEl.querySelectorAll('g[data-id]')) {\n    g.addEventListener('click', (e) => {\n      const handler = g.dataset.handler;\n      if (handler) {\n        api.openItem(e, { id: g.dataset.id, view: { navigateTo: { symbol: handler } } });\n      } else {\n        api.openItem(e, g.dataset.id);\n      }\n    });\n  }\n\n  // Click edges: open subscriber scrolled to that specific handler\n  for (const path of svgEl.querySelectorAll('path[data-sub]')) {\n    path.addEventListener('click', (e) => {\n      const handler = path.dataset.handler;\n      if (handler) {\n        api.openItem(e, { id: path.dataset.sub, view: { navigateTo: { symbol: handler } } });\n      } else {\n        api.openItem(e, path.dataset.sub);\n      }\n    });\n  }\n\n  return svgEl;\n}\n// [END:eventFlow]\n\n// \"item:deleted\" → \"onItemDeleted\", \"kernel:boot-complete\" → \"onKernelBootComplete\"\nfunction eventToHandlerName(eventName) {\n  if (!eventName) return '';\n  const parts = eventName.split(/[:-]/);\n  return 'on' + parts.map(p => p.charAt(0).toUpperCase() + p.slice(1).toLowerCase()).join('');\n}\n\nfunction shortName(nameOf, id) {\n  return nameOf.get(id) || id.slice(0, 8);\n}\n\nfunction textEl(msg) {\n  const p = document.createElement('p');\n  p.textContent = msg;\n  p.style.color = '#94a3b8';\n  return p;\n}\n\nfunction esc(s) {\n  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\n}\n",
     "_symbols": {
       "eventFlow": {
