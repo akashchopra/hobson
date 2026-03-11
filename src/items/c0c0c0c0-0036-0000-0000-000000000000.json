@@ -3,9 +3,1892 @@
   "name": "Testing",
   "type": "871ae771-b9b1-4f40-8c7f-d9038bfb69c3",
   "created": 1770508800000,
-  "modified": 1772451430211,
+  "modified": 1773243817563,
   "content": {
-    "description": "Testing in Hobson follows the same principles as everything else in the system: tests are items, they run inside Hobson, and they use existing infrastructure rather than introducing special-cased machinery.\n\nThe key insight is that **nested instances provide everything a test environment needs**: isolated storage (via ID prefixing), isolated DOM (via the iframe), and free cleanup (via cascade delete on instance deletion). Tests run inside a forked copy of the system, exercising real views, real rendering, and real storage — just in a disposable context.\n\n## Design Principles\n\n1. **Tests are items** — No external test harness. Test definitions, the assertion library, and the test runner are all regular items.\n2. **Use existing infrastructure** — Nested instances for isolation, the rendering system for UI testing, the module system for loading test code.\n3. **Test the real system** — Tests exercise live code inside a real Hobson environment, not mocks or simulations.\n4. **Inspectable results** — Test outcomes are visible as rendered items, not hidden in a console log.\n5. **No kernel changes** — Everything is implemented as user-space items.\n\n## Items\n\n### test tag\n\n**ID:** `c0c0c0c0-0070-0000-0000-000000000000` — **Type:** NOTE (used as tag)\n\nA tag item for test discovery. The test runner queries for all items with this tag. Same pattern as `concept`, `idea`, and `starred` tags. Has a green color (`#22c55e`).\n\n### test-lib\n\n**ID:** `7e570001-0000-4000-8000-000000000000` — **Type:** LIBRARY\n\nMinimal assertion, test-grouping, and DOM-waiting API. Each test file calls `createSuite(name)` to get its own isolated result collector — no shared module-level state.\n\n**Exports:**\n- `createSuite(name)` — Returns `{ test, testAsync, getResults }`. Each result tracks `name`, `passed`, `error`, and `symbol` (the test function's `.name`, used for source navigation in the runner UI).\n- `assert(condition, message)` — Throws if falsy.\n- `assertEquals(actual, expected, message)` — Strict equality with JSON diff in error message.\n- `assertDeepEquals(actual, expected, message)` — Recursive structural equality.\n- `waitFor(fn, { timeout, interval })` — Polls `fn()` until truthy. Defaults: 2s timeout, 50ms interval. Useful for waiting on rendering.\n\n### test-suite\n\n**ID:** `7e570002-0000-4000-8000-000000000000` — **Type:** TYPE_DEFINITION (extends ATOM)\n\nA container type for running tests. Navigate to a `test-suite` item to see the test runner UI. Its `preferredView` points to `test-runner-view`. The item's `content.lastRun` stores the most recent test results for display on reload.\n\n### test-runner-view\n\n**ID:** `7e570003-0000-4000-8000-000000000000` — **Type:** VIEW — **For type:** `test-suite`\n\nThe parent-side UI. Discovers test items and orchestrates test runs via nested instances. On \"Run All\":\n\n1. **Copies all items** into a new nested instance namespace via direct IndexedDB writes (bypasses kernel to avoid side effects).\n2. **Creates a `hobson-instance` item** and opens it as a sibling viewport.\n3. **Waits for a `test-instance-ready` postMessage** from the child (sent by `test-runner-service` on boot).\n4. **Receives `test-progress` messages** as each suite completes, updating the UI incrementally.\n5. **Receives a `test-complete` message** with the full `lastRun` payload, which it persists to the test-suite item.\n6. **Shows a \"Clean Up Instance\" button** — the nested instance stays alive for inspection until explicitly deleted.\n\nThe view also restores and displays the last run's results on load, so results survive page refreshes.\n\nEach test item row shows a pass/fail indicator, count, and expandable details. Individual test names are clickable links that navigate to the test item's code (opening at the relevant symbol if available via `api.siblingContainer.addSibling`).\n\n### test-runner-service\n\n**ID:** `7e570009-0000-4000-8000-000000000000` — **Type:** CODE\n\nThe child-side counterpart. Watches for `kernel:boot-complete` and, if running inside a nested instance (`api.getInstanceId()` is truthy), immediately auto-runs all tests:\n\n1. Discovers test items (tagged with `test`, having `name` and `content.code`).\n2. Creates a hidden off-screen test area for rendering viewports.\n3. For each test item, loads it via `api.require(name)` and calls its `run(testApi)` function.\n4. Reports results back to the parent via `postMessage` (`test-progress` per suite, `test-complete` at the end).\n\nThe **testApi** passed to each test's `run()` function wraps the kernel API with testing conveniences:\n- `set(item)` — Creates/updates an item (uses `{ silent: true }` to avoid re-renders).\n- `get(id)` — Returns item or `null` (swallows not-found errors).\n- `delete(id)` — Deletes an item (swallows errors).\n- `query(filter)`, `getAll()`, `require(name)`, `typeChainIncludes(typeId, targetId)` — Direct delegates.\n- `attach(parentId, itemId)`, `detach(parentId, itemId)`, `findContainerOf(itemId)` — Attachment operations.\n- `events` — The kernel event bus.\n- `openViewport(itemId, viewId?)` — Creates an 800x600 div in the hidden test area, renders the item into it via `api.renderItem()`, returns the container element. Tests query within this scoped element.\n- `closeViewport(el)` — Removes the viewport element.\n\nEach test item gets a 30s timeout. The entire run has a 120s timeout.\n\n## Test Items\n\nTest items are CODE items tagged with `test` that export an async `run(testApi)` function returning an array of result objects `{ name, passed, error?, symbol? }`.\n\n18 test suites exist, covering storage, rendering, modules, events, and extensive Hob language coverage (reader, evaluator, stdlib, macros, destructuring, concurrency, atoms, errors, DOM, views, watches, reactivity, integration):\n\n| Item | ID | Category |\n|------|----|----------|\n| `storage-tests` | `7e570004` | CRUD operations |\n| `note-render-tests` | `7e570005` | Note rendering |\n| `module-system-tests` | `7e570006` | Module require/caching |\n| `tag-attachment-tests` | `7e570007` | Tags, attach/detach |\n| `event-tests` | `7e570008` | Event system |\n| `hob-reader-tests` | `7e57000a` | Hob reader/parser |\n| `hob-evaluator-tests` | `7e57000b` | Hob evaluator |\n| `hob-stdlib-tests` | `7e57000c` | Hob standard library |\n| `hob-integration-tests` | `7e57000d` | Hob end-to-end |\n| `hob-macro-tests` | `7e57000e` | Hob macros |\n| `hob-destructuring-tests` | `7e57000f` | Hob destructuring |\n| `hob-concurrency-tests` | `7e570010` | Hob concurrency |\n| `hob-atom-tests` | `7e570011` | Hob atoms/state |\n| `hob-error-tests` | `7e570012` | Hob error handling |\n| `hob-dom-tests` | `7e570013` | Hob DOM operations |\n| `hob-view-tests` | `7e570014` | Hob view rendering |\n| `hob-watch-tests` | `7e570015` | Hob watches |\n| `hob-reactivity-tests` | `7e570016` | Hob reactivity/selectors |\n\nThe test suites use named functions for each test case (e.g. `async function createsAnItem() { ... }`) so that `fn.name` is captured as the `symbol` field. This lets the runner UI link directly to the test function's source.\n\n## Test Suite Instance\n\nA `Test Suite` item (`56a2c83c-1fd4-4db7-a3e8-3aa152524721`) of type `test-suite` exists and stores the last run results in `content.lastRun`.\n\n## Writing a New Test\n\n1. Create a CODE item with a kebab-case name (e.g. `my-feature-tests`).\n2. Tag it with the `test` tag (`c0c0c0c0-0070-0000-0000-000000000000`).\n3. Export an async `run(api)` function that uses `test-lib`:\n\n```javascript\nexport async function run(api) {\n  const { createSuite, assert, assertEquals } = await api.require('test-lib');\n  const { testAsync, getResults } = createSuite('My Feature');\n\n  async function doesSomething() {\n    // ... use api.set(), api.get(), api.openViewport(), etc.\n    assert(true, 'it works');\n  }\n\n  await testAsync('does something', doesSomething);\n  return getResults();\n}\n```\n\nUse named functions for test cases so the runner can link to them by symbol. Since tests run inside a nested instance, items created via `api.set()` are automatically prefixed and isolated — no manual cleanup needed.\n\n## What This Does Not Include\n\n- **Mocking** — Tests run against real storage, real rendering, real code. No mock framework.\n- **Coverage tracking** — No bytecode instrumentation.\n- **CI/CD integration** — Hobson is offline-first and browser-based. Tests are run by the user, inside the system.\n- **Snapshot testing** — Could be added later as a library item if useful.\n- **Promotion** — A fork/edit/promote workflow was considered but not built. Tests currently verify existing code, not in-progress changes in a sandbox.",
+    "description": [
+      ":doc",
+      [
+        ":p",
+        {
+          "s": "Testing in Hobson follows the same principles as everything else in the system: tests are items, they run inside Hobson, and they use existing infrastructure rather than introducing special-cased machinery."
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The key insight is that "
+        },
+        [
+          ":strong",
+          {
+            "s": "nested instances provide everything a test environment needs"
+          }
+        ],
+        {
+          "s": ": isolated storage (via ID prefixing), isolated DOM (via the iframe), and free cleanup (via cascade delete on instance deletion). Tests run inside a forked copy of the system, exercising real views, real rendering, and real storage — just in a disposable context."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Design Principles"
+        }
+      ],
+      [
+        ":ol",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Tests are items"
+              }
+            ],
+            {
+              "s": " — No external test harness. Test definitions, the assertion library, and the test runner are all regular items."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Use existing infrastructure"
+              }
+            ],
+            {
+              "s": " — Nested instances for isolation, the rendering system for UI testing, the module system for loading test code."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Test the real system"
+              }
+            ],
+            {
+              "s": " — Tests exercise live code inside a real Hobson environment, not mocks or simulations."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Inspectable results"
+              }
+            ],
+            {
+              "s": " — Test outcomes are visible as rendered items, not hidden in a console log."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "No kernel changes"
+              }
+            ],
+            {
+              "s": " — Everything is implemented as user-space items."
+            }
+          ]
+        ]
+      ],
+      [
+        ":h2",
+        {
+          "s": "Items"
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "test tag"
+        }
+      ],
+      [
+        ":p",
+        [
+          ":strong",
+          {
+            "s": "ID:"
+          }
+        ],
+        {
+          "s": " "
+        },
+        [
+          ":code",
+          {
+            "s": "c0c0c0c0-0070-0000-0000-000000000000"
+          }
+        ],
+        {
+          "s": " — "
+        },
+        [
+          ":strong",
+          {
+            "s": "Type:"
+          }
+        ],
+        {
+          "s": " NOTE (used as tag)"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "A tag item for test discovery. The test runner queries for all items with this tag. Same pattern as "
+        },
+        [
+          ":code",
+          {
+            "s": "concept"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "idea"
+          }
+        ],
+        {
+          "s": ", and "
+        },
+        [
+          ":code",
+          {
+            "s": "starred"
+          }
+        ],
+        {
+          "s": " tags. Has a green color ("
+        },
+        [
+          ":code",
+          {
+            "s": "#22c55e"
+          }
+        ],
+        {
+          "s": ")."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "test-lib"
+        }
+      ],
+      [
+        ":p",
+        [
+          ":strong",
+          {
+            "s": "ID:"
+          }
+        ],
+        {
+          "s": " "
+        },
+        [
+          ":code",
+          {
+            "s": "7e570001-0000-4000-8000-000000000000"
+          }
+        ],
+        {
+          "s": " — "
+        },
+        [
+          ":strong",
+          {
+            "s": "Type:"
+          }
+        ],
+        {
+          "s": " LIBRARY"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Minimal assertion, test-grouping, and DOM-waiting API. Each test file calls "
+        },
+        [
+          ":code",
+          {
+            "s": "createSuite(name)"
+          }
+        ],
+        {
+          "s": " to get its own isolated result collector — no shared module-level state."
+        }
+      ],
+      [
+        ":p",
+        [
+          ":strong",
+          {
+            "s": "Exports:"
+          }
+        ]
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":code",
+              {
+                "s": "createSuite(name)"
+              }
+            ],
+            {
+              "s": " — Returns "
+            },
+            [
+              ":code",
+              {
+                "s": "{ test, testAsync, getResults }"
+              }
+            ],
+            {
+              "s": ". Each result tracks "
+            },
+            [
+              ":code",
+              {
+                "s": "name"
+              }
+            ],
+            {
+              "s": ", "
+            },
+            [
+              ":code",
+              {
+                "s": "passed"
+              }
+            ],
+            {
+              "s": ", "
+            },
+            [
+              ":code",
+              {
+                "s": "error"
+              }
+            ],
+            {
+              "s": ", and "
+            },
+            [
+              ":code",
+              {
+                "s": "symbol"
+              }
+            ],
+            {
+              "s": " (the test function's "
+            },
+            [
+              ":code",
+              {
+                "s": ".name"
+              }
+            ],
+            {
+              "s": ", used for source navigation in the runner UI)."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":code",
+              {
+                "s": "assert(condition, message)"
+              }
+            ],
+            {
+              "s": " — Throws if falsy."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":code",
+              {
+                "s": "assertEquals(actual, expected, message)"
+              }
+            ],
+            {
+              "s": " — Strict equality with JSON diff in error message."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":code",
+              {
+                "s": "assertDeepEquals(actual, expected, message)"
+              }
+            ],
+            {
+              "s": " — Recursive structural equality."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":code",
+              {
+                "s": "waitFor(fn, { timeout, interval })"
+              }
+            ],
+            {
+              "s": " — Polls "
+            },
+            [
+              ":code",
+              {
+                "s": "fn()"
+              }
+            ],
+            {
+              "s": " until truthy. Defaults: 2s timeout, 50ms interval. Useful for waiting on rendering."
+            }
+          ]
+        ]
+      ],
+      [
+        ":h3",
+        {
+          "s": "test-suite"
+        }
+      ],
+      [
+        ":p",
+        [
+          ":strong",
+          {
+            "s": "ID:"
+          }
+        ],
+        {
+          "s": " "
+        },
+        [
+          ":code",
+          {
+            "s": "7e570002-0000-4000-8000-000000000000"
+          }
+        ],
+        {
+          "s": " — "
+        },
+        [
+          ":strong",
+          {
+            "s": "Type:"
+          }
+        ],
+        {
+          "s": " TYPE_DEFINITION (extends ATOM)"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "A container type for running tests. Navigate to a "
+        },
+        [
+          ":code",
+          {
+            "s": "test-suite"
+          }
+        ],
+        {
+          "s": " item to see the test runner UI. Its "
+        },
+        [
+          ":code",
+          {
+            "s": "preferredView"
+          }
+        ],
+        {
+          "s": " points to "
+        },
+        [
+          ":code",
+          {
+            "s": "test-runner-view"
+          }
+        ],
+        {
+          "s": ". The item's "
+        },
+        [
+          ":code",
+          {
+            "s": "content.lastRun"
+          }
+        ],
+        {
+          "s": " stores the most recent test results for display on reload."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "test-runner-view"
+        }
+      ],
+      [
+        ":p",
+        [
+          ":strong",
+          {
+            "s": "ID:"
+          }
+        ],
+        {
+          "s": " "
+        },
+        [
+          ":code",
+          {
+            "s": "7e570003-0000-4000-8000-000000000000"
+          }
+        ],
+        {
+          "s": " — "
+        },
+        [
+          ":strong",
+          {
+            "s": "Type:"
+          }
+        ],
+        {
+          "s": " VIEW — "
+        },
+        [
+          ":strong",
+          {
+            "s": "For type:"
+          }
+        ],
+        {
+          "s": " "
+        },
+        [
+          ":code",
+          {
+            "s": "test-suite"
+          }
+        ]
+      ],
+      [
+        ":p",
+        {
+          "s": "The parent-side UI. Discovers test items and orchestrates test runs via nested instances. On \"Run All\":"
+        }
+      ],
+      [
+        ":ol",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Copies all items"
+              }
+            ],
+            {
+              "s": " into a new nested instance namespace via direct IndexedDB writes (bypasses kernel to avoid side effects)."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Creates a `hobson-instance` item"
+              }
+            ],
+            {
+              "s": " and opens it as a sibling viewport."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Waits for a `test-instance-ready` postMessage"
+              }
+            ],
+            {
+              "s": " from the child (sent by "
+            },
+            [
+              ":code",
+              {
+                "s": "test-runner-service"
+              }
+            ],
+            {
+              "s": " on boot)."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Receives `test-progress` messages"
+              }
+            ],
+            {
+              "s": " as each suite completes, updating the UI incrementally."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Receives a `test-complete` message"
+              }
+            ],
+            {
+              "s": " with the full "
+            },
+            [
+              ":code",
+              {
+                "s": "lastRun"
+              }
+            ],
+            {
+              "s": " payload, which it persists to the test-suite item."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Shows a \"Clean Up Instance\" button"
+              }
+            ],
+            {
+              "s": " — the nested instance stays alive for inspection until explicitly deleted."
+            }
+          ]
+        ]
+      ],
+      [
+        ":p",
+        {
+          "s": "The view also restores and displays the last run's results on load, so results survive page refreshes."
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Each test item row shows a pass/fail indicator, count, and expandable details. Individual test names are clickable links that navigate to the test item's code (opening at the relevant symbol if available via "
+        },
+        [
+          ":code",
+          {
+            "s": "api.siblingContainer.addSibling"
+          }
+        ],
+        {
+          "s": ")."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "test-runner-service"
+        }
+      ],
+      [
+        ":p",
+        [
+          ":strong",
+          {
+            "s": "ID:"
+          }
+        ],
+        {
+          "s": " "
+        },
+        [
+          ":code",
+          {
+            "s": "7e570009-0000-4000-8000-000000000000"
+          }
+        ],
+        {
+          "s": " — "
+        },
+        [
+          ":strong",
+          {
+            "s": "Type:"
+          }
+        ],
+        {
+          "s": " CODE"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The child-side counterpart. Watches for "
+        },
+        [
+          ":code",
+          {
+            "s": "kernel:boot-complete"
+          }
+        ],
+        {
+          "s": " and, if running inside a nested instance ("
+        },
+        [
+          ":code",
+          {
+            "s": "api.getInstanceId()"
+          }
+        ],
+        {
+          "s": " is truthy), immediately auto-runs all tests:"
+        }
+      ],
+      [
+        ":ol",
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Discovers test items (tagged with "
+            },
+            [
+              ":code",
+              {
+                "s": "test"
+              }
+            ],
+            {
+              "s": ", having "
+            },
+            [
+              ":code",
+              {
+                "s": "name"
+              }
+            ],
+            {
+              "s": " and "
+            },
+            [
+              ":code",
+              {
+                "s": "content.code"
+              }
+            ],
+            {
+              "s": ")."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Creates a hidden off-screen test area for rendering viewports."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "For each test item, loads it via "
+            },
+            [
+              ":code",
+              {
+                "s": "api.require(name)"
+              }
+            ],
+            {
+              "s": " and calls its "
+            },
+            [
+              ":code",
+              {
+                "s": "run(testApi)"
+              }
+            ],
+            {
+              "s": " function."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Reports results back to the parent via "
+            },
+            [
+              ":code",
+              {
+                "s": "postMessage"
+              }
+            ],
+            {
+              "s": " ("
+            },
+            [
+              ":code",
+              {
+                "s": "test-progress"
+              }
+            ],
+            {
+              "s": " per suite, "
+            },
+            [
+              ":code",
+              {
+                "s": "test-complete"
+              }
+            ],
+            {
+              "s": " at the end)."
+            }
+          ]
+        ]
+      ],
+      [
+        ":p",
+        {
+          "s": "The "
+        },
+        [
+          ":strong",
+          {
+            "s": "testApi"
+          }
+        ],
+        {
+          "s": " passed to each test's "
+        },
+        [
+          ":code",
+          {
+            "s": "run()"
+          }
+        ],
+        {
+          "s": " function wraps the kernel API with testing conveniences:"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":code",
+              {
+                "s": "set(item)"
+              }
+            ],
+            {
+              "s": " — Creates/updates an item (uses "
+            },
+            [
+              ":code",
+              {
+                "s": "{ silent: true }"
+              }
+            ],
+            {
+              "s": " to avoid re-renders)."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":code",
+              {
+                "s": "get(id)"
+              }
+            ],
+            {
+              "s": " — Returns item or "
+            },
+            [
+              ":code",
+              {
+                "s": "null"
+              }
+            ],
+            {
+              "s": " (swallows not-found errors)."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":code",
+              {
+                "s": "delete(id)"
+              }
+            ],
+            {
+              "s": " — Deletes an item (swallows errors)."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":code",
+              {
+                "s": "query(filter)"
+              }
+            ],
+            {
+              "s": ", "
+            },
+            [
+              ":code",
+              {
+                "s": "getAll()"
+              }
+            ],
+            {
+              "s": ", "
+            },
+            [
+              ":code",
+              {
+                "s": "require(name)"
+              }
+            ],
+            {
+              "s": ", "
+            },
+            [
+              ":code",
+              {
+                "s": "typeChainIncludes(typeId, targetId)"
+              }
+            ],
+            {
+              "s": " — Direct delegates."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":code",
+              {
+                "s": "attach(parentId, itemId)"
+              }
+            ],
+            {
+              "s": ", "
+            },
+            [
+              ":code",
+              {
+                "s": "detach(parentId, itemId)"
+              }
+            ],
+            {
+              "s": ", "
+            },
+            [
+              ":code",
+              {
+                "s": "findContainerOf(itemId)"
+              }
+            ],
+            {
+              "s": " — Attachment operations."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":code",
+              {
+                "s": "events"
+              }
+            ],
+            {
+              "s": " — The kernel event bus."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":code",
+              {
+                "s": "openViewport(itemId, viewId?)"
+              }
+            ],
+            {
+              "s": " — Creates an 800x600 div in the hidden test area, renders the item into it via "
+            },
+            [
+              ":code",
+              {
+                "s": "api.renderItem()"
+              }
+            ],
+            {
+              "s": ", returns the container element. Tests query within this scoped element."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":code",
+              {
+                "s": "closeViewport(el)"
+              }
+            ],
+            {
+              "s": " — Removes the viewport element."
+            }
+          ]
+        ]
+      ],
+      [
+        ":p",
+        {
+          "s": "Each test item gets a 30s timeout. The entire run has a 120s timeout."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Test Items"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Test items are CODE items tagged with "
+        },
+        [
+          ":code",
+          {
+            "s": "test"
+          }
+        ],
+        {
+          "s": " that export an async "
+        },
+        [
+          ":code",
+          {
+            "s": "run(testApi)"
+          }
+        ],
+        {
+          "s": " function returning an array of result objects "
+        },
+        [
+          ":code",
+          {
+            "s": "{ name, passed, error?, symbol? }"
+          }
+        ],
+        {
+          "s": "."
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "18 test suites exist, covering storage, rendering, modules, events, and extensive Hob language coverage (reader, evaluator, stdlib, macros, destructuring, concurrency, atoms, errors, DOM, views, watches, reactivity, integration):"
+        }
+      ],
+      [
+        ":table",
+        [
+          ":thead",
+          [
+            ":tr",
+            [
+              ":th",
+              {
+                "s": "Item"
+              }
+            ],
+            [
+              ":th",
+              {
+                "s": "ID"
+              }
+            ],
+            [
+              ":th",
+              {
+                "s": "Category"
+              }
+            ]
+          ]
+        ],
+        [
+          ":tbody",
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "storage-tests"
+                }
+              ]
+            ],
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "7e570004"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "CRUD operations"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "note-render-tests"
+                }
+              ]
+            ],
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "7e570005"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Note rendering"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "module-system-tests"
+                }
+              ]
+            ],
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "7e570006"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Module require/caching"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "tag-attachment-tests"
+                }
+              ]
+            ],
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "7e570007"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Tags, attach/detach"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "event-tests"
+                }
+              ]
+            ],
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "7e570008"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Event system"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "hob-reader-tests"
+                }
+              ]
+            ],
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "7e57000a"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Hob reader/parser"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "hob-evaluator-tests"
+                }
+              ]
+            ],
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "7e57000b"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Hob evaluator"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "hob-stdlib-tests"
+                }
+              ]
+            ],
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "7e57000c"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Hob standard library"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "hob-integration-tests"
+                }
+              ]
+            ],
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "7e57000d"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Hob end-to-end"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "hob-macro-tests"
+                }
+              ]
+            ],
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "7e57000e"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Hob macros"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "hob-destructuring-tests"
+                }
+              ]
+            ],
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "7e57000f"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Hob destructuring"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "hob-concurrency-tests"
+                }
+              ]
+            ],
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "7e570010"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Hob concurrency"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "hob-atom-tests"
+                }
+              ]
+            ],
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "7e570011"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Hob atoms/state"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "hob-error-tests"
+                }
+              ]
+            ],
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "7e570012"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Hob error handling"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "hob-dom-tests"
+                }
+              ]
+            ],
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "7e570013"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Hob DOM operations"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "hob-view-tests"
+                }
+              ]
+            ],
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "7e570014"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Hob view rendering"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "hob-watch-tests"
+                }
+              ]
+            ],
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "7e570015"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Hob watches"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "hob-reactivity-tests"
+                }
+              ]
+            ],
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "7e570016"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Hob reactivity/selectors"
+              }
+            ]
+          ]
+        ]
+      ],
+      [
+        ":p",
+        {
+          "s": "The test suites use named functions for each test case (e.g. "
+        },
+        [
+          ":code",
+          {
+            "s": "async function createsAnItem() { ... }"
+          }
+        ],
+        {
+          "s": ") so that "
+        },
+        [
+          ":code",
+          {
+            "s": "fn.name"
+          }
+        ],
+        {
+          "s": " is captured as the "
+        },
+        [
+          ":code",
+          {
+            "s": "symbol"
+          }
+        ],
+        {
+          "s": " field. This lets the runner UI link directly to the test function's source."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Test Suite Instance"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "A "
+        },
+        [
+          ":code",
+          {
+            "s": "Test Suite"
+          }
+        ],
+        {
+          "s": " item ("
+        },
+        [
+          ":code",
+          {
+            "s": "56a2c83c-1fd4-4db7-a3e8-3aa152524721"
+          }
+        ],
+        {
+          "s": ") of type "
+        },
+        [
+          ":code",
+          {
+            "s": "test-suite"
+          }
+        ],
+        {
+          "s": " exists and stores the last run results in "
+        },
+        [
+          ":code",
+          {
+            "s": "content.lastRun"
+          }
+        ],
+        {
+          "s": "."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Writing a New Test"
+        }
+      ],
+      [
+        ":ol",
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Create a CODE item with a kebab-case name (e.g. "
+            },
+            [
+              ":code",
+              {
+                "s": "my-feature-tests"
+              }
+            ],
+            {
+              "s": ")."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Tag it with the "
+            },
+            [
+              ":code",
+              {
+                "s": "test"
+              }
+            ],
+            {
+              "s": " tag ("
+            },
+            [
+              ":code",
+              {
+                "s": "c0c0c0c0-0070-0000-0000-000000000000"
+              }
+            ],
+            {
+              "s": ")."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Export an async "
+            },
+            [
+              ":code",
+              {
+                "s": "run(api)"
+              }
+            ],
+            {
+              "s": " function that uses "
+            },
+            [
+              ":code",
+              {
+                "s": "test-lib"
+              }
+            ],
+            {
+              "s": ":"
+            }
+          ]
+        ]
+      ],
+      [
+        ":code-block",
+        {
+          "s": "export async function run(api) {\n  const { createSuite, assert, assertEquals } = await api.require('test-lib');\n  const { testAsync, getResults } = createSuite('My Feature');\n\n  async function doesSomething() {\n    // ... use api.set(), api.get(), api.openViewport(), etc.\n    assert(true, 'it works');\n  }\n\n  await testAsync('does something', doesSomething);\n  return getResults();\n}"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Use named functions for test cases so the runner can link to them by symbol. Since tests run inside a nested instance, items created via "
+        },
+        [
+          ":code",
+          {
+            "s": "api.set()"
+          }
+        ],
+        {
+          "s": " are automatically prefixed and isolated — no manual cleanup needed."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "What This Does Not Include"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Mocking"
+              }
+            ],
+            {
+              "s": " — Tests run against real storage, real rendering, real code. No mock framework."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Coverage tracking"
+              }
+            ],
+            {
+              "s": " — No bytecode instrumentation."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "CI/CD integration"
+              }
+            ],
+            {
+              "s": " — Hobson is offline-first and browser-based. Tests are run by the user, inside the system."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Snapshot testing"
+              }
+            ],
+            {
+              "s": " — Could be added later as a library item if useful."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Promotion"
+              }
+            ],
+            {
+              "s": " — A fork/edit/promote workflow was considered but not built. Tests currently verify existing code, not in-progress changes in a sandbox."
+            }
+          ]
+        ]
+      ]
+    ],
     "tags": [
       "a63eadd8-ec56-4163-acf2-207aa392069b"
     ]

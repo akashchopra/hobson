@@ -3,9 +3,1211 @@
   "name": "spatial-canvas-view",
   "type": "aaaaaaaa-0000-0000-0000-000000000000",
   "created": 1768340933093,
-  "modified": 1772813959790,
+  "modified": 1773243817855,
   "content": {
-    "description": "A 2D spatial windowing environment that renders attachments as draggable, resizable windows. The primary container view for organizing multiple items visually. Position data lives in each child’s [attachment](item://c0c0c0c0-0005-0000-0000-000000000000) `view` object — single source of truth, no separate layout table.\n\n## Window Types\n\n### Floating Windows\n- Freely positioned via drag handle, corners to resize\n- Click brings to front; window controls: minimize, maximize, close\n\n### Pinned Windows (Corner-Anchored)\n- Fixed to viewport corner (`top-right`, `bottom-left`, `bottom-right`)\n- Stays in place relative to chosen corner on container resize\n\n### Docked Windows (Edge-Anchored)\n- Snapped to edge (`left`, `right`, `top`, `bottom`), fills perpendicular axis\n- Single-axis resize on the non-docked edge\n\n## Child Specification\n\nEach child in `item.attachments` has a `view` object:\n\n| Field | Type | Purpose |\n|-------|------|---------|\n| `x`, `y` | Number | Position in pixels (from anchor) |\n| `width`, `height` | Number | Window dimensions |\n| `z` | Number | Stored z-index (higher = front) |\n| `anchor` | String/null | Positioning mode (see below) |\n| `minimized` | Boolean | Minimized to pill bar |\n| `maximized` | Boolean | Fills entire canvas |\n| `type` | String/null | Optional view ID override |\n\n### Position Interpretation\n\nThe meaning of `x` and `y` depends on the `anchor`:\n\n| Anchor | x means | y means |\n|--------|---------|----------|\n| `null` / `top-left` | Distance from left edge | Distance from top edge |\n| `top-right` | Distance from right edge | Distance from top edge |\n| `bottom-left` | Distance from left edge | Distance from bottom edge |\n| `bottom-right` | Distance from right edge | Distance from bottom edge |\n| `left` / `right` | Distance from edge | (ignored - fills height) |\n| `top` / `bottom` | (ignored - fills width) | Distance from edge |\n\n## Window Chrome\n\n```\n┌──────────────────────────────────────────┐\n│ ≡ │  Item Title             │ − □ × │\n└──────────────────────────────────────────┘\n  │    └── Drag handle           └── Window controls\n  └── Menu button (pin/dock/unpin options)\n```\n\n- **Menu (≡)**: Pin, Dock Left/Right/Top/Bottom, Unpin/Undock\n- **Minimize (−)**: Collapses to pill at bottom; **Maximize (□)**: Fills canvas\n- **Close (×)**: Detaches child (floating only)\n- **Pin indicator (📌)**: Shown on anchored windows; click to unpin/undock\n\n## Z-Index Layering\n\nThe container uses two overlay layers without explicit z-index, so all children compete in the same stacking context:\n\n| Layer | Z-Index | Contents |\n|-------|---------|----------|\n| Background | 0 | Inner view (in scrollArea) |\n| Docked/pinned windows | 1 (ANCHOR_Z) | In dockOverlay (non-scrolling, pointer-events: none on container, auto on children) |\n| Floating windows | 2+ (storedZ + baseZ) | In scrollArea (scrollable) |\n| Maximized window | 1000000 | Covers everything |\n| Minimized pills | 10000 | Direct children of container |\n| Context menus | 100000 | Appended to document.body |\n\nZ-index is DB-authoritative: `bringToFront` and `normalizeZIndices` read from the database only, never the DOM.\n\n## Background Layer\n\nRenders an optional inner view as full-bleed background beneath windows. The inner view bypasses cycle detection (deliberate composition, not a true cycle) and receives its own `getViewConfig()` scope. Change via View As > Spatial Canvas submenu.\n\n## Sibling Container Protocol\n\nProvides `siblingContainer.addSibling(itemId, navigateTo)` to child views:\n- **New item**: Creates window at offset from last, brings to front\n- **Existing item**: Brings to front, restores if minimized\n- **navigateTo**: Optional anchor/line to scroll to after opening\n\nEnables item links to open as new windows instead of navigating away.\n\n## Scroll Preservation\n\nSaves `scrollTop`/`scrollLeft` from all `.window-content` elements before re-render, restores after via double-`requestAnimationFrame`.\n\n## Architecture\n\nDecomposed into 5 focused libraries:\n- [window-anchor-lib](item://2319aaaa-d991-43dc-8c04-724156f1ac18) — pure anchor positioning calculations\n- [window-zindex-lib](item://bc80bdc2-f6b3-49df-a72d-1cecf866ddcf) — DB-authoritative z-index management\n- [window-drag-resize-lib](item://9b319a24-ec36-4e5d-bf94-e7453febb380) — drag and resize handlers\n- [window-minimize-lib](item://6dd254a8-dc94-4300-8a2e-19ce4165e22e) — single-path minimize/restore\n- [window-menu-lib](item://f2bf33dc-3b41-4c9a-b0e5-62011eff239c) — window context menu\n\n## Programmatic Examples\n\n```javascript\\n// Add a child window\\nconst ws = await api.get('workspace-id');\\nws.attachments.push({ id: 'item-id', view: { x: 100, y: 100, width: 600, height: 400, z: 10 } });\\nawait api.update(ws);\\n\\n// Dock to left edge\\nchild.view.anchor = 'left';\\nchild.view.width = 300;\\nawait api.update(ws);\\n```\n\n## Design Rationale\n\n### Why Spatial Over Hierarchical?\n\n| Approach | Pros | Cons |\n|----------|------|------|\n| **Spatial** | Multiple items visible, persistent layout, direct manipulation | More complex, position persistence needed |\n| **Hierarchical** | Simpler, familiar tree navigation | Context switching, single focus, no spatial memory |\n\nSpatial organization matches how people naturally arrange information. The complexity cost is worth the UX benefit for desktop workflows.\n\n### Why Positioned Objects Over Separate Layout?\n\nPosition data could live in a separate layout table, but that creates synchronization issues (child removed but layout entry remains). Embedding position in the attachment `view` object is a single source of truth.\n\n### Why Three Window Modes?\n\nWindows support **floating** (freely positioned), **pinned** (corner-anchored), and **docked** (edge-anchored) modes. Floating covers general use. Pinned keeps reference panels visible during scrolling. Docked creates IDE-like panel layouts. All three use the same `anchor` field — null/unset for floating, corner string for pinned, edge string for docked.\n\n### Why DB-Authoritative Z-Index?\n\nEarlier versions read z-indices from both DOM and database, causing divergence and unbounded growth. The current design treats the database as the single source of truth — z-index functions read fresh attachments from the DB, never from DOM queries. This eliminates an entire class of stacking bugs.\n\n### Mobile Strategy\n\nThe 2D canvas is desktop-focused. Mobile should use a different container view (e.g., linear list with swipe navigation). Different containers for different contexts is simpler than responsive design.\n\n## Implementation Patterns\n\nSpatial windowing relies on three critical patterns:\n\n- ![Silent Update Pattern](item://c0c0c0c0-0010-0000-0000-000000000000) — saves position without re-rendering\n- ![Stale Closure Prevention](item://c0c0c0c0-0011-0000-0000-000000000000) — reads fresh data in handlers\n- ![Scroll State Preservation](item://c0c0c0c0-0012-0000-0000-000000000000) — restores scroll across re-renders\n\nAlso see [Common Code Gotchas](item://c0c0c0c0-0016-0000-0000-000000000000) for parseInt zero trap and other pitfalls discovered during spatial windowing development.\n\n## See Also\n\n- [Attachments](item://c0c0c0c0-0005-0000-0000-000000000000) — The underlying data model\n- [Content Field Conventions](item://c0c0c0c0-0024-0000-0000-000000000000) — Spatial field reference\n- [Navigation](item://c0c0c0c0-0003-0000-0000-000000000000) — How links work in spatial context\n- [viewport-rendering](item://f1111111-0008-0000-0000-000000000000) — View dispatch and rendering",
+    "description": [
+      ":doc",
+      [
+        ":p",
+        {
+          "s": "A 2D spatial windowing environment that renders attachments as draggable, resizable windows. The primary container view for organizing multiple items visually. Position data lives in each child’s "
+        },
+        [
+          ":item-ref",
+          {
+            "s": "c0c0c0c0-0005-0000-0000-000000000000"
+          },
+          {
+            "s": "attachment"
+          }
+        ],
+        {
+          "s": " "
+        },
+        [
+          ":code",
+          {
+            "s": "view"
+          }
+        ],
+        {
+          "s": " object — single source of truth, no separate layout table."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Window Types"
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Floating Windows"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Freely positioned via drag handle, corners to resize"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Click brings to front; window controls: minimize, maximize, close"
+            }
+          ]
+        ]
+      ],
+      [
+        ":h3",
+        {
+          "s": "Pinned Windows (Corner-Anchored)"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Fixed to viewport corner ("
+            },
+            [
+              ":code",
+              {
+                "s": "top-right"
+              }
+            ],
+            {
+              "s": ", "
+            },
+            [
+              ":code",
+              {
+                "s": "bottom-left"
+              }
+            ],
+            {
+              "s": ", "
+            },
+            [
+              ":code",
+              {
+                "s": "bottom-right"
+              }
+            ],
+            {
+              "s": ")"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Stays in place relative to chosen corner on container resize"
+            }
+          ]
+        ]
+      ],
+      [
+        ":h3",
+        {
+          "s": "Docked Windows (Edge-Anchored)"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Snapped to edge ("
+            },
+            [
+              ":code",
+              {
+                "s": "left"
+              }
+            ],
+            {
+              "s": ", "
+            },
+            [
+              ":code",
+              {
+                "s": "right"
+              }
+            ],
+            {
+              "s": ", "
+            },
+            [
+              ":code",
+              {
+                "s": "top"
+              }
+            ],
+            {
+              "s": ", "
+            },
+            [
+              ":code",
+              {
+                "s": "bottom"
+              }
+            ],
+            {
+              "s": "), fills perpendicular axis"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Single-axis resize on the non-docked edge"
+            }
+          ]
+        ]
+      ],
+      [
+        ":h2",
+        {
+          "s": "Child Specification"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Each child in "
+        },
+        [
+          ":code",
+          {
+            "s": "item.attachments"
+          }
+        ],
+        {
+          "s": " has a "
+        },
+        [
+          ":code",
+          {
+            "s": "view"
+          }
+        ],
+        {
+          "s": " object:"
+        }
+      ],
+      [
+        ":table",
+        [
+          ":thead",
+          [
+            ":tr",
+            [
+              ":th",
+              {
+                "s": "Field"
+              }
+            ],
+            [
+              ":th",
+              {
+                "s": "Type"
+              }
+            ],
+            [
+              ":th",
+              {
+                "s": "Purpose"
+              }
+            ]
+          ]
+        ],
+        [
+          ":tbody",
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "x"
+                }
+              ],
+              {
+                "s": ", "
+              },
+              [
+                ":code",
+                {
+                  "s": "y"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Number"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Position in pixels (from anchor)"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "width"
+                }
+              ],
+              {
+                "s": ", "
+              },
+              [
+                ":code",
+                {
+                  "s": "height"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Number"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Window dimensions"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "z"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Number"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Stored z-index (higher = front)"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "anchor"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "String/null"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Positioning mode (see below)"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "minimized"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Boolean"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Minimized to pill bar"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "maximized"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Boolean"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Fills entire canvas"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "type"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "String/null"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Optional view ID override"
+              }
+            ]
+          ]
+        ]
+      ],
+      [
+        ":h3",
+        {
+          "s": "Position Interpretation"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The meaning of "
+        },
+        [
+          ":code",
+          {
+            "s": "x"
+          }
+        ],
+        {
+          "s": " and "
+        },
+        [
+          ":code",
+          {
+            "s": "y"
+          }
+        ],
+        {
+          "s": " depends on the "
+        },
+        [
+          ":code",
+          {
+            "s": "anchor"
+          }
+        ],
+        {
+          "s": ":"
+        }
+      ],
+      [
+        ":table",
+        [
+          ":thead",
+          [
+            ":tr",
+            [
+              ":th",
+              {
+                "s": "Anchor"
+              }
+            ],
+            [
+              ":th",
+              {
+                "s": "x means"
+              }
+            ],
+            [
+              ":th",
+              {
+                "s": "y means"
+              }
+            ]
+          ]
+        ],
+        [
+          ":tbody",
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "null"
+                }
+              ],
+              {
+                "s": " / "
+              },
+              [
+                ":code",
+                {
+                  "s": "top-left"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Distance from left edge"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Distance from top edge"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "top-right"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Distance from right edge"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Distance from top edge"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "bottom-left"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Distance from left edge"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Distance from bottom edge"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "bottom-right"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Distance from right edge"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Distance from bottom edge"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "left"
+                }
+              ],
+              {
+                "s": " / "
+              },
+              [
+                ":code",
+                {
+                  "s": "right"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Distance from edge"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "(ignored - fills height)"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "top"
+                }
+              ],
+              {
+                "s": " / "
+              },
+              [
+                ":code",
+                {
+                  "s": "bottom"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "(ignored - fills width)"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Distance from edge"
+              }
+            ]
+          ]
+        ]
+      ],
+      [
+        ":h2",
+        {
+          "s": "Window Chrome"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": "┌──────────────────────────────────────────┐\n│ ≡ │  Item Title             │ − □ × │\n└──────────────────────────────────────────┘\n  │    └── Drag handle           └── Window controls\n  └── Menu button (pin/dock/unpin options)"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Menu (≡)"
+              }
+            ],
+            {
+              "s": ": Pin, Dock Left/Right/Top/Bottom, Unpin/Undock"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Minimize (−)"
+              }
+            ],
+            {
+              "s": ": Collapses to pill at bottom; "
+            },
+            [
+              ":strong",
+              {
+                "s": "Maximize (□)"
+              }
+            ],
+            {
+              "s": ": Fills canvas"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Close (×)"
+              }
+            ],
+            {
+              "s": ": Detaches child (floating only)"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Pin indicator (📌)"
+              }
+            ],
+            {
+              "s": ": Shown on anchored windows; click to unpin/undock"
+            }
+          ]
+        ]
+      ],
+      [
+        ":h2",
+        {
+          "s": "Z-Index Layering"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The container uses two overlay layers without explicit z-index, so all children compete in the same stacking context:"
+        }
+      ],
+      [
+        ":table",
+        [
+          ":thead",
+          [
+            ":tr",
+            [
+              ":th",
+              {
+                "s": "Layer"
+              }
+            ],
+            [
+              ":th",
+              {
+                "s": "Z-Index"
+              }
+            ],
+            [
+              ":th",
+              {
+                "s": "Contents"
+              }
+            ]
+          ]
+        ],
+        [
+          ":tbody",
+          [
+            ":tr",
+            [
+              ":td",
+              {
+                "s": "Background"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "0"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Inner view (in scrollArea)"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              {
+                "s": "Docked/pinned windows"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "1 (ANCHOR_Z)"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "In dockOverlay (non-scrolling, pointer-events: none on container, auto on children)"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              {
+                "s": "Floating windows"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "2+ (storedZ + baseZ)"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "In scrollArea (scrollable)"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              {
+                "s": "Maximized window"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "1000000"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Covers everything"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              {
+                "s": "Minimized pills"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "10000"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Direct children of container"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              {
+                "s": "Context menus"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "100000"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Appended to document.body"
+              }
+            ]
+          ]
+        ]
+      ],
+      [
+        ":p",
+        {
+          "s": "Z-index is DB-authoritative: "
+        },
+        [
+          ":code",
+          {
+            "s": "bringToFront"
+          }
+        ],
+        {
+          "s": " and "
+        },
+        [
+          ":code",
+          {
+            "s": "normalizeZIndices"
+          }
+        ],
+        {
+          "s": " read from the database only, never the DOM."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Background Layer"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Renders an optional inner view as full-bleed background beneath windows. The inner view bypasses cycle detection (deliberate composition, not a true cycle) and receives its own "
+        },
+        [
+          ":code",
+          {
+            "s": "getViewConfig()"
+          }
+        ],
+        {
+          "s": " scope. Change via View As > Spatial Canvas submenu."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Sibling Container Protocol"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Provides "
+        },
+        [
+          ":code",
+          {
+            "s": "siblingContainer.addSibling(itemId, navigateTo)"
+          }
+        ],
+        {
+          "s": " to child views:"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "New item"
+              }
+            ],
+            {
+              "s": ": Creates window at offset from last, brings to front"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Existing item"
+              }
+            ],
+            {
+              "s": ": Brings to front, restores if minimized"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "navigateTo"
+              }
+            ],
+            {
+              "s": ": Optional anchor/line to scroll to after opening"
+            }
+          ]
+        ]
+      ],
+      [
+        ":p",
+        {
+          "s": "Enables item links to open as new windows instead of navigating away."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Scroll Preservation"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Saves "
+        },
+        [
+          ":code",
+          {
+            "s": "scrollTop"
+          }
+        ],
+        {
+          "s": "/"
+        },
+        [
+          ":code",
+          {
+            "s": "scrollLeft"
+          }
+        ],
+        {
+          "s": " from all "
+        },
+        [
+          ":code",
+          {
+            "s": ".window-content"
+          }
+        ],
+        {
+          "s": " elements before re-render, restores after via double-"
+        },
+        [
+          ":code",
+          {
+            "s": "requestAnimationFrame"
+          }
+        ],
+        {
+          "s": "."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Architecture"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Decomposed into 5 focused libraries:"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":item-ref",
+              {
+                "s": "2319aaaa-d991-43dc-8c04-724156f1ac18"
+              },
+              {
+                "s": "window-anchor-lib"
+              }
+            ],
+            {
+              "s": " — pure anchor positioning calculations"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":item-ref",
+              {
+                "s": "bc80bdc2-f6b3-49df-a72d-1cecf866ddcf"
+              },
+              {
+                "s": "window-zindex-lib"
+              }
+            ],
+            {
+              "s": " — DB-authoritative z-index management"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":item-ref",
+              {
+                "s": "9b319a24-ec36-4e5d-bf94-e7453febb380"
+              },
+              {
+                "s": "window-drag-resize-lib"
+              }
+            ],
+            {
+              "s": " — drag and resize handlers"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":item-ref",
+              {
+                "s": "6dd254a8-dc94-4300-8a2e-19ce4165e22e"
+              },
+              {
+                "s": "window-minimize-lib"
+              }
+            ],
+            {
+              "s": " — single-path minimize/restore"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":item-ref",
+              {
+                "s": "f2bf33dc-3b41-4c9a-b0e5-62011eff239c"
+              },
+              {
+                "s": "window-menu-lib"
+              }
+            ],
+            {
+              "s": " — window context menu"
+            }
+          ]
+        ]
+      ],
+      [
+        ":h2",
+        {
+          "s": "Programmatic Examples"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": "\n## Design Rationale\n\n### Why Spatial Over Hierarchical?\n\n| Approach | Pros | Cons |\n|----------|------|------|\n| **Spatial** | Multiple items visible, persistent layout, direct manipulation | More complex, position persistence needed |\n| **Hierarchical** | Simpler, familiar tree navigation | Context switching, single focus, no spatial memory |\n\nSpatial organization matches how people naturally arrange information. The complexity cost is worth the UX benefit for desktop workflows.\n\n### Why Positioned Objects Over Separate Layout?\n\nPosition data could live in a separate layout table, but that creates synchronization issues (child removed but layout entry remains). Embedding position in the attachment `view` object is a single source of truth.\n\n### Why Three Window Modes?\n\nWindows support **floating** (freely positioned), **pinned** (corner-anchored), and **docked** (edge-anchored) modes. Floating covers general use. Pinned keeps reference panels visible during scrolling. Docked creates IDE-like panel layouts. All three use the same `anchor` field — null/unset for floating, corner string for pinned, edge string for docked.\n\n### Why DB-Authoritative Z-Index?\n\nEarlier versions read z-indices from both DOM and database, causing divergence and unbounded growth. The current design treats the database as the single source of truth — z-index functions read fresh attachments from the DB, never from DOM queries. This eliminates an entire class of stacking bugs.\n\n### Mobile Strategy\n\nThe 2D canvas is desktop-focused. Mobile should use a different container view (e.g., linear list with swipe navigation). Different containers for different contexts is simpler than responsive design.\n\n## Implementation Patterns\n\nSpatial windowing relies on three critical patterns:\n\n- ![Silent Update Pattern](item://c0c0c0c0-0010-0000-0000-000000000000) — saves position without re-rendering\n- ![Stale Closure Prevention](item://c0c0c0c0-0011-0000-0000-000000000000) — reads fresh data in handlers\n- ![Scroll State Preservation](item://c0c0c0c0-0012-0000-0000-000000000000) — restores scroll across re-renders\n\nAlso see [Common Code Gotchas](item://c0c0c0c0-0016-0000-0000-000000000000) for parseInt zero trap and other pitfalls discovered during spatial windowing development.\n\n## See Also\n\n- [Attachments](item://c0c0c0c0-0005-0000-0000-000000000000) — The underlying data model\n- [Content Field Conventions](item://c0c0c0c0-0024-0000-0000-000000000000) — Spatial field reference\n- [Navigation](item://c0c0c0c0-0003-0000-0000-000000000000) — How links work in spatial context\n- [viewport-rendering](item://f1111111-0008-0000-0000-000000000000) — View dispatch and rendering"
+        }
+      ]
+    ],
     "for_type": "00000000-0000-0000-0000-000000000000",
     "displayName": "Spatial Canvas",
     "capabilities": [

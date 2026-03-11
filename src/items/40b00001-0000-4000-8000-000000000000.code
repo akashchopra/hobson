@@ -1235,6 +1235,17 @@ async function evalDef(ast, env, callStack) {
 async function evalFn(ast, env, callStack) {
   if (ast.length < 2) throw hobError('fn requires parameters and body', null, callStack);
 
+  // Named fn: (fn name [params] body) — creates self-referential binding for recursion
+  if (typeof ast[1] === 'string' && !ast[1].startsWith(':')) {
+    const name = ast[1];
+    const selfEnv = new Environment(env);
+    const innerAst = ['fn', ...ast.slice(2)];
+    const fn = await evalFn(innerAst, selfEnv, callStack);
+    fn._hobName = name;
+    selfEnv.define(name, fn);
+    return fn;
+  }
+
   // Detect multi-arity: (fn ([p1] b1) ([p2 p3] b2))
   if (Array.isArray(ast[1])) {
     return evalFnMultiArity(ast, env, callStack);

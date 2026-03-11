@@ -3,10 +3,999 @@
   "name": "markdown-to-doc-ast",
   "type": "66666666-0000-0000-0000-000000000000",
   "created": 1773100000000,
-  "modified": 1773100000000,
+  "modified": 1773243817738,
   "content": {
-    "description": "Converts markdown description fields to Hob :doc AST. Handles headings, paragraphs, bold, italic, code, code blocks, lists, blockquotes, {{field-ref}}, [text](item://id), and [text](url).\n\nUsage from REPL:\n  const lib = await api.require('markdown-to-doc-ast');\n  await lib.convertItem(api, 'item-id-here');\n\nCreate a copy (for side-by-side comparison):\n  await lib.convertItem(api, 'item-id-here', { copy: true });\n\nOr to preview without saving:\n  const ast = lib.convert(markdownString);",
-    "code": "// markdown-to-doc-ast \u2014 Converts markdown description fields to Hob :doc AST\n// Handles: headings, paragraphs, bold, italic, code, code blocks, lists,\n// blockquotes, {{field-ref}}, [text](item://id), [text](url)\n\nexport function convert(markdown) {\n  if (!markdown || typeof markdown !== 'string') return [':doc', [':p', { s: '' }]];\n\n  const lines = markdown.split('\\n');\n  const blocks = parseBlocks(lines);\n  return [':doc', ...blocks];\n}\n\n// Apply conversion to an item.\n// opts.copy: if true, create a copy with converted AST; otherwise overwrite original.\n// Returns { id, message } where id is the item that was written.\nexport async function convertItem(api, itemId, opts) {\n  const item = await api.get(itemId);\n  if (!item) throw new Error('Item not found: ' + itemId);\n  const desc = item.content?.description;\n  if (!desc || typeof desc !== 'string') {\n    return { id: itemId, message: 'Description is not a markdown string \u2014 skipping' };\n  }\n  if (Array.isArray(desc) && typeof desc[0] === 'string' && desc[0].startsWith(':')) {\n    return { id: itemId, message: 'Description is already a :doc AST \u2014 skipping' };\n  }\n  const ast = convert(desc);\n  const copy = opts?.copy;\n\n  if (copy) {\n    const newId = crypto.randomUUID();\n    const newItem = {\n      ...item,\n      id: newId,\n      name: (item.name || 'Untitled') + ' (doc AST)',\n      content: { ...item.content, description: ast },\n      created: Date.now(),\n      modified: Date.now()\n    };\n    await api.set(newItem);\n    return { id: newId, message: 'Created copy ' + newItem.name + ' \u2014 ' + (ast.length - 1) + ' blocks' };\n  } else {\n    const updated = {\n      ...item,\n      content: { ...item.content, description: ast },\n      modified: Date.now()\n    };\n    await api.set(updated);\n    return { id: itemId, message: 'Converted ' + (item.name || itemId) + ' \u2014 ' + (ast.length - 1) + ' blocks' };\n  }\n}\n\n// --- Block-level parsing ---\n\nfunction parseBlocks(lines) {\n  const blocks = [];\n  let i = 0;\n\n  while (i < lines.length) {\n    const line = lines[i];\n\n    // Blank line \u2014 skip\n    if (line.trim() === '') { i++; continue; }\n\n    // Horizontal rule\n    if (/^-{3,}\\s*$|^\\*{3,}\\s*$|^_{3,}\\s*$/.test(line.trim())) {\n      blocks.push([':hr']);\n      i++;\n      continue;\n    }\n\n    // Code block (fenced)\n    if (line.trimStart().startsWith('```')) {\n      const indent = line.length - line.trimStart().length;\n      const result = parseCodeBlock(lines, i);\n      blocks.push(result.block);\n      i = result.next;\n      continue;\n    }\n\n    // Heading\n    const headingMatch = line.match(/^(#{1,6})\\s+(.*)$/);\n    if (headingMatch) {\n      const level = headingMatch[1].length;\n      const inline = parseInline(headingMatch[2].trim());\n      blocks.push([':h' + level, ...inline]);\n      i++;\n      continue;\n    }\n\n    // Blockquote\n    if (line.trimStart().startsWith('> ')) {\n      const result = parseBlockquote(lines, i);\n      blocks.push(result.block);\n      i = result.next;\n      continue;\n    }\n\n    // Table (header row followed by separator row)\n    if (/^\\|.*\\|/.test(line) && i + 1 < lines.length && /^\\|[\\s:|-]+\\|$/.test(lines[i + 1].trim())) {\n      const result = parseTable(lines, i);\n      blocks.push(result.block);\n      i = result.next;\n      continue;\n    }\n\n    // Unordered list\n    if (/^\\s*[-*+]\\s/.test(line)) {\n      const result = parseList(lines, i, 'ul');\n      blocks.push(result.block);\n      i = result.next;\n      continue;\n    }\n\n    // Ordered list\n    if (/^\\s*\\d+\\.\\s/.test(line)) {\n      const result = parseList(lines, i, 'ol');\n      blocks.push(result.block);\n      i = result.next;\n      continue;\n    }\n\n    // Paragraph \u2014 collect consecutive non-blank, non-special lines\n    const result = parseParagraph(lines, i);\n    blocks.push(result.block);\n    i = result.next;\n  }\n\n  return blocks;\n}\n\nfunction parseCodeBlock(lines, start) {\n  const openLine = lines[start].trimStart();\n  const lang = openLine.slice(3).trim(); // language hint after ```\n  const codeLines = [];\n  let i = start + 1;\n  while (i < lines.length) {\n    if (lines[i].trimStart().startsWith('```')) { i++; break; }\n    codeLines.push(lines[i]);\n    i++;\n  }\n  const block = [':code-block', { s: codeLines.join('\\n') }];\n  return { block, next: i };\n}\n\nfunction parseBlockquote(lines, start) {\n  const contentLines = [];\n  let i = start;\n  while (i < lines.length && (lines[i].trimStart().startsWith('> ') || lines[i].trimStart() === '>')) {\n    contentLines.push(lines[i].replace(/^\\s*>\\s?/, ''));\n    i++;\n  }\n  const innerBlocks = parseBlocks(contentLines);\n  return { block: [':blockquote', ...innerBlocks], next: i };\n}\n\nfunction parseList(lines, start, type) {\n  const pattern = type === 'ul' ? /^(\\s*)[-*+]\\s(.*)$/ : /^(\\s*)\\d+\\.\\s(.*)$/;\n  const items = [];\n  let i = start;\n\n  // Determine base indent\n  const baseMatch = lines[start].match(pattern);\n  if (!baseMatch) return { block: [':' + type], next: start + 1 };\n  const baseIndent = baseMatch[1].length;\n  const contentIndent = baseIndent + 2;\n\n  while (i < lines.length) {\n    const line = lines[i];\n    if (line.trim() === '') { i++; continue; }\n\n    const match = line.match(pattern);\n    if (match && match[1].length === baseIndent) {\n      // Same-level list item\n      const inline = parseInline(match[2].trim());\n      const li = [':li', [':p', ...inline]];\n      i++;\n\n      // Collect continuation content for this item (nested lists, continuation paragraphs)\n      while (i < lines.length) {\n        // Blank lines \u2014 peek ahead to see if content continues\n        if (lines[i].trim() === '') {\n          let peek = i;\n          while (peek < lines.length && lines[peek].trim() === '') peek++;\n          if (peek >= lines.length) break;\n          const peekLine = lines[peek];\n          const peekMatch = peekLine.match(pattern);\n          if (peekMatch && peekMatch[1].length === baseIndent) break;\n          const peekIndent = peekLine.length - peekLine.trimStart().length;\n          if (peekIndent < contentIndent) break;\n          i = peek;\n          continue;\n        }\n\n        const cl = lines[i];\n\n        // Same-level list item \u2014 this item is done\n        const slMatch = cl.match(pattern);\n        if (slMatch && slMatch[1].length === baseIndent) break;\n\n        // Nested list\n        const nestedUl = cl.match(/^(\\s*)[-*+]\\s/);\n        const nestedOl = cl.match(/^(\\s*)\\d+\\.\\s/);\n        if (nestedUl && nestedUl[1].length > baseIndent) {\n          const nested = parseList(lines, i, 'ul');\n          li.push(nested.block);\n          i = nested.next;\n          continue;\n        }\n        if (nestedOl && nestedOl[1].length > baseIndent) {\n          const nested = parseList(lines, i, 'ol');\n          li.push(nested.block);\n          i = nested.next;\n          continue;\n        }\n\n        // Continuation paragraph (indented content)\n        const indent = cl.length - cl.trimStart().length;\n        if (indent >= contentIndent) {\n          const paraLines = [];\n          while (i < lines.length) {\n            const pl = lines[i];\n            if (pl.trim() === '') break;\n            const pi = pl.length - pl.trimStart().length;\n            if (pi < contentIndent) break;\n            if (pl.match(/^(\\s*)[-*+]\\s/) || pl.match(/^(\\s*)\\d+\\.\\s/)) break;\n            paraLines.push(pl.substring(contentIndent));\n            i++;\n          }\n          if (paraLines.length > 0) {\n            const text = paraLines.join(' ');\n            li.push([':p', ...parseInline(text)]);\n          }\n        } else {\n          break;\n        }\n      }\n\n      items.push(li);\n    } else {\n      break;\n    }\n  }\n\n  return { block: [':' + type, ...items], next: i };\n}\n\nfunction parseParagraph(lines, start) {\n  const paraLines = [];\n  let i = start;\n  while (i < lines.length) {\n    const line = lines[i];\n    if (line.trim() === '') break;\n    if (line.match(/^#{1,6}\\s/)) break;\n    if (line.trimStart().startsWith('```')) break;\n    if (line.trimStart().startsWith('> ')) break;\n    if (/^-{3,}\\s*$|^\\*{3,}\\s*$|^_{3,}\\s*$/.test(line.trim())) break;\n    if (/^\\s*[-*+]\\s/.test(line)) break;\n    if (/^\\s*\\d+\\.\\s/.test(line)) break;\n    // Table: pipe-delimited line followed by separator\n    if (/^\\|.*\\|/.test(line) && i + 1 < lines.length && /^\\|[\\s:|-]+\\|$/.test(lines[i + 1].trim())) break;\n    paraLines.push(line);\n    i++;\n  }\n  const text = paraLines.join(' ');\n  const inline = parseInline(text);\n  return { block: [':p', ...inline], next: i };\n}\n\nfunction parseTable(lines, start) {\n  // Header row\n  const headerCells = parseTableRow(lines[start]);\n  // Separator row \u2014 extract alignment\n  const sepCells = lines[start + 1].trim().replace(/^\\||\\|$/g, '').split('|');\n  const aligns = sepCells.map(c => {\n    c = c.trim();\n    if (c.startsWith(':') && c.endsWith(':')) return 'center';\n    if (c.endsWith(':')) return 'right';\n    return 'left';\n  });\n\n  const thead = [':thead', [':tr', ...headerCells.map(cell =>\n    [':th', ...parseInline(cell)]\n  )]];\n\n  // Data rows\n  let i = start + 2;\n  const bodyRows = [];\n  while (i < lines.length && /^\\|.*\\|/.test(lines[i])) {\n    const cells = parseTableRow(lines[i]);\n    bodyRows.push([':tr', ...cells.map(cell =>\n      [':td', ...parseInline(cell)]\n    )]);\n    i++;\n  }\n\n  const table = [':table', thead, [':tbody', ...bodyRows]];\n  // Only include alignment if any column is non-left\n  if (aligns.some(a => a !== 'left')) {\n    table.push([':align', ...aligns.map(a => ({ s: a }))]);\n  }\n  return { block: table, next: i };\n}\n\nfunction parseTableRow(line) {\n  // Split by | but ignore leading/trailing pipes\n  return line.trim().replace(/^\\||\\|$/g, '').split('|').map(c => c.trim());\n}\n\n// --- Inline parsing ---\n\nfunction parseInline(text) {\n  if (!text) return [{ s: '' }];\n\n  const nodes = [];\n  // Regex for inline patterns: {{field}}, ![alt](url), [text](url), **bold**, *italic*, `code`\n  const re = /(\\{\\{([^}]+)\\}\\}|!\\[([^\\]]*)\\]\\(([^)]+)\\)|\\[([^\\]]*)\\]\\(([^)]+)\\)|\\*\\*(.+?)\\*\\*|\\*(.+?)\\*|`([^`]+)`)/g;\n\n  let last = 0;\n  let match;\n  while ((match = re.exec(text)) !== null) {\n    // Text before match\n    if (match.index > last) {\n      nodes.push({ s: text.substring(last, match.index) });\n    }\n\n    if (match[2] !== undefined) {\n      // {{field-ref}} \u2192 expression form\n      nodes.push(['get-field', ':self', ':' + match[2].trim()]);\n    } else if (match[3] !== undefined) {\n      // ![alt](url) \u2014 transclusion or image\n      const alt = match[3];\n      const href = match[4];\n      if (href.startsWith('item://')) {\n        const fullId = href.replace('item://', '');\n        // Parse query params: ?call=fn&param=val or ?symbol=name or ?field=name\n        const qIdx = fullId.indexOf('?');\n        const itemId = qIdx >= 0 ? fullId.substring(0, qIdx) : fullId;\n        const params = {};\n        if (qIdx >= 0) {\n          for (const part of fullId.substring(qIdx + 1).split('&')) {\n            const [k, ...rest] = part.split('=');\n            params[k] = rest.join('=');\n          }\n        }\n        if (params.call) {\n          // ?call= transclusions \u2192 comment placeholder for manual conversion\n          const paramStr = Object.entries(params).filter(([k]) => k !== 'call').map(([k, v]) => k + '=' + v).join(', ');\n          nodes.push([':code', { s: 'TODO: (transclusion-chrome (call-export @' + itemId + ' \"' + params.call + '\" api' + (paramStr ? ' {' + paramStr + '}' : '') + ') :source @' + itemId + ' :symbol \"' + params.call + '\")' }]);\n        } else if (params.symbol) {\n          nodes.push(['transclude', '@' + itemId, ':' + (params.field || 'code'), ':symbol', { s: params.symbol }]);\n        } else {\n          const field = params.field || 'description';\n          nodes.push(['transclude', '@' + itemId, ':' + field]);\n        }\n      } else {\n        // External image \u2014 keep as link for now\n        nodes.push([':link', { s: href }, { s: alt || href }]);\n      }\n    } else if (match[5] !== undefined) {\n      // [text](url)\n      const linkText = match[5];\n      const href = match[6];\n      if (href.startsWith('item://')) {\n        const itemId = href.replace('item://', '');\n        if (linkText) {\n          nodes.push([':item-ref', { s: itemId }, { s: linkText }]);\n        } else {\n          nodes.push([':item-ref', { s: itemId }]);\n        }\n      } else {\n        if (linkText) {\n          nodes.push([':link', { s: href }, { s: linkText }]);\n        } else {\n          nodes.push([':link', { s: href }]);\n        }\n      }\n    } else if (match[7] !== undefined) {\n      // **bold**\n      nodes.push([':strong', { s: match[7] }]);\n    } else if (match[8] !== undefined) {\n      // *italic*\n      nodes.push([':em', { s: match[8] }]);\n    } else if (match[9] !== undefined) {\n      // `code`\n      nodes.push([':code', { s: match[9] }]);\n    }\n\n    last = match.index + match[0].length;\n  }\n\n  // Trailing text\n  if (last < text.length) {\n    nodes.push({ s: text.substring(last) });\n  }\n\n  return nodes.length > 0 ? nodes : [{ s: '' }];\n}\n"
+    "description": [
+      ":doc",
+      [
+        ":p",
+        {
+          "s": "Converts markdown description fields to Hob :doc AST. Handles headings, paragraphs, bold, italic, code, code blocks, lists, blockquotes, "
+        },
+        [
+          ":field-ref",
+          {
+            "s": "field-ref"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":item-ref",
+          {
+            "s": "id"
+          },
+          {
+            "s": "text"
+          }
+        ],
+        {
+          "s": ", and "
+        },
+        [
+          ":link",
+          {
+            "s": "url"
+          },
+          {
+            "s": "text"
+          }
+        ],
+        {
+          "s": "."
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Usage from REPL:   const lib = await api.require('markdown-to-doc-ast');   await lib.convertItem(api, 'item-id-here');"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Create a copy (for side-by-side comparison):   await lib.convertItem(api, 'item-id-here', { copy: true });"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Or to preview without saving:   const ast = lib.convert(markdownString);"
+        }
+      ]
+    ],
+    "code": "// markdown-to-doc-ast — Converts markdown description fields to Hob :doc AST\n// Handles: headings, paragraphs, bold, italic, code, code blocks, lists,\n// blockquotes, {{field-ref}}, [text](item://id), [text](url)\n\nexport function convert(markdown) {\n  if (!markdown || typeof markdown !== 'string') return [':doc', [':p', { s: '' }]];\n\n  const lines = markdown.split('\\n');\n  const blocks = parseBlocks(lines);\n  return [':doc', ...blocks];\n}\n\n// Apply conversion to an item.\n// opts.copy: if true, create a copy with converted AST; otherwise overwrite original.\n// Returns { id, message } where id is the item that was written.\nexport async function convertItem(api, itemId, opts) {\n  const item = await api.get(itemId);\n  if (!item) throw new Error('Item not found: ' + itemId);\n  const desc = item.content?.description;\n  if (!desc || typeof desc !== 'string') {\n    return { id: itemId, message: 'Description is not a markdown string — skipping' };\n  }\n  if (Array.isArray(desc) && typeof desc[0] === 'string' && desc[0].startsWith(':')) {\n    return { id: itemId, message: 'Description is already a :doc AST — skipping' };\n  }\n  const ast = convert(desc);\n  const copy = opts?.copy;\n\n  if (copy) {\n    const newId = crypto.randomUUID();\n    const newItem = {\n      ...item,\n      id: newId,\n      name: (item.name || 'Untitled') + ' (doc AST)',\n      content: { ...item.content, description: ast },\n      created: Date.now(),\n      modified: Date.now()\n    };\n    await api.set(newItem);\n    return { id: newId, message: 'Created copy ' + newItem.name + ' — ' + (ast.length - 1) + ' blocks' };\n  } else {\n    const updated = {\n      ...item,\n      content: { ...item.content, description: ast },\n      modified: Date.now()\n    };\n    await api.set(updated);\n    return { id: itemId, message: 'Converted ' + (item.name || itemId) + ' — ' + (ast.length - 1) + ' blocks' };\n  }\n}\n\n// --- Block-level parsing ---\n\nfunction parseBlocks(lines) {\n  const blocks = [];\n  let i = 0;\n\n  while (i < lines.length) {\n    const line = lines[i];\n\n    // Blank line — skip\n    if (line.trim() === '') { i++; continue; }\n\n    // Horizontal rule\n    if (/^-{3,}\\s*$|^\\*{3,}\\s*$|^_{3,}\\s*$/.test(line.trim())) {\n      blocks.push([':hr']);\n      i++;\n      continue;\n    }\n\n    // Code block (fenced)\n    if (line.trimStart().startsWith('```')) {\n      const indent = line.length - line.trimStart().length;\n      const result = parseCodeBlock(lines, i);\n      blocks.push(result.block);\n      i = result.next;\n      continue;\n    }\n\n    // Heading\n    const headingMatch = line.match(/^(#{1,6})\\s+(.*)$/);\n    if (headingMatch) {\n      const level = headingMatch[1].length;\n      const inline = parseInline(headingMatch[2].trim());\n      blocks.push([':h' + level, ...inline]);\n      i++;\n      continue;\n    }\n\n    // Blockquote\n    if (line.trimStart().startsWith('> ')) {\n      const result = parseBlockquote(lines, i);\n      blocks.push(result.block);\n      i = result.next;\n      continue;\n    }\n\n    // Table (header row followed by separator row)\n    if (/^\\|.*\\|/.test(line) && i + 1 < lines.length && /^\\|[\\s:|-]+\\|$/.test(lines[i + 1].trim())) {\n      const result = parseTable(lines, i);\n      blocks.push(result.block);\n      i = result.next;\n      continue;\n    }\n\n    // Unordered list\n    if (/^\\s*[-*+]\\s/.test(line)) {\n      const result = parseList(lines, i, 'ul');\n      blocks.push(result.block);\n      i = result.next;\n      continue;\n    }\n\n    // Ordered list\n    if (/^\\s*\\d+\\.\\s/.test(line)) {\n      const result = parseList(lines, i, 'ol');\n      blocks.push(result.block);\n      i = result.next;\n      continue;\n    }\n\n    // Paragraph — collect consecutive non-blank, non-special lines\n    const result = parseParagraph(lines, i);\n    blocks.push(result.block);\n    i = result.next;\n  }\n\n  return blocks;\n}\n\nfunction parseCodeBlock(lines, start) {\n  const openLine = lines[start].trimStart();\n  const lang = openLine.slice(3).trim(); // language hint after ```\n  const codeLines = [];\n  let i = start + 1;\n  while (i < lines.length) {\n    if (lines[i].trimStart().startsWith('```')) { i++; break; }\n    codeLines.push(lines[i]);\n    i++;\n  }\n  const block = [':code-block', { s: codeLines.join('\\n') }];\n  return { block, next: i };\n}\n\nfunction parseBlockquote(lines, start) {\n  const contentLines = [];\n  let i = start;\n  while (i < lines.length && (lines[i].trimStart().startsWith('> ') || lines[i].trimStart() === '>')) {\n    contentLines.push(lines[i].replace(/^\\s*>\\s?/, ''));\n    i++;\n  }\n  const innerBlocks = parseBlocks(contentLines);\n  return { block: [':blockquote', ...innerBlocks], next: i };\n}\n\nfunction parseList(lines, start, type) {\n  const pattern = type === 'ul' ? /^(\\s*)[-*+]\\s(.*)$/ : /^(\\s*)\\d+\\.\\s(.*)$/;\n  const items = [];\n  let i = start;\n\n  // Determine base indent\n  const baseMatch = lines[start].match(pattern);\n  if (!baseMatch) return { block: [':' + type], next: start + 1 };\n  const baseIndent = baseMatch[1].length;\n  const contentIndent = baseIndent + 2;\n\n  while (i < lines.length) {\n    const line = lines[i];\n    if (line.trim() === '') { i++; continue; }\n\n    const match = line.match(pattern);\n    if (match && match[1].length === baseIndent) {\n      // Same-level list item\n      const inline = parseInline(match[2].trim());\n      const li = [':li', [':p', ...inline]];\n      i++;\n\n      // Collect continuation content for this item (nested lists, continuation paragraphs)\n      while (i < lines.length) {\n        // Blank lines — peek ahead to see if content continues\n        if (lines[i].trim() === '') {\n          let peek = i;\n          while (peek < lines.length && lines[peek].trim() === '') peek++;\n          if (peek >= lines.length) break;\n          const peekLine = lines[peek];\n          const peekMatch = peekLine.match(pattern);\n          if (peekMatch && peekMatch[1].length === baseIndent) break;\n          const peekIndent = peekLine.length - peekLine.trimStart().length;\n          if (peekIndent < contentIndent) break;\n          i = peek;\n          continue;\n        }\n\n        const cl = lines[i];\n\n        // Same-level list item — this item is done\n        const slMatch = cl.match(pattern);\n        if (slMatch && slMatch[1].length === baseIndent) break;\n\n        // Nested list\n        const nestedUl = cl.match(/^(\\s*)[-*+]\\s/);\n        const nestedOl = cl.match(/^(\\s*)\\d+\\.\\s/);\n        if (nestedUl && nestedUl[1].length > baseIndent) {\n          const nested = parseList(lines, i, 'ul');\n          li.push(nested.block);\n          i = nested.next;\n          continue;\n        }\n        if (nestedOl && nestedOl[1].length > baseIndent) {\n          const nested = parseList(lines, i, 'ol');\n          li.push(nested.block);\n          i = nested.next;\n          continue;\n        }\n\n        // Continuation paragraph (indented content)\n        const indent = cl.length - cl.trimStart().length;\n        if (indent >= contentIndent) {\n          const paraLines = [];\n          while (i < lines.length) {\n            const pl = lines[i];\n            if (pl.trim() === '') break;\n            const pi = pl.length - pl.trimStart().length;\n            if (pi < contentIndent) break;\n            if (pl.match(/^(\\s*)[-*+]\\s/) || pl.match(/^(\\s*)\\d+\\.\\s/)) break;\n            paraLines.push(pl.substring(contentIndent));\n            i++;\n          }\n          if (paraLines.length > 0) {\n            const text = paraLines.join(' ');\n            li.push([':p', ...parseInline(text)]);\n          }\n        } else {\n          break;\n        }\n      }\n\n      items.push(li);\n    } else {\n      break;\n    }\n  }\n\n  return { block: [':' + type, ...items], next: i };\n}\n\nfunction parseParagraph(lines, start) {\n  const paraLines = [];\n  let i = start;\n  while (i < lines.length) {\n    const line = lines[i];\n    if (line.trim() === '') break;\n    if (line.match(/^#{1,6}\\s/)) break;\n    if (line.trimStart().startsWith('```')) break;\n    if (line.trimStart().startsWith('> ')) break;\n    if (/^-{3,}\\s*$|^\\*{3,}\\s*$|^_{3,}\\s*$/.test(line.trim())) break;\n    if (/^\\s*[-*+]\\s/.test(line)) break;\n    if (/^\\s*\\d+\\.\\s/.test(line)) break;\n    // Table: pipe-delimited line followed by separator\n    if (/^\\|.*\\|/.test(line) && i + 1 < lines.length && /^\\|[\\s:|-]+\\|$/.test(lines[i + 1].trim())) break;\n    paraLines.push(line);\n    i++;\n  }\n  const text = paraLines.join(' ');\n  const inline = parseInline(text);\n  return { block: [':p', ...inline], next: i };\n}\n\nfunction parseTable(lines, start) {\n  // Header row\n  const headerCells = parseTableRow(lines[start]);\n  // Separator row — extract alignment\n  const sepCells = lines[start + 1].trim().replace(/^\\||\\|$/g, '').split('|');\n  const aligns = sepCells.map(c => {\n    c = c.trim();\n    if (c.startsWith(':') && c.endsWith(':')) return 'center';\n    if (c.endsWith(':')) return 'right';\n    return 'left';\n  });\n\n  const thead = [':thead', [':tr', ...headerCells.map(cell =>\n    [':th', ...parseInline(cell)]\n  )]];\n\n  // Data rows\n  let i = start + 2;\n  const bodyRows = [];\n  while (i < lines.length && /^\\|.*\\|/.test(lines[i])) {\n    const cells = parseTableRow(lines[i]);\n    bodyRows.push([':tr', ...cells.map(cell =>\n      [':td', ...parseInline(cell)]\n    )]);\n    i++;\n  }\n\n  const table = [':table', thead, [':tbody', ...bodyRows]];\n  // Only include alignment if any column is non-left\n  if (aligns.some(a => a !== 'left')) {\n    table.push([':align', ...aligns.map(a => ({ s: a }))]);\n  }\n  return { block: table, next: i };\n}\n\nfunction parseTableRow(line) {\n  // Split by | but ignore leading/trailing pipes\n  return line.trim().replace(/^\\||\\|$/g, '').split('|').map(c => c.trim());\n}\n\n// --- Inline parsing ---\n\nfunction parseInline(text) {\n  if (!text) return [{ s: '' }];\n\n  const nodes = [];\n  // Regex for inline patterns: {{field}}, [text](url), **bold**, *italic*, `code`\n  const re = /(\\{\\{([^}]+)\\}\\}|\\[([^\\]]*)\\]\\(([^)]+)\\)|\\*\\*(.+?)\\*\\*|\\*(.+?)\\*|`([^`]+)`)/g;\n\n  let last = 0;\n  let match;\n  while ((match = re.exec(text)) !== null) {\n    // Text before match\n    if (match.index > last) {\n      nodes.push({ s: text.substring(last, match.index) });\n    }\n\n    if (match[2] !== undefined) {\n      // {{field-ref}}\n      nodes.push([':field-ref', { s: match[2].trim() }]);\n    } else if (match[3] !== undefined) {\n      // [text](url)\n      const linkText = match[3];\n      const href = match[4];\n      if (href.startsWith('item://')) {\n        const itemId = href.replace('item://', '');\n        if (linkText) {\n          nodes.push([':item-ref', { s: itemId }, { s: linkText }]);\n        } else {\n          nodes.push([':item-ref', { s: itemId }]);\n        }\n      } else {\n        if (linkText) {\n          nodes.push([':link', { s: href }, { s: linkText }]);\n        } else {\n          nodes.push([':link', { s: href }]);\n        }\n      }\n    } else if (match[5] !== undefined) {\n      // **bold**\n      nodes.push([':strong', { s: match[5] }]);\n    } else if (match[6] !== undefined) {\n      // *italic*\n      nodes.push([':em', { s: match[6] }]);\n    } else if (match[7] !== undefined) {\n      // `code`\n      nodes.push([':code', { s: match[7] }]);\n    }\n\n    last = match.index + match[0].length;\n  }\n\n  // Trailing text\n  if (last < text.length) {\n    nodes.push({ s: text.substring(last) });\n  }\n\n  return nodes.length > 0 ? nodes : [{ s: '' }];\n}\n",
+    "_symbols": {
+      "convert": {
+        "name": "convert",
+        "line": 5,
+        "col": 7,
+        "endLine": 11,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(markdown)"
+      },
+      "convert.s": {
+        "name": "s",
+        "line": 6,
+        "col": 74,
+        "endLine": 6,
+        "endCol": 79,
+        "kind": "property",
+        "scope": "convert"
+      },
+      "convert.lines": {
+        "name": "lines",
+        "line": 8,
+        "col": 8,
+        "endLine": 8,
+        "endCol": 36,
+        "kind": "variable",
+        "scope": "convert"
+      },
+      "convert.blocks": {
+        "name": "blocks",
+        "line": 9,
+        "col": 8,
+        "endLine": 9,
+        "endCol": 35,
+        "kind": "variable",
+        "scope": "convert"
+      },
+      "convertItem": {
+        "name": "convertItem",
+        "line": 16,
+        "col": 7,
+        "endLine": 50,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(api, itemId, opts)"
+      },
+      "convertItem.item": {
+        "name": "item",
+        "line": 17,
+        "col": 8,
+        "endLine": 17,
+        "endCol": 36,
+        "kind": "variable",
+        "scope": "convertItem"
+      },
+      "convertItem.desc": {
+        "name": "desc",
+        "line": 19,
+        "col": 8,
+        "endLine": 19,
+        "endCol": 40,
+        "kind": "variable",
+        "scope": "convertItem"
+      },
+      "convertItem.id": {
+        "name": "id",
+        "line": 48,
+        "col": 13,
+        "endLine": 48,
+        "endCol": 23,
+        "kind": "property",
+        "scope": "convertItem"
+      },
+      "convertItem.message": {
+        "name": "message",
+        "line": 48,
+        "col": 25,
+        "endLine": 48,
+        "endCol": 109,
+        "kind": "property",
+        "scope": "convertItem"
+      },
+      "convertItem.ast": {
+        "name": "ast",
+        "line": 26,
+        "col": 8,
+        "endLine": 26,
+        "endCol": 27,
+        "kind": "variable",
+        "scope": "convertItem"
+      },
+      "convertItem.copy": {
+        "name": "copy",
+        "line": 27,
+        "col": 8,
+        "endLine": 27,
+        "endCol": 25,
+        "kind": "variable",
+        "scope": "convertItem"
+      },
+      "convertItem.newId": {
+        "name": "newId",
+        "line": 30,
+        "col": 10,
+        "endLine": 30,
+        "endCol": 37,
+        "kind": "variable",
+        "scope": "convertItem"
+      },
+      "convertItem.newItem": {
+        "name": "newItem",
+        "line": 31,
+        "col": 10,
+        "endLine": 38,
+        "endCol": 5,
+        "kind": "variable",
+        "scope": "convertItem"
+      },
+      "newItem.id": {
+        "name": "id",
+        "line": 33,
+        "col": 6,
+        "endLine": 33,
+        "endCol": 15,
+        "kind": "property",
+        "scope": "newItem"
+      },
+      "newItem.name": {
+        "name": "name",
+        "line": 34,
+        "col": 6,
+        "endLine": 34,
+        "endCol": 52,
+        "kind": "property",
+        "scope": "newItem"
+      },
+      "newItem.content": {
+        "name": "content",
+        "line": 35,
+        "col": 6,
+        "endLine": 35,
+        "endCol": 52,
+        "kind": "property",
+        "scope": "newItem"
+      },
+      "newItem.content.description": {
+        "name": "description",
+        "line": 35,
+        "col": 34,
+        "endLine": 35,
+        "endCol": 50,
+        "kind": "property",
+        "scope": "newItem.content"
+      },
+      "newItem.created": {
+        "name": "created",
+        "line": 36,
+        "col": 6,
+        "endLine": 36,
+        "endCol": 25,
+        "kind": "property",
+        "scope": "newItem"
+      },
+      "newItem.modified": {
+        "name": "modified",
+        "line": 37,
+        "col": 6,
+        "endLine": 37,
+        "endCol": 26,
+        "kind": "property",
+        "scope": "newItem"
+      },
+      "convertItem.updated": {
+        "name": "updated",
+        "line": 42,
+        "col": 10,
+        "endLine": 46,
+        "endCol": 5,
+        "kind": "variable",
+        "scope": "convertItem"
+      },
+      "updated.content": {
+        "name": "content",
+        "line": 44,
+        "col": 6,
+        "endLine": 44,
+        "endCol": 52,
+        "kind": "property",
+        "scope": "updated"
+      },
+      "updated.content.description": {
+        "name": "description",
+        "line": 44,
+        "col": 34,
+        "endLine": 44,
+        "endCol": 50,
+        "kind": "property",
+        "scope": "updated.content"
+      },
+      "updated.modified": {
+        "name": "modified",
+        "line": 45,
+        "col": 6,
+        "endLine": 45,
+        "endCol": 26,
+        "kind": "property",
+        "scope": "updated"
+      },
+      "parseBlocks": {
+        "name": "parseBlocks",
+        "line": 54,
+        "col": 0,
+        "endLine": 129,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(lines)"
+      },
+      "parseBlocks.blocks": {
+        "name": "blocks",
+        "line": 55,
+        "col": 8,
+        "endLine": 55,
+        "endCol": 19,
+        "kind": "variable",
+        "scope": "parseBlocks"
+      },
+      "parseBlocks.i": {
+        "name": "i",
+        "line": 56,
+        "col": 6,
+        "endLine": 56,
+        "endCol": 11,
+        "kind": "variable",
+        "scope": "parseBlocks"
+      },
+      "parseBlocks.line": {
+        "name": "line",
+        "line": 59,
+        "col": 10,
+        "endLine": 59,
+        "endCol": 25,
+        "kind": "variable",
+        "scope": "parseBlocks"
+      },
+      "parseBlocks.indent": {
+        "name": "indent",
+        "line": 73,
+        "col": 12,
+        "endLine": 73,
+        "endCol": 58,
+        "kind": "variable",
+        "scope": "parseBlocks"
+      },
+      "parseBlocks.result": {
+        "name": "result",
+        "line": 123,
+        "col": 10,
+        "endLine": 123,
+        "endCol": 43,
+        "kind": "variable",
+        "scope": "parseBlocks"
+      },
+      "parseBlocks.headingMatch": {
+        "name": "headingMatch",
+        "line": 81,
+        "col": 10,
+        "endLine": 81,
+        "endCol": 56,
+        "kind": "variable",
+        "scope": "parseBlocks"
+      },
+      "parseBlocks.level": {
+        "name": "level",
+        "line": 83,
+        "col": 12,
+        "endLine": 83,
+        "endCol": 42,
+        "kind": "variable",
+        "scope": "parseBlocks"
+      },
+      "parseBlocks.inline": {
+        "name": "inline",
+        "line": 84,
+        "col": 12,
+        "endLine": 84,
+        "endCol": 56,
+        "kind": "variable",
+        "scope": "parseBlocks"
+      },
+      "parseCodeBlock": {
+        "name": "parseCodeBlock",
+        "line": 131,
+        "col": 0,
+        "endLine": 143,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(lines, start)"
+      },
+      "parseCodeBlock.openLine": {
+        "name": "openLine",
+        "line": 132,
+        "col": 8,
+        "endLine": 132,
+        "endCol": 43,
+        "kind": "variable",
+        "scope": "parseCodeBlock"
+      },
+      "parseCodeBlock.lang": {
+        "name": "lang",
+        "line": 133,
+        "col": 8,
+        "endLine": 133,
+        "endCol": 39,
+        "kind": "variable",
+        "scope": "parseCodeBlock"
+      },
+      "parseCodeBlock.codeLines": {
+        "name": "codeLines",
+        "line": 134,
+        "col": 8,
+        "endLine": 134,
+        "endCol": 22,
+        "kind": "variable",
+        "scope": "parseCodeBlock"
+      },
+      "parseCodeBlock.i": {
+        "name": "i",
+        "line": 135,
+        "col": 6,
+        "endLine": 135,
+        "endCol": 19,
+        "kind": "variable",
+        "scope": "parseCodeBlock"
+      },
+      "parseCodeBlock.block": {
+        "name": "block",
+        "line": 142,
+        "col": 11,
+        "endLine": 142,
+        "endCol": 16,
+        "kind": "property",
+        "scope": "parseCodeBlock"
+      },
+      "parseCodeBlock.next": {
+        "name": "next",
+        "line": 142,
+        "col": 18,
+        "endLine": 142,
+        "endCol": 25,
+        "kind": "property",
+        "scope": "parseCodeBlock"
+      },
+      "parseBlockquote": {
+        "name": "parseBlockquote",
+        "line": 145,
+        "col": 0,
+        "endLine": 154,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(lines, start)"
+      },
+      "parseBlockquote.contentLines": {
+        "name": "contentLines",
+        "line": 146,
+        "col": 8,
+        "endLine": 146,
+        "endCol": 25,
+        "kind": "variable",
+        "scope": "parseBlockquote"
+      },
+      "parseBlockquote.i": {
+        "name": "i",
+        "line": 147,
+        "col": 6,
+        "endLine": 147,
+        "endCol": 15,
+        "kind": "variable",
+        "scope": "parseBlockquote"
+      },
+      "parseBlockquote.innerBlocks": {
+        "name": "innerBlocks",
+        "line": 152,
+        "col": 8,
+        "endLine": 152,
+        "endCol": 47,
+        "kind": "variable",
+        "scope": "parseBlockquote"
+      },
+      "parseBlockquote.block": {
+        "name": "block",
+        "line": 153,
+        "col": 11,
+        "endLine": 153,
+        "endCol": 49,
+        "kind": "property",
+        "scope": "parseBlockquote"
+      },
+      "parseBlockquote.next": {
+        "name": "next",
+        "line": 153,
+        "col": 51,
+        "endLine": 153,
+        "endCol": 58,
+        "kind": "property",
+        "scope": "parseBlockquote"
+      },
+      "parseList": {
+        "name": "parseList",
+        "line": 156,
+        "col": 0,
+        "endLine": 245,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(lines, start, type)"
+      },
+      "parseList.pattern": {
+        "name": "pattern",
+        "line": 157,
+        "col": 8,
+        "endLine": 157,
+        "endCol": 77,
+        "kind": "variable",
+        "scope": "parseList"
+      },
+      "parseList.items": {
+        "name": "items",
+        "line": 158,
+        "col": 8,
+        "endLine": 158,
+        "endCol": 18,
+        "kind": "variable",
+        "scope": "parseList"
+      },
+      "parseList.i": {
+        "name": "i",
+        "line": 159,
+        "col": 6,
+        "endLine": 159,
+        "endCol": 15,
+        "kind": "variable",
+        "scope": "parseList"
+      },
+      "parseList.baseMatch": {
+        "name": "baseMatch",
+        "line": 162,
+        "col": 8,
+        "endLine": 162,
+        "endCol": 47,
+        "kind": "variable",
+        "scope": "parseList"
+      },
+      "parseList.block": {
+        "name": "block",
+        "line": 244,
+        "col": 11,
+        "endLine": 244,
+        "endCol": 40,
+        "kind": "property",
+        "scope": "parseList"
+      },
+      "parseList.next": {
+        "name": "next",
+        "line": 244,
+        "col": 42,
+        "endLine": 244,
+        "endCol": 49,
+        "kind": "property",
+        "scope": "parseList"
+      },
+      "parseList.baseIndent": {
+        "name": "baseIndent",
+        "line": 164,
+        "col": 8,
+        "endLine": 164,
+        "endCol": 40,
+        "kind": "variable",
+        "scope": "parseList"
+      },
+      "parseList.contentIndent": {
+        "name": "contentIndent",
+        "line": 165,
+        "col": 8,
+        "endLine": 165,
+        "endCol": 38,
+        "kind": "variable",
+        "scope": "parseList"
+      },
+      "parseList.line": {
+        "name": "line",
+        "line": 168,
+        "col": 10,
+        "endLine": 168,
+        "endCol": 25,
+        "kind": "variable",
+        "scope": "parseList"
+      },
+      "parseList.match": {
+        "name": "match",
+        "line": 171,
+        "col": 10,
+        "endLine": 171,
+        "endCol": 37,
+        "kind": "variable",
+        "scope": "parseList"
+      },
+      "parseList.inline": {
+        "name": "inline",
+        "line": 174,
+        "col": 12,
+        "endLine": 174,
+        "endCol": 49,
+        "kind": "variable",
+        "scope": "parseList"
+      },
+      "parseList.li": {
+        "name": "li",
+        "line": 175,
+        "col": 12,
+        "endLine": 175,
+        "endCol": 43,
+        "kind": "variable",
+        "scope": "parseList"
+      },
+      "parseList.peek": {
+        "name": "peek",
+        "line": 182,
+        "col": 14,
+        "endLine": 182,
+        "endCol": 22,
+        "kind": "variable",
+        "scope": "parseList"
+      },
+      "parseList.peekLine": {
+        "name": "peekLine",
+        "line": 185,
+        "col": 16,
+        "endLine": 185,
+        "endCol": 38,
+        "kind": "variable",
+        "scope": "parseList"
+      },
+      "parseList.peekMatch": {
+        "name": "peekMatch",
+        "line": 186,
+        "col": 16,
+        "endLine": 186,
+        "endCol": 51,
+        "kind": "variable",
+        "scope": "parseList"
+      },
+      "parseList.peekIndent": {
+        "name": "peekIndent",
+        "line": 188,
+        "col": 16,
+        "endLine": 188,
+        "endCol": 74,
+        "kind": "variable",
+        "scope": "parseList"
+      },
+      "parseList.cl": {
+        "name": "cl",
+        "line": 194,
+        "col": 14,
+        "endLine": 194,
+        "endCol": 27,
+        "kind": "variable",
+        "scope": "parseList"
+      },
+      "parseList.slMatch": {
+        "name": "slMatch",
+        "line": 197,
+        "col": 14,
+        "endLine": 197,
+        "endCol": 41,
+        "kind": "variable",
+        "scope": "parseList"
+      },
+      "parseList.nestedUl": {
+        "name": "nestedUl",
+        "line": 201,
+        "col": 14,
+        "endLine": 201,
+        "endCol": 50,
+        "kind": "variable",
+        "scope": "parseList"
+      },
+      "parseList.nestedOl": {
+        "name": "nestedOl",
+        "line": 202,
+        "col": 14,
+        "endLine": 202,
+        "endCol": 50,
+        "kind": "variable",
+        "scope": "parseList"
+      },
+      "parseList.nested": {
+        "name": "nested",
+        "line": 210,
+        "col": 16,
+        "endLine": 210,
+        "endCol": 50,
+        "kind": "variable",
+        "scope": "parseList"
+      },
+      "parseList.indent": {
+        "name": "indent",
+        "line": 217,
+        "col": 14,
+        "endLine": 217,
+        "endCol": 56,
+        "kind": "variable",
+        "scope": "parseList"
+      },
+      "parseList.paraLines": {
+        "name": "paraLines",
+        "line": 219,
+        "col": 16,
+        "endLine": 219,
+        "endCol": 30,
+        "kind": "variable",
+        "scope": "parseList"
+      },
+      "parseList.pl": {
+        "name": "pl",
+        "line": 221,
+        "col": 18,
+        "endLine": 221,
+        "endCol": 31,
+        "kind": "variable",
+        "scope": "parseList"
+      },
+      "parseList.pi": {
+        "name": "pi",
+        "line": 223,
+        "col": 18,
+        "endLine": 223,
+        "endCol": 56,
+        "kind": "variable",
+        "scope": "parseList"
+      },
+      "parseList.text": {
+        "name": "text",
+        "line": 230,
+        "col": 18,
+        "endLine": 230,
+        "endCol": 44,
+        "kind": "variable",
+        "scope": "parseList"
+      },
+      "parseParagraph": {
+        "name": "parseParagraph",
+        "line": 247,
+        "col": 0,
+        "endLine": 267,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(lines, start)"
+      },
+      "parseParagraph.paraLines": {
+        "name": "paraLines",
+        "line": 248,
+        "col": 8,
+        "endLine": 248,
+        "endCol": 22,
+        "kind": "variable",
+        "scope": "parseParagraph"
+      },
+      "parseParagraph.i": {
+        "name": "i",
+        "line": 249,
+        "col": 6,
+        "endLine": 249,
+        "endCol": 15,
+        "kind": "variable",
+        "scope": "parseParagraph"
+      },
+      "parseParagraph.line": {
+        "name": "line",
+        "line": 251,
+        "col": 10,
+        "endLine": 251,
+        "endCol": 25,
+        "kind": "variable",
+        "scope": "parseParagraph"
+      },
+      "parseParagraph.text": {
+        "name": "text",
+        "line": 264,
+        "col": 8,
+        "endLine": 264,
+        "endCol": 34,
+        "kind": "variable",
+        "scope": "parseParagraph"
+      },
+      "parseParagraph.inline": {
+        "name": "inline",
+        "line": 265,
+        "col": 8,
+        "endLine": 265,
+        "endCol": 34,
+        "kind": "variable",
+        "scope": "parseParagraph"
+      },
+      "parseParagraph.block": {
+        "name": "block",
+        "line": 266,
+        "col": 11,
+        "endLine": 266,
+        "endCol": 35,
+        "kind": "property",
+        "scope": "parseParagraph"
+      },
+      "parseParagraph.next": {
+        "name": "next",
+        "line": 266,
+        "col": 37,
+        "endLine": 266,
+        "endCol": 44,
+        "kind": "property",
+        "scope": "parseParagraph"
+      },
+      "parseTable": {
+        "name": "parseTable",
+        "line": 269,
+        "col": 0,
+        "endLine": 302,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(lines, start)"
+      },
+      "parseTable.headerCells": {
+        "name": "headerCells",
+        "line": 271,
+        "col": 8,
+        "endLine": 271,
+        "endCol": 49,
+        "kind": "variable",
+        "scope": "parseTable"
+      },
+      "parseTable.sepCells": {
+        "name": "sepCells",
+        "line": 273,
+        "col": 8,
+        "endLine": 273,
+        "endCol": 77,
+        "kind": "variable",
+        "scope": "parseTable"
+      },
+      "parseTable.aligns": {
+        "name": "aligns",
+        "line": 274,
+        "col": 8,
+        "endLine": 279,
+        "endCol": 4,
+        "kind": "variable",
+        "scope": "parseTable"
+      },
+      "parseTable.thead": {
+        "name": "thead",
+        "line": 281,
+        "col": 8,
+        "endLine": 283,
+        "endCol": 5,
+        "kind": "variable",
+        "scope": "parseTable"
+      },
+      "parseTable.i": {
+        "name": "i",
+        "line": 286,
+        "col": 6,
+        "endLine": 286,
+        "endCol": 19,
+        "kind": "variable",
+        "scope": "parseTable"
+      },
+      "parseTable.bodyRows": {
+        "name": "bodyRows",
+        "line": 287,
+        "col": 8,
+        "endLine": 287,
+        "endCol": 21,
+        "kind": "variable",
+        "scope": "parseTable"
+      },
+      "parseTable.cells": {
+        "name": "cells",
+        "line": 289,
+        "col": 10,
+        "endLine": 289,
+        "endCol": 41,
+        "kind": "variable",
+        "scope": "parseTable"
+      },
+      "parseTable.table": {
+        "name": "table",
+        "line": 296,
+        "col": 8,
+        "endLine": 296,
+        "endCol": 58,
+        "kind": "variable",
+        "scope": "parseTable"
+      },
+      "parseTable.s": {
+        "name": "s",
+        "line": 299,
+        "col": 48,
+        "endLine": 299,
+        "endCol": 52,
+        "kind": "property",
+        "scope": "parseTable"
+      },
+      "parseTable.block": {
+        "name": "block",
+        "line": 301,
+        "col": 11,
+        "endLine": 301,
+        "endCol": 23,
+        "kind": "property",
+        "scope": "parseTable"
+      },
+      "parseTable.next": {
+        "name": "next",
+        "line": 301,
+        "col": 25,
+        "endLine": 301,
+        "endCol": 32,
+        "kind": "property",
+        "scope": "parseTable"
+      },
+      "parseTableRow": {
+        "name": "parseTableRow",
+        "line": 304,
+        "col": 0,
+        "endLine": 307,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(line)"
+      },
+      "parseInline": {
+        "name": "parseInline",
+        "line": 311,
+        "col": 0,
+        "endLine": 367,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(text)"
+      },
+      "parseInline.s": {
+        "name": "s",
+        "line": 366,
+        "col": 39,
+        "endLine": 366,
+        "endCol": 44,
+        "kind": "property",
+        "scope": "parseInline"
+      },
+      "parseInline.nodes": {
+        "name": "nodes",
+        "line": 314,
+        "col": 8,
+        "endLine": 314,
+        "endCol": 18,
+        "kind": "variable",
+        "scope": "parseInline"
+      },
+      "parseInline.re": {
+        "name": "re",
+        "line": 316,
+        "col": 8,
+        "endLine": 316,
+        "endCol": 91,
+        "kind": "variable",
+        "scope": "parseInline"
+      },
+      "parseInline.last": {
+        "name": "last",
+        "line": 318,
+        "col": 6,
+        "endLine": 318,
+        "endCol": 14,
+        "kind": "variable",
+        "scope": "parseInline"
+      },
+      "parseInline.match": {
+        "name": "match",
+        "line": 319,
+        "col": 6,
+        "endLine": 319,
+        "endCol": 11,
+        "kind": "variable",
+        "scope": "parseInline"
+      },
+      "parseInline.linkText": {
+        "name": "linkText",
+        "line": 331,
+        "col": 12,
+        "endLine": 331,
+        "endCol": 31,
+        "kind": "variable",
+        "scope": "parseInline"
+      },
+      "parseInline.href": {
+        "name": "href",
+        "line": 332,
+        "col": 12,
+        "endLine": 332,
+        "endCol": 27,
+        "kind": "variable",
+        "scope": "parseInline"
+      },
+      "parseInline.itemId": {
+        "name": "itemId",
+        "line": 334,
+        "col": 14,
+        "endLine": 334,
+        "endCol": 50,
+        "kind": "variable",
+        "scope": "parseInline"
+      }
+    }
   },
   "attachments": []
 }

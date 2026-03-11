@@ -3,14 +3,22 @@
   "type": "66666666-0000-0000-0000-000000000000",
   "name": "item-palette",
   "created": 1738368000000,
-  "modified": 1772791802356,
+  "modified": 1773243818013,
   "watches": [
     {
       "event": "e0e00000-0002-0002-0000-000000000000"
     }
   ],
   "content": {
-    "description": "Item search/navigation modal. Provides Cmd+K item palette functionality. Opens Item Search as a modal via the Modal Frame wrapper item.",
+    "description": [
+      ":doc",
+      [
+        ":p",
+        {
+          "s": "Item search/navigation modal. Provides Cmd+K item palette functionality. Opens Item Search as a modal via the Modal Frame wrapper item."
+        }
+      ]
+    ],
     "code": "let api = null;\nlet cachedSearchItemId = null;\n\nconst VIEWPORT_ID = '88888888-0000-0000-0000-000000000000';\nconst ITEM_SEARCH_TYPE_ID = '7ac3cf17-2c10-454a-bc06-24db64e440c4';\n\nexport async function onKernelBootComplete({ safeMode }, _api) {\n  if (safeMode) return;\n  api = _api;\n}\n\n// [BEGIN:show]\nexport async function show(_api) {\n  // Lazy init: use passed api if module was reloaded after import\n  if (_api && !api) {\n    api = _api;\n  }\n\n  if (!api) {\n    console.warn('item-palette: not initialized (no api available)');\n    return;\n  }\n\n  // Remove existing modal if present\n  hide();\n\n  // Find the Item Search item (cache ID to avoid full scan on repeat opens)\n  if (!cachedSearchItemId) {\n    const searchItems = await api.query({ type: ITEM_SEARCH_TYPE_ID });\n    if (searchItems.length === 0) {\n      console.warn('item-palette: no item-search item found');\n      return;\n    }\n    cachedSearchItemId = searchItems[0].id;\n  }\n\n  // Fetch search item\n  const searchItem = await api.get(cachedSearchItemId);\n\n  // Pre-fetch starred items so the first render has data immediately\n  const searchLib = await api.require('item-search-lib');\n  const starred = await searchLib.getStarredItems(api);\n  const starredAtts = starred.map(s => ({ id: s.id }));\n\n  // Reset search state with starred items pre-populated\n  searchItem.content = { ...searchItem.content, currentQuery: '' };\n  searchItem.attachments = starredAtts;\n  searchItem.modified = Date.now();\n  await api.set(searchItem);\n\n  // Attach search item to viewport as overlay\n  await api.attach(VIEWPORT_ID, { id: cachedSearchItemId });\n}\n// [END:show]\n\nexport async function hide() {\n  if (cachedSearchItemId) {\n    await api.detach(VIEWPORT_ID, cachedSearchItemId);\n  }\n}\n",
     "_symbols": {
       "api": {

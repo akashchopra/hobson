@@ -3,9 +3,377 @@
   "name": "Stale Closure Prevention",
   "type": "871ae771-b9b1-4f40-8c7f-d9038bfb69c3",
   "created": 1738454400000,
-  "modified": 1770467705058,
+  "modified": 1773243817443,
   "content": {
-    "description": "Event handlers in Hobson views capture data at render time, but the database may have been updated since then (especially via [silent updates](item://c0c0c0c0-0010-0000-0000-000000000000)). Using stale closure data for database writes causes bugs where changes silently revert.\n\n## The Problem\n\nJavaScript closures capture variables from their enclosing scope. When a view renders, handlers close over the current item state:\n\n```javascript\nexport async function render(item, api) {\n  const attachments = item.attachments;  // Snapshot at render time\n\n  titlebar.onmousedown = () => {\n    // BUG: Uses stale data! Other windows may have moved since render.\n    const maxZ = Math.max(...attachments.map(c => c.z));\n  };\n}\n```\n\nAfter silent updates (drag, z-index changes), the database holds current state but the closure still has the render-time snapshot. This causes:\n\n- **Windows jumping to wrong positions** — stale position data overwrites current positions\n- **Z-index calculations using old data** — maxZ computed from stale values\n- **Position updates reverting other windows** — writing stale attachment array back\n\n## The Solution: Always Read Fresh\n\nIn any event handler that reads or writes item data, fetch the current state from the database:\n\n```javascript\ntitlebar.onmousedown = async () => {\n  const freshItem = await api.get(item.id);  // Current state from DB\n  const freshChildren = freshItem.attachments;\n  const maxZ = Math.max(...freshChildren.map(c => c.z));\n};\n```\n\n## Critical Locations\n\nAny function that:\n1. **Reads** item data and makes decisions based on it\n2. **Writes** item data back to the database\n3. Runs **asynchronously** after render time (event handlers, callbacks, timers)\n\nMust fetch fresh state first. Key examples:\n\n- `updateChild()` — MUST read fresh attachments before modifying\n- Click-to-front handler — MUST read fresh z-indices for maxZ\n- Drag end handler — MUST read fresh state before saving final position\n- Any handler that modifies the parent item's attachments array\n\n## Red Flags\n\nWatch for these patterns in code review:\n\n- Variables captured from outer scope used inside `async` handlers\n- Array/object snapshots used for database writes\n- Calculations based on \"current\" data that might be stale\n- `item.attachments.map(...)` inside an event handler (should be `freshItem.attachments.map(...)`)\n\n## The Rule\n\n> **If you're in an event handler and need item data, call `api.get()` first.**\n\nThe cost is one IndexedDB read (fast, local). The benefit is correctness.\n\n## See Also\n\n- [Silent Update Pattern](item://c0c0c0c0-0010-0000-0000-000000000000) — Why closures become stale\n- [Spatial Windowing](item://ef793c27-2d4b-4c99-b05a-2769db5bc5a9) — Where this pattern is most critical",
+    "description": [
+      ":doc",
+      [
+        ":p",
+        {
+          "s": "Event handlers in Hobson views capture data at render time, but the database may have been updated since then (especially via "
+        },
+        [
+          ":item-ref",
+          {
+            "s": "c0c0c0c0-0010-0000-0000-000000000000"
+          },
+          {
+            "s": "silent updates"
+          }
+        ],
+        {
+          "s": "). Using stale closure data for database writes causes bugs where changes silently revert."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "The Problem"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "JavaScript closures capture variables from their enclosing scope. When a view renders, handlers close over the current item state:"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": "export async function render(item, api) {\n  const attachments = item.attachments;  // Snapshot at render time\n\n  titlebar.onmousedown = () => {\n    // BUG: Uses stale data! Other windows may have moved since render.\n    const maxZ = Math.max(...attachments.map(c => c.z));\n  };\n}"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "After silent updates (drag, z-index changes), the database holds current state but the closure still has the render-time snapshot. This causes:"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Windows jumping to wrong positions"
+              }
+            ],
+            {
+              "s": " — stale position data overwrites current positions"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Z-index calculations using old data"
+              }
+            ],
+            {
+              "s": " — maxZ computed from stale values"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Position updates reverting other windows"
+              }
+            ],
+            {
+              "s": " — writing stale attachment array back"
+            }
+          ]
+        ]
+      ],
+      [
+        ":h2",
+        {
+          "s": "The Solution: Always Read Fresh"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "In any event handler that reads or writes item data, fetch the current state from the database:"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": "titlebar.onmousedown = async () => {\n  const freshItem = await api.get(item.id);  // Current state from DB\n  const freshChildren = freshItem.attachments;\n  const maxZ = Math.max(...freshChildren.map(c => c.z));\n};"
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Critical Locations"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Any function that:"
+        }
+      ],
+      [
+        ":ol",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Reads"
+              }
+            ],
+            {
+              "s": " item data and makes decisions based on it"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Writes"
+              }
+            ],
+            {
+              "s": " item data back to the database"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Runs "
+            },
+            [
+              ":strong",
+              {
+                "s": "asynchronously"
+              }
+            ],
+            {
+              "s": " after render time (event handlers, callbacks, timers)"
+            }
+          ]
+        ]
+      ],
+      [
+        ":p",
+        {
+          "s": "Must fetch fresh state first. Key examples:"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":code",
+              {
+                "s": "updateChild()"
+              }
+            ],
+            {
+              "s": " — MUST read fresh attachments before modifying"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Click-to-front handler — MUST read fresh z-indices for maxZ"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Drag end handler — MUST read fresh state before saving final position"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Any handler that modifies the parent item's attachments array"
+            }
+          ]
+        ]
+      ],
+      [
+        ":h2",
+        {
+          "s": "Red Flags"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Watch for these patterns in code review:"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Variables captured from outer scope used inside "
+            },
+            [
+              ":code",
+              {
+                "s": "async"
+              }
+            ],
+            {
+              "s": " handlers"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Array/object snapshots used for database writes"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Calculations based on \"current\" data that might be stale"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":code",
+              {
+                "s": "item.attachments.map(...)"
+              }
+            ],
+            {
+              "s": " inside an event handler (should be "
+            },
+            [
+              ":code",
+              {
+                "s": "freshItem.attachments.map(...)"
+              }
+            ],
+            {
+              "s": ")"
+            }
+          ]
+        ]
+      ],
+      [
+        ":h2",
+        {
+          "s": "The Rule"
+        }
+      ],
+      [
+        ":blockquote",
+        [
+          ":p",
+          [
+            ":strong",
+            {
+              "s": "If you're in an event handler and need item data, call `api.get()` first."
+            }
+          ]
+        ]
+      ],
+      [
+        ":p",
+        {
+          "s": "The cost is one IndexedDB read (fast, local). The benefit is correctness."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "See Also"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":item-ref",
+              {
+                "s": "c0c0c0c0-0010-0000-0000-000000000000"
+              },
+              {
+                "s": "Silent Update Pattern"
+              }
+            ],
+            {
+              "s": " — Why closures become stale"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":item-ref",
+              {
+                "s": "ef793c27-2d4b-4c99-b05a-2769db5bc5a9"
+              },
+              {
+                "s": "Spatial Windowing"
+              }
+            ],
+            {
+              "s": " — Where this pattern is most critical"
+            }
+          ]
+        ]
+      ]
+    ],
     "tags": [
       "af24a7ad-38c7-4660-b8ed-d67cf2062263"
     ]

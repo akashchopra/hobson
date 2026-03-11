@@ -3,9 +3,854 @@
   "name": "Nested Instances",
   "type": "871ae771-b9b1-4f40-8c7f-d9038bfb69c3",
   "created": 1738454400000,
-  "modified": 1772791802390,
+  "modified": 1773243817566,
   "content": {
-    "description": "A nested Hobson instance is a complete, independent Hobson environment running inside another. Each nested instance gets its own kernel, its own items, and its own viewport — fully isolated from the parent via ID-prefixed storage and iframe sandboxing.\n\n![Nested Hobson](item://ded73b62-8060-49fb-b55f-b755936d12e5)\n\n## How It Works\n\nNesting relies on two mechanisms: **storage prefixing** in the bootloader and **iframe rendering** in the view.\n\n### Storage Prefixing\n\nThe [bootloader](item://c0c0c0c0-0002-0000-0000-000000000000) accepts an `?instance=<id>` [URL parameter](item://c0c0c0c0-0031-0000-0000-000000000000). When present, all storage operations are transparently prefixed:\n\n| Operation | Without `?instance` | With `?instance=abc` |\n|-----------|---------------------|----------------------|\n| `save(item)` | stores as `item.id` | stores as `abc:item.id` |\n| `get(id)` | looks up `id` | looks up `abc:id` |\n| `getAll()` | returns unprefixed items | returns `abc:*` items (stripped) |\n\nThe kernel sees a normal item namespace. It doesn't know it's nested — the bootloader's storage backend handles prefixing and stripping silently via `prefixId()` and `stripPrefix()` helpers.\n\n### Instance ID Chaining\n\nNesting composes. When a nested instance creates its own nested instance, the IDs chain:\n\n```\nparent                → items stored as \"item-id\"\n?instance=abc         → items stored as \"abc:item-id\"\n?instance=abc:def     → items stored as \"abc:def:item-id\"\n```\n\nThe [hobson-instance-view](item://99999999-1111-0000-0000-000000000000) builds the chained ID automatically from `api.getInstanceId()` and the current item's ID.\n\n### Iframe Isolation\n\nEach nested instance renders as an iframe pointing to `bootloader.html?instance=<chainedId>`. This gives full isolation:\n\n- **Separate DOM** — CSS and JavaScript don't leak between instances\n- **Separate kernel** — each instance boots its own kernel independently\n- **Separate items** — prefixed storage means no item collisions\n- **No cross-instance communication** — instances cannot talk to each other (by design)\n\n## Key Items\n\n| Item | Purpose |\n|------|---------|\n| [hobson-instance](item://99999999-0000-0000-0000-000000000000) | Type definition for instance items |\n| [hobson-instance-view](item://99999999-1111-0000-0000-000000000000) | View that renders the iframe with header and controls |\n| [hobson-instance-lifecycle](item://f939abc4-2e9e-4d6a-a049-c9361fb3590d) | Library that cascade-deletes nested items when an instance is deleted |\n\n## Cascade Delete\n\nDeleting a `hobson-instance` item triggers [hobson-instance-lifecycle](item://f939abc4-2e9e-4d6a-a049-c9361fb3590d), which finds all items with the instance's prefix via `api.getAllRaw()` and deletes them. This prevents orphaned data in IndexedDB.\n\n`getAll()` filters out prefixed items (showing only the current namespace), while `getAllRaw()` returns everything — including nested items. The lifecycle library needs `getAllRaw()` to find what to clean up.\n\n## API\n\n| Method | Returns |\n|--------|---------|\n| `api.getInstanceId()` | Current instance ID, or `null` if top-level |\n| `api.getAllRaw()` | All items including nested-prefixed ones |\n\n## Use Cases\n\n- **Sandboxed development** — modify kernel code without risking the parent instance\n- **[Testing](item://c0c0c0c0-0036-0000-0000-000000000000)** — isolated storage + isolated DOM + free cleanup = test isolation for free\n- **Multiple workspaces** — independent item collections side by side\n- **Safe experimentation** — try destructive changes, then just delete the instance\n\n## Design Rationale\n\n### Why No Cross-Instance Communication?\n\nIsolation is the whole point. If instances could talk to each other, they'd need to agree on protocols, handle versioning, and manage shared state — all of which undermines the simplicity of \"just prefix the IDs.\" If you need to move items between instances, export/import is the explicit mechanism.\n\n### Why Prefix Rather Than Separate Databases?\n\nIndexedDB allows multiple databases, but a single database with prefixed keys is simpler to manage, back up, and inspect. It also makes cascade delete trivial — just filter by prefix.\n\n## See Also\n\n- [Bootstrap](item://c0c0c0c0-0002-0000-0000-000000000000) — Where the `?instance` parameter is parsed and storage prefixing is implemented\n- [URL Parameters](item://c0c0c0c0-0031-0000-0000-000000000000) — Documents the `?instance` parameter alongside `?safe` and others\n- [Testing](item://c0c0c0c0-0036-0000-0000-000000000000) — Uses nested instances for test isolation\n- [kernel:storage](item://33333333-2222-0000-0000-000000000000) — The kernel module that delegates to the bootloader's storage backend",
+    "description": [
+      ":doc",
+      [
+        ":p",
+        {
+          "s": "A nested Hobson instance is a complete, independent Hobson environment running inside another. Each nested instance gets its own kernel, its own items, and its own viewport — fully isolated from the parent via ID-prefixed storage and iframe sandboxing."
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "!"
+        },
+        [
+          ":item-ref",
+          {
+            "s": "ded73b62-8060-49fb-b55f-b755936d12e5"
+          },
+          {
+            "s": "Nested Hobson"
+          }
+        ]
+      ],
+      [
+        ":h2",
+        {
+          "s": "How It Works"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Nesting relies on two mechanisms: "
+        },
+        [
+          ":strong",
+          {
+            "s": "storage prefixing"
+          }
+        ],
+        {
+          "s": " in the bootloader and "
+        },
+        [
+          ":strong",
+          {
+            "s": "iframe rendering"
+          }
+        ],
+        {
+          "s": " in the view."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Storage Prefixing"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The "
+        },
+        [
+          ":item-ref",
+          {
+            "s": "c0c0c0c0-0002-0000-0000-000000000000"
+          },
+          {
+            "s": "bootloader"
+          }
+        ],
+        {
+          "s": " accepts an "
+        },
+        [
+          ":code",
+          {
+            "s": "?instance=<id>"
+          }
+        ],
+        {
+          "s": " "
+        },
+        [
+          ":item-ref",
+          {
+            "s": "c0c0c0c0-0031-0000-0000-000000000000"
+          },
+          {
+            "s": "URL parameter"
+          }
+        ],
+        {
+          "s": ". When present, all storage operations are transparently prefixed:"
+        }
+      ],
+      [
+        ":table",
+        [
+          ":thead",
+          [
+            ":tr",
+            [
+              ":th",
+              {
+                "s": "Operation"
+              }
+            ],
+            [
+              ":th",
+              {
+                "s": "Without "
+              },
+              [
+                ":code",
+                {
+                  "s": "?instance"
+                }
+              ]
+            ],
+            [
+              ":th",
+              {
+                "s": "With "
+              },
+              [
+                ":code",
+                {
+                  "s": "?instance=abc"
+                }
+              ]
+            ]
+          ]
+        ],
+        [
+          ":tbody",
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "save(item)"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "stores as "
+              },
+              [
+                ":code",
+                {
+                  "s": "item.id"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "stores as "
+              },
+              [
+                ":code",
+                {
+                  "s": "abc:item.id"
+                }
+              ]
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "get(id)"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "looks up "
+              },
+              [
+                ":code",
+                {
+                  "s": "id"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "looks up "
+              },
+              [
+                ":code",
+                {
+                  "s": "abc:id"
+                }
+              ]
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "getAll()"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "returns unprefixed items"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "returns "
+              },
+              [
+                ":code",
+                {
+                  "s": "abc:*"
+                }
+              ],
+              {
+                "s": " items (stripped)"
+              }
+            ]
+          ]
+        ]
+      ],
+      [
+        ":p",
+        {
+          "s": "The kernel sees a normal item namespace. It doesn't know it's nested — the bootloader's storage backend handles prefixing and stripping silently via "
+        },
+        [
+          ":code",
+          {
+            "s": "prefixId()"
+          }
+        ],
+        {
+          "s": " and "
+        },
+        [
+          ":code",
+          {
+            "s": "stripPrefix()"
+          }
+        ],
+        {
+          "s": " helpers."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Instance ID Chaining"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Nesting composes. When a nested instance creates its own nested instance, the IDs chain:"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": "parent                → items stored as \"item-id\"\n?instance=abc         → items stored as \"abc:item-id\"\n?instance=abc:def     → items stored as \"abc:def:item-id\""
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The "
+        },
+        [
+          ":item-ref",
+          {
+            "s": "99999999-1111-0000-0000-000000000000"
+          },
+          {
+            "s": "hobson-instance-view"
+          }
+        ],
+        {
+          "s": " builds the chained ID automatically from "
+        },
+        [
+          ":code",
+          {
+            "s": "api.getInstanceId()"
+          }
+        ],
+        {
+          "s": " and the current item's ID."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Iframe Isolation"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Each nested instance renders as an iframe pointing to "
+        },
+        [
+          ":code",
+          {
+            "s": "bootloader.html?instance=<chainedId>"
+          }
+        ],
+        {
+          "s": ". This gives full isolation:"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Separate DOM"
+              }
+            ],
+            {
+              "s": " — CSS and JavaScript don't leak between instances"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Separate kernel"
+              }
+            ],
+            {
+              "s": " — each instance boots its own kernel independently"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Separate items"
+              }
+            ],
+            {
+              "s": " — prefixed storage means no item collisions"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "No cross-instance communication"
+              }
+            ],
+            {
+              "s": " — instances cannot talk to each other (by design)"
+            }
+          ]
+        ]
+      ],
+      [
+        ":h2",
+        {
+          "s": "Key Items"
+        }
+      ],
+      [
+        ":table",
+        [
+          ":thead",
+          [
+            ":tr",
+            [
+              ":th",
+              {
+                "s": "Item"
+              }
+            ],
+            [
+              ":th",
+              {
+                "s": "Purpose"
+              }
+            ]
+          ]
+        ],
+        [
+          ":tbody",
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":item-ref",
+                {
+                  "s": "99999999-0000-0000-0000-000000000000"
+                },
+                {
+                  "s": "hobson-instance"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Type definition for instance items"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":item-ref",
+                {
+                  "s": "99999999-1111-0000-0000-000000000000"
+                },
+                {
+                  "s": "hobson-instance-view"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "View that renders the iframe with header and controls"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":item-ref",
+                {
+                  "s": "f939abc4-2e9e-4d6a-a049-c9361fb3590d"
+                },
+                {
+                  "s": "hobson-instance-lifecycle"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Library that cascade-deletes nested items when an instance is deleted"
+              }
+            ]
+          ]
+        ]
+      ],
+      [
+        ":h2",
+        {
+          "s": "Cascade Delete"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Deleting a "
+        },
+        [
+          ":code",
+          {
+            "s": "hobson-instance"
+          }
+        ],
+        {
+          "s": " item triggers "
+        },
+        [
+          ":item-ref",
+          {
+            "s": "f939abc4-2e9e-4d6a-a049-c9361fb3590d"
+          },
+          {
+            "s": "hobson-instance-lifecycle"
+          }
+        ],
+        {
+          "s": ", which finds all items with the instance's prefix via "
+        },
+        [
+          ":code",
+          {
+            "s": "api.getAllRaw()"
+          }
+        ],
+        {
+          "s": " and deletes them. This prevents orphaned data in IndexedDB."
+        }
+      ],
+      [
+        ":p",
+        [
+          ":code",
+          {
+            "s": "getAll()"
+          }
+        ],
+        {
+          "s": " filters out prefixed items (showing only the current namespace), while "
+        },
+        [
+          ":code",
+          {
+            "s": "getAllRaw()"
+          }
+        ],
+        {
+          "s": " returns everything — including nested items. The lifecycle library needs "
+        },
+        [
+          ":code",
+          {
+            "s": "getAllRaw()"
+          }
+        ],
+        {
+          "s": " to find what to clean up."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "API"
+        }
+      ],
+      [
+        ":table",
+        [
+          ":thead",
+          [
+            ":tr",
+            [
+              ":th",
+              {
+                "s": "Method"
+              }
+            ],
+            [
+              ":th",
+              {
+                "s": "Returns"
+              }
+            ]
+          ]
+        ],
+        [
+          ":tbody",
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "api.getInstanceId()"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Current instance ID, or "
+              },
+              [
+                ":code",
+                {
+                  "s": "null"
+                }
+              ],
+              {
+                "s": " if top-level"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "api.getAllRaw()"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "All items including nested-prefixed ones"
+              }
+            ]
+          ]
+        ]
+      ],
+      [
+        ":h2",
+        {
+          "s": "Use Cases"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Sandboxed development"
+              }
+            ],
+            {
+              "s": " — modify kernel code without risking the parent instance"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "[Testing](item://c0c0c0c0-0036-0000-0000-000000000000)"
+              }
+            ],
+            {
+              "s": " — isolated storage + isolated DOM + free cleanup = test isolation for free"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Multiple workspaces"
+              }
+            ],
+            {
+              "s": " — independent item collections side by side"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Safe experimentation"
+              }
+            ],
+            {
+              "s": " — try destructive changes, then just delete the instance"
+            }
+          ]
+        ]
+      ],
+      [
+        ":h2",
+        {
+          "s": "Design Rationale"
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Why No Cross-Instance Communication?"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Isolation is the whole point. If instances could talk to each other, they'd need to agree on protocols, handle versioning, and manage shared state — all of which undermines the simplicity of \"just prefix the IDs.\" If you need to move items between instances, export/import is the explicit mechanism."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Why Prefix Rather Than Separate Databases?"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "IndexedDB allows multiple databases, but a single database with prefixed keys is simpler to manage, back up, and inspect. It also makes cascade delete trivial — just filter by prefix."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "See Also"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":item-ref",
+              {
+                "s": "c0c0c0c0-0002-0000-0000-000000000000"
+              },
+              {
+                "s": "Bootstrap"
+              }
+            ],
+            {
+              "s": " — Where the "
+            },
+            [
+              ":code",
+              {
+                "s": "?instance"
+              }
+            ],
+            {
+              "s": " parameter is parsed and storage prefixing is implemented"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":item-ref",
+              {
+                "s": "c0c0c0c0-0031-0000-0000-000000000000"
+              },
+              {
+                "s": "URL Parameters"
+              }
+            ],
+            {
+              "s": " — Documents the "
+            },
+            [
+              ":code",
+              {
+                "s": "?instance"
+              }
+            ],
+            {
+              "s": " parameter alongside "
+            },
+            [
+              ":code",
+              {
+                "s": "?safe"
+              }
+            ],
+            {
+              "s": " and others"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":item-ref",
+              {
+                "s": "c0c0c0c0-0036-0000-0000-000000000000"
+              },
+              {
+                "s": "Testing"
+              }
+            ],
+            {
+              "s": " — Uses nested instances for test isolation"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":item-ref",
+              {
+                "s": "33333333-2222-0000-0000-000000000000"
+              },
+              {
+                "s": "kernel:storage"
+              }
+            ],
+            {
+              "s": " — The kernel module that delegates to the bootloader's storage backend"
+            }
+          ]
+        ]
+      ]
+    ],
     "tags": [
       "bff75873-edb8-412e-81c9-c744e68fe29f",
       "a63eadd8-ec56-4163-acf2-207aa392069b"
