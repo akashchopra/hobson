@@ -312,8 +312,8 @@ function parseInline(text) {
   if (!text) return [{ s: '' }];
 
   const nodes = [];
-  // Regex for inline patterns: {{field}}, [text](url), **bold**, *italic*, `code`
-  const re = /(\{\{([^}]+)\}\}|\[([^\]]*)\]\(([^)]+)\)|\*\*(.+?)\*\*|\*(.+?)\*|`([^`]+)`)/g;
+  // Regex for inline patterns: {{field}}, ![alt](url), [text](url), **bold**, *italic*, `code`
+  const re = /(\{\{([^}]+)\}\}|!\[([^\]]*)\]\(([^)]+)\)|\[([^\]]*)\]\(([^)]+)\)|\*\*(.+?)\*\*|\*(.+?)\*|`([^`]+)`)/g;
 
   let last = 0;
   let match;
@@ -324,12 +324,42 @@ function parseInline(text) {
     }
 
     if (match[2] !== undefined) {
-      // {{field-ref}}
-      nodes.push([':field-ref', { s: match[2].trim() }]);
+      // {{field-ref}} → expression form
+      nodes.push(['get-field', ':self', ':' + match[2].trim()]);
     } else if (match[3] !== undefined) {
-      // [text](url)
-      const linkText = match[3];
+      // ![alt](url) — transclusion or image
+      const alt = match[3];
       const href = match[4];
+      if (href.startsWith('item://')) {
+        const fullId = href.replace('item://', '');
+        // Parse query params: ?call=fn&param=val or ?symbol=name or ?field=name
+        const qIdx = fullId.indexOf('?');
+        const itemId = qIdx >= 0 ? fullId.substring(0, qIdx) : fullId;
+        const params = {};
+        if (qIdx >= 0) {
+          for (const part of fullId.substring(qIdx + 1).split('&')) {
+            const [k, ...rest] = part.split('=');
+            params[k] = rest.join('=');
+          }
+        }
+        if (params.call) {
+          // ?call= transclusions → comment placeholder for manual conversion
+          const paramStr = Object.entries(params).filter(([k]) => k !== 'call').map(([k, v]) => k + '=' + v).join(', ');
+          nodes.push([':code', { s: 'TODO: (transclusion-chrome (call-export @' + itemId + ' "' + params.call + '" api' + (paramStr ? ' {' + paramStr + '}' : '') + ') :source @' + itemId + ' :symbol "' + params.call + '")' }]);
+        } else if (params.symbol) {
+          nodes.push(['transclude', '@' + itemId, ':' + (params.field || 'code'), ':symbol', { s: params.symbol }]);
+        } else {
+          const field = params.field || 'description';
+          nodes.push(['transclude', '@' + itemId, ':' + field]);
+        }
+      } else {
+        // External image — keep as link for now
+        nodes.push([':link', { s: href }, { s: alt || href }]);
+      }
+    } else if (match[5] !== undefined) {
+      // [text](url)
+      const linkText = match[5];
+      const href = match[6];
       if (href.startsWith('item://')) {
         const itemId = href.replace('item://', '');
         if (linkText) {
@@ -344,15 +374,15 @@ function parseInline(text) {
           nodes.push([':link', { s: href }]);
         }
       }
-    } else if (match[5] !== undefined) {
-      // **bold**
-      nodes.push([':strong', { s: match[5] }]);
-    } else if (match[6] !== undefined) {
-      // *italic*
-      nodes.push([':em', { s: match[6] }]);
     } else if (match[7] !== undefined) {
+      // **bold**
+      nodes.push([':strong', { s: match[7] }]);
+    } else if (match[8] !== undefined) {
+      // *italic*
+      nodes.push([':em', { s: match[8] }]);
+    } else if (match[9] !== undefined) {
       // `code`
-      nodes.push([':code', { s: match[7] }]);
+      nodes.push([':code', { s: match[9] }]);
     }
 
     last = match.index + match[0].length;
