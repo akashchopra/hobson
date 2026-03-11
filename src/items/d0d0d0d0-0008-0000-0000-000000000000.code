@@ -95,6 +95,14 @@ function parseBlocks(lines) {
       continue;
     }
 
+    // Table (header row followed by separator row)
+    if (/^\|.*\|/.test(line) && i + 1 < lines.length && /^\|[\s:|-]+\|$/.test(lines[i + 1].trim())) {
+      const result = parseTable(lines, i);
+      blocks.push(result.block);
+      i = result.next;
+      continue;
+    }
+
     // Unordered list
     if (/^\s*[-*+]\s/.test(line)) {
       const result = parseList(lines, i, 'ul');
@@ -248,12 +256,54 @@ function parseParagraph(lines, start) {
     if (/^-{3,}\s*$|^\*{3,}\s*$|^_{3,}\s*$/.test(line.trim())) break;
     if (/^\s*[-*+]\s/.test(line)) break;
     if (/^\s*\d+\.\s/.test(line)) break;
+    // Table: pipe-delimited line followed by separator
+    if (/^\|.*\|/.test(line) && i + 1 < lines.length && /^\|[\s:|-]+\|$/.test(lines[i + 1].trim())) break;
     paraLines.push(line);
     i++;
   }
   const text = paraLines.join(' ');
   const inline = parseInline(text);
   return { block: [':p', ...inline], next: i };
+}
+
+function parseTable(lines, start) {
+  // Header row
+  const headerCells = parseTableRow(lines[start]);
+  // Separator row — extract alignment
+  const sepCells = lines[start + 1].trim().replace(/^\||\|$/g, '').split('|');
+  const aligns = sepCells.map(c => {
+    c = c.trim();
+    if (c.startsWith(':') && c.endsWith(':')) return 'center';
+    if (c.endsWith(':')) return 'right';
+    return 'left';
+  });
+
+  const thead = [':thead', [':tr', ...headerCells.map(cell =>
+    [':th', ...parseInline(cell)]
+  )]];
+
+  // Data rows
+  let i = start + 2;
+  const bodyRows = [];
+  while (i < lines.length && /^\|.*\|/.test(lines[i])) {
+    const cells = parseTableRow(lines[i]);
+    bodyRows.push([':tr', ...cells.map(cell =>
+      [':td', ...parseInline(cell)]
+    )]);
+    i++;
+  }
+
+  const table = [':table', thead, [':tbody', ...bodyRows]];
+  // Only include alignment if any column is non-left
+  if (aligns.some(a => a !== 'left')) {
+    table.push([':align', ...aligns.map(a => ({ s: a }))]);
+  }
+  return { block: table, next: i };
+}
+
+function parseTableRow(line) {
+  // Split by | but ignore leading/trailing pipes
+  return line.trim().replace(/^\||\|$/g, '').split('|').map(c => c.trim());
 }
 
 // --- Inline parsing ---

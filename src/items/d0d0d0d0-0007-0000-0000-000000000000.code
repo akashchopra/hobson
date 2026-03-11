@@ -151,6 +151,7 @@ export async function render(value, options, api) {
     if (tag === ':ul' || tag === ':ol') return renderList(block, path);
     if (tag === ':blockquote') return renderBlockquote(block, path);
     if (tag === ':code-block') return renderCodeBlock(block, path);
+    if (tag === ':table') return renderTable(block, path);
     if (tag === ':hr') return renderHr(block, path);
     // Non-keyword array — Hob expression to evaluate
     if (Array.isArray(block) && !tag) return renderEvalBlock(block, path);
@@ -380,6 +381,38 @@ export async function render(value, options, api) {
     for (const child of block.slice(1)) code.appendChild(document.createTextNode(textOf(child)));
     pre.appendChild(code);
     return pre;
+  }
+
+  function renderTable(block, path) {
+    const table = document.createElement('table');
+    table.dataset.blockPath = pathStr(path);
+    table.style.cssText = 'border-collapse: collapse; width: 100%; margin: 0.5em 0; font-size: 0.875rem;';
+    // Extract alignment metadata if present
+    const alignNode = block.slice(1).find(c => Array.isArray(c) && c[0] === ':align');
+    const aligns = alignNode ? alignNode.slice(1).map(a => textOf(a)) : [];
+
+    for (const section of block.slice(1)) {
+      if (!Array.isArray(section) || section[0] === ':align') continue;
+      const sectionTag = section[0]; // :thead or :tbody
+      const sectionEl = document.createElement(sectionTag === ':thead' ? 'thead' : 'tbody');
+      for (const row of section.slice(1)) {
+        if (!Array.isArray(row) || row[0] !== ':tr') continue;
+        const tr = document.createElement('tr');
+        row.slice(1).forEach((cell, ci) => {
+          if (!Array.isArray(cell)) return;
+          const cellTag = cell[0] === ':th' ? 'th' : 'td';
+          const cellEl = document.createElement(cellTag);
+          cellEl.style.cssText = 'border: 1px solid var(--color-border); padding: 6px 10px; text-align: left;';
+          if (cellTag === 'th') cellEl.style.fontWeight = '600';
+          if (aligns[ci]) cellEl.style.textAlign = aligns[ci];
+          renderInlineContent(cell.slice(1), cellEl);
+          tr.appendChild(cellEl);
+        });
+        sectionEl.appendChild(tr);
+      }
+      table.appendChild(sectionEl);
+    }
+    return table;
   }
 
   function renderHr(block, path) {
