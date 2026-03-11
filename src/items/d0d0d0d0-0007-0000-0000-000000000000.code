@@ -204,20 +204,36 @@ export async function render(value, options, api) {
             span.style.cssText = 'display: inline-block; background: var(--color-bg-surface-alt); padding: 1px 6px; border-radius: 3px; border: 1px dashed var(--color-border); font-size: 0.8125em; font-family: monospace; cursor: default; user-select: none;';
             parent.appendChild(span);
           } else if (tag === 'transclude') {
-            // (transclude @item-id :field) → transclusion chip
+            // Parse transclude expression args
             const itemId = typeof child[1] === 'string' && child[1].startsWith('@') ? child[1].substring(1) : String(child[1]);
-            const fieldName = typeof child[2] === 'string' && child[2].startsWith(':') ? child[2].substring(1) : (child[2] ? String(child[2]) : 'description');
+            let fieldName = 'description', symbolName = null;
+            for (let ci = 2; ci < child.length; ci++) {
+              const arg = child[ci];
+              if (typeof arg === 'string' && arg.startsWith(':')) {
+                const kw = arg.substring(1);
+                if (kw === 'symbol' && ci + 1 < child.length) { symbolName = textOf(child[++ci]); }
+                else if (kw !== 'chrome') { fieldName = kw; }
+                else { ci++; } // skip value of :chrome
+              }
+            }
             const span = document.createElement('span');
             span.contentEditable = 'false';
             span.className = 'doc-transclusion';
             span.dataset.itemId = itemId;
-            span.dataset.field = fieldName;
-            span.textContent = itemId.substring(0, 8) + (fieldName !== 'description' ? '.' + fieldName : '');
+            if (symbolName) {
+              span.dataset.symbol = symbolName;
+              span.dataset.field = fieldName;
+              span.textContent = itemId.substring(0, 8) + '.' + symbolName;
+            } else {
+              span.dataset.field = fieldName;
+              span.textContent = itemId.substring(0, 8) + (fieldName !== 'description' ? '.' + fieldName : '');
+            }
             span.style.cssText = 'display: inline-block; background: var(--color-warning-light, #fef3c7); padding: 1px 6px; border-radius: 3px; border: 1px solid var(--color-warning, #f59e0b); font-size: 0.8125em; cursor: default; user-select: none;';
             api.get(itemId).then(refItem => {
               if (refItem?.name) {
                 span.dataset.display = refItem.name;
-                span.textContent = refItem.name + (fieldName !== 'description' ? '.' + fieldName : '');
+                if (symbolName) span.textContent = refItem.name + '.' + symbolName;
+                else span.textContent = refItem.name + (fieldName !== 'description' ? '.' + fieldName : '');
               }
             }).catch(() => {});
             parent.appendChild(span);
@@ -453,7 +469,12 @@ export async function render(value, options, api) {
           if (node.dataset.display) parts[0].push({ s: node.dataset.display });
           result.push(parts[0]);
         } else if (node.classList.contains('doc-transclusion')) {
-          result.push(['transclude', '@' + node.dataset.itemId, ':' + (node.dataset.field || 'description')]);
+          if (node.dataset.symbol) {
+            const expr = ['transclude', '@' + node.dataset.itemId, ':' + (node.dataset.field || 'code'), ':symbol', { s: node.dataset.symbol }];
+            result.push(expr);
+          } else {
+            result.push(['transclude', '@' + node.dataset.itemId, ':' + (node.dataset.field || 'description')]);
+          }
         } else if (tag === 'br') {
           // Browser inserts <br> in empty blocks — skip
         } else {
@@ -548,12 +569,12 @@ export async function render(value, options, api) {
         .filter(k => !ac.query || k.toLowerCase().includes(ac.query.toLowerCase()))
         .map(k => ({ id: k, label: k, sub: 'computed field' }));
     } else if (ac.type === 'transclusion' && ac.step === 'field') {
-      // Field picker for transclusion target
+      // Field picker for transclusion target — includes fields, symbols, and exports
       try {
         const targetItem = await api.get(ac.targetItem.id);
         const content = targetItem?.content || {};
         for (const [k, v] of Object.entries(content)) {
-          if (k === 'computed' || k === 'tags' || k === 'parent') continue;
+          if (k === 'computed' || k === 'tags' || k === 'parent' || k === '_symbols') continue;
           results.push({ id: k, label: k, sub: typeof v === 'string' ? 'text' : typeof v });
         }
         if (content.computed) {
@@ -561,8 +582,23 @@ export async function render(value, options, api) {
             results.push({ id: k, label: k, sub: 'computed' });
           }
         }
-        // Put description first
-        results.sort((a, b) => a.id === 'description' ? -1 : b.id === 'description' ? 1 : 0);
+        // Collect symbols separately for grouped display
+        const symbolResults = [];
+        if (content._symbols) {
+          for (const [key, info] of Object.entries(content._symbols)) {
+            if (!ac.query || info.name.toLowerCase().includes(ac.query.toLowerCase())) {
+              symbolResults.push({ id: info.name, label: info.name, sub: 'symbol' + (info.kind ? ' \u00b7 ' + info.kind : ''), _type: 'symbol' });
+            }
+          }
+          symbolResults.sort((a, b) => a.label.localeCompare(b.label));
+        }
+        // Sort fields: description first, then alphabetical
+        results.sort((a, b) => a.id === 'description' ? -1 : b.id === 'description' ? 1 : a.label.localeCompare(b.label));
+        // Append symbols with separator
+        if (symbolResults.length) {
+          results.push({ _separator: true, label: 'Symbols' });
+          results.push(...symbolResults);
+        }
       } catch { results = []; }
     } else {
       // Item search (for 'item' and 'transclusion' step='item')
@@ -603,6 +639,13 @@ export async function render(value, options, api) {
       return;
     }
     ac.results.forEach((r, i) => {
+      if (r._separator) {
+        const sep = document.createElement('div');
+        sep.style.cssText = 'padding: 4px 12px; font-size: 0.6875rem; color: var(--color-text-secondary, #6b7280); border-top: 1px solid var(--color-border, #e5e7eb); margin-top: 2px; font-weight: 600;';
+        sep.textContent = r.label;
+        acPopup.appendChild(sep);
+        return;
+      }
       const row = document.createElement('div');
       row.style.cssText = 'padding: 5px 12px; cursor: pointer;' + (i === ac.active ? ' background: var(--color-bg-surface-alt, #f3f4f6);' : '');
       row.dataset.idx = String(i);
@@ -623,7 +666,11 @@ export async function render(value, options, api) {
 
   function acNavigate(dir) {
     if (!ac || ac.results.length === 0) return;
-    ac.active = (ac.active + dir + ac.results.length) % ac.results.length;
+    let next = ac.active;
+    do {
+      next = (next + dir + ac.results.length) % ac.results.length;
+    } while (ac.results[next]._separator && next !== ac.active);
+    ac.active = next;
     acRender();
     const active = acPopup.querySelector(`[data-idx="${ac.active}"]`);
     if (active) active.scrollIntoView({ block: 'nearest' });
@@ -730,16 +777,20 @@ export async function render(value, options, api) {
 
   function acInsertTransclusion(fieldResult) {
     const { targetItem } = ac;
-    const fieldName = fieldResult.id;
-
-    // Create a :transclusion node — expression embedded in AST, no computed field needed
     const node = document.createElement('span');
     node.contentEditable = 'false';
     node.className = 'doc-transclusion';
     node.dataset.itemId = targetItem.id;
-    node.dataset.field = fieldName;
     node.dataset.display = targetItem.label;
-    node.textContent = targetItem.label + (fieldName !== 'description' ? '.' + fieldName : '');
+
+    if (fieldResult._type === 'symbol') {
+      node.dataset.field = 'code';
+      node.dataset.symbol = fieldResult.id;
+      node.textContent = targetItem.label + '.' + fieldResult.id;
+    } else {
+      node.dataset.field = fieldResult.id;
+      node.textContent = targetItem.label + (fieldResult.id !== 'description' ? '.' + fieldResult.id : '');
+    }
     node.style.cssText = 'display: inline-block; background: var(--color-warning-light, #fef3c7); padding: 1px 6px; border-radius: 3px; border: 1px solid var(--color-warning, #f59e0b); font-size: 0.8125em; cursor: default; user-select: none;';
 
     acInsertNode(node);

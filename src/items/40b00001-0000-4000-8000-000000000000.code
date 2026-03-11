@@ -3376,20 +3376,24 @@ export function createInterpreter(api, viewApi, eventApi) {
     }, { _hobName: 'resolve-field-refs' }));
 
     // transclude: get-field with source attribution metadata
-    // (transclude @item-id :field)                  — default chrome (:full)
-    // (transclude @item-id :field :chrome :subtle)  — small attribution link
-    // (transclude @item-id :field :chrome :none)    — no chrome
+    // (transclude @item-id :field)                 — default chrome (:full)
+    // (transclude @item-id :field :chrome :subtle) — small attribution link
+    // (transclude @item-id :field :chrome :none)   — no chrome
+    // (transclude @item-id :code :symbol "name")   — extract symbol from field
     stdlib.define('transclude', Object.assign(async (...args) => {
-      // Parse args: item, field, then optional :chrome keyword arg
+      // Parse args: item, field, then optional keyword args
       let itemOrRef = args[0];
-      let fieldKey = args.length > 1 ? args[1] : ':description';
+      let fieldKey = args.length > 1 ? args[1] : null;
+      if (!fieldKey) fieldKey = ':description';
       let chrome = 'full';
-      for (let i = 2; i < args.length - 1; i++) {
-        if (isKeyword(args[i]) && keywordName(args[i]) === 'chrome') {
-          const val = args[i + 1];
-          chrome = isKeyword(val) ? keywordName(val) : String(val);
-          i++;
-        }
+      let symbolName = null;
+      // Parse keyword args from position 2+
+      for (let i = 2; i < args.length; i++) {
+        if (!isKeyword(args[i])) continue;
+        const kw = keywordName(args[i]);
+        const val = args[i + 1];
+        if (kw === 'chrome') { chrome = isKeyword(val) ? keywordName(val) : String(val); i++; }
+        else if (kw === 'symbol') { symbolName = typeof val === 'object' && 's' in val ? val.s : String(val); i++; }
       }
       // Resolve source item ID for attribution
       let sourceId;
@@ -3403,9 +3407,55 @@ export function createInterpreter(api, viewApi, eventApi) {
         sourceId = itemOrRef.id;
       }
       const sourceField = isKeyword(fieldKey) ? keywordName(fieldKey) : String(fieldKey);
-      const value = await getFieldFn(itemOrRef, fieldKey);
+      let value = await getFieldFn(itemOrRef, fieldKey);
+      if (symbolName) {
+        // :symbol mode — extract symbol from the field value
+        const code = typeof value === 'object' && 's' in value ? value.s : typeof value === 'string' ? value : String(value || '');
+        const item = await api.get(sourceId);
+        const symbols = item?.content?._symbols || {};
+        let info = symbols[symbolName];
+        if (!info) {
+          for (const [, si] of Object.entries(symbols)) {
+            if (si.name === symbolName) { info = si; break; }
+          }
+        }
+        if (!info) throw new Error('Symbol not found: ' + symbolName);
+        const lines = code.split('\n');
+        value = lines.slice(info.line - 1, info.endLine).join('\n');
+      }
       return { _hobType: 'transclusion', value, sourceId, sourceField, chrome };
     }, { _hobName: 'transclude' }));
+
+    // transclusion-chrome: wrap any value in transclusion attribution chrome
+    // (transclusion-chrome value :source @item :symbol "name")       — link to symbol
+    // (transclusion-chrome value :source @item :label "display")     — custom label
+    // (transclusion-chrome value :source @item :symbol "n" :chrome :subtle)
+    stdlib.define('transclusion-chrome', Object.assign(async (value, ...kwargs) => {
+      let sourceId = null, symbol = null, label = null, chrome = 'full';
+      for (let i = 0; i < kwargs.length; i++) {
+        if (!isKeyword(kwargs[i])) continue;
+        const kw = keywordName(kwargs[i]);
+        const val = kwargs[i + 1];
+        if (kw === 'source') {
+          if (val && val._hobType === 'item-ref') sourceId = val.value;
+          else if (typeof val === 'string') sourceId = val;
+          else if (val && typeof val === 'object' && val.id) sourceId = val.id;
+          else if (isKeyword(val) && keywordName(val) === 'self') sourceId = _computedFieldSelf || api._renderItemId;
+          i++;
+        } else if (kw === 'symbol') {
+          symbol = typeof val === 'object' && 's' in val ? val.s : String(val);
+          i++;
+        } else if (kw === 'label') {
+          label = typeof val === 'object' && 's' in val ? val.s : String(val);
+          i++;
+        } else if (kw === 'chrome') {
+          chrome = isKeyword(val) ? keywordName(val) : String(val);
+          i++;
+        }
+      }
+      const sourceField = label || (symbol ? symbol + '()' : null) || '';
+      return { _hobType: 'transclusion', value, sourceId, sourceField, sourceSymbol: symbol, chrome };
+    }, { _hobName: 'transclusion-chrome' }));
 
     // extract-symbol: extract a symbol's source code from an item
     // (extract-symbol @item-id "symbolName") → string of source code
@@ -3435,9 +3485,9 @@ export function createInterpreter(api, viewApi, eventApi) {
     }, { _hobName: 'extract-symbol' }));
 
     // call-export: require an item as a module and call an exported function
-    // (call-export @item-id "fnName") → result of calling the export
-    // (call-export @item-id "fnName" params-map) → with query params
-    stdlib.define('call-export', Object.assign(async (itemOrRef, fnName, params) => {
+    // (call-export @item-id "fnName" arg1 arg2 ...) → result of calling the export
+    // Passes remaining args through to the function after Hob→JS conversion
+    stdlib.define('call-export', Object.assign(async (itemOrRef, fnName, ...args) => {
       let itemId;
       if (itemOrRef && itemOrRef._hobType === 'item-ref') {
         itemId = itemOrRef.value;
@@ -3451,22 +3501,24 @@ export function createInterpreter(api, viewApi, eventApi) {
       const module = await api.require(itemId);
       const fn = module[name];
       if (typeof fn !== 'function') throw new Error('call-export: export not found: ' + name);
-      // Convert params map to plain object if provided
-      let queryParams = {};
-      if (params && typeof params === 'object') {
-        if (params.m && Array.isArray(params.m)) {
-          // Hob map {m: [k1, v1, k2, v2, ...]}
-          for (let i = 0; i < params.m.length; i += 2) {
-            const k = isKeyword(params.m[i]) ? keywordName(params.m[i]) : String(params.m[i]);
-            queryParams[k] = params.m[i + 1];
+      // Convert Hob values to JS at the interop boundary
+      // Unwraps item-refs, keyword keys in maps; passes JS objects (like api) through
+      const toJs = v => {
+        if (v == null || typeof v !== 'object') return v;
+        if (v._hobType === 'item-ref') return v.value;
+        if (v.nodeType) return v;
+        if (Array.isArray(v)) return v.map(toJs);
+        const keys = Object.keys(v);
+        if (keys.some(k => isKeyword(k))) {
+          const result = {};
+          for (const [k, val] of Object.entries(v)) {
+            result[isKeyword(k) ? keywordName(k) : k] = toJs(val);
           }
-        } else {
-          for (const [k, v] of Object.entries(params)) {
-            queryParams[isKeyword(k) ? keywordName(k) : k] = v;
-          }
+          return result;
         }
-      }
-      return await fn(api, queryParams);
+        return v;
+      };
+      return await fn(...args.map(toJs));
     }, { _hobName: 'call-export' }));
   }
 
