@@ -765,116 +765,232 @@ export async function render(value, options, api) {
     }
   }
 
-  // --- Link editing popover ---
+  // --- Inline node editing popover ---
 
-  const linkPopoverEl = document.createElement('div');
-  linkPopoverEl.style.cssText = 'position: fixed; z-index: 9999; background: var(--color-bg-surface, #fff); border: 1px solid var(--color-border, #e5e7eb); border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); padding: 8px; display: none; font-size: 0.8125rem;';
-  document.body.appendChild(linkPopoverEl);
-  let linkPopover = null; // { span, blockEl, path }
+  const popoverEl = document.createElement('div');
+  popoverEl.style.cssText = 'position: fixed; z-index: 9999; background: var(--color-bg-surface, #fff); border: 1px solid var(--color-border, #e5e7eb); border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); padding: 8px; display: none; font-size: 0.8125rem;';
+  document.body.appendChild(popoverEl);
+  let popover = null; // { span, blockEl, path }
 
-  function showLinkPopover(span) {
-    if (linkPopover) hideLinkPopover();
-    const blockEl = span.closest('[data-block-path]');
-    if (!blockEl) return;
-    const path = parsePath(blockEl.dataset.blockPath);
+  const labelStyle = 'font-size: 0.6875rem; color: var(--color-text-secondary, #6b7280); margin-bottom: 2px;';
+  const inputStyle = 'width: 220px; padding: 4px 6px; border: 1px solid var(--color-border, #e5e7eb); border-radius: 4px; font-size: 0.8125rem; outline: none; margin-bottom: 6px; display: block; background: var(--color-bg-surface, #fff); color: var(--color-text, #111);';
 
-    const href = span.dataset.href || '';
-    const display = span.dataset.display || span.textContent || '';
+  function addField(label, value) {
+    const lbl = document.createElement('div');
+    lbl.textContent = label;
+    lbl.style.cssText = labelStyle;
+    popoverEl.appendChild(lbl);
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.value = value;
+    input.style.cssText = inputStyle;
+    popoverEl.appendChild(input);
+    return input;
+  }
 
-    linkPopoverEl.innerHTML = '';
-
-    const displayLabel = document.createElement('div');
-    displayLabel.textContent = 'Text';
-    displayLabel.style.cssText = 'font-size: 0.6875rem; color: var(--color-text-secondary, #6b7280); margin-bottom: 2px;';
-    linkPopoverEl.appendChild(displayLabel);
-
-    const displayInput = document.createElement('input');
-    displayInput.type = 'text';
-    displayInput.value = display;
-    displayInput.style.cssText = 'width: 220px; padding: 4px 6px; border: 1px solid var(--color-border, #e5e7eb); border-radius: 4px; font-size: 0.8125rem; outline: none; margin-bottom: 6px; display: block; background: var(--color-bg-surface, #fff); color: var(--color-text, #111);';
-    linkPopoverEl.appendChild(displayInput);
-
-    const urlLabel = document.createElement('div');
-    urlLabel.textContent = 'URL';
-    urlLabel.style.cssText = 'font-size: 0.6875rem; color: var(--color-text-secondary, #6b7280); margin-bottom: 2px;';
-    linkPopoverEl.appendChild(urlLabel);
-
-    const urlInput = document.createElement('input');
-    urlInput.type = 'text';
-    urlInput.value = href;
-    urlInput.style.cssText = 'width: 220px; padding: 4px 6px; border: 1px solid var(--color-border, #e5e7eb); border-radius: 4px; font-size: 0.8125rem; outline: none; margin-bottom: 6px; display: block; background: var(--color-bg-surface, #fff); color: var(--color-text, #111);';
-    linkPopoverEl.appendChild(urlInput);
-
+  function addActions(removeTxt, onRemove, onDone) {
     const actions = document.createElement('div');
     actions.style.cssText = 'display: flex; justify-content: space-between; align-items: center;';
-
     const removeBtn = document.createElement('button');
-    removeBtn.textContent = 'Remove link';
+    removeBtn.textContent = removeTxt;
     removeBtn.style.cssText = 'background: none; border: none; color: var(--color-danger, #ef4444); cursor: pointer; font-size: 0.75rem; padding: 2px 0;';
-    removeBtn.addEventListener('click', () => {
-      const textNode = document.createTextNode(span.dataset.display || span.dataset.href || '');
-      span.parentNode.replaceChild(textNode, span);
-      hideLinkPopover();
-      handleInput(blockEl, path);
-    });
+    removeBtn.addEventListener('click', onRemove);
     actions.appendChild(removeBtn);
-
     const doneBtn = document.createElement('button');
     doneBtn.textContent = 'Done';
     doneBtn.style.cssText = 'background: var(--color-primary, #3b82f6); color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 0.75rem; padding: 3px 10px;';
-    doneBtn.addEventListener('click', () => {
-      applyLinkEdit(span, blockEl, path, displayInput.value, urlInput.value);
-    });
+    doneBtn.addEventListener('click', onDone);
     actions.appendChild(doneBtn);
-    linkPopoverEl.appendChild(actions);
+    popoverEl.appendChild(actions);
+  }
 
+  function showPopover(span, buildFn) {
+    if (popover) hidePopover();
+    const blockEl = span.closest('[data-block-path]');
+    if (!blockEl) return;
+    const path = parsePath(blockEl.dataset.blockPath);
+    popoverEl.innerHTML = '';
+    popover = { span, blockEl, path };
+    buildFn(span, blockEl, path);
     const rect = span.getBoundingClientRect();
-    linkPopoverEl.style.left = rect.left + 'px';
-    linkPopoverEl.style.top = (rect.bottom + 4) + 'px';
-    linkPopoverEl.style.display = 'block';
-    linkPopover = { span, blockEl, path };
+    popoverEl.style.left = rect.left + 'px';
+    popoverEl.style.top = (rect.bottom + 4) + 'px';
+    popoverEl.style.display = 'block';
+    setTimeout(() => document.addEventListener('mousedown', popoverOutside), 0);
+  }
 
-    requestAnimationFrame(() => displayInput.focus());
+  function hidePopover() {
+    popover = null;
+    popoverEl.style.display = 'none';
+    popoverEl.innerHTML = '';
+    document.removeEventListener('mousedown', popoverOutside);
+  }
 
+  function popoverOutside(e) {
+    if (!popoverEl.contains(e.target) && !(popover && popover.span.contains(e.target))) {
+      hidePopover();
+    }
+  }
+
+  function bindKeys(inputs, onEnter, onEscape) {
     const handleKey = (e) => {
-      if (e.key === 'Enter') { e.preventDefault(); applyLinkEdit(span, blockEl, path, displayInput.value, urlInput.value); }
-      else if (e.key === 'Escape') { e.preventDefault(); hideLinkPopover(); }
+      if (e.key === 'Enter') { e.preventDefault(); onEnter(); }
+      else if (e.key === 'Escape') { e.preventDefault(); onEscape(); }
     };
-    displayInput.addEventListener('keydown', handleKey);
-    urlInput.addEventListener('keydown', handleKey);
-
-    setTimeout(() => document.addEventListener('mousedown', linkPopoverOutside), 0);
+    for (const input of inputs) input.addEventListener('keydown', handleKey);
   }
 
-  function applyLinkEdit(span, blockEl, path, display, href) {
-    if (!href) {
-      // No URL — unwrap to plain text
-      const textNode = document.createTextNode(display || '');
-      span.parentNode.replaceChild(textNode, span);
-    } else {
-      span.dataset.href = href;
-      if (display && display !== href) {
-        span.dataset.display = display;
-      } else {
-        delete span.dataset.display;
-      }
-      span.textContent = (display || href) + ' \u2197';
+  // Item search widget — input with dropdown results, calls onSelect(id, name) when picked
+  function addItemSearch(label, currentId, onSelect) {
+    const lbl = document.createElement('div');
+    lbl.textContent = label;
+    lbl.style.cssText = labelStyle;
+    popoverEl.appendChild(lbl);
+    const wrap = document.createElement('div');
+    wrap.style.cssText = 'position: relative;';
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.placeholder = 'Search items\u2026';
+    input.style.cssText = inputStyle;
+    // Show current target name
+    if (currentId) {
+      api.get(currentId).then(it => { if (it?.name && !input._picked) input.value = it.name; }).catch(() => {});
     }
-    hideLinkPopover();
-    handleInput(blockEl, path);
+    wrap.appendChild(input);
+    const dropdown = document.createElement('div');
+    dropdown.style.cssText = 'position: absolute; left: 0; right: 0; top: 100%; background: var(--color-bg-surface, #fff); border: 1px solid var(--color-border, #e5e7eb); border-radius: 4px; max-height: 150px; overflow-y: auto; display: none; z-index: 1;';
+    wrap.appendChild(dropdown);
+    popoverEl.appendChild(wrap);
+
+    let timer = null;
+    input.addEventListener('input', () => {
+      clearTimeout(timer);
+      timer = setTimeout(async () => {
+        const q = input.value.toLowerCase().trim();
+        dropdown.innerHTML = '';
+        if (!q) { dropdown.style.display = 'none'; return; }
+        try {
+          const all = await api.query({});
+          const matches = all.filter(it => it.name && it.name.toLowerCase().includes(q)).slice(0, 8);
+          if (matches.length === 0) { dropdown.style.display = 'none'; return; }
+          for (const it of matches) {
+            const row = document.createElement('div');
+            row.style.cssText = 'padding: 4px 6px; cursor: pointer; font-size: 0.8125rem;';
+            row.textContent = it.name;
+            row.addEventListener('mouseenter', () => row.style.background = 'var(--color-bg-surface-alt, #f3f4f6)');
+            row.addEventListener('mouseleave', () => row.style.background = '');
+            row.addEventListener('mousedown', (e) => {
+              e.preventDefault();
+              input.value = it.name;
+              input._picked = true;
+              input._pickedId = it.id;
+              input._pickedName = it.name;
+              dropdown.style.display = 'none';
+              onSelect(it.id, it.name);
+            });
+            dropdown.appendChild(row);
+          }
+          dropdown.style.display = 'block';
+        } catch { dropdown.style.display = 'none'; }
+      }, 150);
+    });
+    input.addEventListener('blur', () => { setTimeout(() => dropdown.style.display = 'none', 200); });
+    return input;
   }
 
-  function hideLinkPopover() {
-    linkPopover = null;
-    linkPopoverEl.style.display = 'none';
-    linkPopoverEl.innerHTML = '';
-    document.removeEventListener('mousedown', linkPopoverOutside);
+  // --- Link popover ---
+
+  function showLinkPopover(span) {
+    showPopover(span, (span, blockEl, path) => {
+      const displayInput = addField('Text', span.dataset.display || span.dataset.href || '');
+      const urlInput = addField('URL', span.dataset.href || '');
+      const apply = () => {
+        const display = displayInput.value;
+        const href = urlInput.value;
+        if (!href) {
+          span.parentNode.replaceChild(document.createTextNode(display || ''), span);
+        } else {
+          span.dataset.href = href;
+          if (display && display !== href) span.dataset.display = display;
+          else delete span.dataset.display;
+          span.textContent = (display || href) + ' \u2197';
+        }
+        hidePopover();
+        handleInput(blockEl, path);
+      };
+      addActions('Remove link', () => {
+        span.parentNode.replaceChild(document.createTextNode(span.dataset.display || span.dataset.href || ''), span);
+        hidePopover();
+        handleInput(blockEl, path);
+      }, apply);
+      bindKeys([displayInput, urlInput], apply, hidePopover);
+      requestAnimationFrame(() => displayInput.focus());
+    });
   }
 
-  function linkPopoverOutside(e) {
-    if (!linkPopoverEl.contains(e.target) && !(linkPopover && linkPopover.span.contains(e.target))) {
-      hideLinkPopover();
-    }
+  // --- Item-ref popover ---
+
+  function showItemRefPopover(span) {
+    showPopover(span, (span, blockEl, path) => {
+      const displayInput = addField('Display text', span.dataset.display || '');
+      let newRefId = null;
+      const searchInput = addItemSearch('Target', span.dataset.refId, (id, name) => {
+        newRefId = id;
+        if (!displayInput.value.trim() || displayInput.value === span.dataset.display) {
+          displayInput.value = name;
+        }
+      });
+      const apply = () => {
+        if (newRefId) span.dataset.refId = newRefId;
+        const display = displayInput.value.trim();
+        if (display) {
+          span.dataset.display = display;
+          span.textContent = display;
+        }
+        hidePopover();
+        handleInput(blockEl, path);
+      };
+      addActions('Remove', () => {
+        span.parentNode.replaceChild(document.createTextNode(span.dataset.display || ''), span);
+        hidePopover();
+        handleInput(blockEl, path);
+      }, apply);
+      bindKeys([displayInput], apply, hidePopover);
+      requestAnimationFrame(() => displayInput.focus());
+    });
+  }
+
+  // --- Transclusion popover ---
+
+  function showTransclusionPopover(span) {
+    showPopover(span, (span, blockEl, path) => {
+      let newItemId = null;
+      let newName = null;
+      const searchInput = addItemSearch('Source', span.dataset.itemId, (id, name) => {
+        newItemId = id;
+        newName = name;
+      });
+      const fieldInput = addField('Field', span.dataset.field || 'description');
+      const apply = () => {
+        if (newItemId) {
+          span.dataset.itemId = newItemId;
+          if (newName) span.dataset.display = newName;
+        }
+        const field = fieldInput.value.trim() || 'description';
+        span.dataset.field = field;
+        const displayName = span.dataset.display || span.dataset.itemId.substring(0, 8);
+        span.textContent = displayName + (field !== 'description' ? '.' + field : '');
+        hidePopover();
+        handleInput(blockEl, path);
+      };
+      addActions('Remove', () => {
+        span.parentNode.replaceChild(document.createTextNode(span.dataset.display || ''), span);
+        hidePopover();
+        handleInput(blockEl, path);
+      }, apply);
+      bindKeys([fieldInput], apply, hidePopover);
+      requestAnimationFrame(() => searchInput.focus());
+    });
   }
 
   // --- Event handlers ---
@@ -1546,9 +1662,11 @@ export async function render(value, options, api) {
   if (editable) {
     editor.addEventListener('click', (e) => {
       const linkSpan = e.target.closest('.doc-link');
-      if (linkSpan && editor.contains(linkSpan)) {
-        showLinkPopover(linkSpan);
-      }
+      if (linkSpan && editor.contains(linkSpan)) { showLinkPopover(linkSpan); return; }
+      const itemRefSpan = e.target.closest('.doc-item-ref');
+      if (itemRefSpan && editor.contains(itemRefSpan)) { showItemRefPopover(itemRefSpan); return; }
+      const transclusionSpan = e.target.closest('.doc-transclusion');
+      if (transclusionSpan && editor.contains(transclusionSpan)) { showTransclusionPopover(transclusionSpan); return; }
     });
   }
   renderAllBlocks();
