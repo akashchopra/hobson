@@ -726,6 +726,118 @@ export async function render(value, options, api) {
     }
   }
 
+  // --- Link editing popover ---
+
+  const linkPopoverEl = document.createElement('div');
+  linkPopoverEl.style.cssText = 'position: fixed; z-index: 9999; background: var(--color-bg-surface, #fff); border: 1px solid var(--color-border, #e5e7eb); border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); padding: 8px; display: none; font-size: 0.8125rem;';
+  document.body.appendChild(linkPopoverEl);
+  let linkPopover = null; // { span, blockEl, path }
+
+  function showLinkPopover(span) {
+    if (linkPopover) hideLinkPopover();
+    const blockEl = span.closest('[data-block-path]');
+    if (!blockEl) return;
+    const path = parsePath(blockEl.dataset.blockPath);
+
+    const href = span.dataset.href || '';
+    const display = span.dataset.display || span.textContent || '';
+
+    linkPopoverEl.innerHTML = '';
+
+    const displayLabel = document.createElement('div');
+    displayLabel.textContent = 'Text';
+    displayLabel.style.cssText = 'font-size: 0.6875rem; color: var(--color-text-secondary, #6b7280); margin-bottom: 2px;';
+    linkPopoverEl.appendChild(displayLabel);
+
+    const displayInput = document.createElement('input');
+    displayInput.type = 'text';
+    displayInput.value = display;
+    displayInput.style.cssText = 'width: 220px; padding: 4px 6px; border: 1px solid var(--color-border, #e5e7eb); border-radius: 4px; font-size: 0.8125rem; outline: none; margin-bottom: 6px; display: block; background: var(--color-bg-surface, #fff); color: var(--color-text, #111);';
+    linkPopoverEl.appendChild(displayInput);
+
+    const urlLabel = document.createElement('div');
+    urlLabel.textContent = 'URL';
+    urlLabel.style.cssText = 'font-size: 0.6875rem; color: var(--color-text-secondary, #6b7280); margin-bottom: 2px;';
+    linkPopoverEl.appendChild(urlLabel);
+
+    const urlInput = document.createElement('input');
+    urlInput.type = 'text';
+    urlInput.value = href;
+    urlInput.style.cssText = 'width: 220px; padding: 4px 6px; border: 1px solid var(--color-border, #e5e7eb); border-radius: 4px; font-size: 0.8125rem; outline: none; margin-bottom: 6px; display: block; background: var(--color-bg-surface, #fff); color: var(--color-text, #111);';
+    linkPopoverEl.appendChild(urlInput);
+
+    const actions = document.createElement('div');
+    actions.style.cssText = 'display: flex; justify-content: space-between; align-items: center;';
+
+    const removeBtn = document.createElement('button');
+    removeBtn.textContent = 'Remove link';
+    removeBtn.style.cssText = 'background: none; border: none; color: var(--color-danger, #ef4444); cursor: pointer; font-size: 0.75rem; padding: 2px 0;';
+    removeBtn.addEventListener('click', () => {
+      const textNode = document.createTextNode(span.textContent);
+      span.parentNode.replaceChild(textNode, span);
+      hideLinkPopover();
+      handleInput(blockEl, path);
+    });
+    actions.appendChild(removeBtn);
+
+    const doneBtn = document.createElement('button');
+    doneBtn.textContent = 'Done';
+    doneBtn.style.cssText = 'background: var(--color-primary, #3b82f6); color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 0.75rem; padding: 3px 10px;';
+    doneBtn.addEventListener('click', () => {
+      applyLinkEdit(span, blockEl, path, displayInput.value, urlInput.value);
+    });
+    actions.appendChild(doneBtn);
+    linkPopoverEl.appendChild(actions);
+
+    const rect = span.getBoundingClientRect();
+    linkPopoverEl.style.left = rect.left + 'px';
+    linkPopoverEl.style.top = (rect.bottom + 4) + 'px';
+    linkPopoverEl.style.display = 'block';
+    linkPopover = { span, blockEl, path };
+
+    requestAnimationFrame(() => displayInput.focus());
+
+    const handleKey = (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); applyLinkEdit(span, blockEl, path, displayInput.value, urlInput.value); }
+      else if (e.key === 'Escape') { e.preventDefault(); hideLinkPopover(); }
+    };
+    displayInput.addEventListener('keydown', handleKey);
+    urlInput.addEventListener('keydown', handleKey);
+
+    setTimeout(() => document.addEventListener('mousedown', linkPopoverOutside), 0);
+  }
+
+  function applyLinkEdit(span, blockEl, path, display, href) {
+    if (!href) {
+      // No URL — unwrap to plain text
+      const textNode = document.createTextNode(display || '');
+      span.parentNode.replaceChild(textNode, span);
+    } else {
+      span.dataset.href = href;
+      if (display && display !== href) {
+        span.dataset.display = display;
+      } else {
+        delete span.dataset.display;
+      }
+      span.textContent = display || href;
+    }
+    hideLinkPopover();
+    handleInput(blockEl, path);
+  }
+
+  function hideLinkPopover() {
+    linkPopover = null;
+    linkPopoverEl.style.display = 'none';
+    linkPopoverEl.innerHTML = '';
+    document.removeEventListener('mousedown', linkPopoverOutside);
+  }
+
+  function linkPopoverOutside(e) {
+    if (!linkPopoverEl.contains(e.target) && !(linkPopover && linkPopover.span.contains(e.target))) {
+      hideLinkPopover();
+    }
+  }
+
   // --- Event handlers ---
 
   // --- Markdown shortcuts ---
@@ -1392,6 +1504,14 @@ export async function render(value, options, api) {
   }
 
   // --- Initialize ---
+  if (editable) {
+    editor.addEventListener('click', (e) => {
+      const linkSpan = e.target.closest('.doc-link');
+      if (linkSpan && editor.contains(linkSpan)) {
+        showLinkPopover(linkSpan);
+      }
+    });
+  }
   renderAllBlocks();
   wrapper.appendChild(editor);
   return wrapper;
