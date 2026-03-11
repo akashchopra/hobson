@@ -69,6 +69,78 @@ function tagOf(node) {
   return null;
 }
 
+// Render a transclusion wrapper value with attribution chrome
+async function renderTransclusion(wrapper, parent, api, item, inline) {
+  const { value, sourceId, sourceField, chrome } = wrapper;
+  // Detect whether value is block-level (array with :keyword tag) or scalar/inline
+  const isBlock = Array.isArray(value) && typeof value[0] === 'string' && value[0].startsWith(':');
+
+  if (chrome === 'none' || value == null) {
+    // No chrome — render value directly
+    if (value != null) {
+      if (isBlock) await renderNode(value, parent, api, item);
+      else if (inline) await renderInlineNode(value, parent, api, item);
+      else await renderNode(value, parent, api, item);
+    }
+    return;
+  }
+
+  if ((chrome === 'subtle' || inline) && !isBlock) {
+    // Inline/subtle: render value + small attribution link (only for scalar/inline values)
+    const span = api.createElement('span');
+    span.setAttribute('data-provenance-node', 'transclusion');
+    span.setAttribute('data-provenance-ref-id', sourceId || '');
+    span.setAttribute('data-provenance-field', sourceField || '');
+    await renderInlineNode(value, span, api, item);
+    if (sourceId) {
+      const link = api.createElement('a');
+      link.href = '#';
+      link.style.cssText = 'font-size: 0.6875em; color: var(--color-text-secondary); margin-left: 2px; text-decoration: none; vertical-align: super;';
+      let name;
+      try { name = (await api.get(sourceId))?.name; } catch {}
+      link.title = (name || sourceId.substring(0, 8)) + (sourceField !== 'description' ? '.' + sourceField : '');
+      link.textContent = '\u2197';
+      link.onclick = (e) => { e.preventDefault(); api.openItem(e, sourceId); };
+      span.appendChild(link);
+    }
+    parent.appendChild(span);
+    return;
+  }
+
+  // Full chrome: collapsible container with header
+  const details = api.createElement('details');
+  details.setAttribute('open', '');
+  details.setAttribute('data-provenance-node', 'transclusion');
+  details.setAttribute('data-provenance-ref-id', sourceId || '');
+  details.setAttribute('data-provenance-field', sourceField || '');
+  details.style.cssText = 'background: var(--color-bg-surface-alt); border: 1px solid var(--color-border-light, var(--color-border)); border-radius: var(--border-radius, 4px); padding: 12px; margin: 0.5em 0;';
+
+  const summary = api.createElement('summary');
+  summary.style.cssText = 'font-size: 0.75rem; color: var(--color-text-secondary); padding-bottom: 8px; cursor: pointer;';
+  let sourceName;
+  if (sourceId) {
+    try { sourceName = (await api.get(sourceId))?.name; } catch {}
+  }
+  summary.textContent = 'Transcluded from: ';
+  if (sourceId) {
+    const pill = api.createElement('a');
+    pill.href = '#';
+    pill.textContent = sourceName || sourceId.substring(0, 8);
+    if (sourceField && sourceField !== 'description') pill.textContent += '.' + sourceField;
+    pill.style.cssText = 'display: inline-block; color: var(--color-text-secondary); border: 1px solid var(--color-border); border-radius: 999px; padding: 0 3px; text-decoration: none; cursor: pointer; font-size: inherit;';
+    pill.onclick = (e) => { e.preventDefault(); e.stopPropagation(); api.openItem(e, sourceId); };
+    summary.appendChild(pill);
+  } else {
+    summary.textContent += '?';
+  }
+  details.appendChild(summary);
+
+  const content = api.createElement('div');
+  await renderNode(value, content, api, item);
+  details.appendChild(content);
+  parent.appendChild(details);
+}
+
 // Render a single AST node into a parent DOM element
 async function renderNode(node, parent, api, item) {
   // String literal {s: "..."} — text node
@@ -87,7 +159,8 @@ async function renderNode(node, parent, api, item) {
       try {
         const result = await api.evaluateHob(node, { item });
         if (result != null) {
-          await renderNode(result, parent, api, item);
+          if (result._hobType === 'transclusion') await renderTransclusion(result, parent, api, item, false);
+          else await renderNode(result, parent, api, item);
         }
       } catch (e) {
         const errEl = api.createElement('div');
@@ -196,7 +269,29 @@ async function renderInlineNode(node, parent, api, item) {
   if (!Array.isArray(node)) return;
 
   const tag = tagOf(node);
-  if (!tag) return;
+
+  // Non-keyword array — evaluate as Hob expression and render inline
+  if (!tag) {
+    if (api.evaluateHob) {
+      try {
+        const result = await api.evaluateHob(node, { item });
+        if (result != null) {
+          if (result._hobType === 'transclusion') await renderTransclusion(result, parent, api, item, true);
+          else await renderInlineNode(result, parent, api, item);
+        }
+      } catch (e) {
+        const errEl = api.createElement('span');
+        errEl.style.cssText = 'color: var(--color-danger); font-size: 0.8125rem;';
+        errEl.textContent = 'ERR';
+        errEl.title = e.message || String(e);
+        errEl.setAttribute('data-provenance-node', 'inline-expression');
+        errEl.setAttribute('data-provenance-expression', JSON.stringify(node));
+        errEl.setAttribute('data-provenance-error', e.message || String(e));
+        parent.appendChild(errEl);
+      }
+    }
+    return;
+  }
 
   const children = node.slice(1);
 

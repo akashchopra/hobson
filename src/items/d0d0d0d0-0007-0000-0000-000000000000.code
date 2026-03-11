@@ -191,6 +191,39 @@ export async function render(value, options, api) {
         if (child.s) parent.appendChild(document.createTextNode(child.s));
       } else if (Array.isArray(child)) {
         const tag = child[0];
+        // Expression nodes (non-keyword) — render as editable chips
+        if (typeof tag === 'string' && !tag.startsWith(':')) {
+          if (tag === 'get-field' && child[1] === ':self') {
+            // (get-field :self :field) → field-ref chip
+            const fieldName = typeof child[2] === 'string' && child[2].startsWith(':') ? child[2].substring(1) : String(child[2]);
+            const span = document.createElement('span');
+            span.contentEditable = 'false';
+            span.className = 'doc-field-ref';
+            span.dataset.field = fieldName;
+            span.textContent = '{{' + fieldName + '}}';
+            span.style.cssText = 'display: inline-block; background: var(--color-bg-surface-alt); padding: 1px 6px; border-radius: 3px; border: 1px dashed var(--color-border); font-size: 0.8125em; font-family: monospace; cursor: default; user-select: none;';
+            parent.appendChild(span);
+          } else if (tag === 'transclude') {
+            // (transclude @item-id :field) → transclusion chip
+            const itemId = typeof child[1] === 'string' && child[1].startsWith('@') ? child[1].substring(1) : String(child[1]);
+            const fieldName = typeof child[2] === 'string' && child[2].startsWith(':') ? child[2].substring(1) : (child[2] ? String(child[2]) : 'description');
+            const span = document.createElement('span');
+            span.contentEditable = 'false';
+            span.className = 'doc-transclusion';
+            span.dataset.itemId = itemId;
+            span.dataset.field = fieldName;
+            span.textContent = itemId.substring(0, 8) + (fieldName !== 'description' ? '.' + fieldName : '');
+            span.style.cssText = 'display: inline-block; background: var(--color-warning-light, #fef3c7); padding: 1px 6px; border-radius: 3px; border: 1px solid var(--color-warning, #f59e0b); font-size: 0.8125em; cursor: default; user-select: none;';
+            api.get(itemId).then(refItem => {
+              if (refItem?.name) {
+                span.dataset.display = refItem.name;
+                span.textContent = refItem.name + (fieldName !== 'description' ? '.' + fieldName : '');
+              }
+            }).catch(() => {});
+            parent.appendChild(span);
+          }
+          continue;
+        }
         switch (tag) {
           case ':strong': {
             const el = document.createElement('strong');
@@ -410,7 +443,7 @@ export async function render(value, options, api) {
         } else if (tag === 'code') {
           if (node.textContent) result.push([':code', { s: node.textContent }]);
         } else if (node.classList.contains('doc-field-ref')) {
-          result.push([':field-ref', { s: node.dataset.field }]);
+          result.push(['get-field', ':self', ':' + node.dataset.field]);
         } else if (node.classList.contains('doc-item-ref')) {
           const parts = [[':item-ref', { s: node.dataset.refId }]];
           if (node.dataset.display) parts[0].push({ s: node.dataset.display });
@@ -420,9 +453,7 @@ export async function render(value, options, api) {
           if (node.dataset.display) parts[0].push({ s: node.dataset.display });
           result.push(parts[0]);
         } else if (node.classList.contains('doc-transclusion')) {
-          const t = [':transclusion', { s: node.dataset.itemId }, { s: node.dataset.field || 'description' }];
-          if (node.dataset.display) t.push({ s: node.dataset.display });
-          result.push(t);
+          result.push(['transclude', '@' + node.dataset.itemId, ':' + (node.dataset.field || 'description')]);
         } else if (tag === 'br') {
           // Browser inserts <br> in empty blocks — skip
         } else {
