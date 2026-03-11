@@ -69,6 +69,21 @@ function tagOf(node) {
   return null;
 }
 
+// Create an inline error sentinel span (red ERR with tooltip)
+function createErrorSpan(api, message, provenanceAttrs) {
+  const span = api.createElement('span');
+  span.className = 'field-ref field-ref-error';
+  span.style.cssText = 'border-bottom: 1px dashed var(--color-danger); cursor: pointer; color: var(--color-danger); font-size: 0.8125rem;';
+  span.textContent = 'ERR';
+  span.title = message;
+  if (provenanceAttrs) {
+    for (const [k, v] of Object.entries(provenanceAttrs)) {
+      span.setAttribute('data-provenance-' + k, v);
+    }
+  }
+  return span;
+}
+
 // Render a transclusion wrapper value with attribution chrome
 async function renderTransclusion(wrapper, parent, api, item, inline) {
   const { value, sourceId, sourceField, sourceSymbol, chrome } = wrapper;
@@ -173,6 +188,8 @@ async function renderNode(node, parent, api, item) {
         const errEl = api.createElement('div');
         errEl.style.cssText = 'color: var(--color-danger); font-size: 0.8125rem; padding: 4px 8px; background: var(--color-danger-light, #fee2e2); border-radius: 4px; margin: 0.25em 0;';
         errEl.textContent = 'Eval error: ' + (e.message || e);
+        errEl.setAttribute('data-provenance-node', 'block-expression');
+        errEl.setAttribute('data-provenance-error', e.message || String(e));
         parent.appendChild(errEl);
       }
     }
@@ -291,14 +308,9 @@ async function renderInlineNode(node, parent, api, item) {
         }
       } catch (e) {
         console.error('[doc-ast] Inline eval error:', e, 'node:', node);
-        const errEl = api.createElement('span');
-        errEl.style.cssText = 'color: var(--color-danger); font-size: 0.8125rem;';
-        errEl.textContent = 'ERR';
-        errEl.title = e.message || String(e);
-        errEl.setAttribute('data-provenance-node', 'inline-expression');
-        errEl.setAttribute('data-provenance-expression', JSON.stringify(node));
-        errEl.setAttribute('data-provenance-error', e.message || String(e));
-        parent.appendChild(errEl);
+        parent.appendChild(createErrorSpan(api, e.message || String(e), {
+          node: 'inline-expression', expression: JSON.stringify(node), error: e.message || String(e)
+        }));
       }
     }
     return;
@@ -432,8 +444,11 @@ async function renderInlineNode(node, parent, api, item) {
       try {
         const val = await api.getField(refId, fieldName);
         if (val != null && val._hobType === 'computed-field-error') {
-          span.style.cssText = 'color: var(--color-danger); font-size: 0.8125rem;';
-          span.textContent = 'ERR: ' + val.message;
+          span.className = 'field-ref field-ref-error';
+          span.style.cssText = 'border-bottom: 1px dashed var(--color-danger); cursor: pointer; color: var(--color-danger); font-size: 0.8125rem;';
+          span.textContent = 'ERR';
+          span.title = val.message;
+          span.setAttribute('data-provenance-error', val.message);
         } else if (val?.nodeType) {
           span.appendChild(val);
         } else if (Array.isArray(val) && typeof val[0] === 'string' && val[0].startsWith(':')) {
@@ -442,8 +457,11 @@ async function renderInlineNode(node, parent, api, item) {
           span.textContent = val != null ? String(val) : (display || refId.substring(0, 8) + '...');
         }
       } catch (e) {
-        span.style.cssText = 'color: var(--color-danger); font-size: 0.8125rem;';
-        span.textContent = 'ERR: ' + String(e.message || e);
+        span.className = 'field-ref field-ref-error';
+        span.style.cssText = 'border-bottom: 1px dashed var(--color-danger); cursor: pointer; color: var(--color-danger); font-size: 0.8125rem;';
+        span.textContent = 'ERR';
+        span.title = String(e.message || e);
+        span.setAttribute('data-provenance-error', String(e.message || e));
       }
       parent.appendChild(span);
       break;
