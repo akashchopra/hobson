@@ -855,9 +855,17 @@ export async function render(value, options, api) {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       if (checkShortcutOnEnter(blockEl, path)) return;
+      const listCtx = getListContext(path);
+      if (listCtx) { handleListEnter(blockEl, path, listCtx); return; }
       splitBlock(blockEl, path);
     } else if (e.key === 'Backspace' && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
       if (isCursorAtStart(blockEl)) {
+        const listCtx = getListContext(path);
+        if (listCtx && listCtx.pIdx === 0) {
+          e.preventDefault();
+          handleListBackspace(blockEl, path, listCtx);
+          return;
+        }
         const block = getBlock(path);
         const blockTag = tagOf(block);
         const childIdx = path[path.length - 1];
@@ -889,6 +897,11 @@ export async function render(value, options, api) {
       }
     } else if (e.key === 'Delete' && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
       if (isCursorAtEnd(blockEl)) {
+        const listCtx = getListContext(path);
+        if (listCtx && handleListDelete(blockEl, path, listCtx)) {
+          e.preventDefault();
+          return;
+        }
         const parent = getParent(path);
         const childIdx = path[path.length - 1];
         const nextIdx = childIdx + 1;
@@ -907,6 +920,14 @@ export async function render(value, options, api) {
             requestAnimationFrame(() => focusBlockAtOffset(path, inlineTextLength(getBlock(path).slice(1))));
           }
         }
+      }
+    } else if (e.key === 'Tab') {
+      const listCtx = getListContext(path);
+      if (listCtx) {
+        e.preventDefault();
+        if (e.shiftKey) handleListOutdent(path, listCtx);
+        else handleListIndent(path, listCtx);
+        return;
       }
     } else if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey) {
       if (e.key === 'b' || e.key === 'B') {
@@ -1028,6 +1049,251 @@ export async function render(value, options, api) {
     renderAllBlocks();
     emitChange();
     requestAnimationFrame(() => focusBlockAtOffset(path, cursorOffset));
+  }
+
+  // --- List operations ---
+
+  function getListContext(path) {
+    // Detect if this :p is inside a :li inside a :ul/:ol
+    if (path.length < 3) return null;
+    const liPath = path.slice(0, -1);
+    const li = getBlock(liPath);
+    if (tagOf(li) !== ':li') return null;
+    const listPath = liPath.slice(0, -1);
+    const list = getBlock(listPath);
+    const listTag = tagOf(list);
+    if (listTag !== ':ul' && listTag !== ':ol') return null;
+    return {
+      pIdx: path[path.length - 1],
+      liIdx: liPath[liPath.length - 1],
+      liPath, listPath, li, list, listTag
+    };
+  }
+
+  function handleListEnter(blockEl, path, ctx) {
+    const block = getBlock(path);
+    const inlineContent = domToInlineAst(blockEl);
+    const isEmpty = inlineContent.length === 0 ||
+      (inlineContent.length === 1 && isText(inlineContent[0]) &&
+       inlineContent[0].s.replace(/\u200B/g, '').trim() === '');
+
+    if (isEmpty && ctx.pIdx === 0 && ctx.li.length <= 2) {
+      // Empty :li with only one :p — exit list
+      liftListItem(path, ctx, [{ s: '' }]);
+      return;
+    }
+
+    // Non-empty: split at cursor and create new :li
+    const sel = blockEl.ownerDocument.defaultView.getSelection();
+    if (!sel.rangeCount) return;
+    const range = sel.getRangeAt(0);
+    if (!range.collapsed) range.deleteContents();
+
+    const beforeRange = document.createRange();
+    beforeRange.setStart(blockEl, 0);
+    beforeRange.setEnd(range.startContainer, range.startOffset);
+    const afterRange = document.createRange();
+    afterRange.setStart(range.startContainer, range.startOffset);
+    afterRange.setEnd(blockEl, blockEl.childNodes.length);
+
+    const beforeDiv = document.createElement('div');
+    beforeDiv.appendChild(beforeRange.cloneContents());
+    const afterDiv = document.createElement('div');
+    afterDiv.appendChild(afterRange.cloneContents());
+
+    const beforeAst = domToInlineAst(beforeDiv);
+    const afterAst = domToInlineAst(afterDiv);
+
+    // Update current :p with before-cursor content
+    setBlock(path, [block[0], ...(beforeAst.length ? beforeAst : [{ s: '' }])]);
+
+    // Create new :li after current :li
+    const newLi = [':li', [':p', ...(afterAst.length ? afterAst : [{ s: '' }])]];
+    ctx.list.splice(ctx.liIdx + 2, 0, newLi);
+
+    renderAllBlocks();
+    emitChange();
+    const newPPath = [...ctx.listPath, ctx.liIdx + 1, 0];
+    requestAnimationFrame(() => focusBlock(newPPath, 0));
+  }
+
+  function liftListItem(path, ctx, content) {
+    // Remove :li from list and insert a :p in its place (before/after/between list)
+    ctx.list.splice(ctx.liIdx + 1, 1);
+
+    const listParent = getParent(ctx.listPath);
+    const listChildIdx = ctx.listPath[ctx.listPath.length - 1];
+    const newP = [':p', ...(content.length ? content : [{ s: '' }])];
+
+    if (ctx.list.length <= 1) {
+      // List now empty — replace with :p
+      listParent[listChildIdx + 1] = newP;
+      renderAllBlocks();
+      emitChange();
+      requestAnimationFrame(() => focusBlock(ctx.listPath, 0));
+    } else {
+      const itemsBefore = ctx.liIdx;
+      const itemsAfter = ctx.list.length - 1 - ctx.liIdx;
+
+      if (itemsBefore === 0) {
+        // Was first — insert :p before list
+        listParent.splice(listChildIdx + 1, 0, newP);
+        renderAllBlocks();
+        emitChange();
+        requestAnimationFrame(() => focusBlock(ctx.listPath, 0));
+      } else if (itemsAfter === 0) {
+        // Was last — insert :p after list
+        listParent.splice(listChildIdx + 2, 0, newP);
+        renderAllBlocks();
+        emitChange();
+        const newPath = [...ctx.listPath.slice(0, -1), listChildIdx + 1];
+        requestAnimationFrame(() => focusBlock(newPath, 0));
+      } else {
+        // Middle — split list with :p between
+        const afterLis = ctx.list.splice(ctx.liIdx + 1);
+        const newList = [ctx.listTag, ...afterLis];
+        listParent.splice(listChildIdx + 2, 0, newP, newList);
+        renderAllBlocks();
+        emitChange();
+        const newPPath = [...ctx.listPath.slice(0, -1), listChildIdx + 1];
+        requestAnimationFrame(() => focusBlock(newPPath, 0));
+      }
+    }
+  }
+
+  function handleListBackspace(blockEl, path, ctx) {
+    if (ctx.liIdx === 0) {
+      // First :li — lift out of list
+      const currBlock = getBlock(path);
+      liftListItem(path, ctx, currBlock.slice(1));
+    } else {
+      // Not first :li — merge with previous :li's last leaf block
+      const prevLiPath = [...ctx.listPath, ctx.liIdx - 1];
+      const prevLi = getBlock(prevLiPath);
+
+      // Find last leaf block in previous :li
+      let lastPIdx = -1;
+      for (let i = prevLi.length - 1; i >= 1; i--) {
+        if (isLeafBlock(tagOf(prevLi[i]))) { lastPIdx = i - 1; break; }
+      }
+
+      if (lastPIdx >= 0) {
+        const lastPPath = [...prevLiPath, lastPIdx];
+        const lastP = getBlock(lastPPath);
+        const currBlock = getBlock(path);
+
+        const prevInline = lastP.slice(1);
+        const cursorOffset = inlineTextLength(prevInline);
+        const currInline = currBlock.slice(1);
+        const merged = mergeAdjacentText([...prevInline, ...currInline]);
+
+        setBlock(lastPPath, [lastP[0], ...(merged.length ? merged : [{ s: '' }])]);
+        ctx.list.splice(ctx.liIdx + 1, 1);
+
+        renderAllBlocks();
+        emitChange();
+        requestAnimationFrame(() => focusBlockAtOffset(lastPPath, cursorOffset));
+      }
+    }
+  }
+
+  function handleListIndent(path, ctx) {
+    if (ctx.liIdx === 0) return; // Can't indent the first item
+
+    // Remove current :li from list
+    const currentLi = ctx.list.splice(ctx.liIdx + 1, 1)[0];
+
+    // Previous :li is at array position liIdx (child index liIdx - 1, +1 for tag)
+    const prevLi = ctx.list[ctx.liIdx];
+
+    // Append to existing nested list or create a new one
+    const lastChild = prevLi[prevLi.length - 1];
+    if (tagOf(lastChild) === ctx.listTag) {
+      lastChild.push(currentLi);
+    } else {
+      prevLi.push([ctx.listTag, currentLi]);
+    }
+
+    renderAllBlocks();
+    emitChange();
+
+    // Calculate new path for the :p inside the moved :li
+    const prevLiPath = [...ctx.listPath, ctx.liIdx - 1];
+    const prevLiNode = getBlock(prevLiPath);
+    const nestedListChildIdx = prevLiNode.length - 2;
+    const nestedListNode = prevLiNode[nestedListChildIdx + 1];
+    const movedLiChildIdx = nestedListNode.length - 2;
+    const newPPath = [...prevLiPath, nestedListChildIdx, movedLiChildIdx, ctx.pIdx];
+    requestAnimationFrame(() => focusBlock(newPPath, 0));
+  }
+
+  function handleListOutdent(path, ctx) {
+    // Check if nested list (list is inside a :li inside another list)
+    if (ctx.listPath.length >= 2) {
+      const outerLiPath = ctx.listPath.slice(0, -1);
+      const outerLi = getBlock(outerLiPath);
+      if (tagOf(outerLi) === ':li') {
+        const outerListPath = outerLiPath.slice(0, -1);
+        const outerList = getBlock(outerListPath);
+        const outerListTag = tagOf(outerList);
+        if (outerListTag === ':ul' || outerListTag === ':ol') {
+          // Remove :li from nested list
+          const currentLi = ctx.list.splice(ctx.liIdx + 1, 1)[0];
+
+          // If nested list is now empty, remove it from outer :li
+          if (ctx.list.length <= 1) {
+            const nestChildIdx = ctx.listPath[ctx.listPath.length - 1];
+            outerLi.splice(nestChildIdx + 1, 1);
+          }
+
+          // Insert after the outer :li in the outer list
+          const outerLiIdx = outerLiPath[outerLiPath.length - 1];
+          outerList.splice(outerLiIdx + 2, 0, currentLi);
+
+          renderAllBlocks();
+          emitChange();
+          const newPPath = [...outerListPath, outerLiIdx + 1, ctx.pIdx];
+          requestAnimationFrame(() => focusBlock(newPPath, 0));
+          return;
+        }
+      }
+    }
+
+    // Top-level list — lift item out as :p
+    const currBlock = getBlock(path);
+    liftListItem(path, ctx, currBlock.slice(1));
+  }
+
+  function handleListDelete(blockEl, path, ctx) {
+    // Only applies at end of last leaf block in :li when there's a next :li
+    for (let i = ctx.pIdx + 2; i < ctx.li.length; i++) {
+      if (isLeafBlock(tagOf(ctx.li[i]))) return false; // next leaf sibling exists — default handler
+    }
+    if (ctx.liIdx >= ctx.list.length - 2) return false; // no next :li
+
+    const nextLi = getBlock([...ctx.listPath, ctx.liIdx + 1]);
+
+    // Find first leaf block in next :li
+    let firstPIdx = -1;
+    for (let i = 1; i < nextLi.length; i++) {
+      if (isLeafBlock(tagOf(nextLi[i]))) { firstPIdx = i - 1; break; }
+    }
+    if (firstPIdx < 0) return false;
+
+    const currBlock = getBlock(path);
+    const nextP = nextLi[firstPIdx + 1];
+    const currInline = currBlock.slice(1);
+    const cursorOffset = inlineTextLength(currInline);
+    const nextInline = nextP.slice(1);
+    const merged = mergeAdjacentText([...currInline, ...nextInline]);
+
+    setBlock(path, [currBlock[0], ...(merged.length ? merged : [{ s: '' }])]);
+    ctx.list.splice(ctx.liIdx + 2, 1); // remove next :li
+
+    renderAllBlocks();
+    emitChange();
+    requestAnimationFrame(() => focusBlockAtOffset(path, cursorOffset));
+    return true;
   }
 
   function inlineTextLength(nodes) {
