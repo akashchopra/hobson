@@ -225,10 +225,17 @@ export async function render(value, options, api) {
             const span = document.createElement('span');
             span.contentEditable = 'false';
             span.className = 'doc-item-ref';
-            span.dataset.refId = textOf(child[1]);
+            const refId = textOf(child[1]);
+            span.dataset.refId = refId;
             if (child.length > 2) span.dataset.display = textOf(child[2]);
-            span.textContent = child.length > 2 ? textOf(child[2]) : textOf(child[1]).substring(0, 8) + '\u2026';
-            span.style.cssText = 'display: inline-block; color: var(--color-primary); border-bottom: 1px solid var(--color-primary); cursor: default; user-select: none;';
+            span.textContent = child.length > 2 ? textOf(child[2]) : refId.substring(0, 8) + '\u2026';
+            span.style.cssText = 'display: inline-block; color: var(--color-text-secondary); border: 1px solid var(--color-border); border-radius: 999px; padding: 0 3px; cursor: default; user-select: none;';
+            api.get(refId).then(refItem => {
+              if (refItem?.name) {
+                span.textContent = refItem.name;
+                span.dataset.display = refItem.name;
+              }
+            }).catch(() => {});
             parent.appendChild(span);
             break;
           }
@@ -238,7 +245,8 @@ export async function render(value, options, api) {
             span.className = 'doc-link';
             span.dataset.href = textOf(child[1]);
             if (child.length > 2) span.dataset.display = textOf(child[2]);
-            span.textContent = child.length > 2 ? textOf(child[2]) : textOf(child[1]);
+            const linkText = child.length > 2 ? textOf(child[2]) : textOf(child[1]);
+            span.textContent = linkText + ' \u2197';
             span.style.cssText = 'display: inline; color: var(--color-primary); text-decoration: underline; cursor: default; user-select: none;';
             parent.appendChild(span);
             break;
@@ -639,7 +647,7 @@ export async function render(value, options, api) {
       if (!/^https?:\/\//.test(href)) href = 'https://' + href;
       node.dataset.href = href;
       node.dataset.display = result.label;
-      node.textContent = result.label;
+      node.textContent = result.label + ' \u2197';
       node.style.cssText = 'display: inline; color: var(--color-primary); text-decoration: underline; cursor: default; user-select: none;';
     } else {
       node = document.createElement('span');
@@ -648,7 +656,7 @@ export async function render(value, options, api) {
       node.dataset.refId = result.id;
       node.dataset.display = result.label;
       node.textContent = result.label;
-      node.style.cssText = 'display: inline-block; color: var(--color-primary); border-bottom: 1px solid var(--color-primary); cursor: default; user-select: none;';
+      node.style.cssText = 'display: inline-block; color: var(--color-text-secondary); border: 1px solid var(--color-border); border-radius: 999px; padding: 0 3px; cursor: default; user-select: none;';
     }
 
     acInsertNode(node);
@@ -773,7 +781,7 @@ export async function render(value, options, api) {
     removeBtn.textContent = 'Remove link';
     removeBtn.style.cssText = 'background: none; border: none; color: var(--color-danger, #ef4444); cursor: pointer; font-size: 0.75rem; padding: 2px 0;';
     removeBtn.addEventListener('click', () => {
-      const textNode = document.createTextNode(span.textContent);
+      const textNode = document.createTextNode(span.dataset.display || span.dataset.href || '');
       span.parentNode.replaceChild(textNode, span);
       hideLinkPopover();
       handleInput(blockEl, path);
@@ -819,7 +827,7 @@ export async function render(value, options, api) {
       } else {
         delete span.dataset.display;
       }
-      span.textContent = display || href;
+      span.textContent = (display || href) + ' \u2197';
     }
     hideLinkPopover();
     handleInput(blockEl, path);
