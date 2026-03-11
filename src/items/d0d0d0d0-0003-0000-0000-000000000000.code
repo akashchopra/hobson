@@ -269,6 +269,59 @@ async function renderNode(node, parent, api, item) {
       break;
     }
 
+    // Table
+    case ':table': {
+      const table = api.createElement('table');
+      table.style.cssText = 'border-collapse: collapse; width: 100%; margin: 0.5em 0; font-size: 0.875rem;';
+      table.setAttribute('data-provenance-node', ':table');
+      // Extract alignment metadata if present
+      const alignNode = children.find(c => Array.isArray(c) && c[0] === ':align');
+      const aligns = alignNode ? alignNode.slice(1).map(a => textOf(a)) : [];
+      table._aligns = aligns;
+      for (const child of children) {
+        if (Array.isArray(child) && child[0] !== ':align') await renderNode(child, table, api, item);
+      }
+      parent.appendChild(table);
+      break;
+    }
+    case ':thead': {
+      const thead = api.createElement('thead');
+      thead.setAttribute('data-provenance-node', ':thead');
+      for (const child of children) await renderNode(child, thead, api, item);
+      parent.appendChild(thead);
+      break;
+    }
+    case ':tbody': {
+      const tbody = api.createElement('tbody');
+      tbody.setAttribute('data-provenance-node', ':tbody');
+      for (const child of children) await renderNode(child, tbody, api, item);
+      parent.appendChild(tbody);
+      break;
+    }
+    case ':tr': {
+      const tr = api.createElement('tr');
+      tr.setAttribute('data-provenance-node', ':tr');
+      for (const child of children) await renderNode(child, tr, api, item);
+      parent.appendChild(tr);
+      break;
+    }
+    case ':th': case ':td': {
+      const cellTag = tag === ':th' ? 'th' : 'td';
+      const cell = api.createElement(cellTag);
+      cell.style.cssText = 'border: 1px solid var(--color-border); padding: 6px 10px; text-align: left;';
+      if (cellTag === 'th') cell.style.fontWeight = '600';
+      cell.setAttribute('data-provenance-node', tag);
+      // Apply column alignment from table
+      const table = parent.closest?.('table') || parent.parentNode?.parentNode;
+      if (table?._aligns) {
+        const colIndex = parent.children?.length || 0;
+        if (table._aligns[colIndex]) cell.style.textAlign = table._aligns[colIndex];
+      }
+      await renderInlineChildren(children, cell, api, item);
+      parent.appendChild(cell);
+      break;
+    }
+
     default:
       for (const child of children) await renderNode(child, parent, api, item);
       break;
