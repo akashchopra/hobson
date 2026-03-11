@@ -3406,6 +3406,68 @@ export function createInterpreter(api, viewApi, eventApi) {
       const value = await getFieldFn(itemOrRef, fieldKey);
       return { _hobType: 'transclusion', value, sourceId, sourceField, chrome };
     }, { _hobName: 'transclude' }));
+
+    // extract-symbol: extract a symbol's source code from an item
+    // (extract-symbol @item-id "symbolName") → string of source code
+    stdlib.define('extract-symbol', Object.assign(async (itemOrRef, symbolName) => {
+      let item;
+      if (itemOrRef && itemOrRef._hobType === 'item-ref') {
+        item = await stdlib.lookup('resolve-ref')(itemOrRef);
+      } else if (typeof itemOrRef === 'string') {
+        item = await api.get(itemOrRef);
+      } else if (itemOrRef && typeof itemOrRef === 'object' && itemOrRef.id) {
+        item = itemOrRef;
+      }
+      if (!item) throw new Error('extract-symbol: item not found');
+      const name = typeof symbolName === 'object' && 's' in symbolName ? symbolName.s : String(symbolName);
+      const symbols = item.content?._symbols || {};
+      // Try exact match (qualified name like 'createAPI.get'), then unqualified
+      let info = symbols[name];
+      if (!info) {
+        for (const [, si] of Object.entries(symbols)) {
+          if (si.name === name) { info = si; break; }
+        }
+      }
+      if (!info) throw new Error('extract-symbol: symbol not found: ' + name);
+      const code = item.content?.code || '';
+      const lines = code.split('\n');
+      return lines.slice(info.line - 1, info.endLine).join('\n');
+    }, { _hobName: 'extract-symbol' }));
+
+    // call-export: require an item as a module and call an exported function
+    // (call-export @item-id "fnName") → result of calling the export
+    // (call-export @item-id "fnName" params-map) → with query params
+    stdlib.define('call-export', Object.assign(async (itemOrRef, fnName, params) => {
+      let itemId;
+      if (itemOrRef && itemOrRef._hobType === 'item-ref') {
+        itemId = itemOrRef.value;
+      } else if (typeof itemOrRef === 'string') {
+        itemId = itemOrRef;
+      } else if (itemOrRef && typeof itemOrRef === 'object' && itemOrRef.id) {
+        itemId = itemOrRef.id;
+      }
+      if (!itemId) throw new Error('call-export: item not found');
+      const name = typeof fnName === 'object' && 's' in fnName ? fnName.s : String(fnName);
+      const module = await api.require(itemId);
+      const fn = module[name];
+      if (typeof fn !== 'function') throw new Error('call-export: export not found: ' + name);
+      // Convert params map to plain object if provided
+      let queryParams = {};
+      if (params && typeof params === 'object') {
+        if (params.m && Array.isArray(params.m)) {
+          // Hob map {m: [k1, v1, k2, v2, ...]}
+          for (let i = 0; i < params.m.length; i += 2) {
+            const k = isKeyword(params.m[i]) ? keywordName(params.m[i]) : String(params.m[i]);
+            queryParams[k] = params.m[i + 1];
+          }
+        } else {
+          for (const [k, v] of Object.entries(params)) {
+            queryParams[isKeyword(k) ? keywordName(k) : k] = v;
+          }
+        }
+      }
+      return await fn(api, queryParams);
+    }, { _hobName: 'call-export' }));
   }
 
   if (viewApi) registerViewOps(stdlib, viewApi);
