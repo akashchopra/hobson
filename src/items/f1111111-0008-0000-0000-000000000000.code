@@ -709,8 +709,8 @@ export class RenderingSystem {
     api.evaluateHob = async (hobAst, bindings) => {
       await rendering._ensureInterpreter();
       const childEnv = rendering._hobInterp.createEnvironment();
-      // Bind item ops (get-all, get-item, find-items, etc.)
-      // These are already in stdlib via createInterpreter, inherited by child env.
+      // Expose the enriched API to eval blocks
+      childEnv.define('api', api);
       // Add any extra bindings (e.g. current item)
       if (bindings) {
         for (const [k, v] of Object.entries(bindings)) {
@@ -718,7 +718,19 @@ export class RenderingSystem {
         }
       }
       const hob = rendering._hobModule;
-      const result = await hob.evaluate(hobAst, childEnv, []);
+      // Make enriched API available to stdlib functions (e.g. call-export)
+      if (!rendering._evalApiRefCount) rendering._evalApiRefCount = 0;
+      rendering._evalApiRefCount++;
+      rendering._hobItemApi._evalApi = api;
+      let result;
+      try {
+        result = await hob.evaluate(hobAst, childEnv, []);
+      } finally {
+        rendering._evalApiRefCount--;
+        if (rendering._evalApiRefCount === 0) {
+          rendering._hobItemApi._evalApi = null;
+        }
+      }
       // Convert Hob runtime values to compact JSON format:
       // - Keywords (\u029e prefix) → ":name" strings
       // - Vectors and lists → plain arrays
@@ -737,7 +749,7 @@ export class RenderingSystem {
         if (Array.isArray(val)) return val.map(toCompactJson);
         if (val && typeof val === 'object') {
           if (val._hobType === 'item-ref') return '@' + val.value;
-          if (val._hobType === 'transclusion') return { _hobType: 'transclusion', value: toCompactJson(val.value), sourceId: val.sourceId, sourceField: val.sourceField, chrome: val.chrome };
+          if (val._hobType === 'transclusion') return { _hobType: 'transclusion', value: toCompactJson(val.value), sourceId: val.sourceId, sourceField: val.sourceField, sourceSymbol: val.sourceSymbol, chrome: val.chrome };
           if (val._hobType === 'computed-field-error') return val;
           if (val.nodeType) return val; // DOM node passthrough
           // {s: "..."} is already an AST string literal — pass through

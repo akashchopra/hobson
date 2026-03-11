@@ -71,7 +71,7 @@ function tagOf(node) {
 
 // Render a transclusion wrapper value with attribution chrome
 async function renderTransclusion(wrapper, parent, api, item, inline) {
-  const { value, sourceId, sourceField, chrome } = wrapper;
+  const { value, sourceId, sourceField, sourceSymbol, chrome } = wrapper;
   // Detect whether value is block-level (array with :keyword tag) or scalar/inline
   const isBlock = Array.isArray(value) && typeof value[0] === 'string' && value[0].startsWith(':');
 
@@ -95,8 +95,10 @@ async function renderTransclusion(wrapper, parent, api, item, inline) {
     if (sourceId) {
       let name;
       try { name = (await api.get(sourceId))?.name; } catch {}
-      span.title = 'Transcluded from: ' + (name || sourceId.substring(0, 8)) + (sourceField !== 'description' ? '.' + sourceField : '');
-      span.onclick = (e) => { e.preventDefault(); api.openItem(e, sourceId); };
+      const displaySuffix = sourceSymbol ? '.' + sourceSymbol : (sourceField && sourceField !== 'description' ? '.' + sourceField : '');
+      span.title = 'Transcluded from: ' + (name || sourceId.substring(0, 8)) + displaySuffix;
+      const target = sourceSymbol ? { id: sourceId, view: { navigateTo: { symbol: sourceSymbol } } } : sourceId;
+      span.onclick = (e) => { e.preventDefault(); api.openItem(e, target); };
     }
     await renderInlineNode(value, span, api, item);
     parent.appendChild(span);
@@ -121,10 +123,15 @@ async function renderTransclusion(wrapper, parent, api, item, inline) {
   if (sourceId) {
     const pill = api.createElement('a');
     pill.href = '#';
-    pill.textContent = sourceName || sourceId.substring(0, 8);
-    if (sourceField && sourceField !== 'description') pill.textContent += '.' + sourceField;
-    pill.style.cssText = 'display: inline-block; color: var(--color-text-secondary); border: 1px solid var(--color-border); border-radius: 999px; padding: 0 3px; text-decoration: none; cursor: pointer; font-size: inherit;';
-    pill.onclick = (e) => { e.preventDefault(); e.stopPropagation(); api.openItem(e, sourceId); };
+    const displaySuffix = sourceSymbol ? '.' + sourceSymbol : (sourceField && sourceField !== 'description' ? '.' + sourceField : '');
+    pill.textContent = (sourceName || sourceId.substring(0, 8)) + displaySuffix;
+    const target = sourceSymbol ? { id: sourceId, view: { navigateTo: { symbol: sourceSymbol } } } : sourceId;
+    if (sourceSymbol) {
+      pill.style.cssText = 'color: var(--color-text-secondary); border-bottom: 1.5px dotted var(--color-border); text-decoration: none; cursor: pointer; font-size: inherit;';
+    } else {
+      pill.style.cssText = 'display: inline-block; color: var(--color-text-secondary); border: 1px solid var(--color-border); border-radius: 999px; padding: 0 3px; text-decoration: none; cursor: pointer; font-size: inherit;';
+    }
+    pill.onclick = (e) => { e.preventDefault(); e.stopPropagation(); api.openItem(e, target); };
     summary.appendChild(pill);
   } else {
     summary.textContent += '?';
@@ -162,6 +169,7 @@ async function renderNode(node, parent, api, item) {
           else await renderNode(result, parent, api, item);
         }
       } catch (e) {
+        console.error('[doc-ast] Block eval error:', e, 'node:', node);
         const errEl = api.createElement('div');
         errEl.style.cssText = 'color: var(--color-danger); font-size: 0.8125rem; padding: 4px 8px; background: var(--color-danger-light, #fee2e2); border-radius: 4px; margin: 0.25em 0;';
         errEl.textContent = 'Eval error: ' + (e.message || e);
@@ -282,6 +290,7 @@ async function renderInlineNode(node, parent, api, item) {
           else await renderInlineNode(result, parent, api, item);
         }
       } catch (e) {
+        console.error('[doc-ast] Inline eval error:', e, 'node:', node);
         const errEl = api.createElement('span');
         errEl.style.cssText = 'color: var(--color-danger); font-size: 0.8125rem;';
         errEl.textContent = 'ERR';
