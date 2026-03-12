@@ -34,21 +34,16 @@ export async function show(_api) {
     cachedSearchItemId = searchItems[0].id;
   }
 
-  // Fetch search item
+  // Reset search state silently (no events/re-render) — the attach below
+  // triggers the only render needed. currentQuery=null lets the view's
+  // (when (nil? currentQuery) (do-search "")) fire to fetch starred items.
   const searchItem = await api.get(cachedSearchItemId);
-
-  // Pre-fetch starred items so the first render has data immediately
-  const searchLib = await api.require('item-search-lib');
-  const starred = await searchLib.getStarredItems(api);
-  const starredAtts = starred.map(s => ({ id: s.id }));
-
-  // Reset search state with starred items pre-populated
-  searchItem.content = { ...searchItem.content, currentQuery: '' };
-  searchItem.attachments = starredAtts;
+  searchItem.content = { ...searchItem.content, currentQuery: null };
+  searchItem.attachments = [];
   searchItem.modified = Date.now();
-  await api.set(searchItem);
+  await api.set(searchItem, { silent: true });
 
-  // Attach search item to viewport as overlay
+  // Attach search item to viewport as overlay — modal appears now
   await api.attach(VIEWPORT_ID, { id: cachedSearchItemId });
 }
 // [END:show]
