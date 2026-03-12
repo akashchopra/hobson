@@ -48,6 +48,8 @@ export async function render(value, options, api) {
 
   const LEAF_BLOCKS = new Set([':p', ':h1', ':h2', ':h3', ':h4', ':h5', ':h6']);
   function isLeafBlock(tag) { return LEAF_BLOCKS.has(tag); }
+  const TABLE_CELLS = new Set([':th', ':td']);
+  function isTableCell(tag) { return TABLE_CELLS.has(tag); }
 
   function blockElTag(astTag) {
     if (astTag === ':p') return 'p';
@@ -88,8 +90,10 @@ export async function render(value, options, api) {
     function walk(node, path) {
       const tag = tagOf(node);
       if (!tag) return;
-      if (isLeafBlock(tag)) {
+      if (isLeafBlock(tag) || isTableCell(tag)) {
         editablePaths.push(path);
+      } else if (tag === ':align') {
+        return; // skip table alignment metadata
       } else {
         for (let i = 1; i < node.length; i++) {
           walk(node[i], [...path, i - 1]);
@@ -105,7 +109,7 @@ export async function render(value, options, api) {
 
   function isEditableBlock(block) {
     const tag = tagOf(block);
-    return isLeafBlock(tag) || tag === ':ul' || tag === ':ol' || tag === ':blockquote';
+    return isLeafBlock(tag) || tag === ':ul' || tag === ':ol' || tag === ':blockquote' || tag === ':table';
   }
 
   function renderAllBlocks() {
@@ -404,23 +408,43 @@ export async function render(value, options, api) {
     const alignNode = block.slice(1).find(c => Array.isArray(c) && c[0] === ':align');
     const aligns = alignNode ? alignNode.slice(1).map(a => textOf(a)) : [];
 
-    for (const section of block.slice(1)) {
+    for (let si = 0; si < block.length - 1; si++) {
+      const section = block[si + 1];
       if (!Array.isArray(section) || section[0] === ':align') continue;
       const sectionTag = section[0]; // :thead or :tbody
       const sectionEl = document.createElement(sectionTag === ':thead' ? 'thead' : 'tbody');
-      for (const row of section.slice(1)) {
+      for (let ri = 0; ri < section.length - 1; ri++) {
+        const row = section[ri + 1];
         if (!Array.isArray(row) || row[0] !== ':tr') continue;
         const tr = document.createElement('tr');
-        row.slice(1).forEach((cell, ci) => {
-          if (!Array.isArray(cell)) return;
+        for (let ci = 0; ci < row.length - 1; ci++) {
+          const cell = row[ci + 1];
+          if (!Array.isArray(cell)) continue;
           const cellTag = cell[0] === ':th' ? 'th' : 'td';
           const cellEl = document.createElement(cellTag);
-          cellEl.style.cssText = 'border: 1px solid var(--color-border); padding: 6px 10px; text-align: left;';
+          const cellPath = [...path, si, ri, ci];
+          cellEl.dataset.blockPath = pathStr(cellPath);
+          cellEl.style.cssText = 'border: 1px solid var(--color-border); padding: 6px 10px; text-align: left; outline: none;';
           if (cellTag === 'th') cellEl.style.fontWeight = '600';
           if (aligns[ci]) cellEl.style.textAlign = aligns[ci];
-          renderInlineContent(cell.slice(1), cellEl);
+
+          if (editable) {
+            cellEl.contentEditable = 'true';
+            renderInlineContent(cell.slice(1), cellEl);
+            if (cellEl.lastChild && cellEl.lastChild.nodeType === 1 && cellEl.lastChild.contentEditable === 'false') {
+              cellEl.appendChild(document.createTextNode('\u200B'));
+            }
+            if (cellEl.textContent === '') {
+              cellEl.appendChild(document.createElement('br'));
+            }
+            cellEl.addEventListener('input', () => handleInput(cellEl, cellPath));
+            cellEl.addEventListener('keydown', (e) => handleKeyDown(e, cellEl, cellPath));
+          } else {
+            renderInlineContent(cell.slice(1), cellEl);
+          }
+
           tr.appendChild(cellEl);
-        });
+        }
         sectionEl.appendChild(tr);
       }
       table.appendChild(sectionEl);
@@ -442,13 +466,17 @@ export async function render(value, options, api) {
 
     if (editable) {
       // Edit mode: embed the structural editor
+      // Unwrap implicit `do` — show body expressions as top-level forms
+      const isDo = Array.isArray(block) && block[0] === 'do';
+      const editorValue = isDo ? block.slice(1) : [block];
       (async () => {
         try {
           const structEditor = await api.require('field-view-hob-structural');
-          const editorEl = await structEditor.render([block], {
+          const editorEl = await structEditor.render(editorValue, {
             onChange: (newValue) => {
               if (Array.isArray(newValue) && newValue.length > 0) {
-                setBlock(path, newValue[0]);
+                // Rewrap in `do` — always use do so users can add more expressions
+                setBlock(path, ['do', ...newValue]);
                 emitChange();
               }
             }
@@ -696,6 +724,7 @@ export async function render(value, options, api) {
   // --- Autocomplete ---
 
   let ac = null; // { type: 'item'|'field'|'transclusion', step?, targetItem?, blockEl, path, anchorNode, anchorOffset, query, results, active }
+  let _acInserting = false; // Guard: suppress handleInput during autocomplete DOM mutations
   let acTimer = null;
   const acPopup = document.createElement('div');
   acPopup.style.cssText = 'position: fixed; z-index: 9999; background: var(--color-bg-surface, #fff); border: 1px solid var(--color-border, #e5e7eb); border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); max-height: 200px; overflow-y: auto; min-width: 180px; display: none; font-size: 0.8125rem;';
@@ -893,17 +922,8 @@ export async function render(value, options, api) {
     }
 
     const { blockEl, path, anchorNode, anchorOffset, type } = ac;
-    const sel = blockEl.ownerDocument.defaultView.getSelection();
 
-    // Delete trigger text + query
-    if (sel.rangeCount) {
-      const delRange = document.createRange();
-      delRange.setStart(anchorNode, anchorOffset);
-      delRange.setEnd(sel.getRangeAt(0).startContainer, sel.getRangeAt(0).startOffset);
-      delRange.deleteContents();
-    }
-
-    // Create the non-editable node
+    // Create the non-editable node (trigger text deletion handled by acInsertNode)
     let node;
     if (type === 'field') {
       node = document.createElement('span');
@@ -939,6 +959,9 @@ export async function render(value, options, api) {
     const { blockEl, path, anchorNode, anchorOffset } = ac;
     const sel = blockEl.ownerDocument.defaultView.getSelection();
 
+    // Suppress handleInput during DOM mutations to prevent intermediate AST sync
+    _acInserting = true;
+
     // Delete trigger text + query
     if (sel.rangeCount) {
       const delRange = document.createRange();
@@ -950,6 +973,34 @@ export async function render(value, options, api) {
     // Insert at cursor
     const insRange = sel.getRangeAt(0);
     insRange.insertNode(node);
+
+    // If node ended up inside an inline formatting element, extract it out.
+    // domToInlineAst reads formatting elements via textContent, which would
+    // flatten any nested item-ref/field-ref/link spans to plain text.
+    const INLINE_FORMAT = /^(CODE|STRONG|B|EM|I|DEL|S|STRIKE|MARK)$/;
+    const fmtParent = node.parentElement;
+    if (fmtParent && fmtParent !== blockEl && INLINE_FORMAT.test(fmtParent.tagName)) {
+      // Collect sibling nodes after the inserted node
+      const afterNodes = [];
+      let sib = node.nextSibling;
+      while (sib) { afterNodes.push(sib); sib = sib.nextSibling; }
+
+      // Move after-content into a cloned formatting element if non-empty
+      const hasAfter = afterNodes.some(n => n.textContent.replace(/\u200B/g, ''));
+      if (hasAfter) {
+        const afterFmt = fmtParent.cloneNode(false);
+        for (const n of afterNodes) afterFmt.appendChild(n);
+        fmtParent.parentNode.insertBefore(afterFmt, fmtParent.nextSibling);
+      } else {
+        for (const n of afterNodes) n.remove();
+      }
+
+      // Move the node out, after the formatting element
+      fmtParent.parentNode.insertBefore(node, fmtParent.nextSibling);
+
+      // Remove formatting element if now empty
+      if (!fmtParent.textContent.replace(/\u200B/g, '')) fmtParent.remove();
+    }
 
     // Ensure there's a text node after for cursor placement
     if (!node.nextSibling || (node.nextSibling.nodeType !== 3)) {
@@ -967,6 +1018,7 @@ export async function render(value, options, api) {
     sel.addRange(afterRange);
 
     acHide();
+    _acInserting = false;
     handleInput(blockEl, path);
   }
 
@@ -1282,9 +1334,9 @@ export async function render(value, options, api) {
       return true;
     }
 
-    // >>> → eval block (Hob expression)
+    // >>> → eval block (Hob expression wrapped in implicit do)
     if (before === '>>>') {
-      setBlock(path, [null]); // nil expression — structural editor renders as hole
+      setBlock(path, ["do", null]); // do block with nil hole — structural editor shows body
       renderAllBlocks();
       emitChange();
       return true;
@@ -1353,6 +1405,7 @@ export async function render(value, options, api) {
   }
 
   function handleInput(blockEl, path) {
+    if (_acInserting) return;
     const inlineAst = domToInlineAst(blockEl);
     const block = getBlock(path);
     const blockTag = block[0];
@@ -1374,6 +1427,26 @@ export async function render(value, options, api) {
       if (e.key === 'ArrowUp') { e.preventDefault(); acNavigate(-1); return; }
       if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); acSelect(); return; }
       if (e.key === 'Escape') { e.preventDefault(); acHide(); return; }
+    }
+
+    // Table cell: handle all keys here and return — fully isolated from block-level logic
+    const tableCtx = getTableContext(path);
+    if (tableCtx) {
+      if (e.key === 'Tab') { e.preventDefault(); navigateTableCell(path, tableCtx, e.shiftKey); return; }
+      if (e.key === 'Enter') { e.preventDefault(); if (!e.shiftKey) navigateTableDown(path, tableCtx); return; }
+      if (e.key === 'Backspace' && !e.shiftKey && !e.metaKey && !e.ctrlKey && isCursorAtStart(blockEl)) { e.preventDefault(); return; }
+      if (e.key === 'Delete' && !e.shiftKey && !e.metaKey && !e.ctrlKey && isCursorAtEnd(blockEl)) { e.preventDefault(); return; }
+      if ((e.ctrlKey || e.metaKey) && !e.altKey) {
+        if (!e.shiftKey) {
+          if (e.key === 'b' || e.key === 'B') { e.preventDefault(); e.stopPropagation(); document.execCommand('bold', false, null); handleInput(blockEl, path); }
+          else if (e.key === 'i' || e.key === 'I') { e.preventDefault(); e.stopPropagation(); document.execCommand('italic', false, null); handleInput(blockEl, path); }
+          else if (e.key === 'e' || e.key === 'E') { e.preventDefault(); e.stopPropagation(); applyInlineWrap(blockEl, path, 'code'); }
+        } else {
+          if (e.key === 'x' || e.key === 'X') { e.preventDefault(); e.stopPropagation(); applyInlineWrap(blockEl, path, 'del'); }
+          else if (e.key === 'h' || e.key === 'H') { e.preventDefault(); e.stopPropagation(); applyInlineWrap(blockEl, path, 'mark'); }
+        }
+      }
+      return;
     }
 
     if (e.key === ' ' && !e.ctrlKey && !e.metaKey && checkShortcutOnSpace(blockEl, path)) {
@@ -1465,23 +1538,23 @@ export async function render(value, options, api) {
     } else if ((e.ctrlKey || e.metaKey) && !e.altKey) {
       if (!e.shiftKey) {
         if (e.key === 'b' || e.key === 'B') {
-          e.preventDefault();
+          e.preventDefault(); e.stopPropagation();
           document.execCommand('bold', false, null);
           handleInput(blockEl, path);
         } else if (e.key === 'i' || e.key === 'I') {
-          e.preventDefault();
+          e.preventDefault(); e.stopPropagation();
           document.execCommand('italic', false, null);
           handleInput(blockEl, path);
         } else if (e.key === 'e' || e.key === 'E') {
-          e.preventDefault();
+          e.preventDefault(); e.stopPropagation();
           applyInlineWrap(blockEl, path, 'code');
         }
       } else {
         if (e.key === 'x' || e.key === 'X') {
-          e.preventDefault();
+          e.preventDefault(); e.stopPropagation();
           applyInlineWrap(blockEl, path, 'del');
         } else if (e.key === 'h' || e.key === 'H') {
-          e.preventDefault();
+          e.preventDefault(); e.stopPropagation();
           applyInlineWrap(blockEl, path, 'mark');
         }
       }
@@ -1923,6 +1996,77 @@ export async function render(value, options, api) {
     emitChange();
     requestAnimationFrame(() => focusBlockAtOffset(path, cursorOffset));
     return true;
+  }
+
+  // --- Table cell operations ---
+
+  function getTableContext(path) {
+    if (path.length < 4) return null;
+    const cell = getBlock(path);
+    const cellTag = tagOf(cell);
+    if (!isTableCell(cellTag)) return null;
+    const rowPath = path.slice(0, -1);
+    const row = getBlock(rowPath);
+    if (tagOf(row) !== ':tr') return null;
+    const sectionPath = rowPath.slice(0, -1);
+    const section = getBlock(sectionPath);
+    const sectionTag = tagOf(section);
+    if (sectionTag !== ':thead' && sectionTag !== ':tbody') return null;
+    const tablePath = sectionPath.slice(0, -1);
+    const table = getBlock(tablePath);
+    if (tagOf(table) !== ':table') return null;
+    return {
+      cellIdx: path[path.length - 1],
+      rowIdx: rowPath[rowPath.length - 1],
+      sectionIdx: sectionPath[sectionPath.length - 1],
+      tablePath, table, sectionPath, section, rowPath, row
+    };
+  }
+
+  function navigateTableCell(path, tableCtx, shiftTab) {
+    const ps = pathStr(path);
+    const idx = editablePaths.findIndex(p => pathStr(p) === ps);
+    if (idx < 0) return;
+    const nextIdx = shiftTab ? idx - 1 : idx + 1;
+    if (nextIdx >= 0 && nextIdx < editablePaths.length) {
+      focusBlock(editablePaths[nextIdx], 0);
+    } else if (!shiftTab) {
+      // Past last editable — insert paragraph after the table
+      const tableParent = getParent(tableCtx.tablePath);
+      const tableChildIdx = tableCtx.tablePath[tableCtx.tablePath.length - 1];
+      tableParent.splice(tableChildIdx + 2, 0, [':p', { s: '' }]);
+      renderAllBlocks();
+      emitChange();
+      const newPath = [...tableCtx.tablePath.slice(0, -1), tableChildIdx + 1];
+      requestAnimationFrame(() => focusBlock(newPath, 0));
+    }
+  }
+
+  function navigateTableDown(path, tableCtx) {
+    const { cellIdx, rowIdx, sectionIdx, table, tablePath } = tableCtx;
+    // Try next row in same section
+    const section = tableCtx.section;
+    if (rowIdx + 1 < section.length - 1) {
+      const nextRow = section[rowIdx + 2];
+      if (tagOf(nextRow) === ':tr' && cellIdx < nextRow.length - 1) {
+        focusBlock([...tableCtx.sectionPath, rowIdx + 1, cellIdx], 0);
+        return;
+      }
+    }
+    // Try first row of next section
+    for (let si = sectionIdx + 1; si < table.length - 1; si++) {
+      const sec = table[si + 1];
+      const secTag = tagOf(sec);
+      if (secTag === ':align') continue;
+      if ((secTag === ':thead' || secTag === ':tbody') && sec.length > 1) {
+        const firstRow = sec[1];
+        if (tagOf(firstRow) === ':tr' && cellIdx < firstRow.length - 1) {
+          focusBlock([...tablePath, si, 0, cellIdx], 0);
+          return;
+        }
+      }
+    }
+    // At last row — no-op
   }
 
   function inlineTextLength(nodes) {
