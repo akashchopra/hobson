@@ -439,6 +439,10 @@ export async function render(value, options, api) {
             }
             cellEl.addEventListener('input', () => handleInput(cellEl, cellPath));
             cellEl.addEventListener('keydown', (e) => handleKeyDown(e, cellEl, cellPath));
+            cellEl.addEventListener('contextmenu', (e) => {
+              const ctx = getTableContext(cellPath);
+              if (ctx) showTableContextMenu(e, cellPath, ctx);
+            });
           } else {
             renderInlineContent(cell.slice(1), cellEl);
           }
@@ -1334,6 +1338,20 @@ export async function render(value, options, api) {
       return true;
     }
 
+    // ||| → table (2 columns, header + 1 body row)
+    if (before === '|||') {
+      setBlock(path, [':table',
+        [':thead', [':tr', [':th', { s: '' }], [':th', { s: '' }]]],
+        [':tbody', [':tr', [':td', { s: '' }], [':td', { s: '' }]]]
+      ]);
+      renderAllBlocks();
+      emitChange();
+      // Focus first header cell
+      const firstCellPath = [...path, 0, 0, 0];
+      requestAnimationFrame(() => focusBlock(firstCellPath, 0));
+      return true;
+    }
+
     // >>> → eval block (Hob expression wrapped in implicit do)
     if (before === '>>>') {
       setBlock(path, ["do", null]); // do block with nil hole — structural editor shows body
@@ -2067,6 +2085,275 @@ export async function render(value, options, api) {
       }
     }
     // At last row — no-op
+  }
+
+  // --- Table structure editing ---
+
+  // Helpers to iterate all rows and get column count
+  function tableGetSections(table) {
+    const sections = [];
+    for (let i = 1; i < table.length; i++) {
+      if (Array.isArray(table[i]) && (table[i][0] === ':thead' || table[i][0] === ':tbody')) {
+        sections.push({ node: table[i], idx: i });
+      }
+    }
+    return sections;
+  }
+
+  function tableColCount(table) {
+    for (let i = 1; i < table.length; i++) {
+      if (Array.isArray(table[i]) && (table[i][0] === ':thead' || table[i][0] === ':tbody')) {
+        for (let j = 1; j < table[i].length; j++) {
+          if (Array.isArray(table[i][j]) && table[i][j][0] === ':tr') {
+            return table[i][j].length - 1; // number of cells
+          }
+        }
+      }
+    }
+    return 0;
+  }
+
+  function tableGetAligns(table) {
+    const alignNode = table.find((c, i) => i > 0 && Array.isArray(c) && c[0] === ':align');
+    return alignNode ? alignNode.slice(1).map(a => textOf(a)) : [];
+  }
+
+  function tableSetAligns(table, aligns) {
+    // Remove existing :align node
+    for (let i = table.length - 1; i >= 1; i--) {
+      if (Array.isArray(table[i]) && table[i][0] === ':align') {
+        table.splice(i, 1);
+        break;
+      }
+    }
+    // Add new one if any non-default alignment
+    if (aligns.some(a => a && a !== 'left')) {
+      table.push([':align', ...aligns.map(a => ({ s: a || 'left' }))]);
+    }
+  }
+
+  function tableInsertRow(tableCtx, offset) {
+    // offset: 0 = above current row, 1 = below
+    const { section, rowIdx, cellIdx, tablePath } = tableCtx;
+    const cols = tableColCount(tableCtx.table);
+    const isHead = section[0] === ':thead';
+    const cellTag = isHead ? ':th' : ':td';
+    const newRow = [':tr'];
+    for (let i = 0; i < cols; i++) newRow.push([cellTag, { s: '' }]);
+
+    if (isHead && offset === 1) {
+      // Inserting below a header row — add to tbody instead
+      // Find or create tbody
+      let tbody = null;
+      for (let i = 1; i < tableCtx.table.length; i++) {
+        if (Array.isArray(tableCtx.table[i]) && tableCtx.table[i][0] === ':tbody') {
+          tbody = tableCtx.table[i];
+          break;
+        }
+      }
+      const bodyRow = [':tr'];
+      for (let i = 0; i < cols; i++) bodyRow.push([':td', { s: '' }]);
+      if (tbody) {
+        tbody.splice(1, 0, bodyRow); // insert at start of tbody
+      } else {
+        // Create tbody before :align
+        let insertIdx = tableCtx.table.length;
+        for (let i = 1; i < tableCtx.table.length; i++) {
+          if (Array.isArray(tableCtx.table[i]) && tableCtx.table[i][0] === ':align') {
+            insertIdx = i;
+            break;
+          }
+        }
+        tableCtx.table.splice(insertIdx, 0, [':tbody', bodyRow]);
+      }
+    } else {
+      section.splice(rowIdx + 1 + offset, 0, newRow);
+    }
+
+    renderAllBlocks();
+    emitChange();
+    // Focus first cell of the new row
+    rebuildEditablePaths();
+    const targetCellIdx = Math.min(cellIdx, cols - 1);
+    // Find the new cell by scanning editable paths for one in this table
+    requestAnimationFrame(() => {
+      // Re-derive context after AST mutation
+      for (const ep of editablePaths) {
+        const el = editor.querySelector(`[data-block-path="${pathStr(ep)}"]`);
+        if (el && el.closest('table')?.dataset.blockPath === pathStr(tablePath)) {
+          const ctx = getTableContext(ep);
+          if (!ctx) continue;
+          // Match: same table, expected position
+          if (isHead && offset === 1) {
+            // We inserted at tbody row 0
+            if (ctx.section[0] === ':tbody' && ctx.rowIdx === 0 && ctx.cellIdx === targetCellIdx) {
+              focusBlock(ep, 0);
+              return;
+            }
+          } else {
+            if (ctx.sectionPath.join('.') === tableCtx.sectionPath.join('.') &&
+                ctx.rowIdx === rowIdx + offset && ctx.cellIdx === targetCellIdx) {
+              focusBlock(ep, 0);
+              return;
+            }
+          }
+        }
+      }
+    });
+  }
+
+  function tableDeleteRow(tableCtx) {
+    const { section, rowIdx, cellIdx, table, tablePath } = tableCtx;
+    // Don't delete the last row in the entire table
+    const totalRows = tableGetSections(table).reduce((n, s) => n + s.node.length - 1, 0);
+    if (totalRows <= 1) {
+      // Delete entire table instead
+      tableDelete(tableCtx);
+      return;
+    }
+    section.splice(rowIdx + 1, 1);
+    // If section is now empty, remove it
+    if (section.length <= 1) {
+      for (let i = table.length - 1; i >= 1; i--) {
+        if (table[i] === section) { table.splice(i, 1); break; }
+      }
+    }
+    renderAllBlocks();
+    emitChange();
+  }
+
+  function tableInsertCol(tableCtx, offset) {
+    // offset: 0 = left of current col, 1 = right
+    const { cellIdx, table } = tableCtx;
+    const insertAt = cellIdx + offset;
+    const sections = tableGetSections(table);
+    for (const { node: sec } of sections) {
+      const isHead = sec[0] === ':thead';
+      for (let r = 1; r < sec.length; r++) {
+        const row = sec[r];
+        if (!Array.isArray(row) || row[0] !== ':tr') continue;
+        const cellTag = isHead ? ':th' : ':td';
+        row.splice(insertAt + 1, 0, [cellTag, { s: '' }]);
+      }
+    }
+    // Update alignment
+    const aligns = tableGetAligns(table);
+    if (aligns.length > 0) {
+      aligns.splice(insertAt, 0, 'left');
+      tableSetAligns(table, aligns);
+    }
+    renderAllBlocks();
+    emitChange();
+  }
+
+  function tableDeleteCol(tableCtx) {
+    const { cellIdx, table } = tableCtx;
+    const cols = tableColCount(table);
+    if (cols <= 1) {
+      // Last column — delete entire table
+      tableDelete(tableCtx);
+      return;
+    }
+    const sections = tableGetSections(table);
+    for (const { node: sec } of sections) {
+      for (let r = 1; r < sec.length; r++) {
+        const row = sec[r];
+        if (!Array.isArray(row) || row[0] !== ':tr') continue;
+        if (cellIdx + 1 < row.length) row.splice(cellIdx + 1, 1);
+      }
+    }
+    // Update alignment
+    const aligns = tableGetAligns(table);
+    if (aligns.length > cellIdx) {
+      aligns.splice(cellIdx, 1);
+      tableSetAligns(table, aligns);
+    }
+    renderAllBlocks();
+    emitChange();
+  }
+
+  function tableCycleAlign(tableCtx) {
+    const { cellIdx, table } = tableCtx;
+    const cols = tableColCount(table);
+    const aligns = tableGetAligns(table);
+    // Pad to column count
+    while (aligns.length < cols) aligns.push('left');
+    const cycle = { left: 'center', center: 'right', right: 'left' };
+    aligns[cellIdx] = cycle[aligns[cellIdx]] || 'center';
+    tableSetAligns(table, aligns);
+    renderAllBlocks();
+    emitChange();
+  }
+
+  function tableDelete(tableCtx) {
+    const { tablePath } = tableCtx;
+    setBlock(tablePath, [':p', { s: '' }]);
+    renderAllBlocks();
+    emitChange();
+    requestAnimationFrame(() => focusBlock(tablePath, 0));
+  }
+
+  // --- Table context menu ---
+
+  const tableMenu = document.createElement('div');
+  tableMenu.style.cssText = 'position: fixed; z-index: 10000; background: var(--color-bg-surface, #fff); border: 1px solid var(--color-border, #e5e7eb); border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); min-width: 180px; display: none; font-size: 0.8125rem; padding: 4px 0;';
+  document.body.appendChild(tableMenu);
+
+  function tableMenuHide() {
+    tableMenu.style.display = 'none';
+    tableMenu.innerHTML = '';
+    document.removeEventListener('mousedown', tableMenuOutside);
+  }
+
+  function tableMenuOutside(e) {
+    if (!tableMenu.contains(e.target)) tableMenuHide();
+  }
+
+  function tableMenuAddItem(label, onClick) {
+    const item = document.createElement('div');
+    item.textContent = label;
+    item.style.cssText = 'padding: 5px 14px; cursor: pointer;';
+    item.addEventListener('mouseenter', () => item.style.background = 'var(--color-bg-surface-alt, #f3f4f6)');
+    item.addEventListener('mouseleave', () => item.style.background = '');
+    item.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      tableMenuHide();
+      onClick();
+    });
+    tableMenu.appendChild(item);
+  }
+
+  function tableMenuAddSeparator() {
+    const sep = document.createElement('div');
+    sep.style.cssText = 'height: 1px; background: var(--color-border, #e5e7eb); margin: 4px 0;';
+    tableMenu.appendChild(sep);
+  }
+
+  function showTableContextMenu(e, path, tableCtx) {
+    e.preventDefault();
+    e.stopPropagation();
+    tableMenu.innerHTML = '';
+    const aligns = tableGetAligns(tableCtx.table);
+    const cols = tableColCount(tableCtx.table);
+    const currentAlign = (aligns[tableCtx.cellIdx] || 'left');
+
+    tableMenuAddItem('Insert row above', () => tableInsertRow(tableCtx, 0));
+    tableMenuAddItem('Insert row below', () => tableInsertRow(tableCtx, 1));
+    tableMenuAddItem('Delete row', () => tableDeleteRow(tableCtx));
+    tableMenuAddSeparator();
+    tableMenuAddItem('Insert column left', () => tableInsertCol(tableCtx, 0));
+    tableMenuAddItem('Insert column right', () => tableInsertCol(tableCtx, 1));
+    tableMenuAddItem('Delete column', () => tableDeleteCol(tableCtx));
+    tableMenuAddSeparator();
+    tableMenuAddItem('Align: ' + currentAlign + ' \u2192 ' + ({ left: 'center', center: 'right', right: 'left' }[currentAlign] || 'center'), () => tableCycleAlign(tableCtx));
+    tableMenuAddSeparator();
+    tableMenuAddItem('Delete table', () => tableDelete(tableCtx));
+
+    tableMenu.style.left = e.clientX + 'px';
+    tableMenu.style.top = e.clientY + 'px';
+    tableMenu.style.display = 'block';
+    setTimeout(() => document.addEventListener('mousedown', tableMenuOutside), 0);
   }
 
   function inlineTextLength(nodes) {
