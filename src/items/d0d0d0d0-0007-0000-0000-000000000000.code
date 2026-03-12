@@ -256,7 +256,20 @@ export async function render(value, options, api) {
           }
           case ':code': {
             const el = document.createElement('code');
-            el.style.cssText = 'background: var(--color-bg-surface-alt); padding: 1px 4px; border-radius: 3px; font-size: 0.8125em;';
+            el.style.cssText = 'background: var(--color-bg-surface-alt); padding: 1px 0; border-radius: 3px; box-shadow: -3px 0 0 var(--color-bg-surface-alt), 3px 0 0 var(--color-bg-surface-alt);';
+            for (let i = 1; i < child.length; i++) el.appendChild(document.createTextNode(textOf(child[i])));
+            parent.appendChild(el);
+            break;
+          }
+          case ':del': {
+            const el = document.createElement('del');
+            for (let i = 1; i < child.length; i++) el.appendChild(document.createTextNode(textOf(child[i])));
+            parent.appendChild(el);
+            break;
+          }
+          case ':mark': {
+            const el = document.createElement('mark');
+            el.style.cssText = 'background: var(--color-warning-light, #fef3c7); padding: 1px 2px; border-radius: 2px;';
             for (let i = 1; i < child.length; i++) el.appendChild(document.createTextNode(textOf(child[i])));
             parent.appendChild(el);
             break;
@@ -467,6 +480,146 @@ export async function render(value, options, api) {
     return container;
   }
 
+  function applyInlineWrap(blockEl, path, tagName) {
+    const astTag = ':' + tagName;
+    const sel = blockEl.ownerDocument.defaultView.getSelection();
+    if (!sel.rangeCount) return;
+    const range = sel.getRangeAt(0);
+
+    // Read current inline AST from DOM
+    const inlineAst = domToInlineAst(blockEl);
+    const block = getBlock(path);
+    const FMT_TAGS = [':strong', ':em', ':code', ':del', ':mark'];
+
+    function nodeTextLen(node) {
+      if (isText(node)) return node.s.length;
+      if (Array.isArray(node) && FMT_TAGS.includes(node[0])) {
+        let len = 0;
+        for (let j = 1; j < node.length; j++) len += textOf(node[j]).length;
+        return len;
+      }
+      return Array.isArray(node) ? 1 : 0;
+    }
+
+    // Detect unwrap: is selection inside or spanning an existing element?
+    let existingEl = null;
+    let anc = range.commonAncestorContainer;
+    if (anc.nodeType === 3) anc = anc.parentNode;
+    if (anc.closest?.(tagName) && blockEl.contains(anc.closest(tagName))) {
+      existingEl = anc.closest(tagName);
+    } else if (anc.tagName?.toLowerCase() === tagName) {
+      existingEl = anc;
+    } else {
+      for (const el of blockEl.querySelectorAll(tagName)) {
+        if (range.intersectsNode(el)) { existingEl = el; break; }
+      }
+    }
+
+    let newInline, focusOffset;
+
+    if (existingEl) {
+      // UNWRAP — find matching AST node by text content and remove wrapper
+      const targetText = existingEl.textContent.replace(/\u200B/g, '');
+      newInline = [];
+      let offset = 0;
+      let found = false;
+      let insertStart = -1, insertEnd = -1;
+      for (const node of inlineAst) {
+        if (!found && Array.isArray(node) && node[0] === astTag) {
+          const nodeText = node.slice(1).map(n => isText(n) ? n.s : '').join('');
+          if (nodeText === targetText) {
+            insertStart = newInline.length;
+            for (let j = 1; j < node.length; j++) newInline.push(node[j]);
+            insertEnd = newInline.length;
+            focusOffset = offset + nodeText.length;
+            offset += nodeText.length;
+            found = true;
+            continue;
+          }
+        }
+        offset += nodeTextLen(node);
+        newInline.push(node);
+      }
+      if (!found) return;
+
+      // Ensure spaces at unwrap boundaries (padding was providing visual spacing)
+      function lastChar(node) {
+        if (isText(node)) return node.s[node.s.length - 1];
+        if (Array.isArray(node) && FMT_TAGS.includes(node[0])) {
+          const t = textOf(node[node.length - 1]);
+          return t ? t[t.length - 1] : '';
+        }
+        return '';
+      }
+      function firstChar(node) {
+        if (isText(node)) return node.s[0];
+        if (Array.isArray(node) && FMT_TAGS.includes(node[0])) {
+          const t = textOf(node[1]);
+          return t ? t[0] : '';
+        }
+        return '';
+      }
+      function needsSpace(a, b) {
+        return a && b && /\w/.test(a) && /\w/.test(b);
+      }
+      if (insertStart > 0) {
+        const before = newInline[insertStart - 1];
+        const at = newInline[insertStart];
+        if (at && needsSpace(lastChar(before), firstChar(at))) {
+          if (isText(at)) at.s = ' ' + at.s;
+          else if (isText(before)) before.s += ' ';
+          focusOffset++;
+        }
+      }
+      if (insertEnd > 0 && insertEnd < newInline.length) {
+        const at = newInline[insertEnd - 1];
+        const after = newInline[insertEnd];
+        if (at && needsSpace(lastChar(at), firstChar(after))) {
+          if (isText(after)) after.s = ' ' + after.s;
+          else if (isText(at)) at.s += ' ';
+        }
+      }
+    } else if (!range.collapsed) {
+      // WRAP — find selected text in AST and wrap it
+      const rawSelected = range.toString().replace(/\u200B/g, '');
+      const trimmed = rawSelected.trim();
+      if (!trimmed) return;
+      const leadTrim = rawSelected.length - rawSelected.trimStart().length;
+      const trailTrim = rawSelected.length - rawSelected.trimEnd().length;
+      newInline = [];
+      let offset = 0;
+      let found = false;
+      for (let i = 0; i < inlineAst.length; i++) {
+        const node = inlineAst[i];
+        if (!found && isText(node)) {
+          const idx = node.s.indexOf(rawSelected);
+          if (idx >= 0) {
+            // Keep leading/trailing whitespace outside the formatted element
+            const before = node.s.substring(0, idx + leadTrim);
+            const after = node.s.substring(idx + rawSelected.length - trailTrim);
+            if (before) newInline.push({ s: before });
+            newInline.push([astTag, { s: trimmed }]);
+            if (after) newInline.push({ s: after });
+            focusOffset = offset + idx + leadTrim + trimmed.length;
+            found = true;
+            continue;
+          }
+        }
+        offset += nodeTextLen(node);
+        newInline.push(node);
+      }
+      if (!found) return;
+    } else {
+      return;
+    }
+
+    newInline = mergeAdjacentText(newInline);
+    setBlock(path, [block[0], ...(newInline.length ? newInline : [{ s: '' }])]);
+    renderAllBlocks();
+    emitChange();
+    requestAnimationFrame(() => focusBlockAtOffset(path, focusOffset));
+  }
+
   function renderFallback(block, path) {
     const div = document.createElement('div');
     div.dataset.blockPath = pathStr(path);
@@ -486,11 +639,20 @@ export async function render(value, options, api) {
       } else if (node.nodeType === 1) {
         const tag = node.tagName.toLowerCase();
         if (tag === 'strong' || tag === 'b') {
-          if (node.textContent) result.push([':strong', { s: node.textContent }]);
+          const t = node.textContent.replace(/\u200B/g, '');
+          if (t) result.push([':strong', { s: t }]);
         } else if (tag === 'em' || tag === 'i') {
-          if (node.textContent) result.push([':em', { s: node.textContent }]);
+          const t = node.textContent.replace(/\u200B/g, '');
+          if (t) result.push([':em', { s: t }]);
         } else if (tag === 'code') {
-          if (node.textContent) result.push([':code', { s: node.textContent }]);
+          const t = node.textContent.replace(/\u200B/g, '');
+          if (t) result.push([':code', { s: t }]);
+        } else if (tag === 'del' || tag === 's' || tag === 'strike') {
+          const t = node.textContent.replace(/\u200B/g, '');
+          if (t) result.push([':del', { s: t }]);
+        } else if (tag === 'mark') {
+          const t = node.textContent.replace(/\u200B/g, '');
+          if (t) result.push([':mark', { s: t }]);
         } else if (node.classList.contains('doc-field-ref')) {
           result.push(['get-field', ':self', ':' + node.dataset.field]);
         } else if (node.classList.contains('doc-item-ref')) {
@@ -1300,15 +1462,28 @@ export async function render(value, options, api) {
         else handleListIndent(path, listCtx);
         return;
       }
-    } else if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey) {
-      if (e.key === 'b' || e.key === 'B') {
-        e.preventDefault();
-        document.execCommand('bold', false, null);
-        handleInput(blockEl, path);
-      } else if (e.key === 'i' || e.key === 'I') {
-        e.preventDefault();
-        document.execCommand('italic', false, null);
-        handleInput(blockEl, path);
+    } else if ((e.ctrlKey || e.metaKey) && !e.altKey) {
+      if (!e.shiftKey) {
+        if (e.key === 'b' || e.key === 'B') {
+          e.preventDefault();
+          document.execCommand('bold', false, null);
+          handleInput(blockEl, path);
+        } else if (e.key === 'i' || e.key === 'I') {
+          e.preventDefault();
+          document.execCommand('italic', false, null);
+          handleInput(blockEl, path);
+        } else if (e.key === 'e' || e.key === 'E') {
+          e.preventDefault();
+          applyInlineWrap(blockEl, path, 'code');
+        }
+      } else {
+        if (e.key === 'x' || e.key === 'X') {
+          e.preventDefault();
+          applyInlineWrap(blockEl, path, 'del');
+        } else if (e.key === 'h' || e.key === 'H') {
+          e.preventDefault();
+          applyInlineWrap(blockEl, path, 'mark');
+        }
       }
     }
   }
@@ -1757,7 +1932,7 @@ export async function render(value, options, api) {
         len += node.s.length;
       } else if (Array.isArray(node)) {
         const tag = node[0];
-        if (tag === ':strong' || tag === ':em' || tag === ':code') {
+        if (tag === ':strong' || tag === ':em' || tag === ':code' || tag === ':del' || tag === ':mark') {
           for (let i = 1; i < node.length; i++) len += textOf(node[i]).length;
         } else {
           len += 1; // non-editable island
