@@ -54,17 +54,21 @@ export async function render(value, options, api) {
   return wrapper;
 }
 
-// Extract the string value from a Hob AST text node
+// Extract the string value from a Hob AST text node ({s: "..."} or {:s "..."} from Hob)
 function textOf(node) {
-  if (node && typeof node === 'object' && !Array.isArray(node) && 's' in node) return node.s;
+  if (node && typeof node === 'object' && !Array.isArray(node)) {
+    if ('s' in node) return node.s;
+    if ('\u029es' in node) return node['\u029es'];
+  }
   if (typeof node === 'string') return node;
   return String(node ?? '');
 }
 
-// Get the keyword tag from an AST node (first element, string starting with ":")
+// Get the keyword tag from an AST node (first element, string starting with ":" or Hob keyword Ꞟ)
 function tagOf(node) {
-  if (Array.isArray(node) && typeof node[0] === 'string' && node[0].startsWith(':')) {
-    return node[0];
+  if (Array.isArray(node) && typeof node[0] === 'string') {
+    if (node[0].startsWith(':')) return node[0];
+    if (node[0].startsWith('\u029e')) return ':' + node[0].substring(1);
   }
   return null;
 }
@@ -161,10 +165,13 @@ async function renderTransclusion(wrapper, parent, api, item, inline) {
 
 // Render a single AST node into a parent DOM element
 async function renderNode(node, parent, api, item) {
-  // String literal {s: "..."} — text node
-  if (node && typeof node === 'object' && !Array.isArray(node) && 's' in node) {
-    parent.appendChild(document.createTextNode(node.s));
-    return;
+  // String literal {s: "..."} or {:s "..."} from Hob — text node
+  if (node && typeof node === 'object' && !Array.isArray(node)) {
+    const text = ('s' in node) ? node.s : ('\u029es' in node) ? node['\u029es'] : undefined;
+    if (text !== undefined) {
+      parent.appendChild(document.createTextNode(text));
+      return;
+    }
   }
 
   // DOM node passthrough (e.g. from call-export)
@@ -337,10 +344,13 @@ async function renderInlineChildren(children, parent, api, item) {
 
 // Render a single inline node
 async function renderInlineNode(node, parent, api, item) {
-  // String literal {s: "..."} — text
-  if (node && typeof node === 'object' && !Array.isArray(node) && 's' in node) {
-    parent.appendChild(document.createTextNode(node.s));
-    return;
+  // String literal {s: "..."} or {:s "..."} from Hob — text
+  if (node && typeof node === 'object' && !Array.isArray(node)) {
+    const text = ('s' in node) ? node.s : ('\u029es' in node) ? node['\u029es'] : undefined;
+    if (text !== undefined) {
+      parent.appendChild(document.createTextNode(text));
+      return;
+    }
   }
 
   // DOM node passthrough
