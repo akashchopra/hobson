@@ -2991,6 +2991,24 @@ function registerViewOps(env, api) {
     return await hobsonMarkdown.render(text, api);
   }, { _hobName: 'render-markdown' }));
 
+  // Fast JS-native text extraction from :doc ASTs (avoids Hob interpreter overhead)
+  env.define('extract-text', Object.assign((node) => {
+    function walk(n) {
+      if (typeof n === 'string') return n;
+      if (n && typeof n === 'object' && 's' in n) return n.s;
+      if (Array.isArray(n)) {
+        let out = '';
+        for (let i = 1; i < n.length; i++) {
+          const t = walk(n[i]);
+          if (t) out += (out ? ' ' : '') + t;
+        }
+        return out;
+      }
+      return '';
+    }
+    return walk(node);
+  }, { _hobName: 'extract-text' }));
+
   env.define('copy-to-clipboard!', Object.assign(async (text) => {
     await navigator.clipboard.writeText(text);
     return null;

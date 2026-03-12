@@ -1,6 +1,7 @@
 // related-items-lib — Inverse index library for item relationships
 
 const LINK_RE = /item:\/\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/g;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // State lives on globalThis so it survives moduleSystem.clearCache()
 const CACHE_KEY = '__relatedItemsLib__';
@@ -43,18 +44,38 @@ function getFromIndex(index, key) {
 
 function extractLinks(item) {
   const links = new Set();
-  function scan(val) {
-    if (typeof val === 'string') {
+  const c = item.content;
+  if (!c) return links;
+
+  // 1. Walk doc AST (description) looking for :item-ref nodes structurally.
+  //    Format: [":item-ref", {"s": "uuid"}, {"s": "display-name"}]
+  if (Array.isArray(c.description)) {
+    (function walkAst(node) {
+      if (!Array.isArray(node)) return;
+      if (node[0] === ':item-ref' && node[1]?.s && UUID_RE.test(node[1].s)) {
+        links.add(node[1].s);
+        return; // no need to recurse into item-ref children
+      }
+      for (let i = 1; i < node.length; i++) walkAst(node[i]);
+    })(c.description);
+  }
+
+  // 2. Scan plain string fields (code, body) for legacy item:// links
+  for (const val of [c.code, c.body]) {
+    if (typeof val === 'string' && val.includes('item://')) {
       LINK_RE.lastIndex = 0;
       let m;
       while ((m = LINK_RE.exec(val)) !== null) links.add(m[1]);
-    } else if (Array.isArray(val)) {
-      for (const v of val) scan(v);
-    } else if (val && typeof val === 'object') {
-      for (const v of Object.values(val)) scan(v);
     }
   }
-  if (item.content) scan(item.content);
+
+  // 3. If description is still a markdown string (unmigrated), scan it too
+  if (typeof c.description === 'string' && c.description.includes('item://')) {
+    LINK_RE.lastIndex = 0;
+    let m;
+    while ((m = LINK_RE.exec(c.description)) !== null) links.add(m[1]);
+  }
+
   return links;
 }
 

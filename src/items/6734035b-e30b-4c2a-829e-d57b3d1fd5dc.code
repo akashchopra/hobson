@@ -165,14 +165,17 @@ function resolveTagIds(name, tagCache) {
  * Build searchable text from an item
  */
 function buildSearchableText(item) {
+  const c = item.content;
   return [
     item.id,
     item.type,
     item.name,
-    item.content?.title,
-    item.content?.body,
-    typeof item.content?.description === 'string' ? item.content.description : Array.isArray(item.content?.description) ? extractText(item.content.description) : null,
-    JSON.stringify(item.content)
+    c?.title,
+    c?.body,
+    typeof c?.description === 'string' ? c.description : Array.isArray(c?.description) ? extractText(c.description) : null,
+    c?.code && typeof c.code === 'string' ? c.code : null,
+    c?.displayName,
+    c?.for_type,
   ].filter(Boolean).join(' ').toLowerCase();
 }
 // [END:buildSearchableText]
@@ -249,6 +252,39 @@ export async function matchesFilters(item, filters, api) {
 }
 // [END:matchesFilters]
 
+/**
+ * Synchronous version of matchesFilters for queries without type hierarchy checks.
+ * Avoids async overhead (400+ sequential awaits) in the common case.
+ */
+function matchesFiltersSync(item, filters) {
+  if (filters.text.length > 0) {
+    const searchableText = buildSearchableText(item);
+    if (!filters.text.every(term => searchableText.includes(term))) return false;
+  }
+  if (filters.negatedText.length > 0) {
+    const searchableText = buildSearchableText(item);
+    if (filters.negatedText.some(term => searchableText.includes(term))) return false;
+  }
+  if (filters.types.include.length > 0) {
+    if (!filters.types.include.some(({ id }) => item.type === id)) return false;
+  }
+  for (const { id } of filters.types.exclude) {
+    if (item.type === id) return false;
+  }
+  const itemTags = item.content?.tags || [];
+  for (const orGroup of filters.tags.include) {
+    if (!orGroup.some(tagId => itemTags.includes(tagId))) return false;
+  }
+  for (const tagId of filters.tags.exclude) {
+    if (itemTags.includes(tagId)) return false;
+  }
+  for (const [field, value] of Object.entries(filters.fields)) {
+    const itemValue = (item[field] || item.content?.[field] || '').toLowerCase();
+    if (!itemValue.includes(value.toLowerCase())) return false;
+  }
+  return true;
+}
+
 // [BEGIN:hasFilterSyntax]
 /**
  * Check if a query string contains filter syntax
@@ -301,84 +337,100 @@ export async function searchItems(query, api, options = {}) {
     return matches;
   }
 
-  // Build lookup caches for type and tag names
-  const typeCache = new Map();
-  const tagCache = new Map();  // name -> [id1, id2, ...] (multiple tags can share names)
+  // Parse the query first (cheap) to know which caches we need
+  // Pre-parse without caches to detect what filter kinds are present
+  const preParsed = parseQuery(query);
 
-  try {
-    const allTypes = await api.query({ type: api.IDS?.TYPE_DEFINITION || TYPE_DEFINITION_ID });
-    allTypes.forEach(t => {
-      if (t.name) {
-        const fullName = t.name.toLowerCase();
-        typeCache.set(fullName, t.id);
-        // Also index without namespace prefix (kernel:code -> code)
-        if (fullName.includes(':')) {
-          const shortName = fullName.split(':').pop();
-          if (!typeCache.has(shortName)) {
-            typeCache.set(shortName, t.id);
+  // If all filter values are empty (e.g. "name:" with no value), return empty
+  const hasTextTerms = preParsed.text.length > 0 || preParsed.negatedText.length > 0;
+  const hasTypeFilters = preParsed.types.include.length > 0 || preParsed.types.exclude.length > 0;
+  const hasTagFilters = preParsed.tags.include.length > 0 || preParsed.tags.exclude.length > 0;
+  const hasFieldFilters = Object.values(preParsed.fields).some(v => v.length > 0);
+  if (!hasTextTerms && !hasTypeFilters && !hasTagFilters && !hasFieldFilters) {
+    return [];
+  }
+
+  // Only build caches that the query actually needs
+  const typeCache = new Map();
+  const tagCache = new Map();
+
+  if (hasTypeFilters) {
+    try {
+      const allTypes = await api.query({ type: api.IDS?.TYPE_DEFINITION || TYPE_DEFINITION_ID });
+      for (const t of allTypes) {
+        if (t.name) {
+          const fullName = t.name.toLowerCase();
+          typeCache.set(fullName, t.id);
+          if (fullName.includes(':')) {
+            const shortName = fullName.split(':').pop();
+            if (!typeCache.has(shortName)) typeCache.set(shortName, t.id);
           }
         }
       }
-    });
-  } catch (err) {
-    console.warn('Could not load types for search cache:', err);
+    } catch (err) {
+      console.warn('Could not load types for search cache:', err);
+    }
   }
 
-  try {
-    // Discover tags from actual usage in content.tags across all items
-    const tagIds = new Set();
-    for (const item of itemsToSearch) {
-      const tags = item.content?.tags || [];
-      for (const tagId of tags) tagIds.add(tagId);
-    }
-    // Resolve each tag ID to its item for name lookup
-    const itemById = new Map(itemsToSearch.map(i => [i.id, i]));
-    const tagItemsById = new Map();
-    for (const tagId of tagIds) {
-      const tagItem = itemById.get(tagId) || await api.get(tagId).catch(() => null);
-      if (tagItem) {
-        tagItemsById.set(tagId, tagItem);
-        const name = (tagItem.name || tagItem.content?.name || '').toLowerCase();
-        if (name) {
-          if (!tagCache.has(name)) tagCache.set(name, []);
-          tagCache.get(name).push(tagItem.id);
+  if (hasTagFilters) {
+    try {
+      // Use the already-fetched items to resolve tags synchronously
+      const itemById = new Map(itemsToSearch.map(i => [i.id, i]));
+      const tagIds = new Set();
+      for (const item of itemsToSearch) {
+        const tags = item.content?.tags || [];
+        for (const tagId of tags) tagIds.add(tagId);
+      }
+      const tagItemsById = new Map();
+      for (const tagId of tagIds) {
+        const tagItem = itemById.get(tagId);
+        if (tagItem) {
+          tagItemsById.set(tagId, tagItem);
+          const name = (tagItem.name || tagItem.content?.name || '').toLowerCase();
+          if (name) {
+            if (!tagCache.has(name)) tagCache.set(name, []);
+            tagCache.get(name).push(tagItem.id);
+          }
         }
       }
-    }
-    // Walk parent chains so ancestor tag names also match descendant tag IDs.
-    // e.g. tag:concept should match items tagged with primitive (child of concept).
-    for (const [tagId, tagItem] of tagItemsById) {
-      let parentId = tagItem.content?.parent;
-      const visited = new Set();
-      while (parentId && !visited.has(parentId)) {
-        visited.add(parentId);
-        let parentItem = tagItemsById.get(parentId) || itemById.get(parentId);
-        if (!parentItem) parentItem = await api.get(parentId).catch(() => null);
-        if (!parentItem) break;
-        tagItemsById.set(parentId, parentItem);
-        const parentName = (parentItem.name || parentItem.content?.name || '').toLowerCase();
-        if (parentName) {
-          if (!tagCache.has(parentName)) tagCache.set(parentName, []);
-          const ids = tagCache.get(parentName);
-          if (!ids.includes(tagId)) ids.push(tagId);
-          // Also ensure the parent's own ID is in its cache entry
-          if (!ids.includes(parentId)) ids.push(parentId);
+      // Walk parent chains (sync — only use already-loaded items)
+      for (const [tagId, tagItem] of tagItemsById) {
+        let parentId = tagItem.content?.parent;
+        const visited = new Set();
+        while (parentId && !visited.has(parentId)) {
+          visited.add(parentId);
+          const parentItem = tagItemsById.get(parentId) || itemById.get(parentId);
+          if (!parentItem) break;
+          tagItemsById.set(parentId, parentItem);
+          const parentName = (parentItem.name || parentItem.content?.name || '').toLowerCase();
+          if (parentName) {
+            if (!tagCache.has(parentName)) tagCache.set(parentName, []);
+            const ids = tagCache.get(parentName);
+            if (!ids.includes(tagId)) ids.push(tagId);
+            if (!ids.includes(parentId)) ids.push(parentId);
+          }
+          parentId = parentItem.content?.parent;
         }
-        parentId = parentItem.content?.parent;
       }
+    } catch (err) {
+      console.warn('Could not load tags for search cache:', err);
     }
-  } catch (err) {
-    console.warn('Could not load tags for search cache:', err);
   }
 
-  // Parse the query with caches
+  // Re-parse with resolved caches
   const filters = parseQuery(query, { typeCache, tagCache });
 
-  // Filter items
+  // Filter items — synchronous when no type hierarchy checks needed
+  const needsAsyncTypeCheck = filters.types.include.some(t => t.inherited) ||
+                              filters.types.exclude.some(t => t.inherited);
   const matches = [];
-  for (const item of itemsToSearch) {
-    if (await matchesFilters(item, filters, api)) {
-      matches.push(item);
+  if (needsAsyncTypeCheck) {
+    for (const item of itemsToSearch) {
+      if (await matchesFilters(item, filters, api)) matches.push(item);
+    }
+  } else {
+    for (const item of itemsToSearch) {
+      if (matchesFiltersSync(item, filters)) matches.push(item);
     }
   }
 
