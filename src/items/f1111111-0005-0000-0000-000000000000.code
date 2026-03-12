@@ -34,16 +34,20 @@ export async function show(_api) {
     cachedSearchItemId = searchItems[0].id;
   }
 
-  // Reset search state silently (no events/re-render) — the attach below
-  // triggers the only render needed. currentQuery=null lets the view's
-  // (when (nil? currentQuery) (do-search "")) fire to fetch starred items.
+  // Pre-fetch starred items so the first render has data immediately.
+  // (Deferring to the Hob view's do-search side-effect doesn't work: set-item!
+  // fires before the render instance is registered, so the re-render is lost.)
   const searchItem = await api.get(cachedSearchItemId);
-  searchItem.content = { ...searchItem.content, currentQuery: null };
-  searchItem.attachments = [];
-  searchItem.modified = Date.now();
-  await api.set(searchItem, { silent: true });
+  const searchLib = await api.require('item-search-lib');
+  const starred = await searchLib.getStarredItems(api);
+  const starredAtts = starred.map(s => ({ id: s.id }));
 
-  // Attach search item to viewport as overlay — modal appears now
+  searchItem.content = { ...searchItem.content, currentQuery: '' };
+  searchItem.attachments = starredAtts;
+  searchItem.modified = Date.now();
+  await api.set(searchItem);
+
+  // Attach search item to viewport as overlay
   await api.attach(VIEWPORT_ID, { id: cachedSearchItemId });
 }
 // [END:show]
