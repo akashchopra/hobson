@@ -1244,6 +1244,10 @@ export async function render(value, options, api) {
             // Merge with previous editable sibling
             e.preventDefault();
             mergeWithPrevious(blockEl, path);
+          } else if (tagOf(prevBlock) === ':ul' || tagOf(prevBlock) === ':ol') {
+            // Merge into last leaf block of preceding list's last :li
+            e.preventDefault();
+            mergeIntoPrecedingList(blockEl, path, prevPath, prevBlock);
           } else if (!isEditableBlock(prevBlock)) {
             // Delete previous non-editable block (hr, eval, code-block)
             e.preventDefault();
@@ -1354,19 +1358,35 @@ export async function render(value, options, api) {
     const afterAst = domToInlineAst(afterDiv);
     const block = getBlock(path);
     const blockTag = block[0];
-
-    // Update current block with content before cursor
-    setBlock(path, [blockTag, ...(beforeAst.length ? beforeAst : [{ s: '' }])]);
-
-    // Insert new :p after current block in same parent
     const parent = getParent(path);
     const childIdx = path[path.length - 1];
-    parent.splice(childIdx + 2, 0, [':p', ...(afterAst.length ? afterAst : [{ s: '' }])]);
 
-    renderAllBlocks();
-    emitChange();
-    const newPath = [...path.slice(0, -1), childIdx + 1];
-    requestAnimationFrame(() => focusBlock(newPath, 0));
+    const beforeEmpty = isBlockEmpty(beforeAst);
+
+    if (beforeEmpty && blockTag !== ':p') {
+      // Cursor at start of non-paragraph — insert empty :p before, keep block intact
+      parent.splice(childIdx + 1, 0, [':p', { s: '' }]);
+      renderAllBlocks();
+      emitChange();
+      const newPath = [...path.slice(0, -1), childIdx + 1];
+      requestAnimationFrame(() => focusBlock(newPath, 0));
+    } else {
+      // Update current block with content before cursor
+      setBlock(path, [blockTag, ...(beforeAst.length ? beforeAst : [{ s: '' }])]);
+
+      // Insert new :p after current block in same parent
+      parent.splice(childIdx + 2, 0, [':p', ...(afterAst.length ? afterAst : [{ s: '' }])]);
+
+      renderAllBlocks();
+      emitChange();
+      const newPath = [...path.slice(0, -1), childIdx + 1];
+      requestAnimationFrame(() => focusBlock(newPath, 0));
+    }
+  }
+
+  function isBlockEmpty(inline) {
+    return inline.length === 0 ||
+      inline.every(n => isText(n) && n.s.replace(/\u200B/g, '').trim() === '');
   }
 
   function mergeWithPrevious(blockEl, path) {
@@ -1376,8 +1396,20 @@ export async function render(value, options, api) {
     const prevPath = [...path.slice(0, -1), childIdx - 1];
     const prevBlock = getBlock(prevPath);
     const currBlock = getBlock(path);
+    const parent = getParent(path);
 
     const prevInline = prevBlock.slice(1);
+
+    // If previous block is empty, just remove it (preserves current block's type)
+    if (isBlockEmpty(prevInline)) {
+      parent.splice(childIdx, 1);
+      renderAllBlocks();
+      emitChange();
+      const newPath = [...path.slice(0, -1), childIdx - 1];
+      requestAnimationFrame(() => focusBlock(newPath, 0));
+      return;
+    }
+
     const cursorOffset = inlineTextLength(prevInline);
     const currInline = currBlock.slice(1);
 
@@ -1385,7 +1417,6 @@ export async function render(value, options, api) {
     setBlock(prevPath, [prevBlock[0], ...(merged.length ? merged : [{ s: '' }])]);
 
     // Remove current block from parent
-    const parent = getParent(path);
     parent.splice(childIdx + 1, 1);
 
     renderAllBlocks();
@@ -1404,6 +1435,16 @@ export async function render(value, options, api) {
     const nextBlock = getBlock(nextPath);
 
     const currInline = currBlock.slice(1);
+
+    // If current block is empty, just remove it (preserves next block's type)
+    if (isBlockEmpty(currInline)) {
+      parent.splice(childIdx + 1, 1);
+      renderAllBlocks();
+      emitChange();
+      requestAnimationFrame(() => focusBlock([...path.slice(0, -1), childIdx], 0));
+      return;
+    }
+
     const cursorOffset = inlineTextLength(currInline);
     const nextInline = nextBlock.slice(1);
 
@@ -1416,6 +1457,43 @@ export async function render(value, options, api) {
     renderAllBlocks();
     emitChange();
     requestAnimationFrame(() => focusBlockAtOffset(path, cursorOffset));
+  }
+
+  function mergeIntoPrecedingList(blockEl, path, listPath, list) {
+    // Find last :li in the list
+    let lastLiIdx = -1;
+    for (let i = list.length - 1; i >= 1; i--) {
+      if (tagOf(list[i]) === ':li') { lastLiIdx = i - 1; break; }
+    }
+    if (lastLiIdx < 0) return;
+
+    const lastLi = list[lastLiIdx + 1];
+    // Find last leaf block in that :li
+    let lastPIdx = -1;
+    for (let i = lastLi.length - 1; i >= 1; i--) {
+      if (isLeafBlock(tagOf(lastLi[i]))) { lastPIdx = i - 1; break; }
+    }
+    if (lastPIdx < 0) return;
+
+    const lastPPath = [...listPath, lastLiIdx, lastPIdx];
+    const lastP = getBlock(lastPPath);
+    const currBlock = getBlock(path);
+
+    const prevInline = lastP.slice(1);
+    const cursorOffset = inlineTextLength(prevInline);
+    const currInline = currBlock.slice(1);
+    const merged = mergeAdjacentText([...prevInline, ...currInline]);
+
+    setBlock(lastPPath, [lastP[0], ...(merged.length ? merged : [{ s: '' }])]);
+
+    // Remove the paragraph after the list
+    const parent = getParent(path);
+    const childIdx = path[path.length - 1];
+    parent.splice(childIdx + 1, 1);
+
+    renderAllBlocks();
+    emitChange();
+    requestAnimationFrame(() => focusBlockAtOffset(lastPPath, cursorOffset));
   }
 
   // --- List operations ---
@@ -1470,6 +1548,15 @@ export async function render(value, options, api) {
 
     const beforeAst = domToInlineAst(beforeDiv);
     const afterAst = domToInlineAst(afterDiv);
+
+    // Cursor at very start of single-:p :li — lift item out of list
+    const beforeEmpty = beforeAst.length === 0 ||
+      (beforeAst.length === 1 && isText(beforeAst[0]) &&
+       beforeAst[0].s.replace(/\u200B/g, '').trim() === '');
+    if (beforeEmpty && ctx.pIdx === 0 && ctx.li.length <= 2) {
+      liftListItem(path, ctx, afterAst.length ? afterAst : [{ s: '' }]);
+      return;
+    }
 
     // Update current :p with before-cursor content
     setBlock(path, [block[0], ...(beforeAst.length ? beforeAst : [{ s: '' }])]);
