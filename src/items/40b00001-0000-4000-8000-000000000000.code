@@ -3409,6 +3409,7 @@ export function createInterpreter(api, viewApi, eventApi) {
     // (transclude @item-id :field :chrome :subtle) — small attribution link
     // (transclude @item-id :field :chrome :none)   — no chrome
     // (transclude @item-id :code :symbol "name")   — extract symbol from field
+    // (transclude @item-id :description :slice :first-block) — first block node only
     stdlib.define('transclude', Object.assign(async (...args) => {
       // Parse args: item, field, then optional keyword args
       let itemOrRef = args[0];
@@ -3416,6 +3417,7 @@ export function createInterpreter(api, viewApi, eventApi) {
       if (!fieldKey) fieldKey = ':description';
       let chrome = 'full';
       let symbolName = null;
+      let slice = null;
       // Parse keyword args from position 2+
       for (let i = 2; i < args.length; i++) {
         if (!isKeyword(args[i])) continue;
@@ -3423,6 +3425,7 @@ export function createInterpreter(api, viewApi, eventApi) {
         const val = args[i + 1];
         if (kw === 'chrome') { chrome = isKeyword(val) ? keywordName(val) : String(val); i++; }
         else if (kw === 'symbol') { symbolName = typeof val === 'object' && 's' in val ? val.s : String(val); i++; }
+        else if (kw === 'slice') { slice = isKeyword(val) ? keywordName(val) : String(val); i++; }
       }
       // Resolve source item ID for attribution
       let sourceId;
@@ -3451,6 +3454,10 @@ export function createInterpreter(api, viewApi, eventApi) {
         if (!info) throw new Error('Symbol not found: ' + symbolName);
         const lines = code.split('\n');
         value = lines.slice(info.line - 1, info.endLine).join('\n');
+      }
+      if (slice === 'first-block' && Array.isArray(value) && value.length > 1) {
+        // AST doc node: [":doc", block1, block2, ...] — extract first block
+        value = value[1];
       }
       return { _hobType: 'transclusion', value, sourceId, sourceField, chrome };
     }, { _hobName: 'transclude' }));
