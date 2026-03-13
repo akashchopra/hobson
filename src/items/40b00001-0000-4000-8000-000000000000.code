@@ -11,24 +11,23 @@
 // ============================================================
 
 class HobError extends Error {
-  constructor(message, line, col, stack) {
+  constructor(message, hobExpr, hobStack) {
     super(message);
     this.name = 'HobError';
-    this.hobLine = line;
-    this.hobCol = col;
-    this.hobStack = stack || [];
+    this.hobExpr = hobExpr ?? null;
+    // Snapshot the stack (slice last 10 frames, copy each frame's data)
+    this.hobStack = (hobStack || []).slice(-10).map(f => ({
+      name: f.name || null,
+      expr: f.expr || null
+    }));
   }
 }
 
-function hobError(msg, node, callStack) {
+function hobError(msg, node, callStack, expr) {
   const line = node?.line ?? null;
   const col = node?.col ?? null;
   const locStr = line != null ? ` at line ${line}, col ${col}` : '';
-  const stackLines = (callStack || []).map(
-    f => `  in ${f.name || '(anonymous)'}${f.line != null ? ` at line ${f.line}, col ${f.col}` : ''}`
-  );
-  const fullMsg = `HobError: ${msg}${locStr}` + (stackLines.length ? '\n' + stackLines.join('\n') : '');
-  return new HobError(fullMsg, line, col, callStack);
+  return new HobError(`${msg}${locStr}`, expr, callStack);
 }
 
 // ============================================================
@@ -1142,7 +1141,7 @@ async function evaluate(ast, env, callStack) {
     try {
       return env.lookup(ast);
     } catch (e) {
-      throw hobError(`Undefined symbol '${ast}'`, null, callStack);
+      throw hobError(`Undefined symbol '${ast}'`, null, callStack, ast);
     }
   }
 
@@ -1226,23 +1225,26 @@ async function evaluate(ast, env, callStack) {
     }
   }
 
-  throw hobError(`Unknown AST node: ${JSON.stringify(ast)}`, null, callStack);
+  throw hobError(`Unknown AST node: ${JSON.stringify(ast)}`, null, callStack, ast);
 }
 
 // ---- Special forms ----
 
 async function evalDef(ast, env, callStack) {
-  if (ast.length !== 3) throw hobError('def requires exactly 2 arguments (name value)', null, callStack);
+  if (ast.length !== 3) throw hobError('def requires exactly 2 arguments (name value)', null, callStack, ast);
   const nameNode = ast[1];
-  if (!isSym(nameNode)) throw hobError('def first argument must be a symbol', null, callStack);
-  const value = await evaluate(ast[2], env, callStack);
-  if (typeof value === 'function' && !value._hobName) value._hobName = nameNode;
-  env.define(nameNode, value);
-  return value;
+  if (!isSym(nameNode)) throw hobError('def first argument must be a symbol', null, callStack, ast);
+  callStack.push({ name: 'def', expr: ast });
+  try {
+    const value = await evaluate(ast[2], env, callStack);
+    if (typeof value === 'function' && !value._hobName) value._hobName = nameNode;
+    env.define(nameNode, value);
+    return value;
+  } finally { callStack.pop(); }
 }
 
 async function evalFn(ast, env, callStack) {
-  if (ast.length < 2) throw hobError('fn requires parameters and body', null, callStack);
+  if (ast.length < 2) throw hobError('fn requires parameters and body', null, callStack, ast);
 
   // Named fn: (fn name [params] body) — creates self-referential binding for recursion
   if (typeof ast[1] === 'string' && !ast[1].startsWith(':')) {
@@ -1268,97 +1270,106 @@ async function evalFn(ast, env, callStack) {
 let _currentBindingName = null;
 
 async function evalLet(ast, env, callStack) {
-  if (ast.length < 3) throw hobError('let requires bindings and body', null, callStack);
+  if (ast.length < 3) throw hobError('let requires bindings and body', null, callStack, ast);
   const bindingsNode = ast[1];
-  if (!isVec(bindingsNode)) throw hobError('let bindings must be a vector', null, callStack);
-  if (bindingsNode.v.length % 2 !== 0) throw hobError('let bindings must have an even number of forms', null, callStack);
+  if (!isVec(bindingsNode)) throw hobError('let bindings must be a vector', null, callStack, ast);
+  if (bindingsNode.v.length % 2 !== 0) throw hobError('let bindings must have an even number of forms', null, callStack, ast);
 
-  const letEnv = new Environment(env);
+  callStack.push({ name: 'let', expr: ast });
+  try {
+    const letEnv = new Environment(env);
 
-  // Build pairs with dependency info for auto-parallel
-  const pairs = [];
-  const definedNames = new Set();
-  for (let i = 0; i < bindingsNode.v.length; i += 2) {
-    const nameNode = bindingsNode.v[i];
-    const exprNode = bindingsNode.v[i + 1];
-    const refs = freeSymbols(exprNode, new Set());
-    const dependsOn = new Set([...refs].filter(r => definedNames.has(r)));
-    const names = new Set();
-    if (isSym(nameNode)) {
-      names.add(nameNode);
-    } else {
-      extractBoundNames(nameNode, names);
-    }
-    pairs.push({ nameNode, exprNode, dependsOn, names });
-    for (const n of names) definedNames.add(n);
-  }
-
-  // Group into batches
-  const batches = topologicalBatch(pairs);
-
-  for (const batch of batches) {
-    if (batch.length === 1) {
-      // Sequential — track binding name for element inspector
-      const { nameNode, exprNode } = batch[0];
-      const prevBinding = _currentBindingName;
-      if (isSym(nameNode)) _currentBindingName = nameNode;
-      const value = await evaluate(exprNode, letEnv, callStack);
-      _currentBindingName = prevBinding;
+    // Build pairs with dependency info for auto-parallel
+    const pairs = [];
+    const definedNames = new Set();
+    for (let i = 0; i < bindingsNode.v.length; i += 2) {
+      const nameNode = bindingsNode.v[i];
+      const exprNode = bindingsNode.v[i + 1];
+      const refs = freeSymbols(exprNode, new Set());
+      const dependsOn = new Set([...refs].filter(r => definedNames.has(r)));
+      const names = new Set();
       if (isSym(nameNode)) {
-        letEnv.define(nameNode, value);
+        names.add(nameNode);
       } else {
-        const bindings = await destructure(nameNode, value, letEnv, callStack);
-        for (const [bindName, bindVal] of bindings) {
-          letEnv.define(bindName, bindVal);
-        }
+        extractBoundNames(nameNode, names);
       }
-    } else {
-      // Parallel — binding name tracking not reliable, skip
-      const values = await Promise.all(batch.map(b => evaluate(b.exprNode, letEnv, callStack)));
-      for (let i = 0; i < batch.length; i++) {
-        const { nameNode } = batch[i];
+      pairs.push({ nameNode, exprNode, dependsOn, names });
+      for (const n of names) definedNames.add(n);
+    }
+
+    // Group into batches
+    const batches = topologicalBatch(pairs);
+
+    for (const batch of batches) {
+      if (batch.length === 1) {
+        // Sequential — track binding name for element inspector
+        const { nameNode, exprNode } = batch[0];
+        const prevBinding = _currentBindingName;
+        if (isSym(nameNode)) _currentBindingName = nameNode;
+        const value = await evaluate(exprNode, letEnv, callStack);
+        _currentBindingName = prevBinding;
         if (isSym(nameNode)) {
-          letEnv.define(nameNode, values[i]);
+          letEnv.define(nameNode, value);
         } else {
-          const bindings = await destructure(nameNode, values[i], letEnv, callStack);
+          const bindings = await destructure(nameNode, value, letEnv, callStack);
           for (const [bindName, bindVal] of bindings) {
             letEnv.define(bindName, bindVal);
           }
         }
+      } else {
+        // Parallel — binding name tracking not reliable, skip
+        const values = await Promise.all(batch.map(b => evaluate(b.exprNode, letEnv, callStack)));
+        for (let i = 0; i < batch.length; i++) {
+          const { nameNode } = batch[i];
+          if (isSym(nameNode)) {
+            letEnv.define(nameNode, values[i]);
+          } else {
+            const bindings = await destructure(nameNode, values[i], letEnv, callStack);
+            for (const [bindName, bindVal] of bindings) {
+              letEnv.define(bindName, bindVal);
+            }
+          }
+        }
       }
     }
-  }
 
-  let result = null;
-  for (let i = 2; i < ast.length; i++) {
-    result = await evaluate(ast[i], letEnv, callStack);
-  }
-  return result;
+    let result = null;
+    for (let i = 2; i < ast.length; i++) {
+      result = await evaluate(ast[i], letEnv, callStack);
+    }
+    return result;
+  } finally { callStack.pop(); }
 }
 
 async function evalIf(ast, env, callStack) {
   if (ast.length < 3 || ast.length > 4) {
-    throw hobError('if requires 2 or 3 arguments', null, callStack);
+    throw hobError('if requires 2 or 3 arguments', null, callStack, ast);
   }
-  const test = await evaluate(ast[1], env, callStack);
-  // Only false and nil are falsy
-  if (test !== false && test !== null) {
-    return await evaluate(ast[2], env, callStack);
-  } else {
-    return ast.length > 3 ? await evaluate(ast[3], env, callStack) : null;
-  }
+  callStack.push({ name: 'if', expr: ast });
+  try {
+    const test = await evaluate(ast[1], env, callStack);
+    // Only false and nil are falsy
+    if (test !== false && test !== null) {
+      return await evaluate(ast[2], env, callStack);
+    } else {
+      return ast.length > 3 ? await evaluate(ast[3], env, callStack) : null;
+    }
+  } finally { callStack.pop(); }
 }
 
 async function evalDo(ast, env, callStack) {
-  let result = null;
-  for (let i = 1; i < ast.length; i++) {
-    result = await evaluate(ast[i], env, callStack);
-  }
-  return result;
+  callStack.push({ name: 'do', expr: ast });
+  try {
+    let result = null;
+    for (let i = 1; i < ast.length; i++) {
+      result = await evaluate(ast[i], env, callStack);
+    }
+    return result;
+  } finally { callStack.pop(); }
 }
 
 function evalQuote(ast) {
-  if (ast.length !== 2) throw hobError('quote requires exactly 1 argument', null);
+  if (ast.length !== 2) throw hobError('quote requires exactly 1 argument', null, callStack, ast);
   return astToValue(ast[1]);
 }
 
@@ -1394,74 +1405,83 @@ function astToValue(node) {
 
 async function evalAnd(ast, env, callStack) {
   if (ast.length === 1) return true;
-  let result = true;
-  for (let i = 1; i < ast.length; i++) {
-    result = await evaluate(ast[i], env, callStack);
-    if (result === false || result === null) return result;
-  }
-  return result;
+  callStack.push({ name: 'and', expr: ast });
+  try {
+    let result = true;
+    for (let i = 1; i < ast.length; i++) {
+      result = await evaluate(ast[i], env, callStack);
+      if (result === false || result === null) return result;
+    }
+    return result;
+  } finally { callStack.pop(); }
 }
 
 async function evalOr(ast, env, callStack) {
   if (ast.length === 1) return null;
-  let result = null;
-  for (let i = 1; i < ast.length; i++) {
-    result = await evaluate(ast[i], env, callStack);
-    if (result !== false && result !== null) return result;
-  }
-  return result;
+  callStack.push({ name: 'or', expr: ast });
+  try {
+    let result = null;
+    for (let i = 1; i < ast.length; i++) {
+      result = await evaluate(ast[i], env, callStack);
+      if (result !== false && result !== null) return result;
+    }
+    return result;
+  } finally { callStack.pop(); }
 }
 
 async function evalLoop(ast, env, callStack) {
-  if (ast.length < 3) throw hobError('loop requires bindings and body', null, callStack);
+  if (ast.length < 3) throw hobError('loop requires bindings and body', null, callStack, ast);
   const bindingsNode = ast[1];
-  if (!isVec(bindingsNode)) throw hobError('loop bindings must be a vector', null, callStack);
-  if (bindingsNode.v.length % 2 !== 0) throw hobError('loop bindings must have an even number of forms', null, callStack);
+  if (!isVec(bindingsNode)) throw hobError('loop bindings must be a vector', null, callStack, ast);
+  if (bindingsNode.v.length % 2 !== 0) throw hobError('loop bindings must have an even number of forms', null, callStack, ast);
 
-  const bindingPatterns = [];
-  const loopEnv = new Environment(env);
-  for (let i = 0; i < bindingsNode.v.length; i += 2) {
-    const nameNode = bindingsNode.v[i];
-    const value = await evaluate(bindingsNode.v[i + 1], loopEnv, callStack);
-    if (isSym(nameNode)) {
-      bindingPatterns.push({ pattern: nameNode, isSimple: true, name: nameNode });
-      loopEnv.define(nameNode, value);
-    } else {
-      bindingPatterns.push({ pattern: nameNode, isSimple: false });
-      const bindings = await destructure(nameNode, value, loopEnv, callStack);
-      for (const [bindName, bindVal] of bindings) {
-        loopEnv.define(bindName, bindVal);
-      }
-    }
-  }
-
-  const bodyExprs = ast.slice(2);
-
-  while (true) {
-    let result = null;
-    for (const expr of bodyExprs) {
-      result = await evaluate(expr, loopEnv, callStack);
-    }
-    if (result && result[RECUR]) {
-      const newValues = result.values;
-      if (newValues.length !== bindingPatterns.length) {
-        throw hobError(`recur expected ${bindingPatterns.length} values, got ${newValues.length}`, null, callStack);
-      }
-      for (let i = 0; i < bindingPatterns.length; i++) {
-        const bp = bindingPatterns[i];
-        if (bp.isSimple) {
-          loopEnv.define(bp.name, newValues[i]);
-        } else {
-          const bindings = await destructure(bp.pattern, newValues[i], loopEnv, callStack);
-          for (const [bindName, bindVal] of bindings) {
-            loopEnv.define(bindName, bindVal);
-          }
+  callStack.push({ name: 'loop', expr: ast });
+  try {
+    const bindingPatterns = [];
+    const loopEnv = new Environment(env);
+    for (let i = 0; i < bindingsNode.v.length; i += 2) {
+      const nameNode = bindingsNode.v[i];
+      const value = await evaluate(bindingsNode.v[i + 1], loopEnv, callStack);
+      if (isSym(nameNode)) {
+        bindingPatterns.push({ pattern: nameNode, isSimple: true, name: nameNode });
+        loopEnv.define(nameNode, value);
+      } else {
+        bindingPatterns.push({ pattern: nameNode, isSimple: false });
+        const bindings = await destructure(nameNode, value, loopEnv, callStack);
+        for (const [bindName, bindVal] of bindings) {
+          loopEnv.define(bindName, bindVal);
         }
       }
-      continue;
     }
-    return result;
-  }
+
+    const bodyExprs = ast.slice(2);
+
+    while (true) {
+      let result = null;
+      for (const expr of bodyExprs) {
+        result = await evaluate(expr, loopEnv, callStack);
+      }
+      if (result && result[RECUR]) {
+        const newValues = result.values;
+        if (newValues.length !== bindingPatterns.length) {
+          throw hobError(`recur expected ${bindingPatterns.length} values, got ${newValues.length}`, null, callStack, ast);
+        }
+        for (let i = 0; i < bindingPatterns.length; i++) {
+          const bp = bindingPatterns[i];
+          if (bp.isSimple) {
+            loopEnv.define(bp.name, newValues[i]);
+          } else {
+            const bindings = await destructure(bp.pattern, newValues[i], loopEnv, callStack);
+            for (const [bindName, bindVal] of bindings) {
+              loopEnv.define(bindName, bindVal);
+            }
+          }
+        }
+        continue;
+      }
+      return result;
+    }
+  } finally { callStack.pop(); }
 }
 
 async function evalRecur(ast, env, callStack) {
@@ -1475,9 +1495,9 @@ async function evalRecur(ast, env, callStack) {
 // ---- throw / try / catch / finally ----
 
 async function evalThrow(ast, env, callStack) {
-  if (ast.length !== 2) throw hobError('throw requires exactly 1 argument', null, callStack);
+  if (ast.length !== 2) throw hobError('throw requires exactly 1 argument', null, callStack, ast);
   const value = await evaluate(ast[1], env, callStack);
-  const err = new HobError(typeof value === 'string' ? value : prStr(value, false), null, null, callStack);
+  const err = new HobError(typeof value === 'string' ? value : prStr(value, false), ast, callStack);
   err.hobValue = value;
   throw err;
 }
@@ -1492,8 +1512,8 @@ async function evalTry(ast, env, callStack) {
     const el = ast[i];
     if (Array.isArray(el) && el.length > 0 && isSym(el[0])) {
       if (el[0] === 'catch') {
-        if (el.length < 3) throw hobError('catch requires an error binding and body', null, callStack);
-        if (!isSym(el[1])) throw hobError('catch error binding must be a symbol', null, callStack);
+        if (el.length < 3) throw hobError('catch requires an error binding and body', null, callStack, el);
+        if (!isSym(el[1])) throw hobError('catch error binding must be a symbol', null, callStack, el);
         catchClause = { bindName: el[1], body: el.slice(2), node: el };
         continue;
       }
@@ -1505,6 +1525,7 @@ async function evalTry(ast, env, callStack) {
     bodyExprs.push(el);
   }
 
+  callStack.push({ name: 'try', expr: ast });
   let result = null;
   let finallyRan = false;
   try {
@@ -1531,6 +1552,7 @@ async function evalTry(ast, env, callStack) {
       throw e;
     }
   } finally {
+    callStack.pop();
     if (finallyClause && !finallyRan) {
       for (const expr of finallyClause.body) {
         await evaluate(expr, env, callStack);
@@ -1543,7 +1565,7 @@ async function evalTry(ast, env, callStack) {
 // ---- Quasiquote ----
 
 async function evalQuasiquote(ast, env, callStack) {
-  if (ast.length !== 2) throw hobError('quasiquote requires exactly 1 argument', null, callStack);
+  if (ast.length !== 2) throw hobError('quasiquote requires exactly 1 argument', null, callStack, ast);
   return qqProcess(ast[1], env, callStack);
 }
 
@@ -1611,12 +1633,12 @@ async function qqProcess(node, env, callStack) {
 // ---- defmacro ----
 
 async function evalDefmacro(ast, env, callStack) {
-  if (ast.length < 4) throw hobError('defmacro requires name, params, and body', null, callStack);
+  if (ast.length < 4) throw hobError('defmacro requires name, params, and body', null, callStack, ast);
   const nameNode = ast[1];
-  if (!isSym(nameNode)) throw hobError('defmacro name must be a symbol', null, callStack);
+  if (!isSym(nameNode)) throw hobError('defmacro name must be a symbol', null, callStack, ast);
 
   const paramsNode = ast[2];
-  if (!isVec(paramsNode)) throw hobError('defmacro params must be a vector', null, callStack);
+  if (!isVec(paramsNode)) throw hobError('defmacro params must be a vector', null, callStack, ast);
 
   // Build a fn from the params and body, then mark as macro
   const fnAst = ['fn', paramsNode, ...ast.slice(3)];
@@ -1636,7 +1658,7 @@ function parseParamList(paramsNode, callStack) {
   for (let i = 0; i < paramsNode.v.length; i++) {
     const p = paramsNode.v[i];
     if (p === '&') {
-      if (i + 1 >= paramsNode.v.length) throw hobError('& must be followed by a parameter name', null, callStack);
+      if (i + 1 >= paramsNode.v.length) throw hobError('& must be followed by a parameter name', null, callStack, paramsNode);
       const restNode = paramsNode.v[i + 1];
       if (isSym(restNode)) {
         restParam = restNode;
@@ -1678,11 +1700,12 @@ async function bindArgs(fnEnv, paramNames, restParam, args, paramPatterns, callS
 
 async function evalFnSingleArity(ast, env, callStack) {
   const paramsNode = ast[1];
-  if (!isVec(paramsNode)) throw hobError('fn parameters must be a vector', null, callStack);
+  if (!isVec(paramsNode)) throw hobError('fn parameters must be a vector', null, callStack, ast);
 
   const { paramNames, restParam, paramPatterns } = parseParamList(paramsNode, callStack);
   const bodyExprs = ast.slice(2);
   const closureEnv = env;
+  const fnAstRef = ast;
 
   const fn = async function (...args) {
     const fnEnv = new Environment(closureEnv);
@@ -1699,6 +1722,7 @@ async function evalFnSingleArity(ast, env, callStack) {
   fn._hobBody = bodyExprs;
   fn._hobEnv = closureEnv;
   fn._hobCallStack = callStack;
+  fn._hobAst = fnAstRef;
   return fn;
 }
 
@@ -1707,10 +1731,10 @@ async function evalFnMultiArity(ast, env, callStack) {
   for (let i = 1; i < ast.length; i++) {
     const clause = ast[i];
     if (!Array.isArray(clause) || clause.length < 2) {
-      throw hobError('Multi-arity fn clause must be a list with params and body', null, callStack);
+      throw hobError('Multi-arity fn clause must be a list with params and body', null, callStack, clause);
     }
     const paramsNode = clause[0];
-    if (!isVec(paramsNode)) throw hobError('fn parameters must be a vector', null, callStack);
+    if (!isVec(paramsNode)) throw hobError('fn parameters must be a vector', null, callStack, clause);
     const { paramNames, restParam, paramPatterns } = parseParamList(paramsNode, callStack);
     const bodyExprs = clause.slice(1);
     arities.push({ paramNames, restParam, paramPatterns, bodyExprs, arityCount: paramNames.length });
@@ -1735,7 +1759,7 @@ async function evalFnMultiArity(ast, env, callStack) {
       }
     }
     if (!matched) {
-      throw hobError(`No matching arity for ${args.length} arguments`, null, callStack);
+      throw hobError(`No matching arity for ${args.length} arguments`, null, callStack, ast);
     }
 
     const fnEnv = new Environment(closureEnv);
@@ -1749,82 +1773,89 @@ async function evalFnMultiArity(ast, env, callStack) {
   fn._hobName = null;
   fn._hobEnv = closureEnv;
   fn._hobCallStack = callStack;
+  fn._hobAst = ast;
   return fn;
 }
 
 // ---- plet ----
 
 async function evalPlet(ast, env, callStack) {
-  if (ast.length < 3) throw hobError('plet requires bindings and body', null, callStack);
+  if (ast.length < 3) throw hobError('plet requires bindings and body', null, callStack, ast);
   const bindingsNode = ast[1];
-  if (!isVec(bindingsNode)) throw hobError('plet bindings must be a vector', null, callStack);
-  if (bindingsNode.v.length % 2 !== 0) throw hobError('plet bindings must have an even number of forms', null, callStack);
+  if (!isVec(bindingsNode)) throw hobError('plet bindings must be a vector', null, callStack, ast);
+  if (bindingsNode.v.length % 2 !== 0) throw hobError('plet bindings must have an even number of forms', null, callStack, ast);
 
-  const names = [];
-  const patterns = [];
-  const promises = [];
-  for (let i = 0; i < bindingsNode.v.length; i += 2) {
-    names.push(bindingsNode.v[i]);
-    patterns.push(bindingsNode.v[i]);
-    promises.push(evaluate(bindingsNode.v[i + 1], env, callStack));
-  }
-  const values = await Promise.all(promises);
+  callStack.push({ name: 'plet', expr: ast });
+  try {
+    const names = [];
+    const patterns = [];
+    const promises = [];
+    for (let i = 0; i < bindingsNode.v.length; i += 2) {
+      names.push(bindingsNode.v[i]);
+      patterns.push(bindingsNode.v[i]);
+      promises.push(evaluate(bindingsNode.v[i + 1], env, callStack));
+    }
+    const values = await Promise.all(promises);
 
-  const pletEnv = new Environment(env);
-  for (let i = 0; i < names.length; i++) {
-    const nameNode = names[i];
-    if (isSym(nameNode)) {
-      pletEnv.define(nameNode, values[i]);
-    } else {
-      const bindings = await destructure(nameNode, values[i], pletEnv, callStack);
-      for (const [bindName, bindVal] of bindings) {
-        pletEnv.define(bindName, bindVal);
+    const pletEnv = new Environment(env);
+    for (let i = 0; i < names.length; i++) {
+      const nameNode = names[i];
+      if (isSym(nameNode)) {
+        pletEnv.define(nameNode, values[i]);
+      } else {
+        const bindings = await destructure(nameNode, values[i], pletEnv, callStack);
+        for (const [bindName, bindVal] of bindings) {
+          pletEnv.define(bindName, bindVal);
+        }
       }
     }
-  }
 
-  let result = null;
-  for (let i = 2; i < ast.length; i++) {
-    result = await evaluate(ast[i], pletEnv, callStack);
-  }
-  return result;
+    let result = null;
+    for (let i = 2; i < ast.length; i++) {
+      result = await evaluate(ast[i], pletEnv, callStack);
+    }
+    return result;
+  } finally { callStack.pop(); }
 }
 
 // ---- for special form (auto-keyed) ----
 
 async function evalFor(ast, env, callStack) {
-  if (ast.length < 3) throw hobError('for requires bindings and body', null, callStack);
+  if (ast.length < 3) throw hobError('for requires bindings and body', null, callStack, ast);
   const bindings = ast[1];
   if (!isVec(bindings) || bindings.v.length < 2)
-    throw hobError('for requires [sym coll] bindings', null, callStack);
+    throw hobError('for requires [sym coll] bindings', null, callStack, ast);
 
-  const symNode = bindings.v[0];
-  const collExpr = bindings.v[1];
-  const bodyForms = ast.slice(2);
+  callStack.push({ name: 'for', expr: ast });
+  try {
+    const symNode = bindings.v[0];
+    const collExpr = bindings.v[1];
+    const bodyForms = ast.slice(2);
 
-  const coll = await evaluate(collExpr, env, callStack);
-  if (!Array.isArray(coll)) return [];
+    const coll = await evaluate(collExpr, env, callStack);
+    if (!Array.isArray(coll)) return [];
 
-  const results = [];
-  for (const elem of coll) {
-    const loopEnv = new Environment(env);
-    loopEnv.define(symNode, elem);
-    let result;
-    for (const form of bodyForms) {
-      result = await evaluate(form, loopEnv, callStack);
+    const results = [];
+    for (const elem of coll) {
+      const loopEnv = new Environment(env);
+      loopEnv.define(symNode, elem);
+      let result;
+      for (const form of bodyForms) {
+        result = await evaluate(form, loopEnv, callStack);
+      }
+
+      // Auto-key: extract identity from iteration value
+      const sortKey = extractSortKey(elem);
+      if (sortKey && result && Array.isArray(result) && result.length > 0
+          && isKeyword(result[0])) {
+        injectSortKey(result, sortKey);
+      }
+
+      results.push(result);
     }
-
-    // Auto-key: extract identity from iteration value
-    const sortKey = extractSortKey(elem);
-    if (sortKey && result && Array.isArray(result) && result.length > 0
-        && isKeyword(result[0])) {
-      injectSortKey(result, sortKey);
-    }
-
-    results.push(result);
-  }
-  Object.defineProperty(results, '_isHobVector', { value: true });
-  return results;
+    Object.defineProperty(results, '_isHobVector', { value: true });
+    return results;
+  } finally { callStack.pop(); }
 }
 
 function extractSortKey(elem) {
@@ -1861,7 +1892,7 @@ async function destructure(pattern, value, env, callStack) {
     // Vector destructuring
     const arr = value === null ? [] : value;
     if (value !== null && !Array.isArray(arr)) {
-      throw hobError('Cannot destructure non-sequential value as vector', null, callStack);
+      throw hobError('Cannot destructure non-sequential value as vector', null, callStack, pattern);
     }
     for (let i = 0; i < pattern.v.length; i++) {
       const p = pattern.v[i];
@@ -1980,7 +2011,7 @@ async function destructure(pattern, value, env, callStack) {
     return bindings;
   }
 
-  throw hobError('Destructuring pattern must be a vector or map', null, callStack);
+  throw hobError('Destructuring pattern must be a vector or map', null, callStack, pattern);
 }
 
 // ---- Free symbol analysis for auto-parallel let ----
@@ -2162,7 +2193,7 @@ async function evalApply(ast, env, callStack) {
   // Keywords as functions: (:key map) => get(map, key)
   if (isKeyword(headVal)) {
     if (ast.length < 2 || ast.length > 3) {
-      throw hobError('Keyword lookup requires 1 or 2 arguments', null, callStack);
+      throw hobError('Keyword lookup requires 1 or 2 arguments', null, callStack, ast);
     }
     const target = await evaluate(ast[1], env, callStack);
     const defaultVal = ast.length > 2 ? await evaluate(ast[2], env, callStack) : null;
@@ -2176,19 +2207,14 @@ async function evalApply(ast, env, callStack) {
   }
 
   if (typeof headVal !== 'function') {
-    throw hobError(`'${prStr(headVal, false)}' is not a function`, null, callStack);
+    throw hobError(`'${prStr(headVal, false)}' is not a function`, null, callStack, ast);
   }
 
-  // Evaluate arguments
-  const args = [];
-  for (let i = 1; i < ast.length; i++) {
-    args.push(await evaluate(ast[i], env, callStack));
-  }
-
-  // Push call frame
+  // Push call frame early so arg-evaluation errors show the call site
   const fnName = headVal._hobName || (isSym(headNode) ? headNode : null);
   const frame = {
     name: fnName,
+    expr: ast,
     line: null,
     col: null
   };
@@ -2199,6 +2225,12 @@ async function evalApply(ast, env, callStack) {
   if (fnName) _currentBindingName = fnName;
 
   try {
+    // Evaluate arguments
+    const args = [];
+    for (let i = 1; i < ast.length; i++) {
+      args.push(await evaluate(ast[i], env, callStack));
+    }
+
     let result = headVal(...args);
     if (result && typeof result.then === 'function') result = await result;
     // Tag hiccup results with function name for element inspector.
@@ -2211,7 +2243,7 @@ async function evalApply(ast, env, callStack) {
     return result;
   } catch (e) {
     if (e instanceof HobError) throw e;
-    throw hobError(e.message, null, callStack);
+    throw hobError(e.message, null, callStack, ast);
   } finally {
     _currentBindingName = prevBinding;
     callStack.pop();
@@ -2265,6 +2297,7 @@ function createStdlib() {
     return prStr(a, false);
   }).join(''), { _hobName: 'str' }));
   env.define('pr-str', Object.assign((...args) => args.map(a => prStr(a, true)).join(' '), { _hobName: 'pr-str' }));
+  env.define('pretty-print', Object.assign((ast) => prettyPrint(ast, 0), { _hobName: 'pretty-print' }));
   env.define('subs', Object.assign((s, start, end) => {
     if (end !== undefined) return s.substring(start, end);
     return s.substring(start);
