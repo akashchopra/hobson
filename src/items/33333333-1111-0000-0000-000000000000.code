@@ -1385,19 +1385,27 @@ export async function loadKernel(require, storageBackend) {
 
       try {
         // Emit error-event event - user handlers will process
+        const errorContent = {
+          error: {
+            name: error.name || 'Error',
+            message: error.message || String(error),
+            stack: error.stack || ''
+          },
+          context: {
+            operation: 'unknown',
+            ...context
+          }
+        };
+        // Preserve structured Hob error data when available
+        if (error.hobStack && error.hobStack.length > 0) {
+          errorContent.hobStack = error.hobStack;
+        }
+        if (error.hobExpr != null) {
+          errorContent.hobExpr = error.hobExpr;
+        }
         this.events.emit({
           type: EVENT_IDS.SYSTEM_ERROR,
-          content: {
-            error: {
-              name: error.name || 'Error',
-              message: error.message || String(error),
-              stack: error.stack || ''
-            },
-            context: {
-              operation: 'unknown',
-              ...context
-            }
-          }
+          content: errorContent
         });
       } catch (eventError) {
         // Ultimate fallback if event system fails

@@ -725,6 +725,13 @@ export class RenderingSystem {
       let result;
       try {
         result = await hob.evaluate(hobAst, childEnv, []);
+      } catch (e) {
+        rendering.kernel.captureError(e, {
+          operation: 'evaluateHob',
+          itemId: bindings?.item?.id,
+          itemName: bindings?.item?.name
+        });
+        throw e;
       } finally {
         rendering._evalApiRefCount--;
         if (rendering._evalApiRefCount === 0) {
@@ -2061,13 +2068,52 @@ export class RenderingSystem {
     heading.textContent = `Error rendering: ${itemId}`;
     container.appendChild(heading);
 
+    // Error message
     const message = document.createElement("pre");
+    message.style.cssText = "white-space:pre-wrap; word-break:break-word;";
     message.textContent = error.message;
     container.appendChild(message);
 
+    // Hob call stack (structured, pretty-printed)
+    if (error.hobStack && error.hobStack.length > 0) {
+      const pp = this._hobModule?.prettyPrint;
+      const hobSection = document.createElement("details");
+      hobSection.open = true;
+      hobSection.style.cssText = "margin-top:8px;";
+      const hobSummary = document.createElement("summary");
+      hobSummary.textContent = "Hob call stack";
+      hobSummary.style.cssText = "cursor:pointer; font-weight:600; font-size:0.85em;";
+      hobSection.appendChild(hobSummary);
+      const hobPre = document.createElement("pre");
+      hobPre.style.cssText = "margin:4px 0 0; padding:6px 8px; background:rgba(0,0,0,0.03); border-radius:3px; font-size:0.8em; overflow-x:auto; white-space:pre-wrap;";
+      const lines = error.hobStack.map(f => {
+        const name = f.name || '(anonymous)';
+        if (f.expr && pp) {
+          try {
+            let s = pp(f.expr, 0);
+            if (s.length > 120) s = s.slice(0, 119) + '\u2026';
+            return `  ${name}: ${s}`;
+          } catch (e) { /* fall through */ }
+        }
+        return `  ${name}`;
+      });
+      hobPre.textContent = lines.join('\n');
+      hobSection.appendChild(hobPre);
+      container.appendChild(hobSection);
+    }
+
+    // JS stack (collapsed)
+    const details = document.createElement("details");
+    details.style.cssText = "margin-top:8px;";
+    const summary = document.createElement("summary");
+    summary.textContent = "JS stack trace";
+    summary.style.cssText = "cursor:pointer; color:#666; font-size:0.85em;";
+    details.appendChild(summary);
     const stack = document.createElement("pre");
+    stack.style.cssText = "margin:4px 0 0 0; font-size:0.75em; color:#666; overflow-x:auto;";
     stack.textContent = error.stack || "(no stack trace)";
-    container.appendChild(stack);
+    details.appendChild(stack);
+    container.appendChild(details);
 
     const editBtn = document.createElement("button");
     editBtn.textContent = "Edit Item";

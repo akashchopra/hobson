@@ -4,36 +4,43 @@
 const ERROR_TYPE_ID = 'e7707000-0000-0000-0000-000000000001';
 const ERROR_LIST_TYPE_ID = 'e7707000-0000-0000-0000-000000000010';
 
-export async function onErrorEvent({ error, context, timestamp }, api) {
+export async function onErrorEvent({ error, context, timestamp, hobStack, hobExpr }, api) {
   try {
     // Parse stack trace into structured data (async - looks up item names)
     const frames = await parseStackTrace(error.stack, api);
-    
+
     // Create error item
     const errorId = crypto.randomUUID();
+    const itemLabel = context?.itemName ? `[${context.itemName}] ` : '';
+    const errorContent = {
+      message: error.message,
+      errorType: error.name || 'Error',
+      frames: frames,
+      context: context,
+      timestamp: timestamp,
+      resolved: false
+    };
+    // Preserve structured Hob error data
+    if (hobStack && hobStack.length > 0) errorContent.hobStack = hobStack;
+    if (hobExpr != null) errorContent.hobExpr = hobExpr;
+
     await api.set({
       id: errorId,
       type: ERROR_TYPE_ID,
-      name: `Error: ${(error.message || '').substring(0, 40)}`,
+      name: `Error: ${itemLabel}${(error.message || '').substring(0, 40)}`,
       created: Date.now(),
       modified: Date.now(),
       attachments: [],
-      content: {
-        message: error.message,
-        errorType: error.name || 'Error',
-        frames: frames,
-        context: context,
-        timestamp: timestamp,
-        resolved: false
-      }
+      content: errorContent
     });
-    
+
     // Re-render any visible error lists so they show the new error
     const vpMgr = await api.require('viewport-manager');
     await vpMgr.getRendering().rerenderByType(ERROR_LIST_TYPE_ID);
 
     // Show toast notification
-    showErrorToast(error.message, errorId, context, api);
+    const toastMessage = itemLabel + (error.message || 'Unknown error');
+    showErrorToast(toastMessage, errorId, context, api);
   } catch (handlerError) {
     // If our handler fails, just log to console
     console.error('Error handler failed:', handlerError);
