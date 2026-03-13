@@ -203,6 +203,11 @@ function inflateAll(compactForms) {
       } else {
         node = { id: nextId++, type: 'symbol', value: compact };
       }
+    } else if (Array.isArray(compact) && compact[0] === ':doc') {
+      // Doc node — opaque, stores entire doc AST as value
+      node = { id: nextId++, type: 'doc', value: compact };
+      nodeMap.set(node.id, node);
+      return node;
     } else if (Array.isArray(compact)) {
       node = { id: nextId++, type: 'list', children: [] };
       nodeMap.set(node.id, node);
@@ -265,6 +270,7 @@ function deflate(node) {
     case 'item-ref': return '@' + node.value;
     case 'string': return { s: node.value };
     case 'hole': return null;
+    case 'doc': return node.value;
     case 'list': return node.children.filter(c => c.type !== 'hole').map(deflate);
     case 'vector': return { v: node.children.filter(c => c.type !== 'hole').map(deflate) };
     case 'map': {
@@ -295,11 +301,33 @@ function nodeToSexp(node) {
     case 'item-ref': return '@' + node.value;
     case 'string':   return '"' + node.value.replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
     case 'hole':     return '·';
+    case 'doc':      return nodeToSexp_doc(node.value);
     case 'list':     return '(' + node.children.map(nodeToSexp).join(' ') + ')';
     case 'vector':   return '[' + node.children.map(nodeToSexp).join(' ') + ']';
     case 'map':      return '{' + node.children.map(nodeToSexp).join(' ') + '}';
     default:         return '';
   }
+}
+
+function nodeToSexp_doc(ast) {
+  // Serialize a compact doc AST node to s-expression form
+  if (ast === null) return 'nil';
+  if (typeof ast === 'number') return String(ast);
+  if (typeof ast === 'boolean') return String(ast);
+  if (typeof ast === 'string') return ast; // keywords, symbols
+  if (ast && typeof ast === 'object' && 's' in ast) {
+    return '"' + ast.s.replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
+  }
+  if (ast && typeof ast === 'object' && 'v' in ast) {
+    return '[' + ast.v.map(nodeToSexp_doc).join(' ') + ']';
+  }
+  if (ast && typeof ast === 'object' && 'm' in ast) {
+    return '{' + ast.m.map(([k, v]) => nodeToSexp_doc(k) + ' ' + nodeToSexp_doc(v)).join(' ') + '}';
+  }
+  if (Array.isArray(ast)) {
+    return '(' + ast.map(nodeToSexp_doc).join(' ') + ')';
+  }
+  return '';
 }
 
 // --- S-expression parser (for system clipboard paste fallback) ---
@@ -408,12 +436,14 @@ function leafText(node) {
     case 'string': return '"' + node.value.replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
     case 'item-ref': return '@' + node.value.slice(0, 8);
     case 'hole': return '·';
+    case 'doc': return ';; doc';
     default: return '';
   }
 }
 
 function flatWidth(node) {
   if (node._fw !== undefined) return node._fw;
+  if (node.type === 'doc') { node._fw = Infinity; return node._fw; }
   if (node.children) {
     if (node.type === 'list') {
       const inner = node.children.reduce((s, c) => s + flatWidth(c), 0);
@@ -439,6 +469,7 @@ function flatWidth(node) {
 const MAX_LINE = 60;
 
 function renderNode(node, state, itemNames, api, indent) {
+  if (node.type === 'doc') return renderDocNode(node, state, api);
   if (!node.children) {
     return renderLeaf(node, state, itemNames, api);
   }
@@ -835,6 +866,42 @@ function renderMap(node, state, itemNames, api, indent) {
   return span;
 }
 
+function renderDocNode(node, state, api) {
+  const container = document.createElement('div');
+  container.setAttribute('data-node-id', node.id);
+  container.className = 'hob-doc-node';
+  state.domMap.set(node.id, container);
+
+  // Render doc content (starts read-only; Enter activates editing)
+  container._docNodeId = node.id;
+  container._docRenderContent = async (editable) => {
+    container.textContent = '';
+    try {
+      if (editable && state.onChange) {
+        const docEditor = await api.require('field-view-doc-editable');
+        const el = await docEditor.render(JSON.parse(JSON.stringify(node.value)), {
+          mode: 'editable',
+          onChange: (newAst) => {
+            node.value = newAst;
+            if (state.onChange) state.onChange(deflateAll(state.nodeMap.get(0)));
+          }
+        }, api);
+        container.appendChild(el);
+      } else {
+        const docRenderer = await api.require('field-view-doc');
+        const el = await docRenderer.render(node.value, {}, api);
+        container.appendChild(el);
+      }
+    } catch (err) {
+      container.textContent = ';; (doc render error)';
+    }
+  };
+  // Initial read-only render
+  container._docRenderContent(false);
+
+  return container;
+}
+
 function renderAST(root, state, itemNames, api) {
   const el = document.createElement('div');
   el.className = 'hob-editor';
@@ -1094,6 +1161,9 @@ function inflateSubtree(compact, state) {
     if (compact.startsWith('@')) return makeNode(state, 'item-ref', { value: compact.slice(1) });
     return makeNode(state, 'symbol', { value: compact });
   }
+  if (Array.isArray(compact) && compact[0] === ':doc') {
+    return makeNode(state, 'doc', { value: compact });
+  }
   if (Array.isArray(compact)) {
     const node = makeNode(state, 'list', { children: [] });
     node.children = compact.map(c => {
@@ -1170,6 +1240,7 @@ function updateSelectionVisual(state) {
 function nodeLabel(node) {
   if (!node) return '?';
   if (node.type === 'root') return 'root';
+  if (node.type === 'doc') return ';; doc';
   if (node.type === 'list' && node.children.length > 0 && node.children[0].type === 'symbol') {
     return '(' + node.children[0].value + ')';
   }
@@ -1195,7 +1266,7 @@ function updateStatusBar(state, statusBar) {
 
   // Update mode indicator
   if (state.onChange) {
-    const modeText = state.mode === 'nav' ? 'NAV' : state.mode === 'input' ? 'INPUT' : 'STRING';
+    const modeText = state.mode === 'nav' ? 'NAV' : state.mode === 'doc' ? 'DOC' : state.mode === 'input' ? 'INPUT' : 'STRING';
     modeEl.textContent = modeText;
     modeEl.className = 'hob-mode ' + (state.mode === 'nav' ? 'hob-mode-nav' : 'hob-mode-input');
   } else {
@@ -1279,6 +1350,31 @@ function findHoles(state) {
   }
   walk(state.nodeMap.get(0));
   return holes;
+}
+
+function enterDocEditing(state, docNodeId, itemNames, api, statusBar) {
+  const docEl = state.domMap.get(docNodeId);
+  if (!docEl || !docEl._docRenderContent) return;
+  state.mode = 'doc';
+  docEl._docRenderContent(true).then(() => {
+    const firstEditable = docEl.querySelector('[contenteditable="true"]');
+    if (firstEditable) firstEditable.focus();
+    const escHandler = (evt) => {
+      if (evt.key === 'Escape') {
+        evt.preventDefault();
+        evt.stopPropagation();
+        docEl.removeEventListener('keydown', escHandler, true);
+        state.mode = 'nav';
+        docEl._docRenderContent(false).then(() => {
+          state.editorEl.focus();
+          updateSelectionVisual(state);
+          updateStatusBar(state, statusBar);
+        });
+      }
+    };
+    docEl.addEventListener('keydown', escHandler, true);
+    updateStatusBar(state, statusBar);
+  });
 }
 
 function enterInputMode(state, holeId) {
@@ -1763,6 +1859,9 @@ function handleNavKey(e, ctx) {
       state.selectedId = holes[prevIdx];
       state.expansionStack = [];
     } else { handled = false; }
+  } else if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey && node.type === 'doc' && state.onChange) {
+    // Enter on doc node → activate prose editor
+    enterDocEditing(state, node.id, itemNames, api, statusBar);
   } else if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey && state.onChange) {
     // Insert hole after selected node as sibling
     const hole = makeNode(state, 'hole', {});
@@ -1928,6 +2027,14 @@ function handleNavKey(e, ctx) {
         state.selectedId = pasted.id;
       });
     } else { handled = false; }
+  } else if (e.key === ';' && !e.ctrlKey && !e.metaKey && !e.altKey && state.onChange) {
+    // Insert doc node (comment) after selected
+    const docNode = makeNode(state, 'doc', { value: [':doc', [':p', { s: '' }]] });
+    applyMutation(state, itemNames, api, statusBar, () => insertAfter(state, node.id, docNode));
+    state.selectedId = docNode.id;
+    rerender(state, itemNames, api, statusBar);
+    // Auto-enter prose editing
+    enterDocEditing(state, docNode.id, itemNames, api, statusBar);
   } else if (e.key === '?' && !e.ctrlKey && !e.metaKey && !e.altKey) {
     // Toggle keyboard help overlay
     state.helpVisible ? hideHelp(state) : showHelp(state, ctx.wrapper);
@@ -2309,6 +2416,9 @@ function handleKey(e, ctx) {
     return;
   }
 
+  // In doc mode, let the prose editor handle all keys (Escape handled by doc's own listener)
+  if (state.mode === 'doc') return;
+
   let handled;
   if (state.mode === 'string') {
     handled = handleStringKey(e, ctx);
@@ -2383,6 +2493,17 @@ function handleClick(e, ctx) {
   const id = parseInt(target.getAttribute('data-node-id'), 10);
   if (!state.nodeMap.has(id)) return;
 
+  // If in doc mode, exit it first (unless clicking inside the same doc node)
+  if (state.mode === 'doc') {
+    const docNode = state.nodeMap.get(state.selectedId);
+    if (docNode && docNode.type === 'doc' && id === docNode.id) return; // click inside doc — let prose editor handle
+    const docEl = state.domMap.get(state.selectedId);
+    if (docEl && docEl._docRenderContent) {
+      state.mode = 'nav';
+      docEl._docRenderContent(false);
+    }
+  }
+
   // If in input/string mode, commit or cancel before handling click
   if (state.mode !== 'nav') commitOrCancelInput(state, itemNames, api, statusBar);
 
@@ -2409,7 +2530,14 @@ function handleDoubleClick(e, ctx) {
 
   e.preventDefault();
 
-  if (node.type === 'hole') {
+  if (node.type === 'doc') {
+    // Doc node → enter prose editing
+    state.selectedId = node.id;
+    state.expansionStack = [];
+    updateSelectionVisual(state);
+    enterDocEditing(state, node.id, itemNames, api, statusBar);
+    return;
+  } else if (node.type === 'hole') {
     // Hole not in input mode → enter input mode
     if (state.mode === 'nav') {
       enterInputMode(state, node.id);
@@ -2491,6 +2619,7 @@ const HELP_SECTIONS = [
     ['Backspace',    'Delete node'],
     ['r',            'Replace node'],
     ['d',            'Duplicate'],
+    [';',            'Insert comment (doc)'],
   ]},
   { title: 'Structure', rows: [
     ['w (',          'Wrap in list'],
@@ -2662,7 +2791,7 @@ export async function render(value, options, api) {
 
   // Wrapper
   const wrapper = api.createElement('div');
-  wrapper.style.cssText = 'display: flex; flex-direction: column; border: 1px solid var(--color-border); border-radius: var(--border-radius); overflow: hidden; min-height: 200px;';
+  wrapper.style.cssText = 'display: flex; flex-direction: column; border: 1px solid var(--color-border); border-radius: var(--border-radius); min-height: 200px; position: relative;';
   wrapper.appendChild(editorEl);
   wrapper.appendChild(statusBar);
 
