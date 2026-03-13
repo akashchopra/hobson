@@ -97,16 +97,45 @@ function createErrorSpan(api, message, provenanceAttrs) {
   return span;
 }
 
+// Render a code value as a read-only block (JS string or Hob AST)
+async function renderCodeValue(value, container, api, sourceField) {
+  // Unwrap Hob string wrapper {s: "..."}
+  if (value && typeof value === 'object' && !Array.isArray(value) && 's' in value) value = value.s;
+  if (sourceField === 'hob' && Array.isArray(value)) {
+    // Hob AST — render with structural editor (read-only)
+    try {
+      const structEditor = await api.require('field-view-hob-structural');
+      const el = await structEditor.render(value, {}, api);
+      container.appendChild(el);
+    } catch (e) {
+      const pre = api.createElement('pre');
+      pre.style.cssText = 'margin: 0; padding: 10px; background: var(--color-bg-surface-alt); border-radius: var(--border-radius); overflow-x: auto; font-family: monospace; font-size: 0.8125rem; line-height: 1.5;';
+      pre.textContent = JSON.stringify(value, null, 2);
+      container.appendChild(pre);
+    }
+  } else {
+    // JS code or other string — render as code block
+    const pre = api.createElement('pre');
+    pre.style.cssText = 'margin: 0; padding: 10px; background: var(--color-bg-surface-alt); border-radius: var(--border-radius); overflow-x: auto; font-family: monospace; font-size: 0.8125rem; line-height: 1.5;';
+    const code = api.createElement('code');
+    code.textContent = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
+    pre.appendChild(code);
+    container.appendChild(pre);
+  }
+}
+
 // Render a transclusion wrapper value with attribution chrome
 async function renderTransclusion(wrapper, parent, api, item, inline) {
   const { value, sourceId, sourceField, sourceSymbol, chrome } = wrapper;
+  const isCodeField = sourceField === 'code' || sourceField === 'hob';
   // Detect whether value is block-level (array with :keyword tag) or scalar/inline
-  const isBlock = Array.isArray(value) && typeof value[0] === 'string' && value[0].startsWith(':');
+  const isBlock = isCodeField || (Array.isArray(value) && typeof value[0] === 'string' && value[0].startsWith(':'));
 
   if (chrome === 'none' || value == null) {
     // No chrome — render value directly
     if (value != null) {
-      if (isBlock) await renderNode(value, parent, api, item);
+      if (isCodeField) await renderCodeValue(value, parent, api, sourceField);
+      else if (isBlock) await renderNode(value, parent, api, item);
       else if (inline) await renderInlineNode(value, parent, api, item);
       else await renderNode(value, parent, api, item);
     }
@@ -120,7 +149,8 @@ async function renderTransclusion(wrapper, parent, api, item, inline) {
     container.setAttribute('data-provenance-ref-id', sourceId || '');
     container.setAttribute('data-provenance-field', sourceField || '');
     if (isBlock) {
-      await renderNode(value, container, api, item);
+      if (isCodeField) await renderCodeValue(value, container, api, sourceField);
+      else await renderNode(value, container, api, item);
       // Append a small source link after the content
       if (sourceId) {
         let name;
@@ -188,7 +218,8 @@ async function renderTransclusion(wrapper, parent, api, item, inline) {
   details.appendChild(summary);
 
   const content = api.createElement('div');
-  await renderNode(value, content, api, item);
+  if (isCodeField) await renderCodeValue(value, content, api, sourceField);
+  else await renderNode(value, content, api, item);
   details.appendChild(content);
   parent.appendChild(details);
 }
