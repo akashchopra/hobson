@@ -249,7 +249,7 @@ function inflateAll(compactForms) {
     return child;
   });
 
-  _nextId = nextId;  // sync global counter so makeNode continues from here
+  _nextId = Math.max(_nextId, nextId);  // never decrease — prevents ID collisions across editor instances
   return { root, nodeMap, parentMap };
 }
 
@@ -300,6 +300,100 @@ function nodeToSexp(node) {
     case 'map':      return '{' + node.children.map(nodeToSexp).join(' ') + '}';
     default:         return '';
   }
+}
+
+// --- S-expression parser (for system clipboard paste fallback) ---
+
+function parseSexp(text) {
+  let pos = 0;
+
+  function skipWS() {
+    while (pos < text.length && /[\s,]/.test(text[pos])) pos++;
+  }
+
+  function parseOne() {
+    skipWS();
+    if (pos >= text.length) return undefined;
+    const ch = text[pos];
+
+    if (ch === '(') {
+      pos++;
+      const items = [];
+      skipWS();
+      while (pos < text.length && text[pos] !== ')') {
+        const item = parseOne();
+        if (item !== undefined) items.push(item);
+        skipWS();
+      }
+      if (pos < text.length) pos++; // skip )
+      return items;
+    }
+
+    if (ch === '[') {
+      pos++;
+      const items = [];
+      skipWS();
+      while (pos < text.length && text[pos] !== ']') {
+        const item = parseOne();
+        if (item !== undefined) items.push(item);
+        skipWS();
+      }
+      if (pos < text.length) pos++; // skip ]
+      return { v: items };
+    }
+
+    if (ch === '{') {
+      pos++;
+      const items = [];
+      skipWS();
+      while (pos < text.length && text[pos] !== '}') {
+        const item = parseOne();
+        if (item !== undefined) items.push(item);
+        skipWS();
+      }
+      if (pos < text.length) pos++; // skip }
+      const pairs = [];
+      for (let i = 0; i < items.length; i += 2) {
+        pairs.push([items[i], i + 1 < items.length ? items[i + 1] : null]);
+      }
+      return { m: pairs };
+    }
+
+    if (ch === '"') {
+      pos++;
+      let str = '';
+      while (pos < text.length && text[pos] !== '"') {
+        if (text[pos] === '\\' && pos + 1 < text.length) {
+          pos++;
+          if (text[pos] === 'n') str += '\n';
+          else if (text[pos] === 't') str += '\t';
+          else str += text[pos];
+        } else {
+          str += text[pos];
+        }
+        pos++;
+      }
+      if (pos < text.length) pos++; // skip closing "
+      return { s: str };
+    }
+
+    // Atom: read until delimiter
+    let atom = '';
+    while (pos < text.length && !/[\s,\(\)\[\]\{\}"]/.test(text[pos])) {
+      atom += text[pos];
+      pos++;
+    }
+
+    if (!atom) { pos++; return undefined; }  // skip unrecognized delimiter
+    if (atom === '·') return undefined;
+    if (atom === 'nil') return null;
+    if (atom === 'true') return true;
+    if (atom === 'false') return false;
+    if (/^-?\d+(\.\d+)?$/.test(atom)) return parseFloat(atom);
+    return atom; // symbol, keyword (:foo), or item-ref (@guid)
+  }
+
+  return parseOne();
 }
 
 // --- Flat width calculation ---
@@ -2076,6 +2170,23 @@ function handleInputKey(e, ctx) {
     state.inputCursor = state.inputBuffer.length;
     state.inputSelectAll = false;
     updateHoleDisplay(state);
+  } else if (e.key === 'v' && (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && _clipboard !== null) {
+    // Structural paste from internal clipboard
+    const holeId = state.inputHoleId;
+    let afterId = holeId;
+    if (state.inputBuffer) {
+      const newNode = commitToken(state, itemNames, api, statusBar);
+      afterId = newNode.id;
+    }
+    const pasted = inflateSubtree(_clipboard, state);
+    exitToNav(state, pasted.id);
+    applyMutation(state, itemNames, api, statusBar, () => {
+      if (afterId !== holeId) {
+        insertAfter(state, afterId, pasted);
+      } else {
+        replaceNode(state, holeId, pasted);
+      }
+    });
   } else if (isTypable && TYPABLE_CHARS.test(e.key)) {
     if (state.inputSelectAll) {
       state.inputBuffer = e.key;
@@ -2567,6 +2678,20 @@ export async function render(value, options, api) {
       updateHoleDisplay(state);
       if (state.mode === 'string') updateStringAutocomplete(state, ctx);
       else updateAutocomplete(state, ctx);
+    } else if (state.mode === 'nav' && state.onChange && _clipboard === null) {
+      // Fallback: parse s-expression text from system clipboard
+      e.preventDefault();
+      const text = e.clipboardData?.getData('text')?.trim();
+      if (!text) return;
+      const compact = parseSexp(text);
+      if (compact === undefined) return;
+      const node = state.nodeMap.get(state.selectedId);
+      if (!node) return;
+      const pasted = inflateSubtree(compact, state);
+      applyMutation(state, itemNames, api, statusBar, () => {
+        insertAfter(state, node.id, pasted);
+        state.selectedId = pasted.id;
+      });
     }
   });
 
