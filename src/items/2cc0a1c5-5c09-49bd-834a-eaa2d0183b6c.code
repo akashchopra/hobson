@@ -251,8 +251,8 @@ export async function buildSimpleActions(api, itemId, context) {
   }
   frag.appendChild(makeRootEl);
 
-  // Export as JSON
-  const exportEl = api.createElement('div', { class: 'context-menu-item' }, ['Export as JSON']);
+  // Export (JSON + .code sidecar if item has code)
+  const exportEl = api.createElement('div', { class: 'context-menu-item' }, ['Export']);
   if (context) {
     exportEl.onclick = async () => {
       context.onDismiss();
@@ -262,11 +262,39 @@ export async function buildSimpleActions(api, itemId, context) {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = (itemData.name || itemData.content?.title || itemId.slice(0, 8)) + '.json';
+      a.download = itemId + '.json';
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
+      // Export .code sidecar if item has code content
+      const hasJS = !!itemData.content?.code;
+      const hasHob = Array.isArray(itemData.content?.hob);
+      if (hasJS || hasHob) {
+        const parts = [];
+        if (hasJS && hasHob) {
+          const hob = await api.require('40b00001-0000-4000-8000-000000000000');
+          parts.push(';;; --- JavaScript ---');
+          parts.push(itemData.content.code);
+          parts.push('');
+          parts.push(';;; --- Hob ---');
+          parts.push(hob.prettyPrintAll(itemData.content.hob));
+        } else if (hasJS) {
+          parts.push(itemData.content.code);
+        } else {
+          const hob = await api.require('40b00001-0000-4000-8000-000000000000');
+          parts.push(hob.prettyPrintAll(itemData.content.hob));
+        }
+        const codeBlob = new Blob([parts.join('\n')], { type: 'text/plain' });
+        const codeUrl = URL.createObjectURL(codeBlob);
+        const codeA = document.createElement('a');
+        codeA.href = codeUrl;
+        codeA.download = itemId + '.code';
+        document.body.appendChild(codeA);
+        codeA.click();
+        document.body.removeChild(codeA);
+        URL.revokeObjectURL(codeUrl);
+      }
     };
   }
   frag.appendChild(exportEl);
