@@ -2438,8 +2438,144 @@ export async function render(value, options, api) {
     if (onChange) onChange(JSON.parse(JSON.stringify(ast)));
   }
 
+  // --- Help overlay ---
+
+  const DOC_HELP_SECTIONS = [
+    { title: 'Formatting', rows: [
+      ['Ctrl+B',       'Bold'],
+      ['Ctrl+I',       'Italic'],
+      ['Ctrl+E',       'Inline code'],
+      ['Ctrl+⇧X',     'Strikethrough'],
+      ['Ctrl+⇧H',     'Highlight'],
+    ]},
+    { title: 'Blocks', rows: [
+      ['Enter',        'Split block'],
+      ['Backspace',    'Merge with previous'],
+      ['Delete',       'Merge with next'],
+      ['Tab',          'Indent list item'],
+      ['⇧Tab',        'Outdent list item'],
+    ]},
+    { title: 'Markdown Shortcuts', rows: [
+      ['# + Space',    'Heading (1\u20136)'],
+      ['> + Space',    'Blockquote'],
+      ['- + Space',    'Unordered list'],
+      ['1. + Space',   'Ordered list'],
+      ['||| + Space',  'Table'],
+      ['>>> + Space',  'Eval block'],
+      ['--- + Enter',  'Horizontal rule'],
+    ]},
+    { title: 'Autocomplete', rows: [
+      ['@',            'Insert item ref / link / transclusion'],
+      ['↑ / ↓',        'Navigate suggestions'],
+      ['Tab / Enter',  'Accept suggestion'],
+      ['Escape',       'Dismiss'],
+    ]},
+    { title: 'Table Navigation', rows: [
+      ['Tab',          'Next cell'],
+      ['⇧Tab',        'Previous cell'],
+      ['Enter',        'Move down'],
+    ]},
+  ];
+
+  let helpVisible = false;
+  let helpEl = null;
+
+  function buildDocHelpOverlay() {
+    // Inject help CSS if not already present (shared with hob structural editor)
+    if (!document.getElementById('hob-help-css')) {
+      const style = document.createElement('style');
+      style.id = 'hob-help-css';
+      style.textContent = `
+.hob-help-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.4); display: flex; align-items: center; justify-content: center; z-index: 10000; }
+.hob-help-panel { background: var(--color-surface, #fff); border: 1px solid var(--color-border); border-radius: var(--border-radius); padding: 16px 20px; max-width: min(600px, 90vw); max-height: 70vh; overflow: auto; box-shadow: 0 4px 16px rgba(0,0,0,0.15); }
+.hob-help-header { font-weight: 600; font-size: 0.9375rem; margin-bottom: 12px; color: var(--color-text); }
+.hob-help-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; }
+.hob-help-section { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; align-content: start; }
+.hob-help-section-title { grid-column: 1 / -1; font-weight: 600; font-size: 0.8125rem; color: var(--color-text); margin-bottom: 2px; border-bottom: 1px solid var(--color-border); padding-bottom: 2px; }
+.hob-help-key { font-family: var(--font-mono, monospace); font-size: 0.75rem; color: var(--color-text-secondary); background: var(--color-surface-secondary, oklch(96% 0 0)); padding: 1px 5px; border-radius: 3px; border: 1px solid var(--color-border); white-space: nowrap; text-align: right; }
+.hob-help-desc { font-size: 0.75rem; color: var(--color-text); padding: 1px 0; }
+.hob-help-footer { margin-top: 12px; font-size: 0.75rem; color: var(--color-text-tertiary); text-align: center; }`;
+      document.head.appendChild(style);
+    }
+
+    const overlay = document.createElement('div');
+    overlay.className = 'hob-help-overlay';
+
+    const panel = document.createElement('div');
+    panel.className = 'hob-help-panel';
+
+    const header = document.createElement('div');
+    header.className = 'hob-help-header';
+    header.textContent = 'Keyboard Shortcuts';
+    panel.appendChild(header);
+
+    const grid = document.createElement('div');
+    grid.className = 'hob-help-grid';
+
+    for (const section of DOC_HELP_SECTIONS) {
+      const sec = document.createElement('div');
+      sec.className = 'hob-help-section';
+
+      const title = document.createElement('div');
+      title.className = 'hob-help-section-title';
+      title.textContent = section.title;
+      sec.appendChild(title);
+
+      for (const [key, desc] of section.rows) {
+        const keyEl = document.createElement('span');
+        keyEl.className = 'hob-help-key';
+        keyEl.textContent = key;
+        const descEl = document.createElement('span');
+        descEl.className = 'hob-help-desc';
+        descEl.textContent = desc;
+        sec.appendChild(keyEl);
+        sec.appendChild(descEl);
+      }
+      grid.appendChild(sec);
+    }
+    panel.appendChild(grid);
+
+    const footer = document.createElement('div');
+    footer.className = 'hob-help-footer';
+    footer.textContent = 'Ctrl+/ or Escape to close';
+    panel.appendChild(footer);
+
+    overlay.appendChild(panel);
+    return overlay;
+  }
+
+  function showDocHelp() {
+    if (helpVisible) return;
+    const overlay = buildDocHelpOverlay();
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) hideDocHelp(); });
+    wrapper.appendChild(overlay);
+    helpEl = overlay;
+    helpVisible = true;
+  }
+
+  function hideDocHelp() {
+    if (!helpVisible) return;
+    helpEl?.remove();
+    helpEl = null;
+    helpVisible = false;
+  }
+
   // --- Initialize ---
   if (editable) {
+    // Ctrl+/ help overlay — on wrapper so it catches before per-block handlers
+    wrapper.addEventListener('keydown', (e) => {
+      if (helpVisible) {
+        if ((e.key === '/' && (e.ctrlKey || e.metaKey)) || e.key === 'Escape') hideDocHelp();
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+      if (e.key === '/' && (e.ctrlKey || e.metaKey) && !e.altKey) {
+        e.preventDefault();
+        e.stopPropagation();
+        showDocHelp();
+      }
+    });
     editor.addEventListener('click', (e) => {
       const linkSpan = e.target.closest('.doc-link');
       if (linkSpan && editor.contains(linkSpan)) { showLinkPopover(linkSpan); return; }
