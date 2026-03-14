@@ -294,6 +294,109 @@ function hasFilterSyntax(query) {
 }
 // [END:hasFilterSyntax]
 
+// [BEGIN:hobQuery]
+/**
+ * Check if a query is a Hob expression (starts with open paren)
+ */
+function isHobQuery(query) {
+  return query.trimStart().startsWith('(');
+}
+
+/**
+ * Registry of search predicate functions and their expected arity
+ * (including the item argument). If a call has arity-1 args,
+ * the macro inserts `i` as the first argument.
+ */
+const PREDICATE_REGISTRY = {
+  'type?': 2,
+  'tagged?': 2,
+  'name?': 2,
+  'modified-after?': 2,
+  'modified-before?': 2,
+  'has-field?': 2,
+};
+
+/**
+ * Walk a compact JSON AST and insert `i` as the first argument
+ * to known predicate calls that are missing their item argument.
+ */
+function insertItemArg(ast) {
+  if (!Array.isArray(ast)) return ast;
+
+  const head = ast[0];
+  const args = ast.slice(1);
+
+  // Check if this is a call to a known predicate with one fewer arg than expected
+  if (typeof head === 'string' && head in PREDICATE_REGISTRY) {
+    const expectedArity = PREDICATE_REGISTRY[head];
+    if (args.length === expectedArity - 1) {
+      return [head, 'i', ...args.map(insertItemArg)];
+    }
+  }
+
+  // Recurse into all sub-expressions
+  return ast.map(insertItemArg);
+}
+
+/**
+ * Macro-expand a Hob search query into a complete evaluable program.
+ * Input: user's search text (e.g. '(type? "note") (sort :modified)')
+ * Output: Hob source string ready for eval
+ */
+function expandSearchMacro(input, hob) {
+  const asts = hob.readAll(input);
+  if (asts.length === 0) return null;
+
+  let predicateAst = null;
+  let sortField = ':modified';
+  let sortAsc = false;
+
+  function extractSort(sortExpr) {
+    if (sortExpr.length >= 2) sortField = sortExpr[1];
+    if (sortExpr.length >= 3 && sortExpr[2] === ':asc') sortAsc = true;
+  }
+
+  // Sort-only: (sort :modified) with no predicate
+  if (asts.length === 1 && Array.isArray(asts[0]) && asts[0][0] === 'sort') {
+    extractSort(asts[0]);
+  }
+  // Predicate only: (type? "note")
+  else if (asts.length === 1) {
+    predicateAst = asts[0];
+  }
+  // Predicate + sort: (type? "note") (sort :modified)
+  else if (asts.length === 2 && Array.isArray(asts[1]) && asts[1][0] === 'sort') {
+    predicateAst = asts[0];
+    extractSort(asts[1]);
+  }
+  else if (asts.length > 2) {
+    throw new Error('Expected at most two expressions: a predicate and an optional (sort ...) directive');
+  }
+
+  const sortFieldStr = typeof sortField === 'string' ? sortField : hob.prettyPrint(sortField);
+  const itemsExpr = predicateAst
+    ? `(filter (fn [i] ${hob.prettyPrint(insertItemArg(predicateAst))}) (get-all))`
+    : '(get-all)';
+
+  if (sortAsc) {
+    return `(sort-by ${sortFieldStr} ${itemsExpr})`;
+  }
+  return `(reverse (sort-by ${sortFieldStr} ${itemsExpr}))`;
+}
+
+/**
+ * Evaluate a Hob search query, returning matching items.
+ */
+async function evaluateHobQuery(query, api) {
+  const hob = await api.require('hob-interpreter');
+  const interp = hob.createInterpreter(api);
+  await interp.macrosReady;
+  const source = expandSearchMacro(query, hob);
+  if (!source) return [];
+  return await interp.eval(source);
+}
+// [END:hobQuery]
+
 // [BEGIN:searchItems]
 /**
  * Search items based on query string
@@ -301,6 +404,11 @@ function hasFilterSyntax(query) {
 export async function searchItems(query, api, options = {}) {
   if (!query || query.trim().length === 0) {
     return [];
+  }
+
+  // Hob query path — delegate entirely to the Hob evaluator
+  if (isHobQuery(query)) {
+    return await evaluateHobQuery(query, api);
   }
 
   const { targetContainer, allItems } = options;
@@ -482,7 +590,7 @@ export async function getStarredItems(api, options = {}) {
  */
 export function createSearchUI(containerEl, onSelect, api, options = {}) {
   const {
-    placeholder = 'Search by `name|type|tag|title:...`, or free text',
+    placeholder = 'Search: text, name|type|tag:..., or (hob expression). Press Enter.',
     savedQuery = '',
     targetContainer = null,
     autoFocus = false,
@@ -513,7 +621,7 @@ export function createSearchUI(containerEl, onSelect, api, options = {}) {
 
   const statusDiv = api.createElement('div', {
     style: 'padding: 40px; text-align: center; color: var(--color-border-dark); font-style: italic;'
-  }, ['Type to search...']);
+  }, ['Type to search, press Enter']);
   resultsContainer.appendChild(statusDiv);
 
   const resultsList = api.createElement('div', {
@@ -521,7 +629,6 @@ export function createSearchUI(containerEl, onSelect, api, options = {}) {
   }, []);
   resultsContainer.appendChild(resultsList);
 
-  let searchTimeout = null;
   let currentQuery = savedQuery;
 
   const renderResultItem = (item) => {
@@ -582,7 +689,7 @@ export function createSearchUI(containerEl, onSelect, api, options = {}) {
       if (starred.length === 0) {
         statusDiv.style.display = 'block';
         resultsList.style.display = 'none';
-        statusDiv.textContent = 'Type to search...';
+        statusDiv.textContent = 'Type to search, press Enter';
         return;
       }
       statusDiv.style.display = 'none';
@@ -602,7 +709,19 @@ export function createSearchUI(containerEl, onSelect, api, options = {}) {
     resultsList.style.display = 'none';
     statusDiv.textContent = 'Searching...';
 
-    const matches = await searchItems(query, api, { targetContainer });
+    let matches;
+    try {
+      matches = await searchItems(query, api, { targetContainer });
+    } catch (err) {
+      statusDiv.style.display = 'block';
+      resultsList.style.display = 'none';
+      statusDiv.innerHTML = '';
+      const errMsg = api.createElement('div', {
+        style: 'color: var(--color-error, #c00); font-family: monospace; font-size: 0.875rem; white-space: pre-wrap; text-align: left;'
+      }, ['Hob error: ' + (err.message || String(err))]);
+      statusDiv.appendChild(errMsg);
+      return;
+    }
 
     if (matches.length === 0) {
       statusDiv.style.display = 'block';
@@ -674,17 +793,11 @@ export function createSearchUI(containerEl, onSelect, api, options = {}) {
     }
   };
 
-  const performSearch = (query) => {
-    if (searchTimeout) {
-      clearTimeout(searchTimeout);
+  input.onkeydown = (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      executeSearch(input.value);
     }
-    searchTimeout = setTimeout(() => {
-      executeSearch(query);
-    }, 300);
-  };
-
-  input.oninput = (e) => {
-    performSearch(e.target.value);
   };
 
   if (autoFocus) {
@@ -702,9 +815,6 @@ export function createSearchUI(containerEl, onSelect, api, options = {}) {
       executeSearch(query);
     },
     destroy: () => {
-      if (searchTimeout) {
-        clearTimeout(searchTimeout);
-      }
       containerEl.innerHTML = '';
     }
   };
