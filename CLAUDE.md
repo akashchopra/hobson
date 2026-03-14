@@ -46,7 +46,7 @@ Documentation items follow the `c0c0c0c0-XXXX-0000-0000-000000000000` GUID patte
 
 ## Key Source Files
 
-- `src/bootloader.html` - The application code
+- `src/bootloader.html` - The minimal bootloader. Almost never modified; contains no kernel or application logic.
 - `src/items/{guid}.json` - The most recent export of item with id {guid}. Use these as the reference implementation for all items.
 - `src/items/backup.json` - The most recent dump of all items in the database. Do not read this file! Use the individual item exports.
 
@@ -64,7 +64,6 @@ KERNEL_STYLES: "33333333-8888-0000-0000-000000000000",
 LIBRARY: "66666666-0000-0000-0000-000000000000",
 VIEW: "aaaaaaaa-0000-0000-0000-000000000000",
 DEFAULT_VIEW: "aaaaaaaa-1111-0000-0000-000000000000",
-NOTE: "871ae771-b9b1-4f40-8c7f-d9038bfb69c3"
 ```
 
 ## Item Structure
@@ -101,6 +100,8 @@ NOTE: "871ae771-b9b1-4f40-8c7f-d9038bfb69c3"
 
 These rules are very important!
 
+- **NEVER, EVER, MAKE CODE CHANGES WITHOUT CONFIRMATION. ALL USER REQUESTS SHOULD BE INTERPRETED AS REQUESTS FOR INVESTIGATION AND EXPLANATION, NOT AS REQUESTS FOR AUTOMATIC FIXING.**
+- **DO NOT USE TOOLS THAT REQUIRE CONTINUAL APPROVAL. FOR EXAMPLE, USE OF SED ALWAYS RESULTS IN THE PROMPT "sed command contains operations that require explicit approval". ANOTHER EXAMPLE "Command contains a backslash before a shell operator (;, |, &, <, >) which can hide command structure". NEVER USE SUCH TOOLS.**
 - Before editing existing items, *always* confirm that the `src/items` directory contains the latest versions.
 - **Edit JSON files directly** rather than writing REPL scripts. Edit the exported JSON files in `src/items/*.json` - this makes changes immediately ready for git commit. The user will import the updated files into Hobson.
 - If REPL scripts are needed for some reason, place them in `src/REPL Scripts` (not /tmp).
