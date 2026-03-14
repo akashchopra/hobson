@@ -2938,6 +2938,73 @@ function registerItemOps(env, api) {
     }
     return walk(node);
   }, { _hobName: 'extract-text' }));
+
+  // Search predicates — used by item-search-lib Hob query mode.
+  // Name→ID caches are per registerItemOps call (i.e. per interpreter instance).
+  const typeNameCache = new Map();
+  const tagNameCache = new Map();
+
+  env.define('type?', Object.assign(async (item, typeName) => {
+    if (!item || typeof item !== 'object') return false;
+    const nameKey = typeof typeName === 'string' ? typeName.toLowerCase() : '';
+    if (!typeNameCache.has(nameKey)) {
+      if (UUID_RE.test(typeName)) {
+        typeNameCache.set(nameKey, typeName);
+      } else {
+        const allTypes = await api.query({ type: '11111111-0000-0000-0000-000000000000' });
+        for (const t of allTypes) {
+          if (t.name) {
+            const full = t.name.toLowerCase();
+            typeNameCache.set(full, t.id);
+            if (full.includes(':')) typeNameCache.set(full.split(':').pop(), t.id);
+          }
+        }
+      }
+    }
+    const resolvedId = typeNameCache.get(nameKey) || typeName;
+    return item.type === resolvedId;
+  }, { _hobName: 'type?' }));
+
+  env.define('tagged?', Object.assign(async (item, tagName) => {
+    if (!item || typeof item !== 'object') return false;
+    const tags = item.content?.tags || [];
+    if (UUID_RE.test(tagName)) return tags.includes(tagName);
+    const nameKey = tagName.toLowerCase();
+    if (!tagNameCache.has(nameKey)) {
+      const allItems = await api.getAll();
+      for (const i of allItems) {
+        if (i.name) {
+          const name = i.name.toLowerCase();
+          if (!tagNameCache.has(name)) tagNameCache.set(name, []);
+          tagNameCache.get(name).push(i.id);
+        }
+      }
+    }
+    const tagIds = tagNameCache.get(nameKey) || [];
+    return tagIds.some(id => tags.includes(id));
+  }, { _hobName: 'tagged?' }));
+
+  env.define('name?', Object.assign((item, substring) => {
+    if (!item || typeof item !== 'object') return false;
+    const name = item.name || '';
+    return name.toLowerCase().includes(substring.toLowerCase());
+  }, { _hobName: 'name?' }));
+
+  env.define('modified-after?', Object.assign((item, timestamp) => {
+    if (!item || typeof item !== 'object') return false;
+    return (item.modified || 0) > timestamp;
+  }, { _hobName: 'modified-after?' }));
+
+  env.define('modified-before?', Object.assign((item, timestamp) => {
+    if (!item || typeof item !== 'object') return false;
+    return (item.modified || 0) < timestamp;
+  }, { _hobName: 'modified-before?' }));
+
+  env.define('has-field?', Object.assign((item, field) => {
+    if (!item || typeof item !== 'object') return false;
+    const key = typeof field === 'string' && field.startsWith('\u029e') ? field.slice(1) : field;
+    return item.content != null && key in item.content;
+  }, { _hobName: 'has-field?' }));
 }
 
 // ============================================================
