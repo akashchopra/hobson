@@ -1,130 +1,151 @@
 (defn render [item api]
-  (let [err item
-        content (or (:content err) {})
-        frames (or (:frames content) [])
-        hob-stack (or (:hobStack content) [])
-        hob-expr (:hobExpr content)
-        ctx (or (:context content) {})
-        resolved (:resolved content)
-        renderer-in-stack (and
-                            (:rendererId ctx)
-                            (seq
-                              (filter
-                                (fn [f] (= (:itemId f) (:rendererId ctx)))
-                                frames)))
-        source-id (or
-                    (when (string? (:rendererId ctx)) (:rendererId ctx))
-                    (when (string? (:itemId ctx)) (:itemId ctx)))]
-    [:div.error-item-view {:style "font-family: system-ui, sans-serif;"}
-      [:div {:style (str
-                      "padding: 16px; margin-bottom: 16px; border-left: 4px solid "
-                      (if resolved "var(--color-success)" "var(--color-danger)")
-                      "; background: "
-                      (if
-                        resolved
-                        "var(--color-success-light, #e8f5e9)"
-                        "var(--color-danger-light)")
-                      ";")}
-  
-        [:div {:style "display: flex; align-items: start; gap: 12px;"}
-          [:span {:style "font-size: 2rem;"} (if resolved "✔" "⚠")]
-          [:div {:style "flex: 1;"}
-            [:div {:style "font-size: 0.75rem; color: var(--color-text-secondary); margin-bottom: 4px;"}
-  
-              (str
-                (or (:errorType content) "Error")
-                (if resolved " (Resolved)" ""))]
-            [:div {:style "font-size: 1.125rem; font-weight: 600; margin-bottom: 8px;"}
-  
-              (or (:message content) "Unknown error")]
-            [:div {:style "font-size: 0.75rem; color: var(--color-text-secondary);"}
-  
-              (format-date (:created err))]]]]
-      (when
-        (or (:operation ctx) (:itemId ctx) (:itemName ctx))
-        [:div {:style "margin-bottom: 16px;"}
-          [:h4 {:style "margin: 0 0 8px 0;"} "Context"]
-          [:div {:style "font-family: monospace; font-size: 0.75rem; background: var(--color-bg-body); padding: 12px; border-radius: var(--border-radius);"}
-  
-            (when (:operation ctx) [:div (str "Operation: " (:operation ctx))])
-            (when (:itemName ctx) [:div (str "Item: " (:itemName ctx))])
-            (when
-              (:itemId ctx)
-              [:div
-                "Item ID: "
-                [:span {:style "color: var(--color-primary); cursor: pointer;"
-                        :on-click (fn [e] (open-item! e (:itemId ctx)))}
-                  (:itemId ctx)]])
-            (when
-              (:rendererId ctx)
-              [:div
-                "Renderer: "
-                [:span {:style "color: var(--color-primary); cursor: pointer;"
-                        :on-click (fn [e] (open-item! e (:rendererId ctx)))}
-                  (or (:rendererName ctx) (:rendererId ctx))]])]])
-      (when
-        (or
-          (and (:rendererId ctx) (not renderer-in-stack))
-          (and (= (count frames) 0) (:itemId ctx)))
-        [:div {:style "margin-bottom: 16px; padding: 12px; background: #e3f2fd; border: 1px solid var(--color-primary); border-radius: var(--border-radius);"}
-  
-          [:div {:style "margin-bottom: 8px; font-weight: 500;"}
-            (if
-              (= (count frames) 0)
-              "No stack trace available (syntax/parse error)."
-              "Error originated in renderer (async stack trace truncated). See browser console for full trace.")]
-          (when
-            source-id
-            [:button {:style "padding: 8px 16px; cursor: pointer; background: var(--color-primary); color: white; border: none; border-radius: var(--border-radius); font-weight: 500;"
-                      :on-click (fn [e] (open-item! e source-id))}
-              (str "View " (or (:rendererName ctx) "Source Code"))])])
-      (when
-        (seq hob-stack)
-        [:div {:style "margin-bottom: 16px;"}
-          [:h4 {:style "margin: 0 0 8px 0;"} "Hob Call Stack"]
-          [:div {:style "font-family: var(--font-mono, monospace); font-size: 0.75rem; background: var(--color-bg-body); padding: 12px; border-radius: var(--border-radius); overflow: auto; max-height: 300px;"}
-            (for [frame hob-stack]
-              [:div {:style "padding: 3px 0; white-space: pre-wrap;"}
-                [:span {:style "color: var(--color-text-secondary);"} (or (:name frame) "(anonymous)")]
-                (when (:expr frame)
-                  [:pre {:style "margin: 2px 0 2px 16px; padding: 4px 8px; background: rgba(0,0,0,0.03); border-radius: 3px; white-space: pre-wrap; font-size: inherit;"}
-                    (pretty-print (:expr frame))])])]])
-      (when
-        (seq frames)
-        [:details {:style "margin-bottom: 16px;"}
-          [:summary {:style "cursor: pointer; font-weight: 600; margin-bottom: 8px;"} "JS Stack Trace"]
-          [:div {:style "font-family: monospace; font-size: 0.75rem; background: var(--color-bg-body); padding: 12px; border-radius: var(--border-radius); overflow: auto; max-height: 300px;"}
-  
-            (for [frame frames]
-              (if
-                (and (:navigable frame) (:itemId frame))
-                [:div {:style "padding: 2px 0; white-space: nowrap; cursor: pointer; color: var(--color-primary);"
-                       :title (str
-                                "Click to navigate to "
-                                (:sourceName frame)
-                                ":"
-                                (:line frame))
-                       :on-click (fn [e]
-                                   (open-item!
-                                     e
-                                     {:id (:itemId frame)
-                                      :view {:navigateTo {:field (:field frame)
-                                                          :lines (:line frame)}}
-  }))}
-                  (str "→ " (:raw frame))]
-                [:div {:style "padding: 2px 0; white-space: nowrap; color: var(--color-text-secondary);"}
-  
-                  (:raw frame)]))]])
-      [:div {:style "display: flex; gap: 8px; margin-top: 16px;"}
-        [:button {:style "padding: 8px 16px; cursor: pointer;"
+  (def err item)
+  (def content (or (:content err) {}))
+  (def frames (or (:frames content) []))
+  (def hob-stack (or (:hobStack content) []))
+  (def hob-expr (:hobExpr content))
+  (def ctx (or (:context content) {}))
+  (def resolved (:resolved content))
+  (def renderer-in-stack
+    (and (:rendererId ctx) (seq (filter (fn [f] (= (:itemId f) (:rendererId ctx))) frames))))
+  (def source-id
+    (or (when (string? (:rendererId ctx)) (:rendererId ctx))
+      (when (string? (:itemId ctx)) (:itemId ctx))))
+  [
+    :div.error-item-view
+    {:style "font-family: system-ui, sans-serif;"}
+    [
+      :div
+      {
+        :style (str "padding: 16px; margin-bottom: 16px; border-left: 4px solid "
+          (if resolved "var(--color-success)" "var(--color-danger)")
+          "; background: "
+          (if resolved "var(--color-success-light, #e8f5e9)" "var(--color-danger-light)")
+          ";")}
+      [
+        :div
+        {:style "display: flex; align-items: start; gap: 12px;"}
+        [:span {:style "font-size: 2rem;"} (if resolved "✔" "⚠")]
+        [
+          :div
+          {:style "flex: 1;"}
+          [
+            :div
+            {:style "font-size: 0.75rem; color: var(--color-text-secondary); margin-bottom: 4px;"}
+            (str (or (:errorType content) "Error") (if resolved " (Resolved)" ""))]
+          [
+            :div
+            {:style "font-size: 1.125rem; font-weight: 600; margin-bottom: 8px;"}
+            (or (:message content) "Unknown error")]
+          [
+            :div
+            {:style "font-size: 0.75rem; color: var(--color-text-secondary);"}
+            (format-date (:created err))]]]]
+    (when (or (:operation ctx) (:itemId ctx) (:itemName ctx))
+      [
+        :div
+        {:style "margin-bottom: 16px;"}
+        [:h4 {:style "margin: 0 0 8px 0;"} "Context"]
+        [
+          :div
+          {
+            :style "font-family: monospace; font-size: 0.75rem; background: var(--color-bg-body); padding: 12px; border-radius: var(--border-radius);"}
+          (when (:operation ctx) [:div (str "Operation: " (:operation ctx))])
+          (when (:itemName ctx) [:div (str "Item: " (:itemName ctx))])
+          (when (:itemId ctx)
+            [
+              :div
+              "Item ID: "
+              [
+                :span
+                {
+                  :style "color: var(--color-primary); cursor: pointer;"
+                  :on-click (fn [e] (open-item! e (:itemId ctx)))}
+                (:itemId ctx)]])
+          (when (:rendererId ctx)
+            [
+              :div
+              "Renderer: "
+              [
+                :span
+                {
+                  :style "color: var(--color-primary); cursor: pointer;"
+                  :on-click (fn [e] (open-item! e (:rendererId ctx)))}
+                (or (:rendererName ctx) (:rendererId ctx))]])]])
+    (when (or (and (:rendererId ctx) (not renderer-in-stack)) (and (= (count frames) 0) (:itemId ctx)))
+      [
+        :div
+        {
+          :style "margin-bottom: 16px; padding: 12px; background: #e3f2fd; border: 1px solid var(--color-primary); border-radius: var(--border-radius);"}
+        [
+          :div
+          {:style "margin-bottom: 8px; font-weight: 500;"}
+          (if (= (count frames) 0)
+            "No stack trace available (syntax/parse error)."
+            "Error originated in renderer (async stack trace truncated). See browser console for full trace.")]
+        (when source-id
+          [
+            :button
+            {
+              :style "padding: 8px 16px; cursor: pointer; background: var(--color-primary); color: white; border: none; border-radius: var(--border-radius); font-weight: 500;"
+              :on-click (fn [e] (open-item! e source-id))}
+            (str "View " (or (:rendererName ctx) "Source Code"))])])
+    (when (seq hob-stack)
+      [
+        :div
+        {:style "margin-bottom: 16px;"}
+        [:h4 {:style "margin: 0 0 8px 0;"} "Hob Call Stack"]
+        [
+          :div
+          {
+            :style "font-family: var(--font-mono, monospace); font-size: 0.75rem; background: var(--color-bg-body); padding: 12px; border-radius: var(--border-radius); overflow: auto; max-height: 300px;"}
+          (for [frame hob-stack]
+            [
+              :div
+              {:style "padding: 3px 0; white-space: pre-wrap;"}
+              [:span {:style "color: var(--color-text-secondary);"} (or (:name frame) "(anonymous)")]
+              (when (:expr frame)
+                [
+                  :pre
+                  {
+                    :style "margin: 2px 0 2px 16px; padding: 4px 8px; background: rgba(0,0,0,0.03); border-radius: 3px; white-space: pre-wrap; font-size: inherit;"}
+                  (pretty-print (:expr frame))])])]])
+    (when (seq frames)
+      [
+        :details
+        {:style "margin-bottom: 16px;"}
+        [:summary {:style "cursor: pointer; font-weight: 600; margin-bottom: 8px;"} "JS Stack Trace"]
+        [
+          :div
+          {
+            :style "font-family: monospace; font-size: 0.75rem; background: var(--color-bg-body); padding: 12px; border-radius: var(--border-radius); overflow: auto; max-height: 300px;"}
+          (for [frame frames]
+            (if (and (:navigable frame) (:itemId frame))
+              [
+                :div
+                {
+                  :style "padding: 2px 0; white-space: nowrap; cursor: pointer; color: var(--color-primary);"
+                  :title (str "Click to navigate to " (:sourceName frame) ":" (:line frame))
                   :on-click (fn [e]
-                              (set-item!
-                                (assoc-in err [:content :resolved] (not resolved))))}
-          (if resolved "Mark Unresolved" "Mark Resolved")]
-        [:button {:style "padding: 8px 16px; cursor: pointer; color: var(--color-danger);"
-                  :on-click (fn [e]
-                              (when
-                                (confirm "Delete this error?")
-                                (delete-item! (:id err))
-                                (clear-selection!)))}
-          "Delete"]]]))
+                    (open-item! e
+                      {:id (:itemId frame) :view {:navigateTo {:field (:field frame) :lines (:line frame)}}}))}
+                (str "→ " (:raw frame))]
+              [
+                :div
+                {:style "padding: 2px 0; white-space: nowrap; color: var(--color-text-secondary);"}
+                (:raw frame)]))]])
+    [
+      :div
+      {:style "display: flex; gap: 8px; margin-top: 16px;"}
+      [
+        :button
+        {
+          :style "padding: 8px 16px; cursor: pointer;"
+          :on-click (fn [e] (set-item! (assoc-in err [:content :resolved] (not resolved))))}
+        (if resolved "Mark Unresolved" "Mark Resolved")]
+      [
+        :button
+        {
+          :style "padding: 8px 16px; cursor: pointer; color: var(--color-danger);"
+          :on-click (fn [e] (when (confirm "Delete this error?") (delete-item! (:id err)) (clear-selection!)))}
+        "Delete"]]])
