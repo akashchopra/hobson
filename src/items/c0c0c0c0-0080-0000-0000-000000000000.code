@@ -1,107 +1,97 @@
 (defn render [item api]
-  (let [attachments (or (:attachments item) [])
-        total (count attachments)
-        idx (atom 0)
-        zoom (atom 100)
-        zoom-step 25
-        slide-els (for [att attachments]
-                    (let [dom (render-item (:id att))]
-                      (hiccup->dom
-                        [:div {:style "display:none; height:100%;"} dom])))
-        [root refs] (hiccup->dom+
-                      [:div {:ref :root
-                             :style "display:flex; flex-direction:column; height:100%; background:var(--color-bg-surface);"}
-                        [:div {:ref :stage
-                               :style "flex:1; overflow:auto; position:relative;"}]
-                        [:div {:style "display:flex; align-items:center; padding:8px 16px; border-top:1px solid var(--color-border-light); font-size:13px; color:var(--color-text-secondary);"}
-  
-                          [:button {:ref :prev
-                                    :style "padding:4px 12px; cursor:pointer; background:var(--color-bg-surface); border:1px solid var(--color-border-light); border-radius:4px; font-size:16px;"
-                                    :on-click (fn [e] (go (- (deref idx) 1)))}
-                            "‹"]
-                          [:span {:ref :counter
-                                  :style "flex:1; text-align:center;"}
-                            ""]
-                          [:button {:ref :next
-                                    :style "padding:4px 12px; cursor:pointer; background:var(--color-bg-surface); border:1px solid var(--color-border-light); border-radius:4px; font-size:16px;"
-                                    :on-click (fn [e] (go (+ (deref idx) 1)))}
-                            "›"]
-                          [:span {:style "width:16px;"}]
-                          [:button {:style "padding:2px 8px; cursor:pointer; background:var(--color-bg-surface); border:1px solid var(--color-border-light); border-radius:4px; font-size:13px;"
-                                    :on-click (fn [e]
-                                                (apply-zoom
-                                                  (- (deref zoom) zoom-step)))}
-                            "−"]
-                          [:span {:ref :zoom-label
-                                  :style "min-width:40px; text-align:center; font-size:12px;"}
-                            "100%"]
-                          [:button {:style "padding:2px 8px; cursor:pointer; background:var(--color-bg-surface); border:1px solid var(--color-border-light); border-radius:4px; font-size:13px;"
-                                    :on-click (fn [e]
-                                                (apply-zoom
-                                                  (+ (deref zoom) zoom-step)))}
-                            "+"]]])
-        stage (:stage refs)
-        counter (:counter refs)
-        prev-btn (:prev refs)
-        next-btn (:next refs)
-        zoom-label (:zoom-label refs)
-        _ (for [el slide-els] (invoke stage "appendChild" el))
-        set-display (fn [el val] (dom-set! (dom-get el :style) :display val))
-        set-visibility (fn [el val]
-                         (dom-set! (dom-get el :style) :visibility val))
-        apply-zoom (fn [pct]
-                     (let [clamped (max 50 (min pct 300))]
-                       (reset! zoom clamped)
-                       (dom-set!
-                         (dom-get stage :style)
-                         :zoom
-                         (str (/ clamped 100)))
-                       (dom-set! zoom-label :textContent (str clamped "%"))))
-        go (fn [i]
-             (when
-               (> total 0)
-               (let [clamped (max 0 (min i (- total 1))) prev (deref idx)]
-                 (reset! idx clamped)
-                 (when
-                   (nth slide-els prev)
-                   (set-display (nth slide-els prev) "none"))
-                 (when
-                   (nth slide-els clamped)
-                   (set-display (nth slide-els clamped) ""))
-                 (let [child-name (or
-                                    (:name
-                                      (get-item (:id (nth attachments clamped))))
-                                    "")
-  ]
-                   (dom-set!
-                     counter
-                     :textContent
-                     (str (+ clamped 1) " / " total "  —  " child-name)))
-                 (set-visibility prev-btn (if (= clamped 0) "hidden" "visible"))
-                 (set-visibility
-                   next-btn
-                   (if (= clamped (- total 1)) "hidden" "visible")))))]
-    (on-document!
-      :keydown
-      (fn [e]
-        (let [key (dom-get e :key)]
-          (cond
-            (= key "ArrowLeft")
-            (go (- (deref idx) 1))
-            (= key "ArrowRight")
-            (go (+ (deref idx) 1))
-            (= key "Home")
-            (go 0)
-            (= key "End")
-            (go (- total 1))))))
-    (if
-      (> total 0)
-      (go 0)
-      (invoke
-        stage
-        "appendChild"
-        (hiccup->dom
-          [:div {:style "padding:40px; text-align:center; color:var(--color-text-secondary);"}
-  
-            "No attachments to show as slides"])))
-    root))
+  (def attachments (or (:attachments item) []))
+  (def total (count attachments))
+  (def idx (atom 0))
+  (def zoom (atom 100))
+  (def zoom-step 25)
+  (def slide-els
+    (for [att attachments]
+      (let [dom (render-item (:id att))]
+        (hiccup->dom [:div {:style "display:none; height:100%;"} dom]))))
+  (def [root refs]
+    (hiccup->dom+
+      [
+        :div
+        {
+          :ref :root
+          :style "display:flex; flex-direction:column; height:100%; background:var(--color-bg-surface);"}
+        [:div {:ref :stage :style "flex:1; overflow:auto; position:relative;"}]
+        [
+          :div
+          {
+            :style "display:flex; align-items:center; padding:8px 16px; border-top:1px solid var(--color-border-light); font-size:13px; color:var(--color-text-secondary);"}
+          [
+            :button
+            {
+              :ref :prev
+              :style "padding:4px 12px; cursor:pointer; background:var(--color-bg-surface); border:1px solid var(--color-border-light); border-radius:4px; font-size:16px;"
+              :on-click (fn [e] (go (- (deref idx) 1)))}
+            "‹"]
+          [:span {:ref :counter :style "flex:1; text-align:center;"} ""]
+          [
+            :button
+            {
+              :ref :next
+              :style "padding:4px 12px; cursor:pointer; background:var(--color-bg-surface); border:1px solid var(--color-border-light); border-radius:4px; font-size:16px;"
+              :on-click (fn [e] (go (+ (deref idx) 1)))}
+            "›"]
+          [:span {:style "width:16px;"}]
+          [
+            :button
+            {
+              :style "padding:2px 8px; cursor:pointer; background:var(--color-bg-surface); border:1px solid var(--color-border-light); border-radius:4px; font-size:13px;"
+              :on-click (fn [e] (apply-zoom (- (deref zoom) zoom-step)))}
+            "−"]
+          [:span {:ref :zoom-label :style "min-width:40px; text-align:center; font-size:12px;"} "100%"]
+          [
+            :button
+            {
+              :style "padding:2px 8px; cursor:pointer; background:var(--color-bg-surface); border:1px solid var(--color-border-light); border-radius:4px; font-size:13px;"
+              :on-click (fn [e] (apply-zoom (+ (deref zoom) zoom-step)))}
+            "+"]]]))
+  (def stage (:stage refs))
+  (def counter (:counter refs))
+  (def prev-btn (:prev refs))
+  (def next-btn (:next refs))
+  (def zoom-label (:zoom-label refs))
+  (for [el slide-els] (invoke stage "appendChild" el))
+  (defn set-display [el val]
+    (dom-set! (dom-get el :style) :display val))
+  (defn set-visibility [el val]
+    (dom-set! (dom-get el :style) :visibility val))
+  (defn apply-zoom [pct]
+    (let [clamped (max 50 (min pct 300))]
+      (reset! zoom clamped)
+      (dom-set! (dom-get stage :style) :zoom (str (/ clamped 100)))
+      (dom-set! zoom-label :textContent (str clamped "%"))))
+  (defn go [i]
+    (when (> total 0)
+      (let [clamped (max 0 (min i (- total 1))) prev (deref idx)]
+        (reset! idx clamped)
+        (when (nth slide-els prev) (set-display (nth slide-els prev) "none"))
+        (when (nth slide-els clamped) (set-display (nth slide-els clamped) ""))
+        (let [child-name (or (:name (get-item (:id (nth attachments clamped)))) "")]
+          (dom-set! counter :textContent (str (+ clamped 1) " / " total "  —  " child-name)))
+        (set-visibility prev-btn (if (= clamped 0) "hidden" "visible"))
+        (set-visibility next-btn (if (= clamped (- total 1)) "hidden" "visible")))))
+  (on-document! :keydown
+    (fn [e]
+      (let [key (dom-get e :key)]
+        (cond (= key "ArrowLeft")
+          (go (- (deref idx) 1))
+          (= key "ArrowRight")
+          (go (+ (deref idx) 1))
+          (= key "Home")
+          (go 0)
+          (= key "End")
+          (go (- total 1))))))
+  (if (> total 0)
+    (go 0)
+    (invoke stage
+      "appendChild"
+      (hiccup->dom
+        [
+          :div
+          {:style "padding:40px; text-align:center; color:var(--color-text-secondary);"}
+          "No attachments to show as slides"])))
+  root)
