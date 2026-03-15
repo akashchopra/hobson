@@ -181,7 +181,7 @@ export async function render(workshop, api) {
     // since the re-render from persistState will rebuild everything from state)
     nameInput.value = state.typeName;
     extendsSelect.value = state.extendsType;
-    descInput.value = state.typeDescription;
+    renderDescEditor();
     rebuildFields();
     renderSummary();
     updateEditModeUI();
@@ -198,7 +198,7 @@ export async function render(workshop, api) {
     persistState();
     nameInput.value = '';
     extendsSelect.value = ITEM_TYPE;
-    descInput.value = '';
+    renderDescEditor();
     rebuildFields();
     renderSummary();
     updateEditModeUI();
@@ -369,20 +369,26 @@ export async function render(workshop, api) {
   extendsGroup.appendChild(extendsSelect);
   typeSection.appendChild(extendsGroup);
 
-  // Description
+  // Description — use the doc AST editor for rich text
   const descGroup = api.createElement('div', { style: 'margin-bottom: 12px;' }, []);
   descGroup.appendChild(makeLabel('Description'));
-  const descInput = api.createElement('textarea', {
-    placeholder: 'Describe what this type represents...',
-    rows: '3',
-    style: inputStyle + ' resize: vertical; font-family: inherit;'
+  const descContainer = api.createElement('div', {
+    style: 'border: 1px solid var(--color-border); border-radius: var(--border-radius); padding: 8px; min-height: 60px; background: var(--color-bg-surface);'
   }, []);
-  descInput.value = state.typeDescription;
-  descInput.oninput = (e) => {
-    state.typeDescription = e.target.value;
-    persistState();
-  };
-  descGroup.appendChild(descInput);
+  async function renderDescEditor() {
+    descContainer.innerHTML = '';
+    const docEditor = await api.require('field-view-doc-editable');
+    const el = await docEditor.render(state.typeDescription || '', {
+      mode: 'editable',
+      onChange: (newAst) => {
+        state.typeDescription = newAst;
+        persistState();
+      }
+    }, api);
+    descContainer.appendChild(el);
+  }
+  renderDescEditor();
+  descGroup.appendChild(descContainer);
   typeSection.appendChild(descGroup);
 
   container.appendChild(typeSection);
