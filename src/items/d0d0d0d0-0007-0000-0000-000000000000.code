@@ -109,7 +109,7 @@ export async function render(value, options, api) {
 
   function isEditableBlock(block) {
     const tag = tagOf(block);
-    return isLeafBlock(tag) || tag === ':ul' || tag === ':ol' || tag === ':blockquote' || tag === ':table';
+    return isLeafBlock(tag) || tag === ':ul' || tag === ':ol' || tag === ':blockquote' || tag === ':table' || tag === ':code-block';
   }
 
   function renderAllBlocks() {
@@ -396,10 +396,68 @@ export async function render(value, options, api) {
   function renderCodeBlock(block, path) {
     const pre = document.createElement('pre');
     pre.dataset.blockPath = pathStr(path);
-    pre.style.cssText = 'margin: 0.5em 0; padding: 10px; background: var(--color-bg-surface-alt); border-radius: var(--border-radius); overflow-x: auto; font-family: monospace; font-size: 0.8125rem; line-height: 1.5;';
-    const code = document.createElement('code');
-    for (const child of block.slice(1)) code.appendChild(document.createTextNode(textOf(child)));
-    pre.appendChild(code);
+    pre.style.cssText = 'margin: 0.5em 0; padding: 10px; background: var(--color-bg-surface-alt); border-radius: var(--border-radius); overflow-x: auto; font-family: monospace; font-size: 0.8125rem; line-height: 1.5; outline: none; white-space: pre-wrap;';
+    if (editable) pre.contentEditable = 'true';
+    const text = block.slice(1).map(c => textOf(c)).join('');
+    pre.appendChild(document.createTextNode(text || (editable ? '' : ' ')));
+    if (editable && !text) pre.appendChild(document.createElement('br'));
+
+    if (editable) {
+      pre.addEventListener('input', () => {
+        const newText = pre.textContent;
+        setBlock(path, [':code-block', { s: newText }]);
+        emitChange();
+      });
+      pre.addEventListener('keydown', (e) => {
+        // Enter inserts a newline (not a block split)
+        if (e.key === 'Enter' && !e.shiftKey) {
+          e.preventDefault();
+          e.stopPropagation();
+          const sel = pre.ownerDocument.defaultView.getSelection();
+          if (sel.rangeCount) {
+            const range = sel.getRangeAt(0);
+            range.deleteContents();
+            range.insertNode(document.createTextNode('\n'));
+            range.collapse(false);
+            sel.removeAllRanges();
+            sel.addRange(range);
+            pre.dispatchEvent(new Event('input'));
+          }
+          return;
+        }
+        // Tab inserts 2 spaces
+        if (e.key === 'Tab') {
+          e.preventDefault();
+          e.stopPropagation();
+          const sel = pre.ownerDocument.defaultView.getSelection();
+          if (sel.rangeCount) {
+            const range = sel.getRangeAt(0);
+            range.deleteContents();
+            range.insertNode(document.createTextNode('  '));
+            range.collapse(false);
+            sel.removeAllRanges();
+            sel.addRange(range);
+            pre.dispatchEvent(new Event('input'));
+          }
+          return;
+        }
+        // Backspace at start: merge with previous block or convert to paragraph
+        if (e.key === 'Backspace' && !e.shiftKey && !e.metaKey && !e.ctrlKey && isCursorAtStart(pre)) {
+          e.preventDefault();
+          const childIdx = path[path.length - 1];
+          if (childIdx > 0) {
+            // Convert code block to paragraph with its text
+            const text = pre.textContent;
+            setBlock(path, [':p', { s: text }]);
+            renderAllBlocks();
+            emitChange();
+            requestAnimationFrame(() => focusBlock(path, 0));
+          }
+          return;
+        }
+      });
+    }
+
     return pre;
   }
 
