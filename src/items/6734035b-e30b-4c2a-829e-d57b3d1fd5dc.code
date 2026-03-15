@@ -70,7 +70,8 @@ export function parseQuery(queryString, caches = {}) {
       include: [],
       exclude: []
     },
-    fields: {}
+    fields: {},
+    sort: null
   };
 
   const tokens = tokenize(queryString);
@@ -123,6 +124,12 @@ export function parseQuery(queryString, caches = {}) {
     // title:xxx
     if (cleanToken.startsWith('title:')) {
       result.fields.title = cleanToken.slice(6);
+      continue;
+    }
+
+    // sort:xxx
+    if (cleanToken.startsWith('sort:')) {
+      result.sort = cleanToken.slice(5);
       continue;
     }
 
@@ -290,9 +297,25 @@ function matchesFiltersSync(item, filters) {
  * Check if a query string contains filter syntax
  */
 function hasFilterSyntax(query) {
-  return /(?:^|\s)(?:-?(?:type:|tag:|name:|title:)|#)/.test(query);
+  return /(?:^|\s)(?:-?(?:type:|tag:|name:|title:|sort:)|#)/.test(query);
 }
 // [END:hasFilterSyntax]
+
+/**
+ * Sort results by field. Defaults: modified/created descending, name ascending.
+ */
+function sortResults(items, sortField) {
+  if (sortField === 'modified' || sortField === 'recent') {
+    items.sort((a, b) => (b.modified || 0) - (a.modified || 0));
+  } else if (sortField === 'created') {
+    items.sort((a, b) => (b.created || 0) - (a.created || 0));
+  } else if (sortField === 'name') {
+    items.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  } else {
+    // Default: alphabetical by name
+    items.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  }
+}
 
 // [BEGIN:hobQuery]
 /**
@@ -311,6 +334,7 @@ const PREDICATE_REGISTRY = {
   'type?': 2,
   'tagged?': 2,
   'name?': 2,
+  'text?': 2,
   'modified-after?': 2,
   'modified-before?': 2,
   'has-field?': 2,
@@ -450,11 +474,13 @@ export async function searchItems(query, api, options = {}) {
   const preParsed = parseQuery(query);
 
   // If all filter values are empty (e.g. "name:" with no value), return empty
+  // Exception: sort-only queries return all items sorted
   const hasTextTerms = preParsed.text.length > 0 || preParsed.negatedText.length > 0;
   const hasTypeFilters = preParsed.types.include.length > 0 || preParsed.types.exclude.length > 0;
   const hasTagFilters = preParsed.tags.include.length > 0 || preParsed.tags.exclude.length > 0;
   const hasFieldFilters = Object.values(preParsed.fields).some(v => v.length > 0);
-  if (!hasTextTerms && !hasTypeFilters && !hasTagFilters && !hasFieldFilters) {
+  const hasSortOnly = preParsed.sort && !hasTextTerms && !hasTypeFilters && !hasTagFilters && !hasFieldFilters;
+  if (!hasTextTerms && !hasTypeFilters && !hasTagFilters && !hasFieldFilters && !preParsed.sort) {
     return [];
   }
 
@@ -525,6 +551,12 @@ export async function searchItems(query, api, options = {}) {
     }
   }
 
+  // Sort-only: no filtering needed, return all items sorted
+  if (hasSortOnly) {
+    sortResults(itemsToSearch, preParsed.sort);
+    return itemsToSearch;
+  }
+
   // Re-parse with resolved caches
   const filters = parseQuery(query, { typeCache, tagCache });
 
@@ -542,7 +574,7 @@ export async function searchItems(query, api, options = {}) {
     }
   }
 
-  matches.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  sortResults(matches, filters.sort);
   return matches;
 }
 // [END:searchItems]
