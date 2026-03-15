@@ -1,40 +1,62 @@
-// Theme Hot-Reload Library
-// Applies kernel styles at boot and hot-reloads when kernel:styles is edited
+// Style Loader
+// Loads all CSS items at boot and hot-reloads on edit.
+// Also handles kernel:styles (which uses template substitution).
 
 const KERNEL_STYLES_ID = '33333333-8888-0000-0000-000000000000';
+const CSS_TYPE_ID = '23b66a83-5c61-4320-9517-5aa2abad2d1f';
 
-async function applyStyles(api) {
-  // Remove existing kernel styles if present
-  const existing = document.querySelector('style[data-kernel-styles]');
+function injectCSS(item) {
+  const id = item.id;
+  const existing = document.querySelector(`style[data-css-item="${id}"]`);
   if (existing) existing.remove();
+
+  const style = document.createElement('style');
+  style.setAttribute('data-css-item', id);
+  style.textContent = (item.content.code || '').replace(
+    /\{\{content\.(\w+)\}\}/g,
+    (_, key) => item.content[key] ?? ''
+  );
+  document.head.appendChild(style);
+}
+
+async function applyKernelStyles(api) {
+  // Remove legacy tag if present (from older version of this library)
+  const legacy = document.querySelector('style[data-kernel-styles]');
+  if (legacy) legacy.remove();
 
   try {
     const stylesItem = await api.get(KERNEL_STYLES_ID);
-    const style = document.createElement('style');
-    style.setAttribute('data-kernel-styles', 'true');
-    style.textContent = stylesItem.content.code.replace(
-      /\{\{content\.(\w+)\}\}/g,
-      (_, key) => stylesItem.content[key] ?? ''
-    );
-    document.head.appendChild(style);
+    injectCSS(stylesItem);
   } catch (e) {
-    console.error('Failed to apply kernel styles:', e);
-    // Fallback handled by bootloader inline styles
+    console.error('[style-loader] Failed to apply kernel styles:', e);
+  }
+}
+
+async function loadAllCSSItems(api) {
+  try {
+    const items = await api.query({ type: CSS_TYPE_ID });
+    for (const item of items) {
+      injectCSS(item);
+    }
+    console.log(`[style-loader] Loaded ${items.length} CSS items`);
+  } catch (e) {
+    console.error('[style-loader] Failed to load CSS items:', e);
   }
 }
 
 // Called at boot (or when library is created/edited post-boot)
 export async function onKernelBootComplete({ lateActivation }, api) {
-  await applyStyles(api);
+  await applyKernelStyles(api);
+  await loadAllCSSItems(api);
   if (lateActivation) {
-    console.log('[theme-hot-reload] Library activated post-boot');
+    console.log('[style-loader] Activated post-boot');
   } else {
-    console.log('[theme-hot-reload] Styles applied at boot');
+    console.log('[style-loader] Styles applied at boot');
   }
 }
 
-// Called when kernel:styles is edited
+// Called when kernel:styles or any CSS item is updated
 export async function onItemUpdated({ item }, api) {
-  await applyStyles(api);
-  console.log('[theme-hot-reload] Styles hot-reloaded');
+  injectCSS(item);
+  console.log(`[style-loader] Hot-reloaded: ${item.name || item.id}`);
 }

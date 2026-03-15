@@ -1,7 +1,7 @@
 {
   "id": "e64adaeb-f701-400a-a3b7-a3cd36eb7b16",
   "type": "66666666-0000-0000-0000-000000000000",
-  "name": "theme-hot-reload",
+  "name": "style-loader",
   "created": 1738368000000,
   "modified": 1773243817817,
   "watches": [
@@ -11,6 +11,10 @@
     {
       "event": "e0e00000-0001-0002-0000-000000000000",
       "id": "33333333-8888-0000-0000-000000000000"
+    },
+    {
+      "event": "e0e00000-0001-0002-0000-000000000000",
+      "type": "23b66a83-5c61-4320-9517-5aa2abad2d1f"
     }
   ],
   "content": {
@@ -19,79 +23,11 @@
       [
         ":p",
         {
-          "s": "Applies kernel styles at boot and hot-reloads on edit. This library enables theming to be managed in userland rather than kernel."
+          "s": "Loads all CSS items at boot and hot-reloads on edit. Also handles kernel:styles (which uses template substitution). Replaces the old theme-hot-reload library."
         }
       ]
     ],
-    "code": "// Theme Hot-Reload Library\n// Applies kernel styles at boot and hot-reloads when kernel:styles is edited\n\nconst KERNEL_STYLES_ID = '33333333-8888-0000-0000-000000000000';\n\nasync function applyStyles(api) {\n  // Remove existing kernel styles if present\n  const existing = document.querySelector('style[data-kernel-styles]');\n  if (existing) existing.remove();\n\n  try {\n    const stylesItem = await api.get(KERNEL_STYLES_ID);\n    const style = document.createElement('style');\n    style.setAttribute('data-kernel-styles', 'true');\n    style.textContent = stylesItem.content.code.replace(\n      /\\{\\{content\\.(\\w+)\\}\\}/g,\n      (_, key) => stylesItem.content[key] ?? ''\n    );\n    document.head.appendChild(style);\n  } catch (e) {\n    console.error('Failed to apply kernel styles:', e);\n    // Fallback handled by bootloader inline styles\n  }\n}\n\n// Called at boot (or when library is created/edited post-boot)\nexport async function onKernelBootComplete({ lateActivation }, api) {\n  await applyStyles(api);\n  if (lateActivation) {\n    console.log('[theme-hot-reload] Library activated post-boot');\n  } else {\n    console.log('[theme-hot-reload] Styles applied at boot');\n  }\n}\n\n// Called when kernel:styles is edited\nexport async function onItemUpdated({ item }, api) {\n  await applyStyles(api);\n  console.log('[theme-hot-reload] Styles hot-reloaded');\n}\n",
-    "_symbols": {
-      "KERNEL_STYLES_ID": {
-        "name": "KERNEL_STYLES_ID",
-        "line": 4,
-        "col": 6,
-        "endLine": 4,
-        "endCol": 63,
-        "kind": "variable",
-        "scope": null
-      },
-      "applyStyles": {
-        "name": "applyStyles",
-        "line": 6,
-        "col": 0,
-        "endLine": 24,
-        "endCol": 1,
-        "kind": "function",
-        "scope": null,
-        "signature": "(api)"
-      },
-      "applyStyles.existing": {
-        "name": "existing",
-        "line": 8,
-        "col": 8,
-        "endLine": 8,
-        "endCol": 70,
-        "kind": "variable",
-        "scope": "applyStyles"
-      },
-      "applyStyles.stylesItem": {
-        "name": "stylesItem",
-        "line": 12,
-        "col": 10,
-        "endLine": 12,
-        "endCol": 54,
-        "kind": "variable",
-        "scope": "applyStyles"
-      },
-      "applyStyles.style": {
-        "name": "style",
-        "line": 13,
-        "col": 10,
-        "endLine": 13,
-        "endCol": 49,
-        "kind": "variable",
-        "scope": "applyStyles"
-      },
-      "onKernelBootComplete": {
-        "name": "onKernelBootComplete",
-        "line": 27,
-        "col": 7,
-        "endLine": 34,
-        "endCol": 1,
-        "kind": "function",
-        "scope": null,
-        "signature": "({ ... }, api)"
-      },
-      "onItemUpdated": {
-        "name": "onItemUpdated",
-        "line": 37,
-        "col": 7,
-        "endLine": 40,
-        "endCol": 1,
-        "kind": "function",
-        "scope": null,
-        "signature": "({ ... }, api)"
-      }
-    }
+    "code": "// Style Loader\n// Loads all CSS items at boot and hot-reloads on edit.\n// Also handles kernel:styles (which uses template substitution).\n\nconst KERNEL_STYLES_ID = '33333333-8888-0000-0000-000000000000';\nconst CSS_TYPE_ID = '23b66a83-5c61-4320-9517-5aa2abad2d1f';\n\nfunction injectCSS(item) {\n  const id = item.id;\n  const existing = document.querySelector(`style[data-css-item=\"${id}\"]`);\n  if (existing) existing.remove();\n\n  const style = document.createElement('style');\n  style.setAttribute('data-css-item', id);\n  style.textContent = (item.content.code || '').replace(\n    /\\{\\{content\\.(\\w+)\\}\\}/g,\n    (_, key) => item.content[key] ?? ''\n  );\n  document.head.appendChild(style);\n}\n\nasync function applyKernelStyles(api) {\n  // Remove legacy tag if present (from older version of this library)\n  const legacy = document.querySelector('style[data-kernel-styles]');\n  if (legacy) legacy.remove();\n\n  try {\n    const stylesItem = await api.get(KERNEL_STYLES_ID);\n    injectCSS(stylesItem);\n  } catch (e) {\n    console.error('[style-loader] Failed to apply kernel styles:', e);\n  }\n}\n\nasync function loadAllCSSItems(api) {\n  try {\n    const items = await api.query({ type: CSS_TYPE_ID });\n    for (const item of items) {\n      injectCSS(item);\n    }\n    console.log(`[style-loader] Loaded ${items.length} CSS items`);\n  } catch (e) {\n    console.error('[style-loader] Failed to load CSS items:', e);\n  }\n}\n\n// Called at boot (or when library is created/edited post-boot)\nexport async function onKernelBootComplete({ lateActivation }, api) {\n  await applyKernelStyles(api);\n  await loadAllCSSItems(api);\n  if (lateActivation) {\n    console.log('[style-loader] Activated post-boot');\n  } else {\n    console.log('[style-loader] Styles applied at boot');\n  }\n}\n\n// Called when kernel:styles or any CSS item is updated\nexport async function onItemUpdated({ item }, api) {\n  injectCSS(item);\n  console.log(`[style-loader] Hot-reloaded: ${item.name || item.id}`);\n}\n"
   },
   "attachments": []
 }
