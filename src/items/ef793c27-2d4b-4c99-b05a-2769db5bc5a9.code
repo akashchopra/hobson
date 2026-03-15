@@ -138,7 +138,10 @@
    (:p
     (:strong "scroll-area")
     ": for floating windows. Scrollable to support a canvas larger than the viewport."))
-  (:li (:p (:strong "background") ": fills the scroll-area, provides the spatial canvas backdrop."))))
+  (:li
+   (:p
+    (:strong "background")
+    ": renders an optional inner view as full-bleed background beneath windows. Bypasses cycle detection (deliberate composition, not recursion)."))))
 
 (def _container-result
   (hiccup->dom+ [:div
@@ -209,15 +212,18 @@
  (:p
   "Z-order layering, managed by "
   (:item-ref "bc80bdc2-f6b3-49df-a72d-1cecf866ddcf" "window-zindex-lib")
-  ". Anchored windows sit at "
-  (:code "z-index:1")
-  " ("
-  (:code "ANCHOR-Z")
-  ") so they stay behind floating windows. Floating windows start at "
-  (:code "base-z")
-  " (2) and increment. "
+  ". The container uses two overlay layers without explicit z-index, so all children compete in the same stacking context.")
+ (:table
+  (:thead (:tr (:th "Layer") (:th "Z-Index") (:th "Contents")))
+  (:tbody
+   (:tr (:td "Background") (:td "0") (:td "Optional inner view"))
+   (:tr (:td "Anchored") (:td (:code "ANCHOR-Z") " (1)") (:td "Pinned and docked windows"))
+   (:tr (:td "Floating") (:td (:code "base-z") " (2) +") (:td "Free windows, stacked by interaction"))
+   (:tr (:td "Maximized") (:td "1000000") (:td "Fullscreen overlay"))))
+ (:p
+  "Z-index is DB-authoritative: "
   (:code "bring-to-front")
-  " assigns the next highest z-index when a window is clicked."))
+  " reads fresh attachments from the DB, never from DOM queries."))
 
 (def ANCHOR-Z 1)
 
@@ -227,7 +233,16 @@
  (:p
   "State mutation helpers. These functions read fresh item state via "
   (:code "get-item")
-  " before every mutation to avoid stale-state overwrites from concurrent renders.")
+  " before every mutation to avoid stale-state overwrites from concurrent renders. Key patterns:")
+ (:ul
+  (:li
+   (:p
+    (:item-ref "c0c0c0c0-0010-0000-0000-000000000000" "Silent Update Pattern")
+    " — saves position without re-rendering"))
+  (:li
+   (:p
+    (:item-ref "c0c0c0c0-0011-0000-0000-000000000000" "Stale Closure Prevention")
+    " — reads fresh data in handlers")))
  (:ul
   (:li
    (:p
@@ -343,7 +358,9 @@
  (:p
   "Open/navigate handler. Called when a child requests opening an item (e.g. clicking an "
   (:code ":item-ref")
-  " link). Two paths:")
+  " link). Implements the sibling container protocol — provides "
+  (:code "open-item-handler")
+  " so child views can open items as new windows instead of navigating away.")
  (:ul
   (:li
    (:p
@@ -498,7 +515,16 @@
        (:p
         "Compute final position, size, and z-index. Anchored windows use "
         (:code "inset")
-        " CSS. Floating windows without a stored position are cascaded. Persist computed position for new/repositioned windows."))
+        " CSS. Floating windows without a stored position are cascaded. Persist computed position for new/repositioned windows.")
+       (:p "The meaning of " (:code "x") " and " (:code "y") " depends on the " (:code "anchor") " field:")
+       (:table
+        (:thead (:tr (:th "Anchor") (:th "x means") (:th "y means")))
+        (:tbody
+         (:tr (:td "null (floating)") (:td "pixels from left") (:td "pixels from top"))
+         (:tr (:td (:code "top-right")) (:td "offset from right") (:td "offset from top"))
+         (:tr (:td (:code "bottom-left")) (:td "offset from left") (:td "offset from bottom"))
+         (:tr (:td (:code "bottom-right")) (:td "offset from right") (:td "offset from bottom"))
+         (:tr (:td "Edge (left/right/top/bottom)") (:td "n/a — inset CSS") (:td "n/a — inset CSS")))))
     (def inset-style (invoke anchor-lib "generateInsetStyle" effective-anchor effective-view))
     (def needs-position (and (not inset-style) (nil? (:x effective-view))))
     (def cascade-n
@@ -598,12 +624,15 @@
                            (let [new-z (bring-to-front child-id)]
                                  (when new-z (dom-set! (dom-get wrapper :style) :zIndex new-z)))))))
     (:doc
-       (:p
-        "Titlebar with menu button, title text, and control buttons. The menu ("
-        (:code "≡")
-        ") offers pin/unpin/dock/undock via "
-        (:code "window-menu-lib")
-        "."))
+       (:p "Titlebar with menu button, title text, and control buttons.")
+       (:code-block
+        "┌──────────────────────────────────────────┐\n│ ≡ │  Item Title             │ − □ × │\n└──────────────────────────────────────────┘")
+       (:ul
+        (:li (:p (:strong "Menu (≡)") ": Pin, Dock Left/Right/Top/Bottom, Unpin/Undock"))
+        (:li (:p (:strong "Minimize (−)") ": Hides window to inventory bar"))
+        (:li (:p (:strong "Maximize (□)") ": Fullscreen toggle"))
+        (:li (:p (:strong "Close (×)") ": Removes attachment from canvas")))
+       (:p "Anchored windows show an unpin (📌) button instead of minimize/maximize/close."))
     (def _titlebar-el-result
         (hiccup->dom+ [:div
                         {:ref :titlebar
@@ -1066,13 +1095,17 @@
 
 (:doc
  (:p
-  "Restore scroll positions captured before re-render. Uses double "
-  (:code "requestAnimationFrame")
-  " to wait for child content to be laid out before setting "
+  "Restore scroll positions captured before re-render ("
+  (:item-ref "c0c0c0c0-0012-0000-0000-000000000000" "Scroll State Preservation")
+  " pattern). Saves "
   (:code "scrollTop")
   "/"
   (:code "scrollLeft")
-  "."))
+  " from all "
+  (:code ".window-content")
+  " divs before re-render, then restores after layout. Uses double "
+  (:code "requestAnimationFrame")
+  " to wait for child content to be laid out."))
 
 (when
   (> (dom-get (invoke (dom-get win :Object) "keys" scroll-states) :length) 0)
