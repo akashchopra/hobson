@@ -1,403 +1,363 @@
-(let [doc (dom-get (hiccup->dom [:div]) :ownerDocument)
-      win (dom-get doc :defaultView)
-      search-str (or (dom-get (dom-get win :location) :search) "")
-      url-root (when
-                 (str/includes? search-str "root=")
-                 (let [pairs (str/split (subs search-str 1) "&")
-                       root-pair (first
-                                   (filter
-                                     (fn [p] (str/includes? p "root="))
-                                     pairs))]
-                   (when
-                     root-pair
-                     (let [parts (str/split root-pair "=")]
-                       (when (> (count parts) 1) (nth parts 1))))))
-      stored-spec (first (:attachments item))
-      stored-root-id (if (string? stored-spec) stored-spec (:id stored-spec))
-      resolved (if
-                 (and url-root (not= url-root stored-root-id))
-                 (try
-                   (do
-                     (get-item url-root)
-                     (invoke
-                       api
-                       "set"
-                       (merge
-                         item
-                         {:attachments [{:id url-root}] :modified (now)})
-                       {:silent true})
-                     {:root-id url-root :root-spec {:id url-root}})
-                   (catch
-                     _
+(defn render [item api]
+  (let [doc (dom-get (hiccup->dom [:div]) :ownerDocument)
+        win (dom-get doc :defaultView)
+        search-str (or (dom-get (dom-get win :location) :search) "")
+        url-root (when
+                   (str/includes? search-str "root=")
+                   (let [pairs (str/split (subs search-str 1) "&")
+                         root-pair (first
+                                     (filter
+                                       (fn [p] (str/includes? p "root="))
+                                       pairs))]
+                     (when
+                       root-pair
+                       (let [parts (str/split root-pair "=")]
+                         (when (> (count parts) 1) (nth parts 1))))))
+        stored-spec (first (:attachments item))
+        stored-root-id (if (string? stored-spec) stored-spec (:id stored-spec))
+        resolved (if
+                   (and url-root (not= url-root stored-root-id))
+                   (try
                      (do
-                       (log/warn "[viewport-view] URL root not found:" url-root)
-                       {:root-id stored-root-id :root-spec stored-spec})))
-                 {:root-id stored-root-id :root-spec stored-spec})
-      root-id (:root-id resolved)
-      root-spec (:root-spec resolved)
-      root-view-id (or
-                     (get-in root-spec [:view :type])
-                     (:view root-spec)
-                     (:renderer root-spec))
-      _ (if
-          root-id
-          (let [root-item (get-item
-                            root-id
-                            :select
-                            (fn [it] [(:name it) (get-in it [:content :title])]))
-                iname (or
-                        (get-in root-item [:content :title])
-                        (:name root-item)
-                        (subs root-id 0 8))]
-            (dom-set! doc :title (str iname " - Hobson")))
-          (dom-set! doc :title "Hobson"))
-      context-menu (hiccup->dom
-                     [:div#context-menu.context-menu {:style "display:none;"}])
-      _ (invoke (dom-get doc :body) "appendChild" context-menu)
-      hide-context-menu (fn []
-                          (dom-set!
-                            (dom-get context-menu :style)
-                            :display
-                            "none")
-                          (dom-set! context-menu :innerHTML ""))
-      show-empty-context-menu (fn [x y]
-                                (dom-set! context-menu :innerHTML "")
-                                (let [menu-lib (require "context-menu-lib")]
-                                  (invoke
-                                    context-menu
-                                    "appendChild"
+                       (get-item url-root)
+                       (invoke
+                         api
+                         "set"
+                         (merge
+                           item
+                           {:attachments [{:id url-root}] :modified (now)})
+                         {:silent true})
+                       {:root-id url-root :root-spec {:id url-root}})
+                     (catch
+                       _
+                       (do
+                         (log/warn "[viewport-view] URL root not found:" url-root)
+                         {:root-id stored-root-id :root-spec stored-spec})))
+                   {:root-id stored-root-id :root-spec stored-spec})
+        root-id (:root-id resolved)
+        root-spec (:root-spec resolved)
+        root-view-id (or
+                       (get-in root-spec [:view :type])
+                       (:view root-spec)
+                       (:renderer root-spec))
+        _ (if
+            root-id
+            (let [root-item (get-item
+                              root-id
+                              :select
+                              (fn [it] [(:name it) (get-in it [:content :title])]))
+                  iname (or
+                          (get-in root-item [:content :title])
+                          (:name root-item)
+                          (subs root-id 0 8))]
+              (dom-set! doc :title (str iname " - Hobson")))
+            (dom-set! doc :title "Hobson"))
+        context-menu (hiccup->dom
+                       [:div#context-menu.context-menu {:style "display:none;"}])
+        _ (invoke (dom-get doc :body) "appendChild" context-menu)
+        hide-context-menu (fn []
+                            (dom-set!
+                              (dom-get context-menu :style)
+                              :display
+                              "none")
+                            (dom-set! context-menu :innerHTML ""))
+        show-empty-context-menu (fn [x y]
+                                  (dom-set! context-menu :innerHTML "")
+                                  (let [menu-lib (require "context-menu-lib")]
                                     (invoke
-                                      menu-lib
-                                      "buildEmptyMenu"
-                                      api
-                                      {:onDismiss hide-context-menu}))
-                                  (let [inner-w (dom-get win :innerWidth)
-                                        inner-h (dom-get win :innerHeight)
-                                        menu-x (if
-                                                 (> (+ x 180) inner-w)
-                                                 (- inner-w 190)
-                                                 x)
-                                        menu-y (if
-                                                 (> (+ y 100) inner-h)
-                                                 (- inner-h 110)
-                                                 y)]
-                                    (dom-set!
-                                      (dom-get context-menu :style)
-                                      :left
-                                      (str menu-x "px"))
-                                    (dom-set!
-                                      (dom-get context-menu :style)
-                                      :top
-                                      (str menu-y "px"))
-                                    (dom-set!
-                                      (dom-get context-menu :style)
-                                      :display
-                                      "block"))))
-      _ (on-cleanup! (fn [] (invoke context-menu "remove")))]
-  (if
-    (not root-id)
-    (let [[container crefs] (hiccup->dom+
-                              [:div.viewport-container {:style "display:flex; flex-direction:column; height:100%; position:relative;"}
-
-                                [:div {:ref :empty
-                                       :style "padding:40px; text-align:center; color:var(--color-text-secondary); flex:1;"}]])
-          empty-el (:empty crefs)
-          _ (dom-set!
-              empty-el
-              :innerHTML
-              "No item selected.<br><br><span style=\"font-size:0.875rem;\">Cmd+K - Search items<br>Ctrl+\\ - Open REPL<br>Right-click - Context menu</span>")
-          _ (dom-on!
-              container
-              :contextmenu
-              (fn [e]
-                (when
-                  (not (dom-get e :shiftKey))
-                  (prevent-default! e)
-                  (show-empty-context-menu
-                    (dom-get e :clientX)
-                    (dom-get e :clientY)))))
-          _ (dom-on! container :click (fn [e] (hide-context-menu)))
-          _ (on-document!
-              :keydown
-              (fn [e]
-                (when
-                  (and
-                    (or (dom-get e :metaKey) (dom-get e :ctrlKey))
-                    (= (dom-get e :key) "k"))
-                  (prevent-default! e)
-                  (invoke api "showItemList"))))]
-      container)
-    (let [selected-item-id (atom nil)
-          selected-parent-id (atom nil)
-          selected-element (atom nil)
-          last-ctx-coords (atom {:x 0 :y 0})
-          item-decorator (fn [dom item-id the-item]
-                           (invoke dom "setAttribute" "data-item-id" item-id)
-                           (let [iname (or
-                                         (:name the-item)
-                                         (get-in the-item [:content :title])
-                                         (subs item-id 0 8))
-                                 type-name (let [ti (try
-                                                      (get-item
-                                                        (:type the-item))
-                                                      (catch _ nil))
-]
-                                             (or
-                                               (:name ti)
-                                               (subs (:type the-item) 0 8)))
-                                 tags (:tags the-item)
-                                 tag-str (when
-                                           (and tags (> (count tags) 0))
-                                           (let [names (pmap
-                                                         (fn [tid]
-                                                           (let [t (try
-                                                                     (get-item
-                                                                       tid)
-                                                                     (catch
-                                                                       _
-                                                                       nil))
-]
-                                                             (or
-                                                               (get-in
-                                                                 t
-                                                                 [:content
-                                                                   :name])
-                                                               (:name t)
-                                                               (subs tid 0 8))))
-                                                         tags)
-]
-                                             (str
-                                               "\nTags: "
-                                               (str/join ", " names))))
-                                 title-text (str
-                                              iname
-                                              " ("
-                                              type-name
-                                              ")"
-                                              (or tag-str ""))]
-                             (invoke dom "setAttribute" "title" title-text)))
-          root-on-cycle (fn []
-                          (try
-                            (let [default-view (require "kernel:default-view")]
-                              (invoke default-view "render" item api))
-                            (catch
-                              _
-                              (hiccup->dom
-                                [:div {:style "padding:20px; color:var(--color-text-secondary); font-style:italic; text-align:center;"}
-
-                                  (or (:name item) (subs (:id item) 0 8))]))))
-          [container crefs] (hiccup->dom+
-                              [:div.viewport-container {:ref :container
-                                                        :tabindex "0"
-                                                        :style "display:flex; flex-direction:column; height:100%; position:relative;"}
-                                [:div {:ref :content
-                                       :class "viewport-content"
-                                       :data-item-id root-id
-                                       :style "flex:1; overflow:auto; display:flex; flex-direction:column; min-height:0;"}
-                                  [:render-child {:item root-id
-                                                  :view root-view-id
-                                                  :decorator item-decorator
-                                                  :on-cycle root-on-cycle
-                                                  :style "flex:1; min-height:0; display:flex; flex-direction:column;"}]]])
-          content-area (:content crefs)
-          overlay-specs (rest (:attachments item))
-          _ (for [spec overlay-specs]
-              (let [oid (if (string? spec) spec (:id spec))
-                    [wrapper wrefs] (hiccup->dom+
-                                      [:div {:ref :overlay
-                                             :style "position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0, 0, 0, 0.5); display: flex; align-items: flex-start; justify-content: center; padding-top: 10vh; z-index: 10000000;"}
-                                        [:div {:ref :modal
-                                               :style "background: var(--color-bg-surface); border-radius: 8px; width: 600px; min-width: 600px; max-width: 90vw; max-height: 70vh; display: flex; flex-direction: column; box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3); overflow: auto;"}]])
-                    overlay-el (:overlay wrefs)
-                    modal-el (:modal wrefs)
-                    close-overlay (fn [] (detach! (get-viewport-id) oid))
-                    _ (on-document!
-                        :keydown
-                        (fn [e]
-                          (when (= (dom-get e :key) "Escape") (close-overlay))))
-                    _ (dom-on!
-                        overlay-el
-                        :click
-                        (fn [e]
-                          (when
-                            (= (dom-get e :target) overlay-el)
-                            (close-overlay))))
-                    _ (invoke
-                        modal-el
-                        "appendChild"
-                        (hiccup->dom [:render-child {:item oid}]))
-                    _ (set-timeout!
-                        (fn []
-                          (let [input (invoke modal-el "querySelector" "input")]
-                            (when input (invoke input "focus"))))
-                        0)]
-                (invoke container "appendChild" wrapper)))
-          update-selection-visual (fn []
-                                    (invoke
+                                      context-menu
+                                      "appendChild"
                                       (invoke
-                                        container
-                                        "querySelectorAll"
-                                        "[data-item-id].item-selected")
-                                      "forEach"
-                                      (fn [el]
-                                        (invoke
-                                          (dom-get el :classList)
-                                          "remove"
-                                          "item-selected")))
-                                    (when
-                                      (deref selected-element)
-                                      (invoke
-                                        (dom-get
-                                          (deref selected-element)
-                                          :classList)
-                                        "add"
-                                        "item-selected")))
-          select-item (fn [iid el]
-                        (reset! selected-item-id iid)
-                        (reset!
-                          selected-parent-id
-                          (when el (invoke el "getAttribute" "data-parent-id")))
-                        (reset! selected-element el)
-                        (invoke
-                          (dom-get api :viewport)
-                          "select"
-                          iid
-                          (deref selected-parent-id))
-                        (update-selection-visual))
-          clear-selection (fn []
-                            (reset! selected-item-id nil)
-                            (reset! selected-parent-id nil)
-                            (reset! selected-element nil)
-                            (invoke (dom-get api :viewport) "clearSelection")
-                            (update-selection-visual))
-          _ (on-event!
-              "e0e00000-0003-0001-0000-000000000000"
-              (fn [event]
-                (let [current (get-in event [:content :current])
-                      iid (:itemId current)
-                      pid (:parentId current)]
+                                        menu-lib
+                                        "buildEmptyMenu"
+                                        api
+                                        {:onDismiss hide-context-menu}))
+                                    (let [inner-w (dom-get win :innerWidth)
+                                          inner-h (dom-get win :innerHeight)
+                                          menu-x (if
+                                                   (> (+ x 180) inner-w)
+                                                   (- inner-w 190)
+                                                   x)
+                                          menu-y (if
+                                                   (> (+ y 100) inner-h)
+                                                   (- inner-h 110)
+                                                   y)]
+                                      (dom-set!
+                                        (dom-get context-menu :style)
+                                        :left
+                                        (str menu-x "px"))
+                                      (dom-set!
+                                        (dom-get context-menu :style)
+                                        :top
+                                        (str menu-y "px"))
+                                      (dom-set!
+                                        (dom-get context-menu :style)
+                                        :display
+                                        "block"))))
+        _ (on-cleanup! (fn [] (invoke context-menu "remove")))]
+    (if
+      (not root-id)
+      (let [[container crefs] (hiccup->dom+
+                                [:div.viewport-container {:style "display:flex; flex-direction:column; height:100%; position:relative;"}
+  
+                                  [:div {:ref :empty
+                                         :style "padding:40px; text-align:center; color:var(--color-text-secondary); flex:1;"}]])
+            empty-el (:empty crefs)
+            _ (dom-set!
+                empty-el
+                :innerHTML
+                "No item selected.<br><br><span style=\"font-size:0.875rem;\">Cmd+K - Search items<br>Ctrl+\\ - Open REPL<br>Right-click - Context menu</span>")
+            _ (dom-on!
+                container
+                :contextmenu
+                (fn [e]
                   (when
-                    (not= iid (deref selected-item-id))
-                    (reset! selected-item-id (or iid nil))
-                    (reset! selected-parent-id (or pid nil))
-                    (reset!
-                      selected-element
-                      (when
-                        iid
-                        (invoke
-                          container
-                          "querySelector"
-                          (str "[data-item-id=\"" iid "\"]"))))
-                    (update-selection-visual)))))
-          show-context-menu (fn [x y iid]
-                              (let [menu-item (get-item iid)]
-                                (dom-set! context-menu :innerHTML "")
-                                (reset! last-ctx-coords {:x x :y y})
-                                (let [menu-lib (require "context-menu-lib")
-                                      get-click-coords (fn []
-                                                         (when
-                                                           (deref
-                                                             selected-parent-id)
-                                                           (let [sel (str
-                                                                       "[data-parent-id=\""
-                                                                       (deref
-                                                                         selected-parent-id)
-                                                                       "\"]")
-                                                                 canvas-child (invoke
-                                                                                doc
-                                                                                "querySelector"
-                                                                                sel)
-                                                                 canvas (when
-                                                                          canvas-child
-                                                                          (dom-get
+                    (not (dom-get e :shiftKey))
+                    (prevent-default! e)
+                    (show-empty-context-menu
+                      (dom-get e :clientX)
+                      (dom-get e :clientY)))))
+            _ (dom-on! container :click (fn [e] (hide-context-menu)))
+            _ (on-document!
+                :keydown
+                (fn [e]
+                  (when
+                    (and
+                      (or (dom-get e :metaKey) (dom-get e :ctrlKey))
+                      (= (dom-get e :key) "k"))
+                    (prevent-default! e)
+                    (invoke api "showItemList"))))]
+        container)
+      (let [selected-item-id (atom nil)
+            selected-parent-id (atom nil)
+            selected-element (atom nil)
+            last-ctx-coords (atom {:x 0 :y 0})
+            item-decorator (fn [dom item-id the-item]
+                             (invoke dom "setAttribute" "data-item-id" item-id)
+                             (let [iname (or
+                                           (:name the-item)
+                                           (get-in the-item [:content :title])
+                                           (subs item-id 0 8))
+                                   type-name (let [ti (try
+                                                        (get-item
+                                                          (:type the-item))
+                                                        (catch _ nil))
+  ]
+                                               (or
+                                                 (:name ti)
+                                                 (subs (:type the-item) 0 8)))
+                                   tags (:tags the-item)
+                                   tag-str (when
+                                             (and tags (> (count tags) 0))
+                                             (let [names (pmap
+                                                           (fn [tid]
+                                                             (let [t (try
+                                                                       (get-item
+                                                                         tid)
+                                                                       (catch
+                                                                         _
+                                                                         nil))
+  ]
+                                                               (or
+                                                                 (get-in
+                                                                   t
+                                                                   [:content
+                                                                     :name])
+                                                                 (:name t)
+                                                                 (subs tid 0 8))))
+                                                           tags)
+  ]
+                                               (str
+                                                 "\nTags: "
+                                                 (str/join ", " names))))
+                                   title-text (str
+                                                iname
+                                                " ("
+                                                type-name
+                                                ")"
+                                                (or tag-str ""))]
+                               (invoke dom "setAttribute" "title" title-text)))
+            root-on-cycle (fn []
+                            (try
+                              (let [default-view (require "kernel:default-view")]
+                                (invoke default-view "render" item api))
+                              (catch
+                                _
+                                (hiccup->dom
+                                  [:div {:style "padding:20px; color:var(--color-text-secondary); font-style:italic; text-align:center;"}
+  
+                                    (or (:name item) (subs (:id item) 0 8))]))))
+            [container crefs] (hiccup->dom+
+                                [:div.viewport-container {:ref :container
+                                                          :tabindex "0"
+                                                          :style "display:flex; flex-direction:column; height:100%; position:relative;"}
+                                  [:div {:ref :content
+                                         :class "viewport-content"
+                                         :data-item-id root-id
+                                         :style "flex:1; overflow:auto; display:flex; flex-direction:column; min-height:0;"}
+                                    [:render-child {:item root-id
+                                                    :view root-view-id
+                                                    :decorator item-decorator
+                                                    :on-cycle root-on-cycle
+                                                    :style "flex:1; min-height:0; display:flex; flex-direction:column;"}]]])
+            content-area (:content crefs)
+            overlay-specs (rest (:attachments item))
+            _ (for [spec overlay-specs]
+                (let [oid (if (string? spec) spec (:id spec))
+                      [wrapper wrefs] (hiccup->dom+
+                                        [:div {:ref :overlay
+                                               :style "position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0, 0, 0, 0.5); display: flex; align-items: flex-start; justify-content: center; padding-top: 10vh; z-index: 10000000;"}
+                                          [:div {:ref :modal
+                                                 :style "background: var(--color-bg-surface); border-radius: 8px; width: 600px; min-width: 600px; max-width: 90vw; max-height: 70vh; display: flex; flex-direction: column; box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3); overflow: auto;"}]])
+                      overlay-el (:overlay wrefs)
+                      modal-el (:modal wrefs)
+                      close-overlay (fn [] (detach! (get-viewport-id) oid))
+                      _ (on-document!
+                          :keydown
+                          (fn [e]
+                            (when (= (dom-get e :key) "Escape") (close-overlay))))
+                      _ (dom-on!
+                          overlay-el
+                          :click
+                          (fn [e]
+                            (when
+                              (= (dom-get e :target) overlay-el)
+                              (close-overlay))))
+                      _ (invoke
+                          modal-el
+                          "appendChild"
+                          (hiccup->dom [:render-child {:item oid}]))
+                      _ (set-timeout!
+                          (fn []
+                            (let [input (invoke modal-el "querySelector" "input")]
+                              (when input (invoke input "focus"))))
+                          0)]
+                  (invoke container "appendChild" wrapper)))
+            update-selection-visual (fn []
+                                      (invoke
+                                        (invoke
+                                          container
+                                          "querySelectorAll"
+                                          "[data-item-id].item-selected")
+                                        "forEach"
+                                        (fn [el]
+                                          (invoke
+                                            (dom-get el :classList)
+                                            "remove"
+                                            "item-selected")))
+                                      (when
+                                        (deref selected-element)
+                                        (invoke
+                                          (dom-get
+                                            (deref selected-element)
+                                            :classList)
+                                          "add"
+                                          "item-selected")))
+            select-item (fn [iid el]
+                          (reset! selected-item-id iid)
+                          (reset!
+                            selected-parent-id
+                            (when el (invoke el "getAttribute" "data-parent-id")))
+                          (reset! selected-element el)
+                          (invoke
+                            (dom-get api :viewport)
+                            "select"
+                            iid
+                            (deref selected-parent-id))
+                          (update-selection-visual))
+            clear-selection (fn []
+                              (reset! selected-item-id nil)
+                              (reset! selected-parent-id nil)
+                              (reset! selected-element nil)
+                              (invoke (dom-get api :viewport) "clearSelection")
+                              (update-selection-visual))
+            _ (on-event!
+                "e0e00000-0003-0001-0000-000000000000"
+                (fn [event]
+                  (let [current (get-in event [:content :current])
+                        iid (:itemId current)
+                        pid (:parentId current)]
+                    (when
+                      (not= iid (deref selected-item-id))
+                      (reset! selected-item-id (or iid nil))
+                      (reset! selected-parent-id (or pid nil))
+                      (reset!
+                        selected-element
+                        (when
+                          iid
+                          (invoke
+                            container
+                            "querySelector"
+                            (str "[data-item-id=\"" iid "\"]"))))
+                      (update-selection-visual)))))
+            show-context-menu (fn [x y iid]
+                                (let [menu-item (get-item iid)]
+                                  (dom-set! context-menu :innerHTML "")
+                                  (reset! last-ctx-coords {:x x :y y})
+                                  (let [menu-lib (require "context-menu-lib")
+                                        get-click-coords (fn []
+                                                           (when
+                                                             (deref
+                                                               selected-parent-id)
+                                                             (let [sel (str
+                                                                         "[data-parent-id=\""
+                                                                         (deref
+                                                                           selected-parent-id)
+                                                                         "\"]")
+                                                                   canvas-child (invoke
+                                                                                  doc
+                                                                                  "querySelector"
+                                                                                  sel)
+                                                                   canvas (when
                                                                             canvas-child
-                                                                            :parentElement))]
-                                                             (when
-                                                               canvas
-                                                               (let [rect (invoke
-                                                                            canvas
-                                                                            "getBoundingClientRect")
-                                                                     coords (deref
-                                                                              last-ctx-coords)]
-                                                                 {:x (+
-                                                                       (-
-                                                                         (:x
-                                                                           coords)
+                                                                            (dom-get
+                                                                              canvas-child
+                                                                              :parentElement))]
+                                                               (when
+                                                                 canvas
+                                                                 (let [rect (invoke
+                                                                              canvas
+                                                                              "getBoundingClientRect")
+                                                                       coords (deref
+                                                                                last-ctx-coords)]
+                                                                   {:x (+
+                                                                         (-
+                                                                           (:x
+                                                                             coords)
+                                                                           (dom-get
+                                                                             rect
+                                                                             :left))
                                                                          (dom-get
-                                                                           rect
-                                                                           :left))
-                                                                       (dom-get
-                                                                         canvas
-                                                                         :scrollLeft))
-                                                                  :y (+
-                                                                       (-
-                                                                         (:y
-                                                                           coords)
+                                                                           canvas
+                                                                           :scrollLeft))
+                                                                    :y (+
+                                                                         (-
+                                                                           (:y
+                                                                             coords)
+                                                                           (dom-get
+                                                                             rect
+                                                                             :top))
                                                                          (dom-get
-                                                                           rect
-                                                                           :top))
-                                                                       (dom-get
-                                                                         canvas
-                                                                         :scrollTop))})))))
-                                      dismiss-opts {:onDismiss hide-context-menu}
-
-                                      parent-opts (merge
-                                                    dismiss-opts
-                                                    {:parentId (deref
-                                                                 selected-parent-id)}
-)]
-                                  (invoke
-                                    context-menu
-                                    "appendChild"
-                                    (invoke
-                                      menu-lib
-                                      "buildAddChildSubmenu"
-                                      api
-                                      iid
-                                      (merge
-                                        dismiss-opts
-                                        {:getClickCoords get-click-coords})))
-                                  (invoke
-                                    context-menu
-                                    "appendChild"
-                                    (invoke
-                                      api
-                                      "createElement"
-                                      "div"
-                                      {:class "context-menu-separator"}
-                                      []))
-                                  (let [view-as-result (invoke
-                                                         menu-lib
-                                                         "buildViewAsSubmenu"
-                                                         api
-                                                         iid
-                                                         parent-opts)
-                                        view-state (dom-get
-                                                     view-as-result
-                                                     :viewState)]
-                                    (invoke
-                                      context-menu
-                                      "appendChild"
-                                      (dom-get view-as-result :fragment))
+                                                                           canvas
+                                                                           :scrollTop))})))))
+                                        dismiss-opts {:onDismiss hide-context-menu}
+  
+                                        parent-opts (merge
+                                                      dismiss-opts
+                                                      {:parentId (deref
+                                                                   selected-parent-id)}
+  )]
                                     (invoke
                                       context-menu
                                       "appendChild"
                                       (invoke
                                         menu-lib
-                                        "buildViewSettingsItem"
+                                        "buildAddChildSubmenu"
                                         api
                                         iid
-                                        parent-opts))
-                                    (invoke
-                                      context-menu
-                                      "appendChild"
-                                      (invoke
-                                        menu-lib
-                                        "buildEditViewItem"
-                                        api
-                                        iid
-                                        parent-opts
-                                        view-state))
+                                        (merge
+                                          dismiss-opts
+                                          {:getClickCoords get-click-coords})))
                                     (invoke
                                       context-menu
                                       "appendChild"
@@ -407,124 +367,165 @@
                                         "div"
                                         {:class "context-menu-separator"}
                                         []))
-                                    (invoke
-                                      context-menu
-                                      "appendChild"
+                                    (let [view-as-result (invoke
+                                                           menu-lib
+                                                           "buildViewAsSubmenu"
+                                                           api
+                                                           iid
+                                                           parent-opts)
+                                          view-state (dom-get
+                                                       view-as-result
+                                                       :viewState)]
                                       (invoke
-                                        menu-lib
-                                        "buildSimpleActions"
-                                        api
-                                        iid
-                                        (merge parent-opts {:rootId root-id})))
-                                    (invoke
-                                      context-menu
-                                      "appendChild"
+                                        context-menu
+                                        "appendChild"
+                                        (dom-get view-as-result :fragment))
                                       (invoke
-                                        api
-                                        "createElement"
-                                        "div"
-                                        {:class "context-menu-separator"}
-                                        []))
-                                    (invoke
-                                      context-menu
-                                      "appendChild"
+                                        context-menu
+                                        "appendChild"
+                                        (invoke
+                                          menu-lib
+                                          "buildViewSettingsItem"
+                                          api
+                                          iid
+                                          parent-opts))
                                       (invoke
-                                        menu-lib
-                                        "buildDebugSubmenu"
-                                        api
-                                        iid
-                                        (merge parent-opts view-state))))
-                                  (let [inner-w (dom-get win :innerWidth)
-                                        inner-h (dom-get win :innerHeight)
-                                        menu-x (if
-                                                 (> (+ x 180) inner-w)
-                                                 (- inner-w 190)
-                                                 x)
-                                        menu-y (if
-                                                 (> (+ y 400) inner-h)
-                                                 (- inner-h 410)
-                                                 y)]
-                                    (dom-set!
-                                      (dom-get context-menu :style)
-                                      :left
-                                      (str menu-x "px"))
-                                    (dom-set!
-                                      (dom-get context-menu :style)
-                                      :top
-                                      (str menu-y "px"))
-                                    (dom-set!
-                                      (dom-get context-menu :style)
-                                      :display
-                                      "block")
-                                    (if
-                                      (> (+ menu-x 340) inner-w)
+                                        context-menu
+                                        "appendChild"
+                                        (invoke
+                                          menu-lib
+                                          "buildEditViewItem"
+                                          api
+                                          iid
+                                          parent-opts
+                                          view-state))
                                       (invoke
-                                        (dom-get context-menu :classList)
-                                        "add"
-                                        "submenu-left")
+                                        context-menu
+                                        "appendChild"
+                                        (invoke
+                                          api
+                                          "createElement"
+                                          "div"
+                                          {:class "context-menu-separator"}
+                                          []))
                                       (invoke
-                                        (dom-get context-menu :classList)
-                                        "remove"
-                                        "submenu-left"))))))
-          find-item-element (fn [target]
-                              (or
-                                (invoke
-                                  target
-                                  "closest"
-                                  "[data-parent-id][data-item-id]")
-                                (invoke target "closest" "[data-item-id]")))
-          _ (dom-on!
-              container
-              :click
-              (fn [e]
-                (hide-context-menu)
-                (let [el (find-item-element (dom-get e :target))]
-                  (if
-                    el
-                    (do
-                      (select-item (invoke el "getAttribute" "data-item-id") el)
-                      (stop-propagation! e))
-                    (clear-selection)))))
-          _ (dom-on!
-              container
-              :contextmenu
-              (fn [e]
-                (when
-                  (not (dom-get e :shiftKey))
-                  (prevent-default! e)
+                                        context-menu
+                                        "appendChild"
+                                        (invoke
+                                          menu-lib
+                                          "buildSimpleActions"
+                                          api
+                                          iid
+                                          (merge parent-opts {:rootId root-id})))
+                                      (invoke
+                                        context-menu
+                                        "appendChild"
+                                        (invoke
+                                          api
+                                          "createElement"
+                                          "div"
+                                          {:class "context-menu-separator"}
+                                          []))
+                                      (invoke
+                                        context-menu
+                                        "appendChild"
+                                        (invoke
+                                          menu-lib
+                                          "buildDebugSubmenu"
+                                          api
+                                          iid
+                                          (merge parent-opts view-state))))
+                                    (let [inner-w (dom-get win :innerWidth)
+                                          inner-h (dom-get win :innerHeight)
+                                          menu-x (if
+                                                   (> (+ x 180) inner-w)
+                                                   (- inner-w 190)
+                                                   x)
+                                          menu-y (if
+                                                   (> (+ y 400) inner-h)
+                                                   (- inner-h 410)
+                                                   y)]
+                                      (dom-set!
+                                        (dom-get context-menu :style)
+                                        :left
+                                        (str menu-x "px"))
+                                      (dom-set!
+                                        (dom-get context-menu :style)
+                                        :top
+                                        (str menu-y "px"))
+                                      (dom-set!
+                                        (dom-get context-menu :style)
+                                        :display
+                                        "block")
+                                      (if
+                                        (> (+ menu-x 340) inner-w)
+                                        (invoke
+                                          (dom-get context-menu :classList)
+                                          "add"
+                                          "submenu-left")
+                                        (invoke
+                                          (dom-get context-menu :classList)
+                                          "remove"
+                                          "submenu-left"))))))
+            find-item-element (fn [target]
+                                (or
+                                  (invoke
+                                    target
+                                    "closest"
+                                    "[data-parent-id][data-item-id]")
+                                  (invoke target "closest" "[data-item-id]")))
+            _ (dom-on!
+                container
+                :click
+                (fn [e]
+                  (hide-context-menu)
                   (let [el (find-item-element (dom-get e :target))]
                     (if
                       el
-                      (let [iid (invoke el "getAttribute" "data-item-id")]
-                        (select-item iid el)
-                        (show-context-menu
-                          (dom-get e :clientX)
-                          (dom-get e :clientY)
-                          iid))
                       (do
-                        (clear-selection)
-                        (show-empty-context-menu
-                          (dom-get e :clientX)
-                          (dom-get e :clientY))))))))
-          _ (dom-on!
-              container
-              :keydown
-              (fn [e]
-                (when
-                  (= (dom-get e :key) "Escape")
-                  (if
-                    (not=
-                      (dom-get (dom-get context-menu :style) :display)
-                      "none")
-                    (hide-context-menu)
-                    (clear-selection)))))
-          _ (on-document!
-              :keydown
-              (fn [e]
-                (when
-                  (and
-                    (or (dom-get e :metaKey) (dom-get e :ctrlKey))
-                    (= (dom-get e :key) "k"))
-                  (prevent-default! e)
-                  (invoke api "showItemList"))))]
-      container)))
+                        (select-item (invoke el "getAttribute" "data-item-id") el)
+                        (stop-propagation! e))
+                      (clear-selection)))))
+            _ (dom-on!
+                container
+                :contextmenu
+                (fn [e]
+                  (when
+                    (not (dom-get e :shiftKey))
+                    (prevent-default! e)
+                    (let [el (find-item-element (dom-get e :target))]
+                      (if
+                        el
+                        (let [iid (invoke el "getAttribute" "data-item-id")]
+                          (select-item iid el)
+                          (show-context-menu
+                            (dom-get e :clientX)
+                            (dom-get e :clientY)
+                            iid))
+                        (do
+                          (clear-selection)
+                          (show-empty-context-menu
+                            (dom-get e :clientX)
+                            (dom-get e :clientY))))))))
+            _ (dom-on!
+                container
+                :keydown
+                (fn [e]
+                  (when
+                    (= (dom-get e :key) "Escape")
+                    (if
+                      (not=
+                        (dom-get (dom-get context-menu :style) :display)
+                        "none")
+                      (hide-context-menu)
+                      (clear-selection)))))
+            _ (on-document!
+                :keydown
+                (fn [e]
+                  (when
+                    (and
+                      (or (dom-get e :metaKey) (dom-get e :ctrlKey))
+                      (= (dom-get e :key) "k"))
+                    (prevent-default! e)
+                    (invoke api "showItemList"))))]
+        container))))
