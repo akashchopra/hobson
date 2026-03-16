@@ -1,0 +1,104 @@
+// test-result-handler — creates result items and shows toast on test completion
+
+const TEST_RUN_RESULT_TYPE = '7e5700a0-0000-4000-8000-000000000000';
+const TEST_RUN_RESULT_LIST_TYPE = '7e5700a1-0000-4000-8000-000000000000';
+
+export async function onTestRunComplete({ timestamp, totalPassed, totalFailed, suites, trigger }, api) {
+  try {
+    const resultId = crypto.randomUUID();
+    const triggerLabel = trigger ? `[${trigger.name || trigger.id.slice(0, 8)}] ` : '';
+    const status = totalFailed === 0 ? 'PASS' : 'FAIL';
+
+    await api.set({
+      id: resultId,
+      type: TEST_RUN_RESULT_TYPE,
+      name: `Test Run: ${triggerLabel}${status} (${totalPassed}/${totalPassed + totalFailed})`,
+      created: Date.now(),
+      modified: Date.now(),
+      attachments: [],
+      content: {
+        timestamp,
+        totalPassed,
+        totalFailed,
+        suites,
+        trigger
+      }
+    });
+
+    // Re-render any visible test-run-result-list views
+    try {
+      const vpMgr = await api.require('viewport-manager');
+      await vpMgr.getRendering().rerenderByType(TEST_RUN_RESULT_LIST_TYPE);
+    } catch (e) {
+      // viewport-manager may not be loaded yet on first boot
+    }
+
+    showTestToast(totalPassed, totalFailed, trigger, resultId, api);
+  } catch (err) {
+    console.error('test-result-handler failed:', err);
+  }
+}
+
+function showTestToast(passed, failed, trigger, resultId, api) {
+  const existing = document.querySelector('.test-toast');
+  if (existing) existing.remove();
+
+  const allPassed = failed === 0;
+  const total = passed + failed;
+  const triggerLabel = trigger ? (trigger.name || trigger.id.slice(0, 8)) : 'boot';
+
+  const toast = api.createElement('div', {}, []);
+  toast.className = 'test-toast';
+  toast.style.cssText = `
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    background: ${allPassed ? 'var(--color-success, #22c55e)' : 'var(--color-danger, #ef4444)'};
+    color: white;
+    padding: 16px;
+    border-radius: var(--border-radius);
+    box-shadow: var(--shadow-md);
+    max-width: 400px;
+    z-index: 9999;
+    cursor: pointer;
+    font-family: system-ui, sans-serif;
+  `;
+
+  const icon = allPassed ? '&#10003;' : '&#10007;';
+  const title = allPassed ? 'All Tests Passed' : `${failed} Test${failed !== 1 ? 's' : ''} Failed`;
+
+  toast.innerHTML = `
+    <div style="display: flex; gap: 12px; align-items: start;">
+      <span style="font-size: 1.5rem;">${icon}</span>
+      <div style="flex: 1;">
+        <strong>${title}</strong>
+        <p style="margin: 4px 0 0 0; font-size: 0.875rem;">${passed}/${total} passed</p>
+        <p style="margin: 4px 0 0 0; font-size: 0.75rem; opacity: 0.8;">Triggered by: ${triggerLabel}</p>
+      </div>
+    </div>
+  `;
+
+  toast.onclick = async () => {
+    toast.remove();
+    try {
+      const vpMgr = await api.require('viewport-manager');
+      const currentRoot = vpMgr.getRoot();
+      if (currentRoot) {
+        await api.attach(currentRoot, resultId);
+        await vpMgr.getRendering().renderViewport();
+      } else {
+        await vpMgr.navigate(resultId);
+      }
+    } catch (e) {
+      console.warn('test-result-handler: navigate failed', e);
+    }
+  };
+
+  document.body.appendChild(toast);
+
+  // Auto-dismiss: 5s for pass, 10s for fail
+  const dismissTime = allPassed ? 5000 : 10000;
+  setTimeout(() => {
+    if (toast.parentNode) toast.remove();
+  }, dismissTime);
+}
