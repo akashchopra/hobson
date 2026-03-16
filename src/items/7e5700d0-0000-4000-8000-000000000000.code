@@ -1,0 +1,146 @@
+// test-run-result-view — renders a single test run result
+
+export async function render(item, api) {
+  const content = item.content || {};
+  const totalPassed = content.totalPassed || 0;
+  const totalFailed = content.totalFailed || 0;
+  const total = totalPassed + totalFailed;
+  const suites = content.suites || [];
+  const trigger = content.trigger;
+  const allPassed = totalFailed === 0;
+
+  const container = api.createElement('div');
+  container.style.cssText = 'font-family: system-ui, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px;';
+
+  // Header with pass/fail indicator
+  const header = api.createElement('div');
+  const borderColor = allPassed ? 'var(--color-success, #22c55e)' : 'var(--color-danger, #ef4444)';
+  const bgColor = allPassed ? 'var(--color-success-light, #e8f5e9)' : 'var(--color-danger-light, #fef2f2)';
+  header.style.cssText = `padding: 16px; margin-bottom: 16px; border-left: 4px solid ${borderColor}; background: ${bgColor};`;
+
+  const headerRow = api.createElement('div');
+  headerRow.style.cssText = 'display: flex; align-items: start; gap: 12px;';
+
+  const icon = api.createElement('span');
+  icon.style.cssText = 'font-size: 2rem;';
+  icon.textContent = allPassed ? '\u2713' : '\u2717';
+  headerRow.appendChild(icon);
+
+  const info = api.createElement('div');
+  info.style.cssText = 'flex: 1;';
+
+  const summary = api.createElement('div');
+  summary.style.cssText = 'font-size: 1.125rem; font-weight: 600; margin-bottom: 4px;';
+  summary.textContent = `${totalPassed}/${total} tests passed`;
+  info.appendChild(summary);
+
+  const date = api.createElement('div');
+  date.style.cssText = 'font-size: 0.75rem; color: var(--color-text-secondary);';
+  date.textContent = item.created ? new Date(item.created).toLocaleString() : '';
+  info.appendChild(date);
+
+  if (trigger) {
+    const triggerEl = api.createElement('div');
+    triggerEl.style.cssText = 'font-size: 0.75rem; color: var(--color-text-secondary); margin-top: 2px;';
+    const triggerName = trigger.name || trigger.id;
+    triggerEl.textContent = `Triggered by: ${triggerName}`;
+    if (trigger.id) {
+      triggerEl.style.cursor = 'pointer';
+      triggerEl.style.color = 'var(--color-primary)';
+      triggerEl.onclick = (e) => api.openItem(e, trigger.id);
+    }
+    info.appendChild(triggerEl);
+  }
+
+  headerRow.appendChild(info);
+  header.appendChild(headerRow);
+  container.appendChild(header);
+
+  // Per-suite breakdown
+  if (suites.length > 0) {
+    const suitesHeader = api.createElement('h4');
+    suitesHeader.style.cssText = 'margin: 0 0 8px 0;';
+    suitesHeader.textContent = 'Suites';
+    container.appendChild(suitesHeader);
+
+    for (const suite of suites) {
+      const suiteEl = api.createElement('div');
+      const suiteFailed = (suite.failed || 0) > 0;
+      const suiteBg = suiteFailed ? 'var(--color-danger-light, #fef2f2)' : 'var(--color-bg-hover)';
+      suiteEl.style.cssText = `padding: 8px 12px; margin-bottom: 4px; border-radius: var(--border-radius); background: ${suiteBg};`;
+
+      const suiteHeader = api.createElement('div');
+      suiteHeader.style.cssText = 'display: flex; justify-content: space-between; align-items: center; cursor: pointer;';
+
+      const suiteName = api.createElement('span');
+      suiteName.style.cssText = 'font-weight: 500;';
+      suiteName.textContent = suite.testItemName || 'Unknown';
+      if (suite.testItemId) {
+        suiteName.style.cursor = 'pointer';
+        suiteName.style.color = 'var(--color-primary)';
+        suiteName.onclick = (e) => api.openItem(e, suite.testItemId);
+      }
+      suiteHeader.appendChild(suiteName);
+
+      const suiteCount = api.createElement('span');
+      suiteCount.style.cssText = 'font-size: 0.875rem;';
+      suiteCount.style.color = suiteFailed ? 'var(--color-danger, #ef4444)' : 'var(--color-success, #22c55e)';
+      suiteCount.textContent = `${suite.passed || 0}/${(suite.passed || 0) + (suite.failed || 0)}`;
+      suiteHeader.appendChild(suiteCount);
+
+      suiteEl.appendChild(suiteHeader);
+
+      // Individual test results (collapsed for passing, expanded for failing)
+      const results = suite.results || [];
+      if (results.length > 0) {
+        const details = api.createElement('div');
+        details.style.cssText = 'margin-top: 4px; font-size: 0.75rem;';
+        details.style.display = suiteFailed ? 'block' : 'none';
+
+        suiteHeader.onclick = (e) => {
+          if (e.target === suiteName && suite.testItemId) return;
+          details.style.display = details.style.display === 'none' ? 'block' : 'none';
+        };
+
+        for (const r of results) {
+          const line = api.createElement('div');
+          line.style.cssText = 'padding: 2px 0;';
+          const rIcon = r.passed ? '\u2713 ' : '\u2717 ';
+          const rColor = r.passed ? 'var(--color-success, #22c55e)' : 'var(--color-danger, #ef4444)';
+          line.style.color = rColor;
+          line.textContent = rIcon + r.name;
+
+          if (!r.passed && r.error) {
+            const errMsg = api.createElement('div');
+            errMsg.style.cssText = 'color: var(--color-text-secondary); padding-left: 16px; font-family: var(--font-mono, monospace); font-size: 0.6875rem; white-space: pre-wrap; word-break: break-all;';
+            errMsg.textContent = r.error;
+            line.appendChild(errMsg);
+          }
+
+          details.appendChild(line);
+        }
+
+        suiteEl.appendChild(details);
+      }
+
+      container.appendChild(suiteEl);
+    }
+  }
+
+  // Actions
+  const actions = api.createElement('div');
+  actions.style.cssText = 'display: flex; gap: 8px; margin-top: 16px;';
+
+  const deleteBtn = api.createElement('button');
+  deleteBtn.style.cssText = 'padding: 8px 16px; cursor: pointer; color: var(--color-danger);';
+  deleteBtn.textContent = 'Delete';
+  deleteBtn.onclick = async () => {
+    if (confirm('Delete this test result?')) {
+      await api.delete(item.id);
+    }
+  };
+  actions.appendChild(deleteBtn);
+
+  container.appendChild(actions);
+  return container;
+}

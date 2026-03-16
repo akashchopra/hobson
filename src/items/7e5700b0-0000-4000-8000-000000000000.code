@@ -1,0 +1,105 @@
+// test-auto-runner — watches code changes, runs tests in headless nested instance
+
+const TEST_RUN_COMPLETE_EVENT = 'e0e00000-0002-0003-0000-000000000000';
+const SELF_ID = '7e5700b0-0000-4000-8000-000000000000';
+const DEBOUNCE_MS = 2500;
+
+export async function onKernelBootComplete(event, api) {
+  // Don't run in nested instances (test-runner-service handles that)
+  if (api.getInstanceId()) return;
+  // Don't run in safe mode
+  if (event.safeMode) return;
+
+  scheduleTestRun(null, api);
+}
+
+export async function onItemUpdated({ item }, api) {
+  // Don't run in nested instances
+  if (api.getInstanceId()) return;
+
+  scheduleTestRun({ id: item.id, name: item.name }, api);
+}
+
+async function scheduleTestRun(trigger, api) {
+  // Write a unique token to the item — only the latest token wins
+  const token = crypto.randomUUID();
+  const self = await api.get(SELF_ID);
+  self.content._pendingRunToken = token;
+  self.content._pendingTrigger = trigger;
+  await api.set(self, { silent: true });
+
+  setTimeout(async () => {
+    try {
+      const current = await api.get(SELF_ID);
+      if (current.content._pendingRunToken !== token) return; // stale
+      await runTests(current.content._pendingTrigger, api);
+    } catch (err) {
+      console.warn('test-auto-runner: run failed', err);
+    }
+  }, DEBOUNCE_MS);
+}
+
+async function runTests(trigger, api) {
+  const instanceId = crypto.randomUUID();
+  const { populate } = await api.require('hobson-instance-lib');
+
+  // Populate the nested instance with all current items
+  const allItems = await api.getAll();
+  await populate(instanceId, allItems);
+
+  // Create hidden iframe
+  const path = window.location.pathname;
+  const src = path + '?instance=' + encodeURIComponent(instanceId);
+
+  const iframe = document.createElement('iframe');
+  iframe.style.cssText = 'position:absolute;left:-9999px;top:-9999px;width:1px;height:1px;opacity:0;pointer-events:none;';
+  iframe.src = src;
+  document.body.appendChild(iframe);
+
+  try {
+    // Wait for test-complete message from nested instance
+    const result = await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        window.removeEventListener('message', listener);
+        reject(new Error('Test run timed out after 60s'));
+      }, 60000);
+
+      function listener(e) {
+        if (e.data?.instanceId !== instanceId) return;
+        if (e.data.type === 'test-complete') {
+          clearTimeout(timeout);
+          window.removeEventListener('message', listener);
+          resolve(e.data.lastRun);
+        } else if (e.data.type === 'test-error') {
+          clearTimeout(timeout);
+          window.removeEventListener('message', listener);
+          reject(new Error(e.data.error || 'Test instance error'));
+        }
+      }
+      window.addEventListener('message', listener);
+    });
+
+    // Emit test:run-complete event with results
+    api.events.emit({
+      type: TEST_RUN_COMPLETE_EVENT,
+      content: {
+        timestamp: result.timestamp,
+        totalPassed: result.totalPassed,
+        totalFailed: result.totalFailed,
+        suites: result.suites,
+        trigger: trigger
+      }
+    });
+
+  } finally {
+    // Clean up iframe
+    if (iframe.parentNode) iframe.remove();
+
+    // Clean up instance data from IndexedDB
+    try {
+      await api.deleteByPrefix(instanceId + ':');
+    } catch (cleanupErr) {
+      console.warn('test-auto-runner: cleanup failed', cleanupErr);
+    }
+  }
+}
