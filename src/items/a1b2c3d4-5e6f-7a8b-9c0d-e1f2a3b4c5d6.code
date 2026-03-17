@@ -87,8 +87,6 @@ const applyLineRange = (text, linesParam, baseStartLine = 1) => {
   return { text: lines.slice(start, end).join('\n'), startLine: baseStartLine + start };
 };
 
-let _perfCounter = 0;
-
 /**
  * Render markdown with Hobson extensions.
  * @param {string} markdown - The markdown text to render
@@ -96,8 +94,6 @@ let _perfCounter = 0;
  * @returns {Promise<HTMLElement>} - A div containing the rendered markdown
  */
 export async function render(markdown, api, options = {}) {
-  const perf = window.hobsonPerf;
-  const perfId = ++_perfCounter;
   const md = markdown || '';
 
   // Resolve openIn target: view config override, then parent, then null (= navigate)
@@ -107,12 +103,9 @@ export async function render(markdown, api, options = {}) {
   // Load markdown-it (reuse if passed from parent render)
   let markdownit = options.markdownit;
   if (!markdownit) {
-    perf?.mark(`md-require-${perfId}-start`);
     await api.require('markdown-it');
     const markdownitModule = await api.require('markdown-it-wrapper');
     markdownit = markdownitModule.default;
-    perf?.mark(`md-require-${perfId}-end`);
-    perf?.measure(`md-require-${perfId}`, `md-require-${perfId}-start`, `md-require-${perfId}-end`);
   }
 
   // Configure link rendering for item:// links and external links
@@ -150,10 +143,7 @@ export async function render(markdown, api, options = {}) {
   };
 
   // Render markdown to HTML
-  perf?.mark(`md-parse-${perfId}-start`);
   let html = markdownit.render(md);
-  perf?.mark(`md-parse-${perfId}-end`);
-  perf?.measure(`md-parse-${perfId}`, `md-parse-${perfId}-start`, `md-parse-${perfId}-end`);
 
   // Process region markers: emit invisible anchor spans for [BEGIN:name] markers
   // This allows scroll-to-region navigation in rendered markdown
@@ -197,11 +187,7 @@ export async function render(markdown, api, options = {}) {
 
   // Handle transclusions (images with item:// src)
   const transclusionImages = content.querySelectorAll('img[src^="item://"]');
-  perf?.mark('transclusions-start');
-  let transclusionCount = 0;
   for (const img of transclusionImages) {
-    transclusionCount++;
-    perf?.mark(`transclusion-${transclusionCount}-start`);
     const fullUrl = img.src.replace(/^.*item:\/\//, 'item://');
     const parsed = parseItemUrl(fullUrl);
     const altText = img.alt;
@@ -252,8 +238,6 @@ export async function render(markdown, api, options = {}) {
         }
 
         img.parentNode.replaceChild(wrapperDiv, img);
-        perf?.mark(`transclusion-${transclusionCount}-end`);
-        perf?.measure(`transclusion-${transclusionCount}`, `transclusion-${transclusionCount}-start`, `transclusion-${transclusionCount}-end`);
         continue;
       }
 
@@ -381,29 +365,17 @@ export async function render(markdown, api, options = {}) {
       }
 
       img.parentNode.replaceChild(wrapperDiv, img);
-      perf?.mark(`transclusion-${transclusionCount}-end`);
-      perf?.measure(`transclusion-${transclusionCount}`, `transclusion-${transclusionCount}-start`, `transclusion-${transclusionCount}-end`);
     } catch (err) {
       const errorDiv = api.createElement('div');
       errorDiv.style.cssText = 'background: var(--color-warning-light); border: 1px solid var(--color-warning); border-radius: var(--border-radius); padding: 8px 12px; margin: 10px 0; color: var(--color-warning-text); font-style: italic;';
       errorDiv.textContent = '[Missing: ' + altText + ' - ' + err.message + ']';
       img.parentNode.replaceChild(errorDiv, img);
-      perf?.mark(`transclusion-${transclusionCount}-end`);
-      perf?.measure(`transclusion-${transclusionCount}`, `transclusion-${transclusionCount}-start`, `transclusion-${transclusionCount}-end`);
     }
-  }
-  perf?.mark('transclusions-end');
-  if (transclusionCount > 0) {
-    perf?.measure(`transclusions-total(${transclusionCount})`, 'transclusions-start', 'transclusions-end');
   }
 
   // Handle query blocks (```query ... ```)
   const queryBlocks = content.querySelectorAll('pre > code.language-query');
-  perf?.mark('queries-start');
-  let queryCount = 0;
   for (const codeBlock of queryBlocks) {
-    queryCount++;
-    perf?.mark(`query-${queryCount}-start`);
     const pre = codeBlock.parentElement;
     const queryCode = codeBlock.textContent;
 
@@ -523,21 +495,13 @@ export async function render(markdown, api, options = {}) {
 
       // Replace the pre block with the result
       pre.parentNode.replaceChild(resultDiv, pre);
-      perf?.mark(`query-${queryCount}-end`);
-      perf?.measure(`query-${queryCount}`, `query-${queryCount}-start`, `query-${queryCount}-end`);
 
     } catch (err) {
       const errorDiv = api.createElement('div');
       errorDiv.style.cssText = 'background: var(--color-danger-light); border: 1px solid var(--color-danger); border-radius: var(--border-radius); padding: 8px 12px; margin: 10px 0; color: var(--color-danger-text);';
       errorDiv.textContent = '[Query error: ' + err.message + ']';
       pre.parentNode.replaceChild(errorDiv, pre);
-      perf?.mark(`query-${queryCount}-end`);
-      perf?.measure(`query-${queryCount}`, `query-${queryCount}-start`, `query-${queryCount}-end`);
     }
-  }
-  perf?.mark('queries-end');
-  if (queryCount > 0) {
-    perf?.measure(`queries-total(${queryCount})`, 'queries-start', 'queries-end');
   }
 
   return content;
