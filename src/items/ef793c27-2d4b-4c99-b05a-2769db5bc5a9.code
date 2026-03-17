@@ -149,12 +149,44 @@
                :style "position:absolute; top:0; left:0; right:0; bottom:24px; overflow:auto;"}
           [:div {:ref :background
                  :class "spatial-background"
-                 :style "position:absolute; inset:0; z-index:0; overflow:auto; display:flex; flex-direction:column;"}]]]))
+                 :style "position:absolute; inset:0; z-index:0; overflow:auto; display:flex; flex-direction:column; background:var(--color-bg-surface);"}]]]))
   (def container (first _container-result))
   (def crefs (nth _container-result 1))
   (def dock-overlay (:dock-overlay crefs))
   (def scroll-area (:scroll-area crefs))
   (def background (:background crefs))
+  (:doc
+    (:p
+      "Inner view resolution. Renders the item's natural view as a full-bleed background "
+      "beneath windows. Checks "
+      (:code "get-view-config")
+      " for an explicit "
+      (:code ":innerView")
+      " override, then falls back to the item type's preferred view "
+      "(skipping spatial-canvas to avoid a cycle)."))
+  (def SPATIAL-CANVAS-ID "ef793c27-2d4b-4c99-b05a-2769db5bc5a9")
+  (def view-config (get-view-config))
+  (def
+    inner-view-id
+    (or
+      (when view-config (:type (:innerView view-config)))
+      (when
+        (= (:preferredView item) SPATIAL-CANVAS-ID)
+        (let [type-item (try (get-item (:type item)) (catch _ nil))
+              type-pref (when type-item (:preferredView type-item))]
+          (if
+            (and type-pref (not= type-pref SPATIAL-CANVAS-ID))
+            type-pref
+            "aaaaaaaa-1111-0000-0000-000000000000")))))
+  (when
+    (or inner-view-id (not= (:preferredView item) SPATIAL-CANVAS-ID))
+    (invoke
+      background
+      "appendChild"
+      (hiccup->dom
+        [:render-child {:item (:id item)
+                        :view inner-view-id
+                        :style "flex:1; min-height:0;"}])))
   (:doc
     (:p
       "Child window classification. Attachments are split into three groups based on their "
