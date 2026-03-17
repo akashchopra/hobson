@@ -1,6 +1,7 @@
 // test-auto-runner — watches code changes, runs tests in headless nested instance
 
 const TEST_RUN_COMPLETE_EVENT = 'e0e00000-0002-0003-0000-000000000000';
+const TEST_RUN_RESULT_LIST_TYPE = '7e5700a1-0000-4000-8000-000000000000';
 const SELF_ID = '7e5700b0-0000-4000-8000-000000000000';
 const DEBOUNCE_MS = 2500;
 
@@ -32,11 +33,21 @@ async function scheduleTestRun(trigger, api) {
     try {
       const current = await api.get(SELF_ID);
       if (current.content._pendingRunToken !== token) return; // stale
+      if (!(await isEnabled(api))) return;
       await runTests(current.content._pendingTrigger, api);
     } catch (err) {
       console.warn('test-auto-runner: run failed', err);
     }
   }, DEBOUNCE_MS);
+}
+
+async function isEnabled(api) {
+  // Check if any test-run-result-list item has autoRunEnabled set to false
+  // Default: enabled (true) if no list item exists or flag is not set
+  const allItems = await api.getAll();
+  const listItem = allItems.find(i => i.type === TEST_RUN_RESULT_LIST_TYPE);
+  if (!listItem) return true;
+  return listItem.content?.autoRunEnabled !== false;
 }
 
 async function runTests(trigger, api) {
