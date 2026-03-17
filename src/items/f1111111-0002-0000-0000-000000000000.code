@@ -46,11 +46,16 @@ export async function onKernelBootComplete({ safeMode, rootElement }, _api) {
   await rendering.renderViewport();
 
   // Signal that viewport infrastructure is ready
+  // Include rendering capabilities so viewport:ready watchers can use them
+  // without requiring viewport-manager (which would break after cache clear)
   window.kernel.events.emit({
     type: EVENT_IDS.VIEWPORT_READY,
     content: {
       rootElement,
-      rootId: urlRoot || null
+      rootId: urlRoot || null,
+      getViews: (typeId) => rendering.getViews(typeId),
+      createElement: rendering.kernel._baseCreateElement,
+      navigate
     }
   });
 }
@@ -282,7 +287,8 @@ export async function hasPreviousView() {
   return !!child?.previousView;
 }
 
-// Get the rendering system instance (for re-rendering operations)
+// Get the rendering system instance
+// TODO: other callers should migrate to receiving capabilities via viewport:ready
 export function getRendering() {
   return rendering;
 }

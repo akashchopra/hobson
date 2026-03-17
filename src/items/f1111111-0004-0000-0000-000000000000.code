@@ -1,29 +1,16 @@
 // Keyboard Shortcuts Library
-// Registers global keyboard shortcuts, moved from kernel to userland
+// Registers global keyboard shortcuts, initialized by viewport:ready
 
 let api = null;
+let getViews = null;
+let createElement = null;
+let navigate = null;
 
-// Minimal createElement matching viewport-rendering's API shape (without debug attribution)
-function createElement(tag, props = {}, children = []) {
-  const el = document.createElement(tag);
-  for (const [key, value] of Object.entries(props)) {
-    if (typeof value === 'function') el[key] = value;
-    else if (key === 'class') el.className = value;
-    else if (key === 'style' && typeof value === 'string') el.style.cssText = value;
-    else el.setAttribute(key, value);
-  }
-  for (const child of children) {
-    if (typeof child === 'string') el.appendChild(document.createTextNode(child));
-    else if (child instanceof Node) el.appendChild(child);
-    else if (Array.isArray(child)) el.appendChild(createElement(child[0], child[1], child[2]));
-  }
-  return el;
-}
-
-export async function onKernelBootComplete({ safeMode }, _api) {
-  if (safeMode) return;  // No shortcuts in safe mode
-
+export async function onViewportReady(event, _api) {
   api = _api;
+  getViews = event.getViews;
+  createElement = event.createElement;
+  navigate = event.navigate;
 
   // Register keyboard handler (only if not already registered)
   if (!window._userKeyboardHandler) {
@@ -54,11 +41,8 @@ export async function onKernelBootComplete({ safeMode }, _api) {
 
         try {
           const ctxLib = await api.require('context-menu-lib');
-          const vpMgr = await api.require('viewport-manager');
-          const rendering = vpMgr.getRendering();
           const item = await api.get(selectedId);
-          // findEditableView needs api.getViews which is rendering-only
-          const enrichedApi = { ...api, getViews: (t) => rendering.getViews(t) };
+          const enrichedApi = { ...api, getViews };
           const editView = await ctxLib.findEditableView(enrichedApi, item.type);
           if (!editView) return;
 
@@ -77,8 +61,9 @@ export async function onKernelBootComplete({ safeMode }, _api) {
               await api.set(parent); // triggers reactive re-render
             }
           } else {
-            await vpMgr.setRootView(editView.id);
-            await rendering.renderViewport();
+            // Root item — navigate with view override to change view and re-render
+            const rootId = new URLSearchParams(window.location.search).get('root');
+            await navigate(rootId, { view: editView.id });
           }
         } catch (err) {
           console.warn('Ctrl+E edit failed:', err.message);
@@ -90,17 +75,15 @@ export async function onKernelBootComplete({ safeMode }, _api) {
         const tag = document.activeElement?.tagName;
         if (tag === 'INPUT' || tag === 'TEXTAREA' || document.activeElement?.isContentEditable) return;
 
-        const vpMgr = await api.require('viewport-manager');
-        const rootId = vpMgr.getRoot();
-        if (!document.querySelector(`[data-container-id="${rootId}"]`)) return;
+        const rootId = new URLSearchParams(window.location.search).get('root');
+        if (!rootId || !document.querySelector(`[data-container-id="${rootId}"]`)) return;
 
         e.preventDefault();
 
         try {
           const typePicker = await api.require('type-picker-lib');
           const ctxLib = await api.require('context-menu-lib');
-          const rendering = vpMgr.getRendering();
-          const enrichedApi = { ...api, getViews: (t) => rendering.getViews(t), createElement };
+          const enrichedApi = { ...api, getViews, createElement };
 
           const selectedType = await typePicker.showTypePicker(enrichedApi);
           if (!selectedType) return;
@@ -135,9 +118,8 @@ export async function onKernelBootComplete({ safeMode }, _api) {
         const tag = document.activeElement?.tagName;
         if (tag === 'INPUT' || tag === 'TEXTAREA' || document.activeElement?.isContentEditable) return;
 
-        const vpMgr = await api.require('viewport-manager');
-        const rootId = vpMgr.getRoot();
-        if (!document.querySelector(`[data-container-id="${rootId}"]`)) return;
+        const rootId = new URLSearchParams(window.location.search).get('root');
+        if (!rootId || !document.querySelector(`[data-container-id="${rootId}"]`)) return;
 
         e.preventDefault();
 
