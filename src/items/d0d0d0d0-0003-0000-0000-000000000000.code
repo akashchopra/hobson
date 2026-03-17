@@ -126,7 +126,45 @@ async function renderCodeValue(value, container, api, sourceField) {
 
 // Render a transclusion wrapper value with attribution chrome
 async function renderTransclusion(wrapper, parent, api, item, inline) {
-  const { value, sourceId, sourceField, sourceSymbol, chrome } = wrapper;
+  const { value, sourceId, sourceField, sourceSymbol, chrome, embed, viewId } = wrapper;
+
+  // Full-item embed — render via data-render-child mount point
+  if (embed && sourceId) {
+    if (chrome === 'none') {
+      const mountPoint = document.createElement('div');
+      mountPoint.setAttribute('data-render-child', '');
+      mountPoint.setAttribute('data-child-item', sourceId);
+      mountPoint.__renderChildSpec = { itemId: sourceId, viewId: viewId || null, openIn: null };
+      parent.appendChild(mountPoint);
+      return;
+    }
+    // Full or subtle chrome — collapsible wrapper with mount point inside
+    const details = api.createElement('details');
+    details.setAttribute('open', '');
+    details.setAttribute('data-provenance-node', 'transclusion');
+    details.setAttribute('data-provenance-ref-id', sourceId);
+    details.style.cssText = 'background: var(--color-bg-surface-alt); border: 1px solid var(--color-border-light, var(--color-border)); border-radius: var(--border-radius, 4px); padding: 12px; margin: 0.5em 0;';
+    const summary = api.createElement('summary');
+    summary.style.cssText = 'font-size: 0.75rem; color: var(--color-text-secondary); padding-bottom: 8px; cursor: pointer;';
+    summary.textContent = 'Source: ';
+    let sourceName;
+    try { sourceName = (await api.get(sourceId))?.name; } catch {}
+    const pill = api.createElement('a');
+    pill.href = '#';
+    pill.className = 'hob-item-ref';
+    pill.textContent = sourceName || sourceId.substring(0, 8);
+    pill.onclick = (e) => { e.preventDefault(); e.stopPropagation(); api.openItem(e, sourceId); };
+    summary.appendChild(pill);
+    details.appendChild(summary);
+    const mountPoint = document.createElement('div');
+    mountPoint.setAttribute('data-render-child', '');
+    mountPoint.setAttribute('data-child-item', sourceId);
+    mountPoint.__renderChildSpec = { itemId: sourceId, viewId: viewId || null, openIn: null };
+    details.appendChild(mountPoint);
+    parent.appendChild(details);
+    return;
+  }
+
   const isCodeField = sourceField === 'code' || sourceField === 'hob';
   // Detect whether value is block-level (array with :keyword tag) or scalar/inline
   const isBlock = isCodeField || (Array.isArray(value) && typeof value[0] === 'string' && value[0].startsWith(':'));

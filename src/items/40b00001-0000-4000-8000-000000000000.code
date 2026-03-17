@@ -3543,22 +3543,31 @@ export function createInterpreter(api, viewApi, eventApi) {
     // (transclude @item-id :field :chrome :none)   — no chrome
     // (transclude @item-id :code :symbol "name")   — extract symbol from field
     // (transclude @item-id :description :slice :first-block) — first block node only
+    // (transclude @item-id)                        — embed full item via its view
+    // (transclude @item-id :view @view-id)         — embed with specific view
     stdlib.define('transclude', Object.assign(async (...args) => {
       // Parse args: item, field, then optional keyword args
       let itemOrRef = args[0];
       let fieldKey = args.length > 1 ? args[1] : null;
-      if (!fieldKey) fieldKey = ':description';
       let chrome = 'full';
       let symbolName = null;
       let slice = null;
-      // Parse keyword args from position 2+
-      for (let i = 2; i < args.length; i++) {
+      let viewId = null;
+      // Parse keyword args from position 2+ (or 1+ if first kwarg is :chrome/:view)
+      const kwStart = fieldKey && isKeyword(fieldKey) && (keywordName(fieldKey) === 'chrome' || keywordName(fieldKey) === 'view') ? 1 : 2;
+      if (kwStart === 1) fieldKey = null; // first arg was a keyword option, not a field
+      for (let i = kwStart; i < args.length; i++) {
         if (!isKeyword(args[i])) continue;
         const kw = keywordName(args[i]);
         const val = args[i + 1];
         if (kw === 'chrome') { chrome = isKeyword(val) ? keywordName(val) : String(val); i++; }
         else if (kw === 'symbol') { symbolName = typeof val === 'object' && 's' in val ? val.s : String(val); i++; }
         else if (kw === 'slice') { slice = isKeyword(val) ? keywordName(val) : String(val); i++; }
+        else if (kw === 'view') {
+          if (val && val._hobType === 'item-ref') viewId = val.value;
+          else if (typeof val === 'string') viewId = val;
+          i++;
+        }
       }
       // Resolve source item ID for attribution
       let sourceId;
@@ -3570,6 +3579,10 @@ export function createInterpreter(api, viewApi, eventApi) {
         sourceId = itemOrRef;
       } else if (itemOrRef && typeof itemOrRef === 'object' && itemOrRef.id) {
         sourceId = itemOrRef.id;
+      }
+      // No field → full-item embed via its view
+      if (!fieldKey) {
+        return { _hobType: 'transclusion', embed: true, sourceId, viewId, chrome };
       }
       const sourceField = isKeyword(fieldKey) ? keywordName(fieldKey) : String(fieldKey);
       let value = await getFieldFn(itemOrRef, fieldKey);

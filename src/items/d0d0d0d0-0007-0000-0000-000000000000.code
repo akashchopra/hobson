@@ -211,34 +211,46 @@ export async function render(value, options, api) {
           } else if (tag === 'transclude') {
             // Parse transclude expression args
             const itemId = typeof child[1] === 'string' && child[1].startsWith('@') ? child[1].substring(1) : String(child[1]);
-            let fieldName = 'description', symbolName = null;
+            let fieldName = null, symbolName = null, viewId = null, isEmbed = true;
             for (let ci = 2; ci < child.length; ci++) {
               const arg = child[ci];
               if (typeof arg === 'string' && arg.startsWith(':')) {
                 const kw = arg.substring(1);
-                if (kw === 'symbol' && ci + 1 < child.length) { symbolName = textOf(child[++ci]); }
-                else if (kw !== 'chrome') { fieldName = kw; }
-                else { ci++; } // skip value of :chrome
+                if (kw === 'symbol' && ci + 1 < child.length) { symbolName = textOf(child[++ci]); isEmbed = false; }
+                else if (kw === 'view' && ci + 1 < child.length) {
+                  const varg = child[++ci];
+                  viewId = typeof varg === 'string' && varg.startsWith('@') ? varg.substring(1) : textOf(varg);
+                }
+                else if (kw === 'chrome') { ci++; } // skip value of :chrome
+                else { fieldName = kw; isEmbed = false; }
               }
             }
             const span = document.createElement('span');
             span.contentEditable = 'false';
             span.className = 'doc-transclusion';
             span.dataset.itemId = itemId;
-            if (symbolName) {
+            if (isEmbed && !fieldName) {
+              // Full-item embed
+              span.dataset.embed = 'true';
+              if (viewId) span.dataset.viewId = viewId;
+              span.textContent = '\u25A3 ' + itemId.substring(0, 8);
+              span.style.cssText = 'display: inline-block; background: var(--color-primary-light, #dbeafe); padding: 1px 6px; border-radius: 3px; border: 1px solid var(--color-primary, #3b82f6); font-size: 0.8125em; cursor: default; user-select: none;';
+            } else if (symbolName) {
               span.dataset.symbol = symbolName;
-              span.dataset.field = fieldName;
+              span.dataset.field = fieldName || 'code';
               span.textContent = itemId.substring(0, 8) + '.' + symbolName;
+              span.style.cssText = 'display: inline-block; background: var(--color-warning-light, #fef3c7); padding: 1px 6px; border-radius: 3px; border: 1px solid var(--color-warning, #f59e0b); font-size: 0.8125em; cursor: default; user-select: none;';
             } else {
-              span.dataset.field = fieldName;
-              span.textContent = itemId.substring(0, 8) + (fieldName !== 'description' ? '.' + fieldName : '');
+              span.dataset.field = fieldName || 'description';
+              span.textContent = itemId.substring(0, 8) + ((fieldName && fieldName !== 'description') ? '.' + fieldName : '');
+              span.style.cssText = 'display: inline-block; background: var(--color-warning-light, #fef3c7); padding: 1px 6px; border-radius: 3px; border: 1px solid var(--color-warning, #f59e0b); font-size: 0.8125em; cursor: default; user-select: none;';
             }
-            span.style.cssText = 'display: inline-block; background: var(--color-warning-light, #fef3c7); padding: 1px 6px; border-radius: 3px; border: 1px solid var(--color-warning, #f59e0b); font-size: 0.8125em; cursor: default; user-select: none;';
             api.get(itemId).then(refItem => {
               if (refItem?.name) {
                 span.dataset.display = refItem.name;
-                if (symbolName) span.textContent = refItem.name + '.' + symbolName;
-                else span.textContent = refItem.name + (fieldName !== 'description' ? '.' + fieldName : '');
+                if (span.dataset.embed === 'true') span.textContent = '\u25A3 ' + refItem.name;
+                else if (symbolName) span.textContent = refItem.name + '.' + symbolName;
+                else span.textContent = refItem.name + ((fieldName && fieldName !== 'description') ? '.' + fieldName : '');
               }
             }).catch(() => {});
             parent.appendChild(span);
@@ -757,7 +769,11 @@ export async function render(value, options, api) {
           if (node.dataset.display) parts[0].push({ s: node.dataset.display });
           result.push(parts[0]);
         } else if (node.classList.contains('doc-transclusion')) {
-          if (node.dataset.symbol) {
+          if (node.dataset.embed === 'true') {
+            const expr = ['transclude', '@' + node.dataset.itemId];
+            if (node.dataset.viewId) expr.push(':view', '@' + node.dataset.viewId);
+            result.push(expr);
+          } else if (node.dataset.symbol) {
             const expr = ['transclude', '@' + node.dataset.itemId, ':' + (node.dataset.field || 'code'), ':symbol', { s: node.dataset.symbol }];
             result.push(expr);
           } else {
@@ -823,8 +839,8 @@ export async function render(value, options, api) {
 
   function acUpdateQuery() {
     if (!ac) return;
-    // Field picker step doesn't track typing — it's a static list
-    if (ac.type === 'transclusion' && ac.step === 'field') return;
+    // Field/view picker steps don't track typing — they're static lists
+    if (ac.type === 'transclusion' && (ac.step === 'field' || ac.step === 'view')) return;
     const sel = ac.blockEl.ownerDocument.defaultView.getSelection();
     if (!sel.rangeCount) { acHide(); return; }
     const range = sel.getRangeAt(0);
@@ -858,7 +874,9 @@ export async function render(value, options, api) {
         .filter(k => !ac.query || k.toLowerCase().includes(ac.query.toLowerCase()))
         .map(k => ({ id: k, label: k, sub: 'computed field' }));
     } else if (ac.type === 'transclusion' && ac.step === 'field') {
-      // Field picker for transclusion target — includes fields, symbols, and exports
+      // Field picker for transclusion target — includes embed, fields, symbols, and exports
+      results.push({ id: '_embed', label: '\u25A3 Embed (full item)', sub: 'render via view', _type: 'embed' });
+      results.push({ _separator: true, label: 'Fields' });
       try {
         const targetItem = await api.get(ac.targetItem.id);
         const content = targetItem?.content || {};
@@ -889,6 +907,38 @@ export async function render(value, options, api) {
           results.push(...symbolResults);
         }
       } catch { results = []; }
+    } else if (ac.type === 'transclusion' && ac.step === 'view') {
+      // View picker for embed transclusion
+      results.push({ id: '_default', label: 'Default view', sub: 'auto-resolved', _viewId: null });
+      try {
+        const targetItem = await api.get(ac.targetItem.id);
+        const VIEW_TYPE = 'aaaaaaaa-0000-0000-0000-000000000000';
+        const allViews = await api.query({ type: VIEW_TYPE });
+        // Walk the type chain to find compatible views
+        const typeChain = [targetItem.type];
+        let currentType = targetItem.type;
+        const visited = new Set();
+        while (currentType && !visited.has(currentType)) {
+          visited.add(currentType);
+          try {
+            const typeItem = await api.get(currentType);
+            const next = typeItem.extends !== undefined ? typeItem.extends : typeItem.type;
+            if (next && next !== currentType) { typeChain.push(next); currentType = next; }
+            else break;
+          } catch { break; }
+        }
+        const viewResults = allViews
+          .filter(v => v.content?.for_type && typeChain.includes(v.content.for_type))
+          .map(v => ({
+            id: v.id, label: v.name || v.id.substring(0, 8),
+            sub: v.content.displayName || (v.content.for_type === targetItem.type ? 'direct' : 'inherited'),
+            _viewId: v.id
+          }));
+        if (viewResults.length) {
+          results.push({ _separator: true, label: 'Views' });
+          results.push(...viewResults);
+        }
+      } catch {}
     } else {
       // Item search (for 'item' and 'transclusion' step='item')
       try {
@@ -913,11 +963,11 @@ export async function render(value, options, api) {
 
   function acRender() {
     acPopup.innerHTML = '';
-    // Header for transclusion field picker
-    if (ac?.type === 'transclusion' && ac.step === 'field' && ac.targetItem) {
+    // Header for transclusion field/view picker
+    if (ac?.type === 'transclusion' && (ac.step === 'field' || ac.step === 'view') && ac.targetItem) {
       const header = document.createElement('div');
       header.style.cssText = 'padding: 5px 12px; font-size: 0.6875rem; color: var(--color-text-secondary, #6b7280); border-bottom: 1px solid var(--color-border, #e5e7eb);';
-      header.textContent = 'Field from: ' + ac.targetItem.label;
+      header.textContent = ac.step === 'view' ? 'View for: ' + ac.targetItem.label : 'Field from: ' + ac.targetItem.label;
       acPopup.appendChild(header);
     }
     if (!ac || ac.results.length === 0) {
@@ -980,9 +1030,23 @@ export async function render(value, options, api) {
       return;
     }
 
-    // Transclusion step 2: field selected → create computed field + insert ref
+    // Transclusion step 2: field selected → insert ref (or transition to view picker for embeds)
     if (ac.type === 'transclusion' && ac.step === 'field') {
+      if (result._type === 'embed') {
+        // Transition to view picker
+        ac.step = 'view';
+        ac.query = '';
+        ac.active = 0;
+        acUpdate();
+        return;
+      }
       acInsertTransclusion(result);
+      return;
+    }
+
+    // Transclusion step 3: view selected for embed → insert
+    if (ac.type === 'transclusion' && ac.step === 'view') {
+      acInsertTransclusion({ _type: 'embed', viewId: result._viewId || null });
       return;
     }
 
@@ -1095,15 +1159,21 @@ export async function render(value, options, api) {
     node.dataset.itemId = targetItem.id;
     node.dataset.display = targetItem.label;
 
-    if (fieldResult._type === 'symbol') {
+    if (fieldResult._type === 'embed') {
+      node.dataset.embed = 'true';
+      if (fieldResult.viewId) node.dataset.viewId = fieldResult.viewId;
+      node.textContent = '\u25A3 ' + targetItem.label;
+      node.style.cssText = 'display: inline-block; background: var(--color-primary-light, #dbeafe); padding: 1px 6px; border-radius: 3px; border: 1px solid var(--color-primary, #3b82f6); font-size: 0.8125em; cursor: default; user-select: none;';
+    } else if (fieldResult._type === 'symbol') {
       node.dataset.field = 'code';
       node.dataset.symbol = fieldResult.id;
       node.textContent = targetItem.label + '.' + fieldResult.id;
+      node.style.cssText = 'display: inline-block; background: var(--color-warning-light, #fef3c7); padding: 1px 6px; border-radius: 3px; border: 1px solid var(--color-warning, #f59e0b); font-size: 0.8125em; cursor: default; user-select: none;';
     } else {
       node.dataset.field = fieldResult.id;
       node.textContent = targetItem.label + (fieldResult.id !== 'description' ? '.' + fieldResult.id : '');
+      node.style.cssText = 'display: inline-block; background: var(--color-warning-light, #fef3c7); padding: 1px 6px; border-radius: 3px; border: 1px solid var(--color-warning, #f59e0b); font-size: 0.8125em; cursor: default; user-select: none;';
     }
-    node.style.cssText = 'display: inline-block; background: var(--color-warning-light, #fef3c7); padding: 1px 6px; border-radius: 3px; border: 1px solid var(--color-warning, #f59e0b); font-size: 0.8125em; cursor: default; user-select: none;';
 
     acInsertNode(node);
   }
@@ -1325,6 +1395,24 @@ export async function render(value, options, api) {
 
   // --- Transclusion popover ---
 
+  function addSelect(label, options, value) {
+    const lbl = document.createElement('div');
+    lbl.textContent = label;
+    lbl.style.cssText = labelStyle;
+    popoverEl.appendChild(lbl);
+    const select = document.createElement('select');
+    select.style.cssText = inputStyle + 'appearance: auto;';
+    for (const opt of options) {
+      const o = document.createElement('option');
+      o.value = opt.value;
+      o.textContent = opt.label;
+      if (opt.value === value) o.selected = true;
+      select.appendChild(o);
+    }
+    popoverEl.appendChild(select);
+    return select;
+  }
+
   function showTransclusionPopover(span) {
     showPopover(span, (span, blockEl, path) => {
       let newItemId = null;
@@ -1333,16 +1421,109 @@ export async function render(value, options, api) {
         newItemId = id;
         newName = name;
       });
+
+      // Mode: embed vs field vs symbol
+      const isEmbed = span.dataset.embed === 'true';
+      const hasSymbol = !!span.dataset.symbol;
+      const currentMode = isEmbed ? 'embed' : hasSymbol ? 'symbol' : 'field';
+      const modeSelect = addSelect('Type', [
+        { value: 'embed', label: '\u25A3 Embed (full item)' },
+        { value: 'field', label: 'Field' },
+        { value: 'symbol', label: 'Symbol' }
+      ], currentMode);
+
+      // Field input (for field/symbol modes)
       const fieldInput = addField('Field', span.dataset.field || 'description');
+      const fieldLabel = fieldInput.previousElementSibling;
+      // Symbol input (for symbol mode)
+      const symbolInput = addField('Symbol', span.dataset.symbol || '');
+      const symbolLabel = symbolInput.previousElementSibling;
+      // View picker (for embed mode)
+      const viewLabel = document.createElement('div');
+      viewLabel.textContent = 'View';
+      viewLabel.style.cssText = labelStyle;
+      popoverEl.insertBefore(viewLabel, fieldLabel);
+      const viewSelect = document.createElement('select');
+      viewSelect.style.cssText = inputStyle + 'appearance: auto;';
+      const defaultOpt = document.createElement('option');
+      defaultOpt.value = '';
+      defaultOpt.textContent = 'Default view';
+      viewSelect.appendChild(defaultOpt);
+      popoverEl.insertBefore(viewSelect, fieldLabel);
+
+      // Populate views async
+      (async () => {
+        try {
+          const targetId = newItemId || span.dataset.itemId;
+          const targetItem = await api.get(targetId);
+          const VIEW_TYPE = 'aaaaaaaa-0000-0000-0000-000000000000';
+          const allViews = await api.query({ type: VIEW_TYPE });
+          const typeChain = [targetItem.type];
+          let ct = targetItem.type;
+          const vis = new Set();
+          while (ct && !vis.has(ct)) {
+            vis.add(ct);
+            try {
+              const ti = await api.get(ct);
+              const next = ti.extends !== undefined ? ti.extends : ti.type;
+              if (next && next !== ct) { typeChain.push(next); ct = next; }
+              else break;
+            } catch { break; }
+          }
+          const compat = allViews.filter(v => v.content?.for_type && typeChain.includes(v.content.for_type));
+          for (const v of compat) {
+            const o = document.createElement('option');
+            o.value = v.id;
+            o.textContent = v.name || v.id.substring(0, 8);
+            if (v.id === span.dataset.viewId) o.selected = true;
+            viewSelect.appendChild(o);
+          }
+        } catch {}
+      })();
+
+      // Show/hide fields based on mode
+      const updateVisibility = () => {
+        const mode = modeSelect.value;
+        viewLabel.style.display = mode === 'embed' ? '' : 'none';
+        viewSelect.style.display = mode === 'embed' ? '' : 'none';
+        fieldLabel.style.display = mode !== 'embed' ? '' : 'none';
+        fieldInput.style.display = mode !== 'embed' ? '' : 'none';
+        symbolLabel.style.display = mode === 'symbol' ? '' : 'none';
+        symbolInput.style.display = mode === 'symbol' ? '' : 'none';
+      };
+      modeSelect.addEventListener('change', updateVisibility);
+      updateVisibility();
+
       const apply = () => {
         if (newItemId) {
           span.dataset.itemId = newItemId;
           if (newName) span.dataset.display = newName;
         }
-        const field = fieldInput.value.trim() || 'description';
-        span.dataset.field = field;
+        const mode = modeSelect.value;
         const displayName = span.dataset.display || span.dataset.itemId.substring(0, 8);
-        span.textContent = displayName + (field !== 'description' ? '.' + field : '');
+        if (mode === 'embed') {
+          span.dataset.embed = 'true';
+          delete span.dataset.field;
+          delete span.dataset.symbol;
+          const vid = viewSelect.value;
+          if (vid) span.dataset.viewId = vid;
+          else delete span.dataset.viewId;
+          span.textContent = '\u25A3 ' + displayName;
+          span.style.cssText = 'display: inline-block; background: var(--color-primary-light, #dbeafe); padding: 1px 6px; border-radius: 3px; border: 1px solid var(--color-primary, #3b82f6); font-size: 0.8125em; cursor: default; user-select: none;';
+        } else {
+          delete span.dataset.embed;
+          delete span.dataset.viewId;
+          const field = fieldInput.value.trim() || 'description';
+          span.dataset.field = field;
+          if (mode === 'symbol') {
+            span.dataset.symbol = symbolInput.value.trim();
+            span.textContent = displayName + '.' + (symbolInput.value.trim() || field);
+          } else {
+            delete span.dataset.symbol;
+            span.textContent = displayName + (field !== 'description' ? '.' + field : '');
+          }
+          span.style.cssText = 'display: inline-block; background: var(--color-warning-light, #fef3c7); padding: 1px 6px; border-radius: 3px; border: 1px solid var(--color-warning, #f59e0b); font-size: 0.8125em; cursor: default; user-select: none;';
+        }
         hidePopover();
         handleInput(blockEl, path);
       };
@@ -1351,7 +1532,7 @@ export async function render(value, options, api) {
         hidePopover();
         handleInput(blockEl, path);
       }, apply);
-      bindKeys([fieldInput], apply, hidePopover);
+      bindKeys([fieldInput, symbolInput], apply, hidePopover);
       requestAnimationFrame(() => searchInput.focus());
     });
   }
