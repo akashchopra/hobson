@@ -76,71 +76,9 @@
     // Parse URL parameters
     const urlParams = new URLSearchParams(window.location.search);
     const instanceId = urlParams.get('instance');
-    const perfMode = urlParams.get('perf') === '1';
-
-    // Performance instrumentation helper
-    const perf = {
-      enabled: perfMode,
-      mark(name) {
-        if (this.enabled) performance.mark(`hobson:${name}`);
-      },
-      measure(name, startMark, endMark) {
-        if (this.enabled) {
-          try {
-            performance.measure(`hobson:${name}`, `hobson:${startMark}`, `hobson:${endMark}`);
-          } catch (e) {
-            // Marks may not exist if boot failed early
-          }
-        }
-      },
-      getTimings() {
-        // Returns timings as an object, useful for programmatic access
-        const measures = performance.getEntriesByType('measure')
-          .filter(e => e.name.startsWith('hobson:'))
-          .sort((a, b) => a.startTime - b.startTime);
-        const result = {};
-        for (const m of measures) {
-          result[m.name.replace('hobson:', '')] = Math.round(m.duration * 10) / 10;
-        }
-        return result;
-      },
-      summary() {
-        if (!this.enabled) return;
-        const measures = performance.getEntriesByType('measure')
-          .filter(e => e.name.startsWith('hobson:'))
-          .sort((a, b) => a.startTime - b.startTime);
-
-        if (measures.length === 0) return;
-
-        console.group('%c⏱ Hobson Boot Timings', 'font-weight: bold; color: #2196F3');
-        const maxNameLen = Math.max(...measures.map(m => m.name.length)) - 7; // subtract 'hobson:'
-        for (const m of measures) {
-          const name = m.name.replace('hobson:', '').padEnd(maxNameLen);
-          const duration = m.duration.toFixed(1).padStart(7);
-          const bar = '█'.repeat(Math.min(50, Math.round(m.duration / 10)));
-          console.log(`  ${name}  ${duration}ms  ${bar}`);
-        }
-        const total = measures.find(m => m.name === 'hobson:total');
-        if (total) {
-          console.log(`%c  ${'─'.repeat(maxNameLen + 12)}`, 'color: #999');
-          console.log(`%c  Total: ${total.duration.toFixed(1)}ms`, 'font-weight: bold');
-        }
-        console.groupEnd();
-      }
-    };
-    window.hobsonPerf = perf;
-
-    // Update title for nested instances
-    if (instanceId) {
-      document.title = `Hobson (nested: ${instanceId.slice(0, 8)}...)`;
-    }
-
     async function boot() {
       try {
-        perf.mark('boot-start');
-
-        // Open IndexedDB - use version 2 to force upgrade if old version exists
-        perf.mark('indexeddb-start');
+        // Open IndexedDB
         const db = await new Promise((resolve, reject) => {
           const request = indexedDB.open('hobson', 2);
           
@@ -164,125 +102,35 @@
         if (!db.objectStoreNames.contains('items')) {
           throw new Error('Database opened but items object store is missing. Please clear your browser data and try again.');
         }
-        perf.mark('indexeddb-end');
-        perf.measure('indexeddb-open', 'indexeddb-start', 'indexeddb-end');
+        // Key prefix for nested instance storage (empty string for main instance)
+        const keyPrefix = instanceId ? `${instanceId}:` : '';
 
-        // Helper: prefix an ID if in instance mode
-        const prefixId = (id) => instanceId ? `${instanceId}:${id}` : id;
+        // Generic IndexedDB helpers — no instance awareness
+        const idbGet = (key) => new Promise((resolve, reject) => {
+          const tx = db.transaction('items', 'readonly');
+          const req = tx.objectStore('items').get(key);
+          req.onsuccess = () => resolve(req.result);
+          req.onerror = () => reject(req.error);
+        });
 
-        // Helper: strip prefix from ID if in instance mode
-        const stripPrefix = (id) => {
-          if (!instanceId) return id;
-          const prefix = `${instanceId}:`;
-          return id.startsWith(prefix) ? id.slice(prefix.length) : id;
-        };
-
-        // Helper: strip prefix from an item
-        const stripItemPrefix = (item) => {
-          if (!instanceId || !item) return item;
-          return { ...item, id: stripPrefix(item.id) };
-        };
-
-        // Create storage backend adapter (handles prefixing transparently)
-        const storageBackend = {
-          instanceId: instanceId,
-
-          async get(id) {
-            const actualId = prefixId(id);
-            return new Promise((resolve, reject) => {
-              const tx = db.transaction('items', 'readonly');
-              const request = tx.objectStore('items').get(actualId);
-              request.onsuccess = () => resolve(stripItemPrefix(request.result));
-              request.onerror = () => reject(request.error);
-            });
-          },
-
-          async set(item) {
-            const prefixedItem = instanceId
-              ? { ...item, id: prefixId(item.id) }
-              : item;
-            return new Promise((resolve, reject) => {
-              const tx = db.transaction('items', 'readwrite');
-              const request = tx.objectStore('items').put(prefixedItem);
-              request.onsuccess = () => resolve(stripItemPrefix(prefixedItem));
-              request.onerror = () => reject(request.error);
-            });
-          },
-
-          async delete(id) {
-            const actualId = prefixId(id);
-            return new Promise((resolve, reject) => {
-              const tx = db.transaction('items', 'readwrite');
-              const request = tx.objectStore('items').delete(actualId);
-              request.onsuccess = () => resolve();
-              request.onerror = () => reject(request.error);
-            });
-          },
-
-          async getAll() {
-            // Returns "my" items only (excludes nested instance items)
-            const raw = await this.getAllRaw();
-            // Exclude items that belong to nested instances (have : in their ID)
-            return raw.filter(item => !item.id.includes(':'));
-          },
-
-          async getAllRaw() {
-            // Returns all items in this namespace (including nested instance items)
-            return new Promise((resolve, reject) => {
-              const tx = db.transaction('items', 'readonly');
-              const request = tx.objectStore('items').getAll();
-              request.onsuccess = () => {
-                let items = request.result;
-                if (instanceId) {
-                  // Filter to only items in this instance's namespace
-                  const prefix = `${instanceId}:`;
-                  items = items
-                    .filter(item => item.id.startsWith(prefix))
-                    .map(stripItemPrefix);
-                }
-                resolve(items);
-              };
-              request.onerror = () => reject(request.error);
-            });
-          },
-
-          async query(filter) {
-            const allItems = await this.getAll();
-            // filter is an object like { name: 'foo', type: 'bar' }
-            return allItems.filter(item => {
-              for (const [key, value] of Object.entries(filter)) {
-                if (item[key] !== value) return false;
-              }
-              return true;
-            });
-          },
-
-          async queryRaw(filter) {
-            const allItems = await this.getAllRaw();
-            return allItems.filter(item => {
-              for (const [key, value] of Object.entries(filter)) {
-                if (item[key] !== value) return false;
-              }
-              return true;
-            });
-          }
-        };
+        const idbPut = (item) => new Promise((resolve, reject) => {
+          const tx = db.transaction('items', 'readwrite');
+          const req = tx.objectStore('items').put(item);
+          req.onsuccess = () => resolve();
+          req.onerror = () => reject(req.error);
+        });
 
         // Check for kernel:core (using its GUID)
         const KERNEL_CORE_ID = '33333333-1111-0000-0000-000000000000';
 
-        perf.mark('kernel-core-load-start');
-        const kernelCore = await storageBackend.get(KERNEL_CORE_ID);
-        perf.mark('kernel-core-load-end');
-        perf.measure('kernel-core-load', 'kernel-core-load-start', 'kernel-core-load-end');
+        const kernelCore = await idbGet(keyPrefix + KERNEL_CORE_ID);
 
         if (!kernelCore || !kernelCore.content?.code) {
-          showImportUI(db, storageBackend);
+          showImportUI(item => idbPut({ ...item, id: keyPrefix + item.id }));
           return;
         }
 
         // Import kernel-core as module
-        perf.mark('module-import-start');
         const code = `
           "use strict";
           ${kernelCore.content.code}
@@ -293,13 +141,10 @@
 
         const { loadKernel } = await import(url);
         URL.revokeObjectURL(url);
-        perf.mark('module-import-end');
-        perf.measure('module-import', 'module-import-start', 'module-import-end');
 
-        // Create custom require function that uses our storage backend
+        // Create custom require function that loads modules from IndexedDB
         const customRequire = async (moduleId) => {
-          // Load module from storage (storage backend handles prefixing)
-          const moduleItem = await storageBackend.get(moduleId);
+          const moduleItem = await idbGet(keyPrefix + moduleId);
           if (!moduleItem || !moduleItem.content?.code) {
             throw new Error(`Module not found: ${moduleId}`);
           }
@@ -320,17 +165,10 @@
           }
         };
 
-        // Load and instantiate kernel (pass require and storage backend for nested instances)
-        perf.mark('load-kernel-start');
-        const Kernel = await loadKernel(customRequire, storageBackend);
-        perf.mark('load-kernel-end');
-        perf.measure('load-kernel', 'load-kernel-start', 'load-kernel-end');
-
-        perf.mark('kernel-new-start');
+        // Load and instantiate kernel
+        const Kernel = await loadKernel(customRequire, db, instanceId);
         const kernel = new Kernel();
         window.kernel = kernel;
-        perf.mark('kernel-new-end');
-        perf.measure('kernel-instantiate', 'kernel-new-start', 'kernel-new-end');
         
         // Listen for reload requests
         window.addEventListener('message', async (e) => {
@@ -348,11 +186,7 @@
         // so DOM structure exists when kernel:boot-complete fires
         document.body.appendChild(kernel.rootElement);
 
-        // Boot kernel
-        perf.mark('kernel-boot-start');
         await kernel.boot();
-        perf.mark('kernel-boot-end');
-        perf.measure('kernel-boot', 'kernel-boot-start', 'kernel-boot-end');
 
         // In safe mode, inject a multi-file import button using direct IndexedDB access
         // (bypasses old safe-mode import code that may not support multiple files)
@@ -375,8 +209,8 @@
                   const data = JSON.parse(text);
                   const items = Array.isArray(data) ? data : [data];
                   for (const item of items) {
-                    const exists = await storageBackend.get(item.id);
-                    await storageBackend.set(item);
+                    const exists = await idbGet(keyPrefix + item.id);
+                    await idbPut({ ...item, id: keyPrefix + item.id });
                     if (exists) updated++; else created++;
                   }
                 }
@@ -391,26 +225,18 @@
           }
         }
 
-        perf.mark('boot-end');
-        perf.measure('total', 'boot-start', 'boot-end');
-        perf.summary();
-
       } catch (error) {
         showError(error);
       }
     }
     
-    function showImportUI(db, storageBackend) {
+    function showImportUI(saveItem) {
       // Create import UI
       const ui = document.createElement('div');
       ui.className = 'bootstrap-ui';
-      const title = instanceId ? 'Import Kernel (Nested Instance)' : 'Import Kernel';
-      const description = instanceId
-        ? `Nested instance <code>${instanceId.slice(0, 8)}...</code> needs a kernel. Please import a kernel JSON file.`
-        : 'Hobson needs a kernel to run. Please import a kernel JSON file.';
       ui.innerHTML = `
-        <h1>${title}</h1>
-        <p>${description}</p>
+        <h1>Import Kernel</h1>
+        <p>Hobson needs a kernel to run. Please import a kernel JSON file.</p>
         <input type="file" id="import" accept=".json">
         <div id="status"></div>
       `;
@@ -431,9 +257,8 @@
             throw new Error('JSON must be an array of items');
           }
 
-          // Use storage backend for import (handles prefixing in instance mode)
           for (const item of items) {
-            await storageBackend.set(item);
+            await saveItem(item);
           }
 
           status.textContent = `Imported ${items.length} items. Reloading...`;

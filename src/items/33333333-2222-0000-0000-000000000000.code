@@ -1,13 +1,13 @@
 // kernel-storage module
 // See [Architecture Overview - Storage Architecture](item://a0a0a0a0-d0c0-4000-8000-000000000003#Storage-Architecture)
-// Delegates all storage operations to the backend provided by the bootloader.
-// The backend handles IndexedDB access and ID prefixing for nested instances.
+// Owns IndexedDB access and ID prefixing for nested instance isolation.
 
 // [BEGIN:Storage]
-/** Storage layer — delegates to the IndexedDB backend, with in-memory caching. */
+/** Storage layer — wraps IndexedDB with ID-prefix isolation and in-memory caching. */
 export class Storage {
-  constructor(backend) {
-    this.backend = backend;
+  constructor(db, instanceId) {
+    this._db = db;
+    this._instanceId = instanceId || null;
     this._cache = new Map();
     this._allCached = false;
   }
@@ -16,13 +16,85 @@ export class Storage {
    * @returns {string|null}
    */
   get instanceId() {
-    return this.backend.instanceId || null;
+    return this._instanceId;
   }
 
-  /** Initialize storage (no-op — backend is initialized by bootloader). */
+  /** Initialize storage (no-op — db is already open). */
   async initialize() {
-    // Backend is already initialized by the bootloader
+    // db is already open, passed from the bootloader
   }
+
+  // --- Private: ID prefixing for nested instance isolation ---
+
+  _prefixId(id) {
+    return this._instanceId ? `${this._instanceId}:${id}` : id;
+  }
+
+  _stripPrefix(id) {
+    if (!this._instanceId) return id;
+    const prefix = `${this._instanceId}:`;
+    return id.startsWith(prefix) ? id.slice(prefix.length) : id;
+  }
+
+  _stripItemPrefix(item) {
+    if (!this._instanceId || !item) return item;
+    return { ...item, id: this._stripPrefix(item.id) };
+  }
+
+  // --- Private: IndexedDB operations ---
+
+  _idbGet(id) {
+    const actualId = this._prefixId(id);
+    return new Promise((resolve, reject) => {
+      const tx = this._db.transaction('items', 'readonly');
+      const req = tx.objectStore('items').get(actualId);
+      req.onsuccess = () => resolve(this._stripItemPrefix(req.result));
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  _idbSet(item) {
+    const toStore = this._instanceId
+      ? { ...item, id: this._prefixId(item.id) }
+      : item;
+    return new Promise((resolve, reject) => {
+      const tx = this._db.transaction('items', 'readwrite');
+      const req = tx.objectStore('items').put(toStore);
+      req.onsuccess = () => resolve();
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  _idbDelete(id) {
+    const actualId = this._prefixId(id);
+    return new Promise((resolve, reject) => {
+      const tx = this._db.transaction('items', 'readwrite');
+      const req = tx.objectStore('items').delete(actualId);
+      req.onsuccess = () => resolve();
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  /** Fetch all items in this instance's namespace (with prefixes stripped). */
+  _idbGetAll() {
+    return new Promise((resolve, reject) => {
+      const tx = this._db.transaction('items', 'readonly');
+      const req = tx.objectStore('items').getAll();
+      req.onsuccess = () => {
+        let items = req.result;
+        if (this._instanceId) {
+          const prefix = `${this._instanceId}:`;
+          items = items
+            .filter(item => item.id.startsWith(prefix))
+            .map(item => this._stripItemPrefix(item));
+        }
+        resolve(items);
+      };
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  // --- Public API ---
 
   /** Retrieve an item by ID. Throws if not found.
    * @param {string} id - Item GUID
@@ -31,7 +103,7 @@ export class Storage {
   async get(id) {
     const cached = this._cache.get(id);
     if (cached) return cached;
-    const result = await this.backend.get(id);
+    const result = await this._idbGet(id);
     if (!result) {
       throw new Error(`Item not found: ${id}`);
     }
@@ -45,7 +117,7 @@ export class Storage {
    */
   async set(item, kernel) {
     await this._validateItem(item, kernel);
-    await this.backend.set(item);
+    await this._idbSet(item);
     this._cache.set(item.id, item);
   }
 
@@ -54,7 +126,7 @@ export class Storage {
    */
   async delete(id) {
     this._cache.delete(id);
-    return this.backend.delete(id);
+    return this._idbDelete(id);
   }
 
   /** Find items matching a filter object (key-value pairs matched against item fields).
@@ -63,7 +135,7 @@ export class Storage {
    */
   async query(filter) {
     if (this._allCached) {
-      // Match backend behavior: exclude nested instance items (have ':' in ID)
+      // Exclude nested instance items (have ':' in ID)
       const items = [];
       for (const item of this._cache.values()) {
         if (!item.id.includes(':')) items.push(item);
@@ -75,7 +147,13 @@ export class Storage {
         return true;
       });
     }
-    return this.backend.query(filter);
+    const allItems = await this.getAll();
+    return allItems.filter(item => {
+      for (const [key, value] of Object.entries(filter)) {
+        if (item[key] !== value) return false;
+      }
+      return true;
+    });
   }
 
   /** Get all items (excludes nested instance items). Populates cache on first call.
@@ -89,7 +167,9 @@ export class Storage {
       }
       return items;
     }
-    const items = await this.backend.getAll();
+    const allItems = await this._idbGetAll();
+    // Filter out nested instance items (items with ':' in their stripped ID)
+    const items = allItems.filter(item => !item.id.includes(':'));
     for (const item of items) {
       this._cache.set(item.id, item);
     }
@@ -101,10 +181,7 @@ export class Storage {
    * @returns {Promise<Object[]>}
    */
   async getAllRaw() {
-    if (this.backend.getAllRaw) {
-      return this.backend.getAllRaw();
-    }
-    return this.backend.getAll();
+    return this._idbGetAll();
   }
 
   /** Delete all items whose ID starts with a prefix.
