@@ -1233,12 +1233,18 @@ async function evaluate(ast, env, callStack) {
 async function evalDef(ast, env, callStack) {
   if (ast.length !== 3) throw hobError('def requires exactly 2 arguments (name value)', null, callStack, ast);
   const nameNode = ast[1];
-  if (!isSym(nameNode)) throw hobError('def first argument must be a symbol', null, callStack, ast);
   callStack.push({ name: 'def', expr: ast });
   try {
     const value = await evaluate(ast[2], env, callStack);
-    if (typeof value === 'function' && !value._hobName) value._hobName = nameNode;
-    env.define(nameNode, value);
+    if (isSym(nameNode)) {
+      if (typeof value === 'function' && !value._hobName) value._hobName = nameNode;
+      env.define(nameNode, value);
+    } else {
+      const bindings = await destructure(nameNode, value, env, callStack);
+      for (const [bindName, bindVal] of bindings) {
+        env.define(bindName, bindVal);
+      }
+    }
     return value;
   } finally { callStack.pop(); }
 }
