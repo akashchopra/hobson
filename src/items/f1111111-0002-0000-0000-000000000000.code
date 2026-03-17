@@ -21,6 +21,7 @@ export async function onKernelBootComplete({ safeMode, rootElement }, _api) {
   const { RenderingSystem } = await window.kernel.moduleSystem.require(VIEWPORT_RENDERING_ID);
   rendering = new RenderingSystem(window.kernel);
   rendering.rootElement = rootElement;
+  rootElement._renderingSystem = rendering;
 
   // Register popstate handler for browser back/forward
   // Use window-level guard that survives module re-evaluation after clearCache()
@@ -205,7 +206,7 @@ export async function navigate(itemId, params = {}) {
   });
 
   // Trigger re-render
-  await rendering.renderViewport();
+  await ensureRendering().renderViewport();
 }
 
 // Get current root (sync - reads from URL)
@@ -287,10 +288,16 @@ export async function hasPreviousView() {
   return !!child?.previousView;
 }
 
-// Get the rendering system instance
-// TODO: other callers should migrate to receiving capabilities via viewport:ready
-export function getRendering() {
+// Get the rendering system instance (recovers from DOM after cache clear)
+function ensureRendering() {
+  if (!rendering) {
+    rendering = document.getElementById('app')?._renderingSystem || null;
+  }
   return rendering;
+}
+
+export function getRendering() {
+  return ensureRendering();
 }
 
 // Force persist - no longer needed (writes happen immediately)
