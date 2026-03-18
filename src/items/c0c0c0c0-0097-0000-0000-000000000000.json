@@ -717,20 +717,11 @@
             [
               ":strong",
               {
-                "s": "Module cache invalidation is actively painful."
+                "s": "Module cache invalidation: remaining issues."
               }
             ],
             {
-              "s": " This is not hypothetical — it causes daily friction. Saving any code item triggers "
-            },
-            [
-              ":code",
-              {
-                "s": "clearCache()"
-              }
-            ],
-            {
-              "s": ", wiping the entire module cache. Investigation reveals three distinct problems:"
+              "s": " Global clearCache() has been replaced with per-item invalidation (only the changed module's cache entry is cleared on save). viewport-manager uses a lazy singleton pattern to reconstruct correctly after its own cache entry is cleared. Two issues remain:"
             }
           ]
         ],
@@ -741,40 +732,7 @@
             [
               ":strong",
               {
-                "s": "(a) viewport-manager loses state."
-              }
-            ],
-            {
-              "s": " After cache clear and re-evaluation, "
-            },
-            [
-              ":code",
-              {
-                "s": "let rendering = null"
-              }
-            ],
-            {
-              "s": " resets. Any module calling "
-            },
-            [
-              ":code",
-              {
-                "s": "getRendering()"
-              }
-            ],
-            {
-              "s": " gets null — breaking view-update-watcher (fires on every view save, exactly when clearCache runs), default-error-handler, related-items-view, and test-result-handler."
-            }
-          ]
-        ],
-        [
-          ":li",
-          [
-            ":p",
-            [
-              ":strong",
-              {
-                "s": "(b) Watcher items don't re-activate."
+                "s": "Watcher items don't re-activate."
               }
             ],
             {
@@ -816,20 +774,11 @@
             [
               ":strong",
               {
-                "s": "(c) Old side effects persist."
+                "s": "Old side effects persist."
               }
             ],
             {
               "s": " Event handlers registered on document/window by the old module instance keep running old code after cache clear. The new module's code never takes over. This is a module lifecycle problem — there's no cleanup hook called before a module is evicted from cache."
-            }
-          ]
-        ],
-        [
-          ":li",
-          [
-            ":p",
-            {
-              "s": "Proposed direction: the lazy singleton pattern. Modules that manage long-lived state export a class with a static GetSingletonInstance() method. The instance is created lazily on first call and cached on the class. After cache clear, the module is re-evaluated (fresh class, instance is null), and the next GetSingletonInstance() call constructs a new instance from the new code, initializing from current system state (DOM, URL, kernel API). No persistence mechanism needed — cache clear IS the invalidation, and reconstruction from new code happens naturally on next access. This needs to be explored for each affected module to see how well it generalises."
             }
           ]
         ],
@@ -944,7 +893,7 @@
               }
             ],
             {
-              "s": " — three distinct issues: (a) viewport-manager loses state on re-evaluation, breaking all getRendering() callers; (b) no late-activation for viewport:ready, so edited watcher items never re-initialize; (c) no module cleanup lifecycle, so old event handlers persist running stale code. Proposed approach: the lazy singleton pattern — modules export a class with GetSingletonInstance() that lazily creates/caches an instance. Cache clear wipes the class (and its cached instance), so the next call reconstructs from new code and current system state. No special persistence needed."
+              "s": " — per-item invalidation and viewport-manager lazy singleton are implemented. Two remaining issues: (1) no late-activation for viewport:ready, so edited watcher items never re-initialize (needs a generic sticky-event mechanism in the event bus); (2) no module cleanup lifecycle, so old event handlers on document/window persist running stale code after the module is re-evaluated."
             }
           ]
         ],
