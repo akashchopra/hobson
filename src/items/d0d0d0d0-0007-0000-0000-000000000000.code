@@ -138,6 +138,7 @@ export async function render(value, options, api) {
         });
         const insertIdx = i; // capture for closure
         gap.addEventListener('click', () => {
+          pushUndo();
           ast.splice(insertIdx, 0, [':p', { s: '' }]);
           renderAllBlocks();
           emitChange();
@@ -459,6 +460,7 @@ export async function render(value, options, api) {
           const childIdx = path[path.length - 1];
           if (childIdx > 0) {
             // Convert code block to paragraph with its text
+            pushUndo();
             const text = pre.textContent;
             setBlock(path, [':p', { s: text }]);
             renderAllBlocks();
@@ -719,6 +721,7 @@ export async function render(value, options, api) {
     }
 
     newInline = mergeAdjacentText(newInline);
+    pushUndo();
     setBlock(path, [block[0], ...(newInline.length ? newInline : [{ s: '' }])]);
     renderAllBlocks();
     emitChange();
@@ -803,6 +806,78 @@ export async function render(value, options, api) {
   }
 
   // --- Autocomplete ---
+
+  // --- Structural undo/redo ---
+
+  const undoStack = [];
+  const redoStack = [];
+  let _inlineCheckpointNeeded = false; // set after structural ops; cleared on first inline edit
+
+  function getCursorState() {
+    const sel = editor.ownerDocument.defaultView.getSelection();
+    if (!sel.rangeCount || !sel.isCollapsed) return null;
+    let node = sel.anchorNode;
+    if (!node) return null;
+    const blockEl = node.nodeType === 1
+      ? node.closest?.('[data-block-path]')
+      : node.parentElement?.closest?.('[data-block-path]');
+    if (!blockEl || !editor.contains(blockEl)) return null;
+    const path = parsePath(blockEl.dataset.blockPath);
+    const range = sel.getRangeAt(0);
+    const preRange = document.createRange();
+    preRange.setStart(blockEl, 0);
+    preRange.setEnd(range.startContainer, range.startOffset);
+    const offset = preRange.toString().replace(/\u200B/g, '').length;
+    return { path, offset };
+  }
+
+  function _pushSnapshot() {
+    const snapshot = JSON.stringify(ast);
+    if (undoStack.length > 0 && undoStack[undoStack.length - 1].snapshot === snapshot) return;
+    undoStack.push({ snapshot, cursor: getCursorState() });
+    if (undoStack.length > 100) undoStack.shift();
+  }
+
+  function pushUndo() {
+    _pushSnapshot();
+    redoStack.length = 0;
+    _inlineCheckpointNeeded = true;
+  }
+
+  function inlineCheckpoint() {
+    // Capture post-structural state so inline edits get their own undo entry
+    if (!_inlineCheckpointNeeded) return;
+    _pushSnapshot();
+    _inlineCheckpointNeeded = false;
+  }
+
+  function performUndo() {
+    if (undoStack.length === 0) return false;
+    _inlineCheckpointNeeded = false;
+    redoStack.push({ snapshot: JSON.stringify(ast), cursor: getCursorState() });
+    const entry = undoStack.pop();
+    ast = JSON.parse(entry.snapshot);
+    renderAllBlocks();
+    emitChange();
+    if (entry.cursor) {
+      requestAnimationFrame(() => focusBlockAtOffset(entry.cursor.path, entry.cursor.offset));
+    }
+    return true;
+  }
+
+  function performRedo() {
+    if (redoStack.length === 0) return false;
+    _inlineCheckpointNeeded = false;
+    undoStack.push({ snapshot: JSON.stringify(ast), cursor: getCursorState() });
+    const entry = redoStack.pop();
+    ast = JSON.parse(entry.snapshot);
+    renderAllBlocks();
+    emitChange();
+    if (entry.cursor) {
+      requestAnimationFrame(() => focusBlockAtOffset(entry.cursor.path, entry.cursor.offset));
+    }
+    return true;
+  }
 
   let ac = null; // { type: 'item'|'field'|'transclusion', step?, targetItem?, blockEl, path, anchorNode, anchorOffset, query, results, active }
   let _acInserting = false; // Guard: suppress handleInput during autocomplete DOM mutations
@@ -1572,6 +1647,7 @@ export async function render(value, options, api) {
     // # through ###### → heading
     const headingMatch = /^#{1,6}$/.exec(before);
     if (headingMatch) {
+      pushUndo();
       const level = headingMatch[0].length;
       setBlock(path, [':h' + level, ...stripPrefix(level)]);
       renderAllBlocks();
@@ -1582,6 +1658,7 @@ export async function render(value, options, api) {
 
     // ||| → table (2 columns, header + 1 body row)
     if (before === '|||') {
+      pushUndo();
       setBlock(path, [':table',
         [':thead', [':tr', [':th', { s: '' }], [':th', { s: '' }]]],
         [':tbody', [':tr', [':td', { s: '' }], [':td', { s: '' }]]]
@@ -1596,6 +1673,7 @@ export async function render(value, options, api) {
 
     // >>> → eval block (Hob expression wrapped in implicit do)
     if (before === '>>>') {
+      pushUndo();
       setBlock(path, ["do", null]); // do block with nil hole — structural editor shows body
       renderAllBlocks();
       emitChange();
@@ -1604,6 +1682,7 @@ export async function render(value, options, api) {
 
     // > → blockquote
     if (before === '>') {
+      pushUndo();
       const content = stripPrefix(1);
       setBlock(path, [':blockquote', [':p', ...content]]);
       renderAllBlocks();
@@ -1615,6 +1694,7 @@ export async function render(value, options, api) {
 
     // - or * or + → unordered list
     if (before === '-' || before === '*' || before === '+') {
+      pushUndo();
       // Make sure it's not --- (hr shortcut, handled on Enter)
       const content = stripPrefix(1);
       setBlock(path, [':ul', [':li', [':p', ...content]]]);
@@ -1628,6 +1708,7 @@ export async function render(value, options, api) {
     // 1. → ordered list
     const olMatch = /^\d+\.$/.exec(before);
     if (olMatch) {
+      pushUndo();
       const content = stripPrefix(olMatch[0].length);
       setBlock(path, [':ol', [':li', [':p', ...content]]]);
       renderAllBlocks();
@@ -1650,6 +1731,7 @@ export async function render(value, options, api) {
 
     // --- or *** or ___ → horizontal rule
     if (/^-{3,}$|^\*{3,}$|^_{3,}$/.test(text)) {
+      pushUndo();
       setBlock(path, [':hr']);
       // Insert an empty paragraph after the hr
       const parent = getParent(path);
@@ -1666,6 +1748,7 @@ export async function render(value, options, api) {
 
   function handleInput(blockEl, path) {
     if (_acInserting) return;
+    inlineCheckpoint();
     const inlineAst = domToInlineAst(blockEl);
     const block = getBlock(path);
     const blockTag = block[0];
@@ -1698,11 +1781,14 @@ export async function render(value, options, api) {
       if (e.key === 'Delete' && !e.shiftKey && !e.metaKey && !e.ctrlKey && isCursorAtEnd(blockEl)) { e.preventDefault(); return; }
       if ((e.ctrlKey || e.metaKey) && !e.altKey) {
         if (!e.shiftKey) {
-          if (e.key === 'b' || e.key === 'B') { e.preventDefault(); e.stopPropagation(); document.execCommand('bold', false, null); handleInput(blockEl, path); }
+          if (e.key === 'z' || e.key === 'Z') { if (undoStack.length > 0) { e.preventDefault(); e.stopPropagation(); performUndo(); } }
+          else if (e.key === 'y' || e.key === 'Y') { if (redoStack.length > 0) { e.preventDefault(); e.stopPropagation(); performRedo(); } }
+          else if (e.key === 'b' || e.key === 'B') { e.preventDefault(); e.stopPropagation(); document.execCommand('bold', false, null); handleInput(blockEl, path); }
           else if (e.key === 'i' || e.key === 'I') { e.preventDefault(); e.stopPropagation(); document.execCommand('italic', false, null); handleInput(blockEl, path); }
           else if (e.key === 'e' || e.key === 'E') { e.preventDefault(); e.stopPropagation(); applyInlineWrap(blockEl, path, 'code'); }
         } else {
-          if (e.key === 'x' || e.key === 'X') { e.preventDefault(); e.stopPropagation(); applyInlineWrap(blockEl, path, 'del'); }
+          if (e.key === 'z' || e.key === 'Z') { if (redoStack.length > 0) { e.preventDefault(); e.stopPropagation(); performRedo(); } }
+          else if (e.key === 'x' || e.key === 'X') { e.preventDefault(); e.stopPropagation(); applyInlineWrap(blockEl, path, 'del'); }
           else if (e.key === 'h' || e.key === 'H') { e.preventDefault(); e.stopPropagation(); applyInlineWrap(blockEl, path, 'mark'); }
         }
       }
@@ -1746,6 +1832,7 @@ export async function render(value, options, api) {
           } else if (!isEditableBlock(prevBlock)) {
             // Delete previous non-editable block (hr, eval, code-block)
             e.preventDefault();
+            pushUndo();
             const parent = getParent(path);
             parent.splice(childIdx, 1); // remove previous block (childIdx = prevBlock's AST position + 1)
             renderAllBlocks();
@@ -1755,6 +1842,7 @@ export async function render(value, options, api) {
         } else if (path.length === 1 && blockTag && blockTag !== ':p' && isLeafBlock(blockTag)) {
           // Top-level heading → convert to paragraph
           e.preventDefault();
+          pushUndo();
           block[0] = ':p';
           renderAllBlocks();
           emitChange();
@@ -1780,6 +1868,7 @@ export async function render(value, options, api) {
           } else if (!isEditableBlock(nextBlock)) {
             // Delete next non-editable block (hr, eval, code-block)
             e.preventDefault();
+            pushUndo();
             parent.splice(nextIdx + 1, 1);
             renderAllBlocks();
             emitChange();
@@ -1797,7 +1886,11 @@ export async function render(value, options, api) {
       }
     } else if ((e.ctrlKey || e.metaKey) && !e.altKey) {
       if (!e.shiftKey) {
-        if (e.key === 'b' || e.key === 'B') {
+        if (e.key === 'z' || e.key === 'Z') {
+          if (undoStack.length > 0) { e.preventDefault(); e.stopPropagation(); performUndo(); }
+        } else if (e.key === 'y' || e.key === 'Y') {
+          if (redoStack.length > 0) { e.preventDefault(); e.stopPropagation(); performRedo(); }
+        } else if (e.key === 'b' || e.key === 'B') {
           e.preventDefault(); e.stopPropagation();
           document.execCommand('bold', false, null);
           handleInput(blockEl, path);
@@ -1810,7 +1903,9 @@ export async function render(value, options, api) {
           applyInlineWrap(blockEl, path, 'code');
         }
       } else {
-        if (e.key === 'x' || e.key === 'X') {
+        if (e.key === 'z' || e.key === 'Z') {
+          if (redoStack.length > 0) { e.preventDefault(); e.stopPropagation(); performRedo(); }
+        } else if (e.key === 'x' || e.key === 'X') {
           e.preventDefault(); e.stopPropagation();
           applyInlineWrap(blockEl, path, 'del');
         } else if (e.key === 'h' || e.key === 'H') {
@@ -1844,6 +1939,7 @@ export async function render(value, options, api) {
   }
 
   function splitBlock(blockEl, path) {
+    pushUndo();
     const sel = blockEl.ownerDocument.defaultView.getSelection();
     if (!sel.rangeCount) return;
     const range = sel.getRangeAt(0);
@@ -1898,6 +1994,7 @@ export async function render(value, options, api) {
   }
 
   function mergeWithPrevious(blockEl, path) {
+    pushUndo();
     const childIdx = path[path.length - 1];
     if (childIdx === 0) return;
 
@@ -1933,6 +2030,7 @@ export async function render(value, options, api) {
   }
 
   function mergeWithNext(blockEl, path) {
+    pushUndo();
     const parent = getParent(path);
     const childIdx = path[path.length - 1];
     const nextIdx = childIdx + 1;
@@ -1968,6 +2066,7 @@ export async function render(value, options, api) {
   }
 
   function mergeIntoPrecedingList(blockEl, path, listPath, list) {
+    pushUndo();
     // Find last :li in the list
     let lastLiIdx = -1;
     for (let i = list.length - 1; i >= 1; i--) {
@@ -2024,6 +2123,7 @@ export async function render(value, options, api) {
   }
 
   function handleListEnter(blockEl, path, ctx) {
+    pushUndo();
     const block = getBlock(path);
     const inlineContent = domToInlineAst(blockEl);
     const isEmpty = inlineContent.length === 0 ||
@@ -2124,6 +2224,7 @@ export async function render(value, options, api) {
   }
 
   function handleListBackspace(blockEl, path, ctx) {
+    pushUndo();
     if (ctx.liIdx === 0) {
       // First :li — lift out of list
       const currBlock = getBlock(path);
@@ -2161,6 +2262,7 @@ export async function render(value, options, api) {
 
   function handleListIndent(path, ctx) {
     if (ctx.liIdx === 0) return; // Can't indent the first item
+    pushUndo();
 
     // Remove current :li from list
     const currentLi = ctx.list.splice(ctx.liIdx + 1, 1)[0];
@@ -2190,6 +2292,7 @@ export async function render(value, options, api) {
   }
 
   function handleListOutdent(path, ctx) {
+    pushUndo();
     // Check if nested list (list is inside a :li inside another list)
     if (ctx.listPath.length >= 2) {
       const outerLiPath = ctx.listPath.slice(0, -1);
@@ -2227,6 +2330,7 @@ export async function render(value, options, api) {
   }
 
   function handleListDelete(blockEl, path, ctx) {
+    pushUndo();
     // Only applies at end of last leaf block in :li when there's a next :li
     for (let i = ctx.pIdx + 2; i < ctx.li.length; i++) {
       if (isLeafBlock(tagOf(ctx.li[i]))) return false; // next leaf sibling exists — default handler
@@ -2292,6 +2396,7 @@ export async function render(value, options, api) {
       focusBlock(editablePaths[nextIdx], 0);
     } else if (!shiftTab) {
       // Past last editable — insert paragraph after the table
+      pushUndo();
       const tableParent = getParent(tableCtx.tablePath);
       const tableChildIdx = tableCtx.tablePath[tableCtx.tablePath.length - 1];
       tableParent.splice(tableChildIdx + 2, 0, [':p', { s: '' }]);
@@ -2375,6 +2480,7 @@ export async function render(value, options, api) {
   }
 
   function tableInsertRow(tableCtx, offset) {
+    pushUndo();
     // offset: 0 = above current row, 1 = below
     const { section, rowIdx, cellIdx, tablePath } = tableCtx;
     const cols = tableColCount(tableCtx.table);
@@ -2445,6 +2551,7 @@ export async function render(value, options, api) {
   }
 
   function tableDeleteRow(tableCtx) {
+    pushUndo();
     const { section, rowIdx, cellIdx, table, tablePath } = tableCtx;
     // Don't delete the last row in the entire table
     const totalRows = tableGetSections(table).reduce((n, s) => n + s.node.length - 1, 0);
@@ -2465,6 +2572,7 @@ export async function render(value, options, api) {
   }
 
   function tableInsertCol(tableCtx, offset) {
+    pushUndo();
     // offset: 0 = left of current col, 1 = right
     const { cellIdx, table } = tableCtx;
     const insertAt = cellIdx + offset;
@@ -2489,6 +2597,7 @@ export async function render(value, options, api) {
   }
 
   function tableDeleteCol(tableCtx) {
+    pushUndo();
     const { cellIdx, table } = tableCtx;
     const cols = tableColCount(table);
     if (cols <= 1) {
@@ -2515,6 +2624,7 @@ export async function render(value, options, api) {
   }
 
   function tableCycleAlign(tableCtx) {
+    pushUndo();
     const { cellIdx, table } = tableCtx;
     const cols = tableColCount(table);
     const aligns = tableGetAligns(table);
@@ -2528,6 +2638,7 @@ export async function render(value, options, api) {
   }
 
   function tableDelete(tableCtx) {
+    pushUndo();
     const { tablePath } = tableCtx;
     setBlock(tablePath, [':p', { s: '' }]);
     renderAllBlocks();
@@ -2693,6 +2804,8 @@ export async function render(value, options, api) {
       ['Delete',       'Merge with next'],
       ['Tab',          'Indent list item'],
       ['⇧Tab',        'Outdent list item'],
+      ['Ctrl+Z',       'Undo structural change'],
+      ['Ctrl+⇧Z',     'Redo structural change'],
     ]},
     { title: 'Markdown Shortcuts', rows: [
       ['# + Space',    'Heading (1\u20136)'],
@@ -2813,6 +2926,28 @@ export async function render(value, options, api) {
         e.preventDefault();
         e.stopPropagation();
         showDocHelp();
+        return;
+      }
+      // Structural undo: Ctrl+Z (only when stack is non-empty; otherwise browser handles inline undo)
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && (e.key === 'z' || e.key === 'Z')) {
+        if (undoStack.length > 0) {
+          e.preventDefault();
+          e.stopPropagation();
+          performUndo();
+        }
+        return;
+      }
+      // Structural redo: Ctrl+Shift+Z or Ctrl+Y
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && (
+        (e.shiftKey && (e.key === 'z' || e.key === 'Z')) ||
+        (!e.shiftKey && (e.key === 'y' || e.key === 'Y'))
+      )) {
+        if (redoStack.length > 0) {
+          e.preventDefault();
+          e.stopPropagation();
+          performRedo();
+        }
+        return;
       }
     });
     editor.addEventListener('click', (e) => {
