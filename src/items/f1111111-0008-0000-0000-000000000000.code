@@ -1242,30 +1242,20 @@ export class RenderingSystem {
     // at top level, compact-card in a search result). Only an exact pair match
     // indicates true recursion.
     const ancestors = context.ancestors || new Set();
-    const pairKey = viewId ? `${itemId}:${viewId}` : null;
-    const isCycle = pairKey
-      ? (renderPath.includes(pairKey) || ancestors.has(pairKey))
-      : // viewId unknown: conservative check — any pair with this itemId
-        (renderPath.some(k => k.startsWith(itemId + ':')) ||
-         [...ancestors].some(k => k.startsWith(itemId + ':')));
-    if (isCycle) {
-      if (options.onCycle) {
+
+    // When viewId is known upfront, check for cycles immediately.
+    // When viewId is null, defer cycle check until after view resolution
+    // so we can try findView as a fallback before giving up.
+    if (viewId) {
+      const pairKey = `${itemId}:${viewId}`;
+      if (renderPath.includes(pairKey) || ancestors.has(pairKey)) {
+        if (options.onCycle) {
+          const item = await this.kernel.storage.get(itemId);
+          return options.onCycle(item);
+        }
         const item = await this.kernel.storage.get(itemId);
-        return options.onCycle(item);
+        return this._cyclePlaceholder(itemId, item, context);
       }
-      // No onCycle handler — produce a default cycle placeholder.
-      // With :render-child, cycles can be detected at any nesting level
-      // (sortable-list rendering a child that's also an ancestor), so
-      // a graceful fallback is always needed.
-      const item = await this.kernel.storage.get(itemId);
-      const name = item?.name || itemId.slice(0, 8);
-      const el = document.createElement('div');
-      el.style.cssText = 'padding:12px; color:var(--color-text-tertiary); font-style:italic; border:1px dashed var(--color-border); border-radius:var(--border-radius); background:var(--color-bg-surface-alt); text-align:center;';
-      el.textContent = `↻ ${name} (already shown above)`;
-      // Set data attributes so context menu can target this item for "View As..."
-      el.setAttribute('data-item-id', itemId);
-      if (context.parentId) el.setAttribute('data-parent-id', context.parentId);
-      return el;
     }
 
     const item = await this.kernel.storage.get(itemId);
@@ -1278,6 +1268,24 @@ export class RenderingSystem {
     } else {
       // Use preference hierarchy: item.preferredView → type.preferredView → type chain
       view = await this.resolveView(item);
+
+      // If resolved view would cycle, try for_type chain as fallback.
+      // This handles e.g. workspace items whose type prefers spatial-canvas-view:
+      // resolveView returns spatial-canvas (cycle), findView finds workspace-view.
+      let pairKey = `${itemId}:${view.id}`;
+      if (renderPath.includes(pairKey) || ancestors.has(pairKey)) {
+        const altView = await this.findView(item.type);
+        if (altView.id !== view.id) {
+          view = altView;
+          pairKey = `${itemId}:${view.id}`;
+        }
+      }
+
+      // Final cycle check after fallback — genuine cycle, no alternative view available
+      if (renderPath.includes(pairKey) || ancestors.has(pairKey)) {
+        if (options.onCycle) return options.onCycle(item);
+        return this._cyclePlaceholder(itemId, item, context);
+      }
     }
 
     // Build new context with updated render path
@@ -1425,6 +1433,17 @@ export class RenderingSystem {
       }
     }
     return domNode;
+  }
+
+  /** Produce a default cycle placeholder element. */
+  _cyclePlaceholder(itemId, item, context) {
+    const name = item?.name || itemId.slice(0, 8);
+    const el = document.createElement('div');
+    el.style.cssText = 'padding:12px; color:var(--color-text-tertiary); font-style:italic; border:1px dashed var(--color-border); border-radius:var(--border-radius); background:var(--color-bg-surface-alt); text-align:center;';
+    el.textContent = `↻ ${name} (already shown above)`;
+    el.setAttribute('data-item-id', itemId);
+    if (context.parentId) el.setAttribute('data-parent-id', context.parentId);
+    return el;
   }
 
   /** Resolve a view using the preference hierarchy: item.preferredView → type.preferredView → type chain.
