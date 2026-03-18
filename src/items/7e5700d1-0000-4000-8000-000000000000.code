@@ -1,0 +1,117 @@
+(defn render [item api]
+  (def result-type-id "7e5700a0-0000-4000-8000-000000000000")
+  (def all-items (get-all))
+  (def
+    results
+    (->>
+      all-items
+      (filter (fn [i] (= (:type i) result-type-id)))
+      (sort-by (fn [i] (- (or (:created i) 0))))))
+  (def result-count (count results))
+  (def auto-enabled (not= (:autoRunEnabled (:content item)) false))
+  (def s-container "max-width: 800px; margin: 0 auto; padding: 20px;")
+  (def
+    s-header
+    "display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; padding-bottom: 15px; border-bottom: 2px solid var(--color-border-light);")
+  (def s-title "margin: 0; font-size: 1.25rem;")
+  (def
+    s-count
+    "font-size: 0.875rem; color: var(--color-text-secondary); margin-top: 4px;")
+  (def s-btn-group "display: flex; gap: 8px;")
+  (def
+    s-btn-refresh
+    "padding: 8px 16px; background: var(--color-bg-hover); color: var(--color-text); border: none; border-radius: var(--border-radius); cursor: pointer; font-size: 0.875rem;")
+  (def
+    s-btn-clear
+    "padding: 8px 16px; background: var(--color-danger); color: white; border: none; border-radius: var(--border-radius); cursor: pointer; font-size: 0.875rem;")
+  (def
+    s-btn-toggle-on
+    "padding: 8px 16px; background: var(--color-success, #22c55e); color: white; border: none; border-radius: var(--border-radius); cursor: pointer; font-size: 0.875rem;")
+  (def
+    s-btn-toggle-off
+    "padding: 8px 16px; background: var(--color-text-secondary, #6b7280); color: white; border: none; border-radius: var(--border-radius); cursor: pointer; font-size: 0.875rem;")
+  (def
+    s-empty
+    "padding: 40px; text-align: center; color: var(--color-text-secondary); font-style: italic;")
+  (def
+    s-row
+    "display: flex; align-items: center; gap: 10px; padding: 8px 12px; margin-bottom: 2px; border-radius: var(--border-radius); cursor: pointer; font-size: 0.875rem;")
+  (def s-row-pass "background: var(--color-success-light, #e8f5e9);")
+  (def s-row-fail "background: var(--color-danger-light, #fef2f2);")
+  (def
+    s-indicator
+    "width: 20px; text-align: center; flex-shrink: 0; font-weight: 600;")
+  (def s-counts "font-weight: 500; min-width: 80px;")
+  (def
+    s-trigger
+    "color: var(--color-text-secondary); font-size: 0.8125rem; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;")
+  (def
+    s-time
+    "color: var(--color-text-secondary); font-size: 0.75rem; flex-shrink: 0;")
+  [:div {:style s-container}
+    [:div {:style s-header}
+      [:div {}
+        [:h2 {:style s-title} (or (:name item) "Test Run History")]
+        [:div {:style s-count}
+          (if
+            (= result-count 0)
+            "No test runs"
+            (str result-count " run" (when (not= result-count 1) "s")))]]
+      [:div {:style s-btn-group}
+        [:button {:style (if auto-enabled s-btn-toggle-on s-btn-toggle-off)
+                  :on-click (fn [e]
+                              (do
+                                (def fresh (get-item (:id item)))
+                                (def
+                                  new-val
+                                  (= (:autoRunEnabled (:content fresh)) false))
+                                (set-item!
+                                  (assoc-in
+                                    fresh
+                                    [:content :autoRunEnabled]
+                                    new-val))))}
+          (if auto-enabled "Auto-Run: On" "Auto-Run: Off")]
+        [:button {:style s-btn-refresh :on-click (fn [e] (rerender!))}
+          "Refresh"]
+        (when
+          (> result-count 0)
+          [:button {:style s-btn-clear
+                    :on-click (fn [e]
+                                (when
+                                  (confirm
+                                    (str
+                                      "Delete "
+                                      result-count
+                                      " result"
+                                      (when (not= result-count 1) "s")
+                                      "?"))
+                                  (doseq [r results] (delete-item! (:id r)))
+                                  (rerender!)))}
+            "Clear All"])]]
+    (if
+      (= result-count 0)
+      [:div {:style s-empty} "No test runs yet"]
+      (for [r results]
+        (let [c (:content r)
+              passed (or (:totalPassed c) 0)
+              failed (or (:totalFailed c) 0)
+              total (+ passed failed)
+              all-passed (= failed 0)
+              trigger (:trigger c)
+              trigger-label (if
+                              trigger
+                              (or (:name trigger) (subs (:id trigger) 0 8))
+                              "boot")]
+          [:div {:style (str s-row (if all-passed s-row-pass s-row-fail))
+                 :on-click (fn [e] (open-item! e (:id r)))}
+            [:span {:style (str
+                             s-indicator
+                             (if
+                               all-passed
+                               " color: var(--color-success, #22c55e);"
+                               " color: var(--color-danger, #ef4444);"))}
+
+              (if all-passed "✓" "✗")]
+            [:span {:style s-counts} (str passed "/" total)]
+            [:span {:style s-trigger} trigger-label]
+            [:span {:style s-time} (format-date (:created r))]])))])
