@@ -1122,9 +1122,12 @@ export async function loadKernel(require, db, instanceId) {
       // Emit deletion event — await so cascade-delete watchers complete before re-render
       await this.events.emitAsync({ type: EVENT_IDS.ITEM_DELETED, content: { id: itemId, item } });
 
-      // Clear module cache only if this was a code item
+      // Targeted cache invalidation for deleted code items
       if (await this.isCodeItem(item)) {
-        this.moduleSystem.clearCache();
+        this.moduleSystem.moduleCache.delete(itemId);
+        for (const [name, cachedId] of this.moduleSystem.nameCache) {
+          if (cachedId === itemId) { this.moduleSystem.nameCache.delete(name); break; }
+        }
       }
       // Reactivity handles re-render via ITEM_DELETED event
     }
@@ -1167,10 +1170,8 @@ export async function loadKernel(require, db, instanceId) {
         this.watcherIndex.delete(item.id);
       }
 
-      // Clear module cache if this is a code item (ensures fresh code on next require)
-      if (await this.isCodeItem(item)) {
-        this.moduleSystem.clearCache();
-      }
+      // Per-item cache invalidation happens via ITEM_UPDATED event handler
+      // in moduleSystem.initEventListeners() — no global clearCache needed.
 
       if (!silent) {
         if (exists) {
