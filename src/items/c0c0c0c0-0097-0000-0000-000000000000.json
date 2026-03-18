@@ -721,14 +721,115 @@
               }
             ],
             {
-              "s": " This is not hypothetical — it causes daily friction. "
+              "s": " This is not hypothetical — it causes daily friction. Saving any code item triggers "
             },
             [
-              ":item-ref",
-              "c0c0c0c0-0096-0000-0000-000000000000"
+              ":code",
+              {
+                "s": "clearCache()"
+              }
             ],
             {
-              "s": " documents the root cause and the \"Bob pattern\" fix: saving any code item triggers clearCache(), and any module with state in module-scoped variables (viewport-manager, selection-manager, related-items-lib) loses that state. Keyboard shortcuts silently break, the related-items widget goes stale, selection state is lost. The globalThis workaround and viewport:ready event migration are partial fixes, but several items still need migration (test-runner-service, test-run-result-list-view, error-list handler). The deeper question — targeted cache invalidation vs. full clear — remains open. This directly undermines the \"edit code, see changes immediately\" workflow that is the Smalltalk soul of the system."
+              "s": ", wiping the entire module cache. Investigation reveals three distinct problems:"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "(a) viewport-manager loses state."
+              }
+            ],
+            {
+              "s": " After cache clear and re-evaluation, "
+            },
+            [
+              ":code",
+              {
+                "s": "let rendering = null"
+              }
+            ],
+            {
+              "s": " resets. Any module calling "
+            },
+            [
+              ":code",
+              {
+                "s": "getRendering()"
+              }
+            ],
+            {
+              "s": " gets null — breaking view-update-watcher (fires on every view save, exactly when clearCache runs), default-error-handler, related-items-view, and test-result-handler."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "(b) Watcher items don't re-activate."
+              }
+            ],
+            {
+              "s": " Editing a module that watches "
+            },
+            [
+              ":code",
+              {
+                "s": "viewport:ready"
+              }
+            ],
+            {
+              "s": " doesn't re-fire the event — the new code never initializes. "
+            },
+            [
+              ":code",
+              {
+                "s": "kernel:boot-complete"
+              }
+            ],
+            {
+              "s": " has late-activation (hardcoded in saveItem), but "
+            },
+            [
+              ":code",
+              {
+                "s": "viewport:ready"
+              }
+            ],
+            {
+              "s": " does not. A generic sticky-event mechanism in the event bus would fix this without leaking viewport knowledge into the kernel."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "(c) Old side effects persist."
+              }
+            ],
+            {
+              "s": " Event handlers registered on document/window by the old module instance keep running old code after cache clear. The new module's code never takes over. This is a module lifecycle problem — there's no cleanup hook called before a module is evicted from cache."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Previous analysis proposed DOM recovery and globalThis workarounds. These bypass cache invalidation rather than working with it — if the changed code affects the cached dependency, you get stale behavior. The right direction is ensuring modules initialize correctly on load, regardless of whether they're loaded at boot or after a cache clear. This directly undermines the \"edit code, see changes immediately\" workflow that is the Smalltalk soul of the system."
             }
           ]
         ],
@@ -843,7 +944,7 @@
               }
             ],
             {
-              "s": " — finish the viewport:ready migration for remaining items, and investigate targeted cache invalidation vs. full clear. The \"edit code, see changes immediately\" workflow is the Smalltalk soul of the system; every silent breakage after a code save undermines it."
+              "s": " — three distinct issues: (a) viewport-manager loses state on re-evaluation, breaking all getRendering() callers; (b) no late-activation for viewport:ready, so edited watcher items never re-initialize; (c) no module cleanup lifecycle, so old event handlers persist running stale code. The root fix is ensuring modules initialize correctly on load, not bypassing cache invalidation with DOM recovery or globalThis workarounds."
             }
           ]
         ],
