@@ -1,166 +1,166 @@
 // Keyboard Shortcuts Library
-// Registers global keyboard shortcuts, initialized by viewport:ready
+// Registers global keyboard shortcuts, initialized by viewport:ready.
+// Capabilities obtained via require() at runtime (not captured closures).
 
 let api = null;
-let getViews = null;
-let createElement = null;
-let navigate = null;
 
 export async function onViewportReady(event, _api) {
   api = _api;
-  getViews = event.getViews;
-  createElement = event.createElement;
-  navigate = event.navigate;
 
-  // Register keyboard handler (only if not already registered)
-  if (!window._userKeyboardHandler) {
-    window._userKeyboardHandler = async (e) => {
-      // Cmd/Ctrl+Shift+? - Help dialog
-      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === '?') {
-        e.preventDefault();
-        try {
-          const helpDialog = await api.require('help-dialog');
-          helpDialog.show();
-        } catch (err) {
-          console.warn('help-dialog not available:', err.message);
-        }
+  // Clean up old handler before registering new one (supports re-activation after edit)
+  cleanup();
+
+  window._userKeyboardHandler = async (e) => {
+    // Cmd/Ctrl+Shift+? - Help dialog
+    if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === '?') {
+      e.preventDefault();
+      try {
+        const helpDialog = await api.require('help-dialog');
+        helpDialog.show();
+      } catch (err) {
+        console.warn('help-dialog not available:', err.message);
       }
-      // Ctrl+E - Edit selected item
-      if (e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey && e.key === 'e') {
-        // Don't steal from text inputs
-        const tag = document.activeElement?.tagName;
-        if (tag === 'INPUT' || tag === 'TEXTAREA' || document.activeElement?.isContentEditable) return;
+    }
+    // Ctrl+E - Edit selected item
+    if (e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey && e.key === 'e') {
+      const tag = document.activeElement?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || document.activeElement?.isContentEditable) return;
 
-        const selMgr = await api.require('selection-manager');
-        const selectedId = selMgr.getSelection();
-        if (!selectedId) return;
+      const selMgr = await api.require('selection-manager');
+      const selectedId = selMgr.getSelection();
+      if (!selectedId) return;
 
-        e.preventDefault();
+      e.preventDefault();
 
-        const parentId = selMgr.getSelectionParent();
+      const parentId = selMgr.getSelectionParent();
 
-        try {
-          const ctxLib = await api.require('context-menu-lib');
-          const item = await api.get(selectedId);
-          const enrichedApi = { ...api, getViews };
-          const editView = await ctxLib.findEditableView(enrichedApi, item.type);
-          if (!editView) return;
+      try {
+        const vpMgr = await api.require('viewport-manager');
+        const rendering = vpMgr.getRendering();
+        const ctxLib = await api.require('context-menu-lib');
+        const item = await api.get(selectedId);
+        const enrichedApi = { ...api, getViews: (typeId) => rendering.getViews(typeId) };
+        const editView = await ctxLib.findEditableView(enrichedApi, item.type);
+        if (!editView) return;
 
-          if (parentId) {
-            // Inline setAttachmentView: update parent's attachment spec
-            const parent = await api.get(parentId);
-            const idx = parent.attachments.findIndex(c => c.id === selectedId);
-            if (idx >= 0) {
-              const child = parent.attachments[idx];
-              parent.attachments = [...parent.attachments];
-              parent.attachments[idx] = {
-                ...child,
-                previousView: child.view ? { ...child.view } : null,
-                view: { ...(child.view || {}), type: editView.id }
-              };
-              await api.set(parent); // triggers reactive re-render
-            }
-          } else {
-            // Root item — navigate with view override to change view and re-render
-            const rootId = new URLSearchParams(window.location.search).get('root');
-            await navigate(rootId, { view: editView.id });
+        if (parentId) {
+          const parent = await api.get(parentId);
+          const idx = parent.attachments.findIndex(c => c.id === selectedId);
+          if (idx >= 0) {
+            const child = parent.attachments[idx];
+            parent.attachments = [...parent.attachments];
+            parent.attachments[idx] = {
+              ...child,
+              previousView: child.view ? { ...child.view } : null,
+              view: { ...(child.view || {}), type: editView.id }
+            };
+            await api.set(parent);
           }
-        } catch (err) {
-          console.warn('Ctrl+E edit failed:', err.message);
+        } else {
+          const rootId = new URLSearchParams(window.location.search).get('root');
+          await vpMgr.navigate(rootId, { view: editView.id });
         }
+      } catch (err) {
+        console.warn('Ctrl+E edit failed:', err.message);
       }
+    }
 
-      // Ctrl+Shift+N - New child item on spatial canvas
-      if (e.ctrlKey && !e.metaKey && e.shiftKey && !e.altKey && e.key === 'N') {
-        const tag = document.activeElement?.tagName;
-        if (tag === 'INPUT' || tag === 'TEXTAREA' || document.activeElement?.isContentEditable) return;
+    // Ctrl+Shift+N - New child item on spatial canvas
+    if (e.ctrlKey && !e.metaKey && e.shiftKey && !e.altKey && e.key === 'N') {
+      const tag = document.activeElement?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || document.activeElement?.isContentEditable) return;
 
-        const rootId = new URLSearchParams(window.location.search).get('root');
-        if (!rootId || !document.querySelector(`[data-container-id="${rootId}"]`)) return;
+      const rootId = new URLSearchParams(window.location.search).get('root');
+      if (!rootId || !document.querySelector(`[data-container-id="${rootId}"]`)) return;
 
-        e.preventDefault();
+      e.preventDefault();
 
-        try {
-          const typePicker = await api.require('type-picker-lib');
-          const ctxLib = await api.require('context-menu-lib');
-          const enrichedApi = { ...api, getViews, createElement };
+      try {
+        const vpMgr = await api.require('viewport-manager');
+        const rendering = vpMgr.getRendering();
+        const typePicker = await api.require('type-picker-lib');
+        const ctxLib = await api.require('context-menu-lib');
+        const enrichedApi = {
+          ...api,
+          getViews: (typeId) => rendering.getViews(typeId),
+          createElement: window.kernel._baseCreateElement
+        };
 
-          const selectedType = await typePicker.showTypePicker(enrichedApi);
-          if (!selectedType) return;
+        const selectedType = await typePicker.showTypePicker(enrichedApi);
+        if (!selectedType) return;
 
-          const editView = await ctxLib.findEditableView(enrichedApi, selectedType);
+        const editView = await ctxLib.findEditableView(enrichedApi, selectedType);
 
-          const newItem = {
-            id: crypto.randomUUID(),
-            name: new Date().toISOString(),
-            type: selectedType,
-            created: Date.now(),
-            modified: Date.now(),
-            attachments: [],
-            content: {}
-          };
-          await api.set(newItem);
+        const newItem = {
+          id: crypto.randomUUID(),
+          name: new Date().toISOString(),
+          type: selectedType,
+          created: Date.now(),
+          modified: Date.now(),
+          attachments: [],
+          content: {}
+        };
+        await api.set(newItem);
 
-          const attachment = { id: newItem.id };
-          if (editView) attachment.view = { type: editView.id };
+        const attachment = { id: newItem.id };
+        if (editView) attachment.view = { type: editView.id };
 
-          const root = await api.get(rootId);
-          root.attachments = [...(root.attachments || []), attachment];
-          root.modified = Date.now();
-          await api.set(root);
-        } catch (err) {
-          console.warn('Ctrl+Shift+N failed:', err.message);
-        }
+        const root = await api.get(rootId);
+        root.attachments = [...(root.attachments || []), attachment];
+        root.modified = Date.now();
+        await api.set(root);
+      } catch (err) {
+        console.warn('Ctrl+Shift+N failed:', err.message);
       }
+    }
 
-      // Ctrl+Shift+A - Add existing item to spatial canvas
-      if (e.ctrlKey && !e.metaKey && e.shiftKey && !e.altKey && e.key === 'A') {
-        const tag = document.activeElement?.tagName;
-        if (tag === 'INPUT' || tag === 'TEXTAREA' || document.activeElement?.isContentEditable) return;
+    // Ctrl+Shift+A - Add existing item to spatial canvas
+    if (e.ctrlKey && !e.metaKey && e.shiftKey && !e.altKey && e.key === 'A') {
+      const tag = document.activeElement?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || document.activeElement?.isContentEditable) return;
 
-        const rootId = new URLSearchParams(window.location.search).get('root');
-        if (!rootId || !document.querySelector(`[data-container-id="${rootId}"]`)) return;
+      const rootId = new URLSearchParams(window.location.search).get('root');
+      if (!rootId || !document.querySelector(`[data-container-id="${rootId}"]`)) return;
 
-        e.preventDefault();
+      e.preventDefault();
 
-        try {
-          const modalLib = await api.require('modal-lib');
-          const searchLib = await api.require('item-search-lib');
+      try {
+        const modalLib = await api.require('modal-lib');
+        const searchLib = await api.require('item-search-lib');
 
-          const searchContainer = document.createElement('div');
-          const enrichedApi = { ...api, createElement };
-          const { close } = modalLib.showModal({
-            title: 'Add Existing Item',
-            width: '600px',
-            maxHeight: '80vh',
-            api: enrichedApi,
-            content: searchContainer
-          });
+        const searchContainer = document.createElement('div');
+        const enrichedApi = { ...api, createElement: window.kernel._baseCreateElement };
+        const { close } = modalLib.showModal({
+          title: 'Add Existing Item',
+          width: '600px',
+          maxHeight: '80vh',
+          api: enrichedApi,
+          content: searchContainer
+        });
 
-          searchLib.createSearchUI(
-            searchContainer,
-            async (selectedItem) => {
-              close();
-              const root = await api.get(rootId);
-              root.attachments = [...(root.attachments || []), { id: selectedItem.id }];
-              root.modified = Date.now();
-              await api.set(root);
-            },
-            enrichedApi,
-            { placeholder: 'Search for items to add...', autoFocus: true }
-          );
-        } catch (err) {
-          console.warn('Ctrl+Shift+A failed:', err.message);
-        }
+        searchLib.createSearchUI(
+          searchContainer,
+          async (selectedItem) => {
+            close();
+            const root = await api.get(rootId);
+            root.attachments = [...(root.attachments || []), { id: selectedItem.id }];
+            root.modified = Date.now();
+            await api.set(root);
+          },
+          enrichedApi,
+          { placeholder: 'Search for items to add...', autoFocus: true }
+        );
+      } catch (err) {
+        console.warn('Ctrl+Shift+A failed:', err.message);
       }
+    }
 
-      // Note: Cmd+K (item palette) is handled by viewport-view
-    };
-    document.addEventListener('keydown', window._userKeyboardHandler);
-  }
+    // Note: Cmd+K (item palette) is handled by viewport-view
+  };
+  document.addEventListener('keydown', window._userKeyboardHandler);
 }
 
-// Cleanup function for hot-reload scenarios
+// Cleanup: remove old handler so new code can re-register
 export function cleanup() {
   if (window._userKeyboardHandler) {
     document.removeEventListener('keydown', window._userKeyboardHandler);

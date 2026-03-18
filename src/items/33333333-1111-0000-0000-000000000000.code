@@ -5,6 +5,15 @@ export async function loadKernel(require, db, instanceId) {
     constructor(kernel) {
       this.kernel = kernel;  // Reference for eventTypeCache access
       this.listeners = new Map();
+      this.stickyEvents = new Map(); // eventTypeId → last event (for replay to late subscribers)
+    }
+
+    /** Get the stored payload for a sticky event, or null if not emitted yet.
+     * @param {string} eventTypeId - Event type GUID
+     * @returns {Object|null} The stored event object, or null
+     */
+    getStickyEvent(eventTypeId) {
+      return this.stickyEvents.get(eventTypeId) || null;
     }
 
     /** Subscribe to an event type. Returns an unsubscribe function.
@@ -36,13 +45,19 @@ export async function loadKernel(require, db, instanceId) {
     /** Emit an event, dispatching to all matching subscribers (including parent types).
      * @param {Object} event - Event object with {type: eventTypeGUID, content: {...}}
      */
-    emit(event) {
-      // event = { type: eventTypeId, content: {...} }
-      // Add timestamp if not present
+    /** Emit an event. Pass { sticky: true } as options to store the payload for late replay.
+     * @param {Object} event - Event object with {type, content}
+     * @param {Object} [options] - { sticky: boolean }
+     */
+    emit(event, options) {
       const eventWithTimestamp = {
         ...event,
         timestamp: event.timestamp || Date.now()
       };
+
+      if (options?.sticky) {
+        this.stickyEvents.set(event.type, eventWithTimestamp);
+      }
 
       const emittedType = event.type;
 
@@ -74,11 +89,19 @@ export async function loadKernel(require, db, instanceId) {
     /** Get all event type GUIDs that have active listeners.
      * @returns {string[]} Array of event type GUIDs
      */
-    async emitAsync(event) {
+    /** Async emit — waits for all handlers to settle. Supports { sticky: true }.
+     * @param {Object} event - Event object with {type, content}
+     * @param {Object} [options] - { sticky: boolean }
+     */
+    async emitAsync(event, options) {
       const eventWithTimestamp = {
         ...event,
         timestamp: event.timestamp || Date.now()
       };
+
+      if (options?.sticky) {
+        this.stickyEvents.set(event.type, eventWithTimestamp);
+      }
 
       const emittedType = event.type;
       const cacheEntry = this.kernel?.eventTypeCache?.get(emittedType);
@@ -349,7 +372,7 @@ export async function loadKernel(require, db, instanceId) {
             lateActivation: false,
             rootElement: this.rootElement
           }
-        });
+        }, { sticky: true });
       }
     }
 
@@ -1170,6 +1193,16 @@ export async function loadKernel(require, db, instanceId) {
         this.watcherIndex.delete(item.id);
       }
 
+      // Module lifecycle: cleanup old module before cache invalidation
+      if (!silent && exists && item.watches?.length > 0) {
+        const oldModule = this.moduleSystem.moduleCache.get(item.id)?.module;
+        if (oldModule?.cleanup) {
+          try { await oldModule.cleanup(); } catch(e) {
+            console.warn(`Cleanup for ${item.name || item.id} failed:`, e);
+          }
+        }
+      }
+
       // Per-item cache invalidation happens via ITEM_UPDATED event handler
       // in moduleSystem.initEventListeners() — no global clearCache needed.
 
@@ -1180,23 +1213,19 @@ export async function loadKernel(require, db, instanceId) {
           this.events.emit({ type: EVENT_IDS.ITEM_CREATED, content: { id: item.id, item } });
         }
 
-        // If item watches kernel:boot-complete, call its handler now
-        // This enables newly-created/edited libraries to activate without reload
-        if (item.watches?.some(w => w.event === EVENT_IDS.SYSTEM_BOOT_COMPLETE)) {
-          try {
-            const bootEvent = {
-              type: EVENT_IDS.SYSTEM_BOOT_COMPLETE,
-              content: {
-                safeMode: this._safeMode,
-                debugMode: this.debugMode,
-                lateActivation: true,
-                rootElement: this.rootElement
-              },
-              timestamp: Date.now()
-            };
-            await this.callWatchHandler(item, bootEvent);
-          } catch (e) {
-            console.warn(`Boot handler for ${item.name || item.id} failed:`, e);
+        // Replay any sticky events this item watches (e.g., boot-complete, viewport:ready).
+        // This enables newly-created/edited watcher items to activate without reload.
+        if (item.watches?.length > 0) {
+          for (const watch of item.watches) {
+            const stickyEvent = this.events.getStickyEvent(watch.event);
+            if (stickyEvent) {
+              try {
+                const replayEvent = { ...stickyEvent, content: { ...stickyEvent.content, lateActivation: true } };
+                await this.callWatchHandler(item, replayEvent);
+              } catch (e) {
+                console.warn(`Sticky replay for ${item.name || item.id} (${watch.event}) failed:`, e);
+              }
+            }
           }
         }
       }
