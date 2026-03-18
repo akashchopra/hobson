@@ -3,7 +3,7 @@
   "name": "Automerge Investigation",
   "type": "871ae771-b9b1-4f40-8c7f-d9038bfb69c3",
   "created": 1773859676415,
-  "modified": 1773859676415,
+  "modified": 1773862000000,
   "content": {
     "description": [
       ":doc",
@@ -68,9 +68,129 @@
         }
       ],
       [
+        ":hr"
+      ],
+      [
         ":h2",
         {
-          "s": "Questions to Answer"
+          "s": "Proposed Architecture"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Automerge lives in the kernel storage layer. The rest of Hobson does not interact with Automerge directly."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Read path"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "A.load(bytes) → Automerge doc → convert to plain JS object → return to caller. Callers receive a mutable plain object, never an Automerge proxy. This is functionally necessary because callers mutate the returned object before passing it back to api.set()."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Write path"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Caller passes a plain JS object (as today) → storage layer diffs it against the current Automerge doc → applies minimal A.change() mutations at field level (not character level) → A.save() → bytes to IDB. This preserves the existing api.set(item) interface."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "History and revert"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "History/revert belongs in the kernel storage layer, not as a userland item — item edits must not be able to break the history mechanism. The storage API would expose:"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":code",
+              {
+                "s": "api.getHistory(itemId)"
+              }
+            ],
+            {
+              "s": " — list of changes with timestamps and messages"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":code",
+              {
+                "s": "api.viewAt(itemId, heads)"
+              }
+            ],
+            {
+              "s": " — read-only plain object at a historical state (uses A.view(), which is cheap)"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":code",
+              {
+                "s": "api.revertTo(itemId, heads)"
+              }
+            ],
+            {
+              "s": " — reverts item to a previous state by diffing and applying reverse patches"
+            }
+          ]
+        ]
+      ],
+      [
+        ":p",
+        {
+          "s": "A userland history-view can call these APIs for the UI, but the mechanism itself is protected in the kernel."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Query"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Automerge has no cross-document query mechanism. Hobson already maintains indexes in related-items-lib. The existing query/search pattern (load items, filter in JS) continues to work. A lightweight metadata index could avoid deserialising full items for bulk queries."
+        }
+      ],
+      [
+        ":hr"
+      ],
+      [
+        ":h2",
+        {
+          "s": "Open Questions"
         }
       ],
       [
@@ -82,11 +202,26 @@
             [
               ":strong",
               {
-                "s": "Data model fit."
+                "s": "Read conversion performance."
               }
             ],
             {
-              "s": " Hobson items are JSON documents with nested objects, arrays, and Active Text ASTs. Can Automerge represent these naturally? What changes to the mutation patterns (api.set, api.attach, etc.) are needed?"
+              "s": " api.get() returns a plain object clone (JSON.parse(JSON.stringify(doc))). This is sub-millisecond per item, but getAll() on 337+ items needs benchmarking. Alternative: return Automerge proxies directly for reads, clone only when caller needs mutability. Needs prototyping to see what breaks."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Write diffing complexity."
+              }
+            ],
+            {
+              "s": " The storage layer must diff a plain JS object against an Automerge doc to produce fine-grained A.change() mutations. Object/primitive fields are straightforward. Arrays (tags, attachments, Active Text ASTs) need a diffing strategy — element-by-element comparison with fallback to full replacement. Needs prototyping."
             }
           ]
         ],
@@ -101,7 +236,7 @@
               }
             ],
             {
-              "s": " Automerge stores a full operation log. Hobson items are typically set as whole field values, not character-by-character. What's the realistic storage cost for Hobson's usage pattern? Is it acceptable at 1,000+ items?"
+              "s": " Automerge stores full operation history. For Hobson's whole-field-value pattern, overhead is estimated at 2-3x raw JSON. Need to measure on real items."
             }
           ]
         ],
@@ -112,11 +247,11 @@
             [
               ":strong",
               {
-                "s": "Migration path."
+                "s": "WASM dependency."
               }
             ],
             {
-              "s": " Can the current storage API (get, set, delete, query) be preserved as a facade over Automerge? How would existing IndexedDB items be migrated?"
+              "s": " Automerge's core is Rust compiled to WASM. Adds to initial load time and requires async initialisation. Need to measure impact on boot."
             }
           ]
         ],
@@ -127,11 +262,11 @@
             [
               ":strong",
               {
-                "s": "Undo ergonomics."
+                "s": "Undo for deleted items."
               }
             ],
             {
-              "s": " How does undo work in practice? Can you revert a single item's last change without affecting other items? What about reverting a delete (item no longer exists as a document)?"
+              "s": " Reverting a field change is straightforward (diff + reverse patches). But reverting item deletion means the item's Automerge doc must still exist somewhere. May need soft-delete (mark as deleted, keep the doc) rather than actual removal."
             }
           ]
         ],
@@ -146,7 +281,7 @@
               }
             ],
             {
-              "s": " What does the sync layer look like? automerge-repo? Custom sync server? Peer-to-peer? What's the minimum viable setup for two-device sync?"
+              "s": " What does mobile sync look like? automerge-repo handles document lifecycle and sync adapters. A sync server (or peer-to-peer via WebRTC) is needed. This is a later concern but the storage layer should not preclude it."
             }
           ]
         ],
@@ -161,10 +296,91 @@
               }
             ],
             {
-              "s": " Is Automerge the best option, or should Yjs, PouchDB+CouchDB, or a simpler custom approach be considered? What are the tradeoffs?"
+              "s": " PouchDB was considered but its revision system discards old bodies on compaction — designed for sync conflict resolution, not version history. Yjs is another CRDT option but has a different storage model. A custom IDB history store (copy-on-write) is simpler but doesn't help with sync."
             }
           ]
         ]
+      ],
+      [
+        ":hr"
+      ],
+      [
+        ":h2",
+        {
+          "s": "Prototype Plan"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Before committing to Automerge, build a minimal prototype to get hard numbers:"
+        }
+      ],
+      [
+        ":ol",
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Take a representative large item (view with hundreds of lines of code, doc with a big Active Text AST)."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Create an Automerge doc from it. Measure A.from() and A.save() sizes."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Measure JSON.parse(JSON.stringify(doc)) conversion time, singly and in bulk (337x)."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Implement a naive field-level diff (old doc vs new plain object). Measure diffing + A.change() time."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Test Active Text AST mutations: insert block, change block type, edit text. Verify Automerge handles the nested structure correctly."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Measure A.getHistory(), A.view(), and A.diff() on a doc with ~50 changes."
+            }
+          ]
+        ]
+      ],
+      [
+        ":p",
+        {
+          "s": "If the prototype shows acceptable performance, proceed with integrating Automerge into the kernel storage layer. If not, evaluate whether proxy-based reads (skipping conversion) or a simpler custom approach is needed."
+        }
+      ],
+      [
+        ":hr"
       ],
       [
         ":h2",
@@ -188,7 +404,7 @@
           [
             ":p",
             {
-              "s": "Mutations must go through Automerge's change API (can't assign plain JS objects directly)."
+              "s": "Documents read like plain JS objects (proxy-based). JSON.stringify() works directly."
             }
           ]
         ],
@@ -197,7 +413,7 @@
           [
             ":p",
             {
-              "s": "Storage overhead: ~4-6 bytes per character for text editing, likely 2-3x raw JSON for Hobson's whole-field-value pattern."
+              "s": "Documents are immutable outside of A.change() — callers need a mutable clone, which is why the plain-object conversion on read is functionally necessary."
             }
           ]
         ],
@@ -206,7 +422,7 @@
           [
             ":p",
             {
-              "s": "History is preserved by default (compaction repackages but doesn't discard). Full operation log enables time travel."
+              "s": "Active Text ASTs (nested arrays of mixed types) work natively. Fine-grained mutations on nested elements are supported. Replacing whole subtrees works but loses merge granularity."
             }
           ]
         ],
@@ -215,7 +431,43 @@
           [
             ":p",
             {
-              "s": "PouchDB was also considered but its revision system is designed for sync conflict resolution, not version history. Old revision bodies are discarded on compaction."
+              "s": "A.view(doc, oldHeads) gives cheap read-only snapshots at any historical state (shares memory, no copying). A.diff() returns structured patches."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "No built-in undo — implemented via patch inversion (capture reverse patches during A.change(), apply them to revert)."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Storage: A.save() produces compact binary (Uint8Array) for IDB. A.load() restores. No need for automerge-repo for basic persistence."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Automerge 3.0 has 10x memory improvement over 2.0. Plain strings are collaborative by default; use A.ImmutableString for atomic strings (GUIDs, type IDs)."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "PouchDB was considered but rejected — its revision system discards old bodies on compaction, making it unsuitable for version history."
             }
           ]
         ]
