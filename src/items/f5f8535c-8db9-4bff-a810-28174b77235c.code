@@ -2,6 +2,7 @@
 
 const LINK_RE = /item:\/\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/g;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const AT_REF_RE = /^@([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
 
 // State lives on globalThis so it survives moduleSystem.clearCache()
 const CACHE_KEY = '__relatedItemsLib__';
@@ -42,38 +43,44 @@ function getFromIndex(index, key) {
   return set ? [...set] : [];
 }
 
+// Walk a JSON AST (Active Text or Hob) collecting item references.
+// Handles: :item-ref, :transclusion, and @uuid (Hob item-ref).
+function walkAstForLinks(node, links) {
+  if (typeof node === 'string') {
+    const m = AT_REF_RE.exec(node);
+    if (m) links.add(m[1]);
+    return;
+  }
+  if (!Array.isArray(node)) return;
+  const tag = node[0];
+  if (tag === ':item-ref' || tag === ':transclusion') {
+    const ref = node[1];
+    const id = typeof ref === 'string' ? ref : ref?.s;
+    if (id && UUID_RE.test(id)) links.add(id);
+    // :transclusion children won't contain further refs; :item-ref might
+    // not either, but recurse anyway for robustness
+  }
+  for (let i = 1; i < node.length; i++) walkAstForLinks(node[i], links);
+}
+
 function extractLinks(item) {
   const links = new Set();
   const c = item.content;
   if (!c) return links;
 
-  // 1. Walk Active Text (description) looking for :item-ref nodes structurally.
-  //    Format: [":item-ref", {"s": "uuid"}, {"s": "display-name"}]
-  if (Array.isArray(c.description)) {
-    (function walkAst(node) {
-      if (!Array.isArray(node)) return;
-      if (node[0] === ':item-ref' && node[1]?.s && UUID_RE.test(node[1].s)) {
-        links.add(node[1].s);
-        return; // no need to recurse into item-ref children
-      }
-      for (let i = 1; i < node.length; i++) walkAst(node[i]);
-    })(c.description);
+  // 1. Walk Active Text description AST for :item-ref, :transclusion, @uuid
+  if (Array.isArray(c.description)) walkAstForLinks(c.description, links);
+
+  // 2. Walk Hob AST for @uuid item-refs and :item-ref/:transclusion in :doc comments
+  if (Array.isArray(c.hob)) {
+    for (const form of c.hob) walkAstForLinks(form, links);
   }
 
-  // 2. Scan plain string fields (code, body) for legacy item:// links
-  for (const val of [c.code, c.body]) {
-    if (typeof val === 'string' && val.includes('item://')) {
-      LINK_RE.lastIndex = 0;
-      let m;
-      while ((m = LINK_RE.exec(val)) !== null) links.add(m[1]);
-    }
-  }
-
-  // 3. If description is still a markdown string (unmigrated), scan it too
-  if (typeof c.description === 'string' && c.description.includes('item://')) {
+  // 3. Scan code field for item:// links
+  if (typeof c.code === 'string' && c.code.includes('item://')) {
     LINK_RE.lastIndex = 0;
     let m;
-    while ((m = LINK_RE.exec(c.description)) !== null) links.add(m[1]);
+    while ((m = LINK_RE.exec(c.code)) !== null) links.add(m[1]);
   }
 
   return links;
