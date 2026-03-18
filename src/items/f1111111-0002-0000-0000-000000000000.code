@@ -1,6 +1,6 @@
 // Viewport Manager Library
-// Stateless - reads from URL (root) and viewport item (view config)
-// No module-level caching; sources of truth are URL + viewport item
+// Reads from URL (root) and viewport item (view config).
+// RenderingSystem singleton is lazily (re)constructed after cache clear.
 
 const VIEWPORT_ID = "88888888-0000-0000-0000-000000000000";
 const VIEWPORT_RENDERING_ID = "f1111111-0008-0000-0000-000000000000";
@@ -10,21 +10,48 @@ const EVENT_IDS = {
   VIEWPORT_READY: "e0e00000-0003-0003-0000-000000000000"
 };
 
-// Module-level rendering system (initialized at boot)
-let rendering = null;
+// ============================================================================
+// Lazy Singleton — survives module re-evaluation after cache clear
+// ============================================================================
 
-// Called at boot
+export class ViewportManager {
+  static _instance = null;
+
+  constructor(RenderingSystemClass, kernel, rootElement) {
+    this.rendering = new RenderingSystemClass(kernel);
+    this.rendering.rootElement = rootElement;
+    rootElement._renderingSystem = this.rendering;
+  }
+
+  /**
+   * Get the singleton instance. If the module was re-evaluated after cache
+   * clear, lazily reconstructs a new instance from the current kernel and
+   * the cached viewport-rendering module.
+   */
+  static getSingletonInstance() {
+    if (!this._instance) {
+      const vpRendering = window.kernel.moduleSystem.getCached(VIEWPORT_RENDERING_ID);
+      if (vpRendering?.RenderingSystem) {
+        const rootElement = document.getElementById('app');
+        this._instance = new ViewportManager(vpRendering.RenderingSystem, window.kernel, rootElement);
+      }
+    }
+    return this._instance;
+  }
+}
+
+// ============================================================================
+// Boot handler — creates the singleton with full async init
+// ============================================================================
+
 export async function onKernelBootComplete({ safeMode, rootElement }, _api) {
   if (safeMode) return;
 
-  // Load and initialize viewport-rendering
+  // Load viewport-rendering (async, first time)
   const { RenderingSystem } = await window.kernel.moduleSystem.require(VIEWPORT_RENDERING_ID);
-  rendering = new RenderingSystem(window.kernel);
-  rendering.rootElement = rootElement;
-  rootElement._renderingSystem = rendering;
+  ViewportManager._instance = new ViewportManager(RenderingSystem, window.kernel, rootElement);
 
   // Register popstate handler for browser back/forward
-  // Use window-level guard that survives module re-evaluation after clearCache()
   if (!window._hobsonPopstateHandler) {
     window._hobsonPopstateHandler = handlePopstate;
     window.addEventListener('popstate', handlePopstate);
@@ -35,71 +62,55 @@ export async function onKernelBootComplete({ safeMode, rootElement }, _api) {
   if (urlRoot) {
     const viewport = await window.kernel.storage.get(VIEWPORT_ID);
     const currentChild = viewport.attachments?.[0];
-
-    // If URL root differs from viewport item, update viewport item
-    // (URL is authoritative for root)
     if (currentChild?.id !== urlRoot) {
       await persistRootChange(urlRoot, currentChild?.id);
     }
   }
 
   // Initial render
-  await rendering.renderViewport();
+  await ViewportManager._instance.rendering.renderViewport();
 
   // Signal that viewport infrastructure is ready
-  // Include rendering capabilities so viewport:ready watchers can use them
-  // without requiring viewport-manager (which would break after cache clear)
   window.kernel.events.emit({
     type: EVENT_IDS.VIEWPORT_READY,
     content: {
       rootElement,
       rootId: urlRoot || null,
-      getViews: (typeId) => rendering.getViews(typeId),
-      createElement: rendering.kernel._baseCreateElement,
+      getViews: (typeId) => ViewportManager.getSingletonInstance()?.rendering.getViews(typeId),
+      createElement: window.kernel._baseCreateElement,
       navigate
     }
   });
 }
 
-// Handle browser back/forward
+// ============================================================================
+// Internal helpers
+// ============================================================================
+
 async function handlePopstate(e) {
   const urlRoot = getRoot();
   if (urlRoot) {
-    // Get previous root from viewport item for event
     const viewport = await window.kernel.storage.get(VIEWPORT_ID);
     const previous = viewport.attachments?.[0]?.id;
 
-    // Update viewport item (clear view override when navigating to different item)
     if (previous !== urlRoot) {
       await persistRootChange(urlRoot, previous);
     }
 
-    // Emit event
     window.kernel.events.emit({
       type: EVENT_IDS.VIEWPORT_ROOT_CHANGED,
-      content: {
-        rootId: urlRoot,
-        previous,
-        initial: false,
-        popstate: true
-      }
+      content: { rootId: urlRoot, previous, initial: false, popstate: true }
     });
 
-    await rendering.renderViewport();
+    const instance = ViewportManager.getSingletonInstance();
+    if (instance) await instance.rendering.renderViewport();
   }
 }
 
-// Persist a root change to viewport item
-// Clears view config when changing roots (unless a viewId override is provided)
 async function persistRootChange(newRootId, previousRootId, viewId) {
   const viewport = await window.kernel.storage.get(VIEWPORT_ID);
+  if (newRootId === previousRootId && !viewId) return;
 
-  if (newRootId === previousRootId && !viewId) {
-    // Same root, no view override - preserve view config
-    return;
-  }
-
-  // Build attachment spec
   const spec = newRootId ? { id: newRootId } : null;
   if (spec && viewId) spec.view = { type: viewId };
 
@@ -107,20 +118,6 @@ async function persistRootChange(newRootId, previousRootId, viewId) {
   viewport.modified = Date.now();
   await window.kernel.saveItem(viewport, { silent: true });
 }
-
-// Get navigation params from URL
-function getUrlParams() {
-  const params = new URLSearchParams(window.location.search);
-  return {
-    field: params.get('field'),
-    line: params.get('line'),
-    col: params.get('col')
-  };
-}
-
-// ============================================================================
-// Helper: read child spec from viewport item
-// ============================================================================
 
 async function getChildSpec() {
   try {
@@ -140,13 +137,10 @@ async function updateChildSpec(updater) {
 
     let childSpec = viewport.attachments?.[0];
     if (!childSpec || childSpec.id !== root) {
-      // Child spec doesn't exist or is for different root
       childSpec = { id: root };
     }
 
-    // Apply the update
     const updated = updater(childSpec);
-
     viewport.attachments = [updated];
     viewport.modified = Date.now();
     await window.kernel.saveItem(viewport, { silent: true });
@@ -156,152 +150,104 @@ async function updateChildSpec(updater) {
 }
 
 // ============================================================================
-// Public API
+// Public API — exported functions delegate to the singleton
 // ============================================================================
 
-// Navigate to an item
+export function getRendering() {
+  return ViewportManager.getSingletonInstance()?.rendering || null;
+}
+
 export async function navigate(itemId, params = {}) {
-  // Extract view override (not a URL param)
   const { view, ...urlParams } = params;
 
-  // Get previous root for event
   const viewport = await window.kernel.storage.get(VIEWPORT_ID);
   const previous = viewport.attachments?.[0]?.id;
 
-  // Build new URL
   const url = new URL(window.location);
   url.searchParams.set('root', itemId);
-
-  // Clear previous navigation params
   url.searchParams.delete('field');
   url.searchParams.delete('line');
   url.searchParams.delete('col');
   url.searchParams.delete('symbol');
   url.searchParams.delete('region');
 
-  // Add optional navigation params
   if (urlParams.field) url.searchParams.set('field', urlParams.field);
   if (urlParams.line) url.searchParams.set('line', urlParams.line);
   if (urlParams.col) url.searchParams.set('col', urlParams.col);
   if (urlParams.symbol) url.searchParams.set('symbol', urlParams.symbol);
   if (urlParams.region) url.searchParams.set('region', urlParams.region);
 
-  // Only push to history if URL is actually changing
   if (url.href !== window.location.href) {
     window.history.pushState({ itemId, ...urlParams }, '', url);
   }
 
-  // Persist to viewport item (clears view config if root changed, applies view override)
   await persistRootChange(itemId, previous, view);
 
-  // Emit viewport:root-changed event
   window.kernel.events.emit({
     type: EVENT_IDS.VIEWPORT_ROOT_CHANGED,
-    content: {
-      rootId: itemId,
-      previous,
-      initial: false,
-      popstate: false
-    }
+    content: { rootId: itemId, previous, initial: false, popstate: false }
   });
 
-  // Trigger re-render
-  await ensureRendering().renderViewport();
+  const instance = ViewportManager.getSingletonInstance();
+  if (instance) await instance.rendering.renderViewport();
 }
 
-// Get current root (sync - reads from URL)
 export function getRoot() {
   const params = new URLSearchParams(window.location.search);
   return params.get('root');
 }
 
-// Get root view ID (async - reads from viewport item)
 export async function getRootView() {
   const child = await getChildSpec();
   if (!child) return null;
-  // Support view.type format and legacy flat format
   return child.view?.type || child.view || child.renderer || null;
 }
 
-// Set root view (async - writes to viewport item)
 export async function setRootView(viewId, storePrevious = true) {
   await updateChildSpec(child => {
     const newChild = { ...child };
-
     if (storePrevious && child.view) {
-      // Store current view as previous
       newChild.previousView = { ...child.view };
     }
-
     if (viewId) {
       newChild.view = { ...(child.view || {}), type: viewId };
     } else {
       delete newChild.view;
     }
-
     return newChild;
   });
 }
 
-// Get the full view config for root (async - reads from viewport item)
 export async function getRootViewConfig() {
   const child = await getChildSpec();
   if (!child?.view) return null;
-
-  if (typeof child.view === 'object') {
-    return child.view;
-  }
-
-  // Legacy: view is just a string ID
+  if (typeof child.view === 'object') return child.view;
   return { type: child.view };
 }
 
-// Update root view config (async - merges with existing config)
 export async function updateRootViewConfig(updates) {
   await updateChildSpec(child => {
     const currentView = child.view || {};
-    return {
-      ...child,
-      view: { ...currentView, ...updates }
-    };
+    return { ...child, view: { ...currentView, ...updates } };
   });
 }
 
-// Restore previous root view (async)
 export async function restorePreviousRootView() {
   const child = await getChildSpec();
   if (!child?.previousView) return false;
-
   await updateChildSpec(child => {
     const newChild = { ...child };
     newChild.view = { ...child.previousView };
     delete newChild.previousView;
     return newChild;
   });
-
   return true;
 }
 
-// Check if there's a previous view to restore (async)
 export async function hasPreviousView() {
   const child = await getChildSpec();
   return !!child?.previousView;
 }
 
-// Get the rendering system instance (recovers from DOM after cache clear)
-function ensureRendering() {
-  if (!rendering) {
-    rendering = document.getElementById('app')?._renderingSystem || null;
-  }
-  return rendering;
-}
-
-export function getRendering() {
-  return ensureRendering();
-}
-
-// Force persist - no longer needed (writes happen immediately)
-// Kept for API compatibility
-export async function forcePersist() {
-  // No-op: state is always persisted immediately now
-}
+// No-op — kept for API compatibility
+export async function forcePersist() {}
