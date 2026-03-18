@@ -3,6 +3,7 @@
 const LINK_RE = /item:\/\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/g;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const AT_REF_RE = /^@([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
+const JS_REQUIRE_RE = /api\.require\(\s*['"]([^'"]+)['"]\s*\)/g;
 
 // State lives on globalThis so it survives moduleSystem.clearCache()
 const CACHE_KEY = '__relatedItemsLib__';
@@ -14,8 +15,10 @@ if (!globalThis[CACHE_KEY]) {
     extendsIndex: new Map(),
     containerIndex: new Map(),
     linkIndex: new Map(),
+    codeRefIndex: new Map(),
     forTypeIndex: new Map(),
     preferredViewIndex: new Map(),
+    nameIndex: new Map(),   // name → id for resolving require('name')
     built: false,
   };
 }
@@ -43,12 +46,13 @@ function getFromIndex(index, key) {
   return set ? [...set] : [];
 }
 
-// Walk a JSON AST (Active Text or Hob) collecting item references.
-// Handles: :item-ref, :transclusion, and @uuid (Hob item-ref).
-function walkAstForLinks(node, links) {
+// Walk a JSON AST (Active Text or Hob) collecting document links and code refs.
+// links:    :item-ref, :transclusion nodes
+// codeRefs: @uuid strings, (require "name") forms
+function walkAst(node, links, codeRefIds, requireNames) {
   if (typeof node === 'string') {
     const m = AT_REF_RE.exec(node);
-    if (m) links.add(m[1]);
+    if (m) codeRefIds.add(m[1]);
     return;
   }
   if (!Array.isArray(node)) return;
@@ -57,10 +61,16 @@ function walkAstForLinks(node, links) {
     const ref = node[1];
     const id = typeof ref === 'string' ? ref : ref?.s;
     if (id && UUID_RE.test(id)) links.add(id);
-    // :transclusion children won't contain further refs; :item-ref might
-    // not either, but recurse anyway for robustness
   }
-  for (let i = 1; i < node.length; i++) walkAstForLinks(node[i], links);
+  if (tag === 'require') {
+    const ref = node[1];
+    const name = typeof ref === 'string' ? ref : ref?.s;
+    if (name) {
+      if (UUID_RE.test(name)) codeRefIds.add(name);
+      else requireNames.add(name);
+    }
+  }
+  for (let i = 1; i < node.length; i++) walkAst(node[i], links, codeRefIds, requireNames);
 }
 
 function extractLinks(item) {
@@ -68,15 +78,14 @@ function extractLinks(item) {
   const c = item.content;
   if (!c) return links;
 
-  // 1. Walk Active Text description AST for :item-ref, :transclusion, @uuid
-  if (Array.isArray(c.description)) walkAstForLinks(c.description, links);
-
-  // 2. Walk Hob AST for @uuid item-refs and :item-ref/:transclusion in :doc comments
+  const ignore = new Set(); // unused, but walkAst requires all params
+  // Walk description and hob ASTs for :item-ref and :transclusion only
+  if (Array.isArray(c.description)) walkAst(c.description, links, ignore, ignore);
   if (Array.isArray(c.hob)) {
-    for (const form of c.hob) walkAstForLinks(form, links);
+    for (const form of c.hob) walkAst(form, links, ignore, ignore);
   }
 
-  // 3. Scan code field for item:// links
+  // Scan code field for item:// links
   if (typeof c.code === 'string' && c.code.includes('item://')) {
     LINK_RE.lastIndex = 0;
     let m;
@@ -86,8 +95,47 @@ function extractLinks(item) {
   return links;
 }
 
+// Extract code dependency IDs (@uuid) and unresolved require names.
+function extractCodeRefs(item) {
+  const ids = new Set();
+  const names = new Set();
+  const c = item.content;
+  if (!c) return { ids, names };
+
+  const ignore = new Set();
+  if (Array.isArray(c.description)) walkAst(c.description, ignore, ids, names);
+  if (Array.isArray(c.hob)) {
+    for (const form of c.hob) walkAst(form, ignore, ids, names);
+  }
+
+  // JS require('name') in code field
+  if (typeof c.code === 'string') {
+    JS_REQUIRE_RE.lastIndex = 0;
+    let m;
+    while ((m = JS_REQUIRE_RE.exec(c.code)) !== null) {
+      if (UUID_RE.test(m[1])) ids.add(m[1]);
+      else names.add(m[1]);
+    }
+  }
+
+  return { ids, names };
+}
+
+// Resolve require names to item IDs using the nameIndex.
+function resolveCodeRefs(item) {
+  const { ids, names } = extractCodeRefs(item);
+  for (const name of names) {
+    const targetId = S.nameIndex.get(name);
+    if (targetId) ids.add(targetId);
+  }
+  return ids;
+}
+
 function indexItem(item) {
   const id = item.id;
+
+  // name → id map
+  if (item.name) S.nameIndex.set(item.name, id);
 
   // type
   addToIndex(S.typeIndex, item.type, id);
@@ -116,6 +164,11 @@ function indexItem(item) {
     addToIndex(S.linkIndex, target, id);
   }
 
+  // code refs (@uuid, require)
+  for (const target of resolveCodeRefs(item)) {
+    addToIndex(S.codeRefIndex, target, id);
+  }
+
   // for_type
   addToIndex(S.forTypeIndex, item.content?.for_type, id);
 
@@ -125,6 +178,11 @@ function indexItem(item) {
 
 function unindexItem(item) {
   const id = item.id;
+
+  // name → id map: only remove if this item still owns the name
+  if (item.name && S.nameIndex.get(item.name) === id) {
+    S.nameIndex.delete(item.name);
+  }
 
   removeFromIndex(S.typeIndex, item.type, id);
 
@@ -146,14 +204,19 @@ function unindexItem(item) {
     removeFromIndex(S.linkIndex, target, id);
   }
 
+  for (const target of resolveCodeRefs(item)) {
+    removeFromIndex(S.codeRefIndex, target, id);
+  }
+
   removeFromIndex(S.forTypeIndex, item.content?.for_type, id);
   removeFromIndex(S.preferredViewIndex, item.preferredView, id);
 }
 
 function clearAll() {
-  for (const key of ['typeIndex', 'tagIndex', 'parentIndex', 'extendsIndex', 'containerIndex', 'linkIndex', 'forTypeIndex', 'preferredViewIndex']) {
+  for (const key of ['typeIndex', 'tagIndex', 'parentIndex', 'extendsIndex', 'containerIndex', 'linkIndex', 'codeRefIndex', 'forTypeIndex', 'preferredViewIndex']) {
     S[key].clear();
   }
+  S.nameIndex.clear();
   S.built = false;
 }
 
@@ -221,6 +284,7 @@ export function getChildrenOf(parentId)     { return getFromIndex(S.parentIndex,
 export function getSubtypesOf(typeId)       { return getFromIndex(S.extendsIndex, typeId); }
 export function getContainersOf(itemId)     { return getFromIndex(S.containerIndex, itemId); }
 export function getLinksTo(itemId)          { return getFromIndex(S.linkIndex, itemId); }
+export function getCodeRefsTo(itemId)       { return getFromIndex(S.codeRefIndex, itemId); }
 export function getViewsFor(typeId)         { return getFromIndex(S.forTypeIndex, typeId); }
 export function getItemsPreferring(viewId)  { return getFromIndex(S.preferredViewIndex, viewId); }
 
@@ -235,6 +299,7 @@ export async function getRelated(itemId, api) {
     ? item.attachments.map(a => typeof a === 'string' ? a : a?.id).filter(Boolean)
     : [];
   const outgoing = [...extractLinks(item)];
+  const outgoingCode = [...resolveCodeRefs(item)];
 
   return {
     // Forward
@@ -246,6 +311,7 @@ export async function getRelated(itemId, api) {
     preferredView: item.preferredView || null,
     attachments: attachmentIds,
     outgoingLinks: outgoing,
+    outgoingCodeRefs: outgoingCode,
 
     // Inverse
     instances: getFromIndex(S.typeIndex, itemId),
@@ -254,6 +320,7 @@ export async function getRelated(itemId, api) {
     subtypes: getFromIndex(S.extendsIndex, itemId),
     containers: getFromIndex(S.containerIndex, itemId),
     incomingLinks: getFromIndex(S.linkIndex, itemId),
+    incomingCodeRefs: getFromIndex(S.codeRefIndex, itemId),
     viewsFor: getFromIndex(S.forTypeIndex, itemId),
     preferredBy: getFromIndex(S.preferredViewIndex, itemId),
   };
