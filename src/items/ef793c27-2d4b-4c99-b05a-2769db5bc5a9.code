@@ -59,7 +59,11 @@
       (:code "querySelector")
       ") and "
       (:code "parseInt")
-      " calls throughout the view."))
+      " calls throughout the view. Hob has no global "
+      (:code "document")
+      " binding, so we obtain it via a throwaway element's "
+      (:code "ownerDocument")
+      "."))
   (def doc (dom-get (hiccup->dom [:div]) :ownerDocument))
   (def win (dom-get doc :defaultView))
   (:doc
@@ -94,6 +98,11 @@
              (get-in a [:view :type])
              (get-in a [:view :navigateTo])])
           (or (:attachments it) [])))))
+  (:doc
+    (:p
+      "Capture scroll positions before re-render. Uses "
+      (:code "Object.create(null)")
+      " to create a plain JS object — needed because these objects are passed to JS library functions that expect native property access, not Hob maps."))
   (def
     scroll-states
     (let [m (invoke (dom-get win :Object) "create" nil)]
@@ -135,7 +144,16 @@
       (:li
         (:p
           (:strong "background")
-          ": renders an optional inner view as full-bleed background beneath windows. Bypasses cycle detection (deliberate composition, not recursion)."))))
+          ": renders an optional inner view as full-bleed background beneath windows. Bypasses cycle detection (deliberate composition, not recursion)."))
+      (:li
+        (:p
+          "The "
+          (:code "bottom:24px")
+          " on dock-overlay and scroll-area reserves space for the inventory bar ("
+          (:code "BAR_HEIGHT")
+          " in "
+          (:item-ref "6dd254a8-dc94-4300-8a2e-19ce4165e22e" "window-minimize-lib")
+          ")."))))
   (def
     _container-result
     (hiccup->dom+
@@ -532,6 +550,13 @@
               "\"][data-item-id=\""
               child-id
               "\"]"))))
+      (:doc
+        (:p
+          "Rebind "
+          (:code "child-view")
+          " — if the stored view has no position but a DOM wrapper exists from a previous render, recover x/y/width/height from the wrapper's "
+          (:code "data-orig-*")
+          " attributes. This preserves the window's visual position across silent re-renders that don't persist coordinates."))
       (def
         child-view
         (if
@@ -660,6 +685,13 @@
             (+ (:z effective-view) base-z)
             (+ (get-max-z) 1))))
       (def is-maximized (or (:maximized effective-view) false))
+      (:doc
+        (:p
+          "Persist position on first render ("
+          (:code "needs-position")
+          " — window had no stored coordinates, so cascade defaults were assigned) or when recovering from a DOM wrapper ("
+          (:code "existing-wrapper")
+          " — DOM-recovered coordinates need to be written back to storage so they survive the next render)."))
       (when
         (or needs-position existing-wrapper)
         (update-child
@@ -806,6 +838,16 @@
                 (invoke anchor-lib "isEdgeAnchor" effective-anchor)))
             (dom-set! menu-opts :wrapper wrapper)
             (dom-set! menu-opts :effectiveView effective-view)
+            (:doc
+              (:p
+                "Menu callbacks. Each reads the window's current position from inline CSS (the DOM is authoritative during interaction — stored coordinates may be stale from silent saves). All four call "
+                (:code "navigate!")
+                " after persisting to force a full re-render with the new anchor state.")
+              (:ul
+                (:li (:p (:strong "onPin") ": floating → corner-anchored. Reads CSS left/top/width/height, calls " (:code "pinToNearestCorner") " to find the closest corner, persists the anchor."))
+                (:li (:p (:strong "onUnpin") ": corner-anchored → floating. Converts anchor-relative offsets to absolute x/y via " (:code "calculateAbsolutePosition") ", assigns a new top z-index."))
+                (:li (:p (:strong "onUndock") ": edge-anchored → floating. Reads current CSS position/size directly (edge windows already have absolute pixel values from inset layout)."))
+                (:li (:p (:strong "onDock") ": floating/corner → edge-anchored. Preserves width/height, sets anchor to the chosen edge (left/right/top/bottom)."))))
             (dom-set!
               menu-opts
               :onPin
@@ -1027,6 +1069,11 @@
                           [:button {:style "width:18px; height:18px; padding:0; border:none; background:transparent; cursor:pointer; font-size:0.875rem; font-weight:bold; color:var(--color-text-secondary); display:flex; align-items:center; justify-content:center;"
                                     :title "Close"}
                             "×"])]
+          (:doc
+            (:p
+              "Minimize: hide immediately via CSS for responsiveness, then persist. The "
+              (:code "update-child")
+              " call triggers a re-render that will skip this window (minimized), confirming the hide."))
           (dom-on!
             min-btn
             :click
@@ -1034,6 +1081,17 @@
               (invoke click-e "stopPropagation")
               (dom-set! (dom-get wrapper :style) :display "none")
               (update-child child-id {:minimized true :maximized false})))
+          (:doc
+            (:p
+              "Maximize/restore toggle. Done via direct DOM manipulation rather than a full re-render — toggling is instant and frequent, so avoiding re-render prevents flicker and preserves scroll positions. Reads "
+              (:code "dataset.maximized")
+              " (the DOM flag set by this handler) rather than the persisted "
+              (:code ":maximized")
+              " in "
+              (:code "update-child")
+              ", because the DOM may have been toggled multiple times between re-renders. Original position is stashed in "
+              (:code "data-orig-*")
+              " attributes (set when creating the wrapper) so restore can recover it."))
           (dom-on!
             max-btn
             :click
@@ -1108,7 +1166,28 @@
         (:p
           "Attach drag handler (floating only), corner resize (floating), and edge resize (anchored). Render child content via "
           (:code ":render-child")
-          "."))
+          ".")
+        (:ul
+          (:li
+            (:p
+              (:strong "Drag (titlebar)")
+              ": "
+              (:code "onDragStart")
+              " brings to front (silent). "
+              (:code "onDragEnd")
+              " persists final x/y plus current width/height, clears anchor (dragging undocks)."))
+          (:li
+            (:p
+              (:strong "Corner resize (floating)")
+              ": "
+              (:code "onResizeEnd")
+              " persists final x/y/width/height and clears anchor."))
+          (:li
+            (:p
+              (:strong "Edge resize (anchored)")
+              ": "
+              (:code "onResizeEnd")
+              " persists only width/height — position is controlled by the anchor's inset CSS."))))
       (when
         can-drag
         (let [drag-opts (invoke (dom-get win :Object) "create" nil)]
@@ -1404,7 +1483,9 @@
       (:code ".window-content")
       " divs before re-render, then restores after layout. Uses double "
       (:code "requestAnimationFrame")
-      " to wait for child content to be laid out."))
+      " to wait for child content to be laid out. One rAF fires before the browser has laid out new DOM; the second fires after layout and paint, when "
+      (:code "scrollTop")
+      " assignment will stick."))
   (when
     (> (dom-get (invoke (dom-get win :Object) "keys" scroll-states) :length) 0)
     (invoke
