@@ -1,0 +1,609 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Automerge Perf Benchmark — Hobson</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, sans-serif; padding: 24px; max-width: 900px; margin: 0 auto; background: #1a1a2e; color: #e0e0e0; }
+    h1 { margin-bottom: 8px; font-size: 1.4rem; }
+    p.subtitle { color: #888; margin-bottom: 24px; font-size: 0.9rem; }
+    #status { margin-bottom: 16px; padding: 12px; background: #16213e; border-radius: 6px; font-family: monospace; font-size: 0.85rem; white-space: pre-wrap; max-height: 200px; overflow-y: auto; }
+    table { width: 100%; border-collapse: collapse; margin-bottom: 24px; }
+    th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid #333; font-size: 0.85rem; }
+    th { color: #aaa; font-weight: 600; }
+    td.num { text-align: right; font-family: monospace; }
+    tr.section td { font-weight: 600; color: #7eb8da; padding-top: 16px; border-bottom: 2px solid #333; }
+    button { padding: 10px 20px; background: #0f3460; color: #e0e0e0; border: 1px solid #555; border-radius: 6px; cursor: pointer; font-size: 0.9rem; margin-bottom: 16px; }
+    button:hover { background: #1a4a7a; }
+    button:disabled { opacity: 0.5; cursor: default; }
+    .warn { color: #e6a23c; }
+    .good { color: #67c23a; }
+    .bad { color: #f56c6c; }
+  </style>
+</head>
+<body>
+  <h1>Automerge Perf Benchmark</h1>
+  <p class="subtitle">
+    Tests the six prototype plan items from the
+    <a href="../src/items/c0c0c0c0-0098-0000-0000-000000000000.json" style="color:#7eb8da">Automerge Investigation</a>.
+    Select an item to benchmark, or use the default (spatial-canvas-view).
+  </p>
+  <div style="display:flex; gap:8px; align-items:center; margin-bottom:16px; flex-wrap:wrap;">
+    <select id="item-select" style="flex:1; min-width:300px; padding:8px; background:#16213e; color:#e0e0e0; border:1px solid #555; border-radius:6px; font-size:0.85rem;">
+      <option value="">Loading items...</option>
+    </select>
+    <button id="run-btn" disabled>Loading Automerge...</button>
+    <button id="boot-btn" disabled>Boot Simulation</button>
+  </div>
+  <div id="status">Initialising...</div>
+  <table>
+    <thead><tr><th>Benchmark</th><th style="text-align:right">Result</th><th style="text-align:right">Notes</th></tr></thead>
+    <tbody id="results"></tbody>
+  </table>
+
+<script type="module">
+// ── Setup ──────────────────────────────────────────────────────────────
+
+const statusEl = document.getElementById('status');
+const resultsEl = document.getElementById('results');
+const runBtn = document.getElementById('run-btn');
+
+function log(msg) {
+  statusEl.textContent += msg + '\n';
+  statusEl.scrollTop = statusEl.scrollHeight;
+}
+
+function addSection(title) {
+  const tr = document.createElement('tr');
+  tr.className = 'section';
+  tr.innerHTML = `<td colspan="3">${title}</td>`;
+  resultsEl.appendChild(tr);
+}
+
+function addRow(name, value, notes, cls) {
+  const tr = document.createElement('tr');
+  tr.innerHTML = `<td>${name}</td><td class="num ${cls || ''}">${value}</td><td class="num">${notes || ''}</td>`;
+  resultsEl.appendChild(tr);
+}
+
+function fmt(ms) {
+  if (ms < 0.01) return '<0.01ms';
+  if (ms < 1) return ms.toFixed(2) + 'ms';
+  if (ms < 1000) return ms.toFixed(1) + 'ms';
+  return (ms / 1000).toFixed(2) + 's';
+}
+
+function fmtBytes(b) {
+  if (b < 1024) return b + ' B';
+  if (b < 1024 * 1024) return (b / 1024).toFixed(1) + ' KB';
+  return (b / (1024 * 1024)).toFixed(2) + ' MB';
+}
+
+function median(arr) {
+  const sorted = [...arr].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+function bench(fn, iterations = 10) {
+  const times = [];
+  for (let i = 0; i < iterations; i++) {
+    const t0 = performance.now();
+    fn();
+    times.push(performance.now() - t0);
+  }
+  return { median: median(times), min: Math.min(...times), max: Math.max(...times), times };
+}
+
+async function benchAsync(fn, iterations = 10) {
+  const times = [];
+  for (let i = 0; i < iterations; i++) {
+    const t0 = performance.now();
+    await fn();
+    times.push(performance.now() - t0);
+  }
+  return { median: median(times), min: Math.min(...times), max: Math.max(...times), times };
+}
+
+// ── Load Automerge ─────────────────────────────────────────────────────
+
+log('Loading Automerge from esm.sh...');
+let A;
+const wasmInitStart = performance.now();
+try {
+  A = await import('https://esm.sh/@automerge/automerge@3/slim?bundle-deps');
+  log('Module loaded. Initialising WASM...');
+  await A.initializeWasm(
+    fetch('https://esm.sh/@automerge/automerge@3/dist/automerge.wasm')
+  );
+  const wasmInitTime = performance.now() - wasmInitStart;
+  log(`WASM ready in ${fmt(wasmInitTime)}`);
+  window._wasmInitTime = wasmInitTime;
+} catch (e) {
+  log('ERROR: Failed to load Automerge: ' + e.message);
+  throw e;
+}
+
+// ── Discover available items ───────────────────────────────────────────
+
+const itemSelect = document.getElementById('item-select');
+const DEFAULT_ITEM = 'ef793c27-2d4b-4c99-b05a-2769db5bc5a9';
+const bootBtn = document.getElementById('boot-btn');
+let itemIndex = []; // [{id, name, path, size}]
+let allItems = []; // full item objects from backup.json
+
+log('Scanning src/items/ for JSON files...');
+try {
+  // Fetch the backup.json to get the item list (it has all items with names)
+  // But backup.json is too large. Instead, fetch individual files.
+  // We'll use a pragmatic approach: fetch a directory listing or a known set.
+  // Since we're on a local dev server, try fetching backup.json just for the index.
+  const backupResp = await fetch('../src/items/backup.json');
+  if (backupResp.ok) {
+    const backup = await backupResp.json();
+    // backup is an array of items
+    allItems = Array.isArray(backup) ? backup : [];
+    itemIndex = allItems
+      .map(it => ({
+        id: it.id,
+        name: it.name || it.id.substring(0, 8),
+        size: JSON.stringify(it).length,
+      }))
+      .sort((a, b) => b.size - a.size);
+
+    itemSelect.innerHTML = '';
+    for (const it of itemIndex) {
+      const opt = document.createElement('option');
+      opt.value = it.id;
+      opt.textContent = `${it.name} (${fmtBytes(it.size)})`;
+      if (it.id === DEFAULT_ITEM) opt.selected = true;
+      itemSelect.appendChild(opt);
+    }
+    log(`Found ${itemIndex.length} items. Sorted by size (largest first).`);
+  } else {
+    throw new Error('backup.json not found');
+  }
+} catch (e) {
+  // Fallback: just offer the default item
+  log('Could not load item index from backup.json: ' + e.message);
+  log('Falling back to default item (spatial-canvas-view).');
+  itemSelect.innerHTML = `<option value="${DEFAULT_ITEM}">spatial-canvas-view (default)</option>`;
+}
+
+// ── Load selected fixture ─────────────────────────────────────────────
+
+let fixture;
+
+async function loadFixture(itemId) {
+  log(`Loading item ${itemId}...`);
+  // Try individual file first, fall back to finding in backup
+  const resp = await fetch(`../src/items/${itemId}.json`);
+  if (resp.ok) {
+    fixture = await resp.json();
+  } else {
+    // Item might not have an individual export — find in backup index
+    throw new Error(`Could not fetch ${itemId}.json`);
+  }
+  log(`Fixture loaded: ${fixture.name || fixture.id} (${fmtBytes(JSON.stringify(fixture).length)} JSON)`);
+}
+
+try {
+  await loadFixture(itemSelect.value || DEFAULT_ITEM);
+} catch (e) {
+  log('ERROR: Failed to load fixture: ' + e.message);
+}
+
+// ── Ready ──────────────────────────────────────────────────────────────
+
+runBtn.disabled = false;
+runBtn.textContent = 'Run Benchmarks';
+if (allItems.length > 0) {
+  bootBtn.disabled = false;
+  bootBtn.textContent = `Boot Simulation (${allItems.length} items)`;
+}
+log('Ready. Select an item and click "Run Benchmarks", or "Boot Simulation" to test all items.');
+
+itemSelect.addEventListener('change', async () => {
+  try {
+    await loadFixture(itemSelect.value);
+    log('Ready to benchmark ' + (fixture.name || fixture.id));
+  } catch (e) {
+    log('ERROR loading item: ' + e.message);
+  }
+});
+
+runBtn.addEventListener('click', async () => {
+  runBtn.disabled = true;
+  itemSelect.disabled = true;
+  runBtn.textContent = 'Running...';
+  resultsEl.innerHTML = '';
+  statusEl.textContent = '';
+
+  try {
+    // Reload in case selection changed
+    await loadFixture(itemSelect.value || DEFAULT_ITEM);
+    await runBenchmarks();
+  } catch (e) {
+    log('ERROR: ' + e.message + '\n' + e.stack);
+  }
+
+  runBtn.disabled = false;
+  itemSelect.disabled = false;
+  runBtn.textContent = 'Run Again';
+});
+
+bootBtn.addEventListener('click', async () => {
+  bootBtn.disabled = true;
+  runBtn.disabled = true;
+  itemSelect.disabled = true;
+  bootBtn.textContent = 'Running...';
+  resultsEl.innerHTML = '';
+  statusEl.textContent = '';
+
+  try {
+    await runBootSimulation();
+  } catch (e) {
+    log('ERROR: ' + e.message + '\n' + e.stack);
+  }
+
+  bootBtn.disabled = false;
+  runBtn.disabled = false;
+  itemSelect.disabled = false;
+  bootBtn.textContent = `Boot Simulation (${allItems.length} items)`;
+});
+
+// ── Boot Simulation ───────────────────────────────────────────────────
+
+async function runBootSimulation() {
+  log(`Preparing ${allItems.length} items...`);
+  addSection(`Boot Simulation: ${allItems.length} real items`);
+
+  // Phase 1: A.from() + A.save() for each item (one-time migration cost)
+  log('Phase 1: Converting all items to Automerge binary (A.from + A.save)...');
+  const saved = []; // [{id, name, jsonSize, amSize, bytes, fromTime}]
+  const fromStart = performance.now();
+  for (const item of allItems) {
+    const jsonSize = JSON.stringify(item).length;
+    const t0 = performance.now();
+    const doc = A.from(item);
+    const bytes = A.save(doc);
+    const fromTime = performance.now() - t0;
+    saved.push({
+      id: item.id,
+      name: item.name || item.id.substring(0, 8),
+      jsonSize,
+      amSize: bytes.length,
+      bytes,
+      fromTime,
+    });
+  }
+  const totalFromTime = performance.now() - fromStart;
+  log(`Migration complete: ${fmt(totalFromTime)} total`);
+
+  // Phase 2: A.load() for each item (simulates boot)
+  log('Phase 2: Loading all items from binary (A.load)...');
+  const loadTimes = []; // [{name, jsonSize, amSize, loadTime}]
+  const bootStart = performance.now();
+  for (const s of saved) {
+    const t0 = performance.now();
+    A.load(s.bytes);
+    const loadTime = performance.now() - t0;
+    loadTimes.push({
+      name: s.name,
+      jsonSize: s.jsonSize,
+      amSize: s.amSize,
+      loadTime,
+    });
+  }
+  const totalBootTime = performance.now() - bootStart;
+  log(`Boot simulation complete: ${fmt(totalBootTime)}`);
+
+  // ── Summary ─────────────────────────────────────────────────────────
+  addSection('Boot time');
+  addRow('Total A.load() for all items', fmt(totalBootTime), `${allItems.length} items`, totalBootTime > 3000 ? 'bad' : totalBootTime > 1000 ? 'warn' : 'good');
+
+  const totalJsonSize = loadTimes.reduce((s, r) => s + r.jsonSize, 0);
+  const totalAmSize = loadTimes.reduce((s, r) => s + r.amSize, 0);
+  addRow('Total JSON size', fmtBytes(totalJsonSize), '');
+  addRow('Total Automerge binary size', fmtBytes(totalAmSize), `${(totalAmSize / totalJsonSize).toFixed(2)}x`);
+
+  const times = loadTimes.map(r => r.loadTime).sort((a, b) => a - b);
+  addRow('Median A.load()', fmt(median(times)), '');
+  addRow('Mean A.load()', fmt(times.reduce((a, b) => a + b, 0) / times.length), '');
+  addRow('Max A.load()', fmt(times[times.length - 1]), loadTimes.find(r => r.loadTime === times[times.length - 1]).name);
+  addRow('Min A.load()', fmt(times[0]), '');
+
+  // ── Size buckets ────────────────────────────────────────────────────
+  addSection('By size bucket');
+  const buckets = [
+    { label: '< 1 KB', min: 0, max: 1024 },
+    { label: '1–5 KB', min: 1024, max: 5 * 1024 },
+    { label: '5–20 KB', min: 5 * 1024, max: 20 * 1024 },
+    { label: '20–50 KB', min: 20 * 1024, max: 50 * 1024 },
+    { label: '> 50 KB', min: 50 * 1024, max: Infinity },
+  ];
+
+  for (const b of buckets) {
+    const items = loadTimes.filter(r => r.jsonSize >= b.min && r.jsonSize < b.max);
+    if (items.length === 0) continue;
+    const totalMs = items.reduce((s, r) => s + r.loadTime, 0);
+    const avgMs = totalMs / items.length;
+    addRow(b.label, `${items.length} items`, `total ${fmt(totalMs)}, avg ${fmt(avgMs)}`);
+  }
+
+  // ── Slowest items ───────────────────────────────────────────────────
+  addSection('Top 10 slowest items');
+  const slowest = [...loadTimes].sort((a, b) => b.loadTime - a.loadTime).slice(0, 10);
+  for (const r of slowest) {
+    addRow(r.name, fmt(r.loadTime), `${fmtBytes(r.jsonSize)} JSON, ${fmtBytes(r.amSize)} AM`);
+  }
+
+  // ── Migration cost ──────────────────────────────────────────────────
+  addSection('One-time migration cost (A.from + A.save)');
+  addRow('Total migration time', fmt(totalFromTime), `${allItems.length} items`);
+
+  log('\nDone!');
+}
+
+// ── Benchmarks ─────────────────────────────────────────────────────────
+
+async function runBenchmarks() {
+  const jsonStr = JSON.stringify(fixture);
+  const jsonBytes = new TextEncoder().encode(jsonStr).length;
+
+  addSection(`Fixture: ${fixture.name || fixture.id} (${fmtBytes(jsonBytes)})`);
+
+  // ── 1. WASM Init ───────────────────────────────────────────────────
+  addSection('1. WASM Initialisation');
+  // Already measured above; re-measure with a fresh import is not practical
+  // in the same page, so we report the initial measurement.
+  log('WASM init: measured during page load (see above).');
+  addRow('WASM init (page load)', fmt(window._wasmInitTime), 'includes module fetch + compile');
+
+  // ── 2. A.from() + A.save() ────────────────────────────────────────
+  addSection('2. Create doc from plain object');
+  log('Benchmarking A.from()...');
+
+  let doc;
+  const fromResult = bench(() => { doc = A.from(fixture); });
+  addRow('A.from(item)', fmt(fromResult.median), `min ${fmt(fromResult.min)}, max ${fmt(fromResult.max)}`);
+
+  log('Benchmarking A.save()...');
+  let savedBytes;
+  const saveResult = bench(() => { savedBytes = A.save(doc); });
+  addRow('A.save(doc)', fmt(saveResult.median), `min ${fmt(saveResult.min)}, max ${fmt(saveResult.max)}`);
+  addRow('JSON size', fmtBytes(jsonBytes), '');
+  addRow('Automerge binary size', fmtBytes(savedBytes.length), '');
+
+  const ratio = (savedBytes.length / jsonBytes).toFixed(2);
+  const ratioCls = ratio < 2 ? 'good' : ratio < 4 ? 'warn' : 'bad';
+  addRow('Size ratio (AM / JSON)', ratio + 'x', '', ratioCls);
+
+  // ── 3. Read conversion ────────────────────────────────────────────
+  addSection('3. Read conversion (doc → plain object)');
+  log('Benchmarking JSON.parse(JSON.stringify(doc))...');
+
+  const readResult = bench(() => { JSON.parse(JSON.stringify(doc)); });
+  addRow('Single item read', fmt(readResult.median), `min ${fmt(readResult.min)}, max ${fmt(readResult.max)}`);
+
+  log('Benchmarking bulk read (337 items)...');
+  // Simulate 337 items by repeating the same doc (conservative — real items are smaller)
+  const bulkResult = bench(() => {
+    for (let i = 0; i < 337; i++) JSON.parse(JSON.stringify(doc));
+  }, 3);
+  addRow('Bulk read (337x)', fmt(bulkResult.median), 'worst case — all items are this large', bulkResult.median > 500 ? 'bad' : bulkResult.median > 100 ? 'warn' : 'good');
+
+  // Also measure A.load() which is the IDB → doc step
+  log('Benchmarking A.load()...');
+  const loadResult = bench(() => { A.load(savedBytes); });
+  addRow('A.load(bytes)', fmt(loadResult.median), `min ${fmt(loadResult.min)}, max ${fmt(loadResult.max)}`);
+
+  const bulkLoadResult = bench(() => {
+    for (let i = 0; i < 337; i++) A.load(savedBytes);
+  }, 3);
+  addRow('Bulk A.load (337x)', fmt(bulkLoadResult.median), 'worst case', bulkLoadResult.median > 2000 ? 'bad' : bulkLoadResult.median > 500 ? 'warn' : 'good');
+
+  // ── 4. Field-level diff + A.change() ──────────────────────────────
+  addSection('4. Write path: diff + A.change()');
+  log('Benchmarking field-level mutations...');
+
+  // A.change() freezes the input doc, so each iteration must start from a fresh clone.
+
+  // 4a. Simple field change (modify name)
+  const simpleChangeResult = bench(() => {
+    const c = A.clone(doc);
+    A.change(c, 'rename', d => { d.name = 'spatial-canvas-view-renamed'; });
+  });
+  addRow('Simple field change (name)', fmt(simpleChangeResult.median), 'includes clone');
+
+  // 4b. Nested field change (modify timestamp)
+  const nestedChangeResult = bench(() => {
+    const c = A.clone(doc);
+    A.change(c, 'touch', d => { d.modified = Date.now(); });
+  });
+  addRow('Nested field change (modified)', fmt(nestedChangeResult.median), 'includes clone');
+
+  // 4c. Array mutation (add a tag)
+  const tagChangeResult = bench(() => {
+    const c = A.clone(doc);
+    A.change(c, 'add tag', d => {
+      if (!d.content.tags) d.content.tags = [];
+      d.content.tags.push('deadbeef-test-0000-0000-000000000000');
+    });
+  });
+  addRow('Array push (add tag)', fmt(tagChangeResult.median), 'includes clone');
+
+  // 4d. Deep nested mutation (attachment view.z change)
+  const hasAttachments = fixture.attachments && fixture.attachments.length > 0;
+  if (hasAttachments) {
+    const attachChangeResult = bench(() => {
+      const c = A.clone(doc);
+      A.change(c, 'change z', d => {
+        d.attachments[0].view.z = 999;
+      });
+    });
+    addRow('Deep nested change (attachment.view.z)', fmt(attachChangeResult.median), 'includes clone');
+  } else {
+    addRow('Deep nested change (attachment.view.z)', 'skipped', 'no attachments in fixture', 'warn');
+  }
+
+  // 4e. Measure clone cost separately so we can subtract it
+  const cloneResult = bench(() => { A.clone(doc); });
+  addRow('A.clone(doc) alone', fmt(cloneResult.median), 'subtract from above for pure change cost');
+
+  // 4f. Simulate the full write path: clone plain object, mutate, diff, apply
+  log('Benchmarking full write path simulation...');
+  const fullWriteResult = bench(() => {
+    const c = A.clone(doc);
+    // 1. Read: convert doc to plain object
+    const plain = JSON.parse(JSON.stringify(c));
+    // 2. Caller mutates the plain object
+    plain.name = 'modified-' + Math.random();
+    plain.modified = Date.now();
+    // 3. Storage layer diffs and applies
+    A.change(c, 'full write', d => {
+      d.name = plain.name;
+      d.modified = plain.modified;
+    });
+  });
+  addRow('Full write path (read + mutate + change)', fmt(fullWriteResult.median), 'includes clone + JSON round-trip');
+
+  // ── 5. Active Text AST mutations ──────────────────────────────────
+  addSection('5. Active Text AST mutations');
+  log('Benchmarking AST mutations...');
+
+  const hasHob = fixture.content && fixture.content.hob;
+  if (hasHob) {
+    // The hob AST is a deeply nested array. Log its top-level structure for context.
+    const hobLen = fixture.content.hob.length;
+    log(`content.hob: top-level array length = ${hobLen}, first element = ${JSON.stringify(fixture.content.hob[0])}`);
+    addRow('content.hob top-level length', hobLen.toString(), `first: ${JSON.stringify(fixture.content.hob[0])}`);
+
+    // Use the description AST instead — it's a list of blocks (Active Text)
+    // that better represents the mutation patterns we care about.
+    const hasDesc = fixture.content.description && Array.isArray(fixture.content.description);
+    const descLen = hasDesc ? fixture.content.description.length : 0;
+    log(`content.description: array length = ${descLen}`);
+
+    if (hasDesc && descLen > 4) {
+      // 5a. Append a block to the description AST
+      const astInsertResult = bench(() => {
+        const c = A.clone(doc);
+        A.change(c, 'append AST block', d => {
+          d.content.description.push([':p', { s: 'benchmark-appended-block' }]);
+        });
+      });
+      addRow('Append AST block (push)', fmt(astInsertResult.median), 'includes clone');
+
+      // 5b. Insert a block mid-array
+      const insertIdx = Math.min(3, descLen - 1);
+      const astSpliceResult = bench(() => {
+        const c = A.clone(doc);
+        A.change(c, 'splice AST block', d => {
+          d.content.description.splice(insertIdx, 0, [':p', { s: 'benchmark-spliced-block' }]);
+        });
+      });
+      addRow(`Splice AST block (at index ${insertIdx})`, fmt(astSpliceResult.median), 'includes clone');
+
+      // 5c. Edit text in an existing AST node
+      // Find a node with an "s" property to modify
+      let editPath = null;
+      for (let i = 1; i < fixture.content.description.length; i++) {
+        const node = fixture.content.description[i];
+        if (Array.isArray(node) && node.length > 1 && node[1] && node[1].s !== undefined) {
+          editPath = i;
+          break;
+        }
+      }
+      if (editPath !== null) {
+        const astEditResult = bench(() => {
+          const c = A.clone(doc);
+          A.change(c, 'edit AST text', d => {
+            d.content.description[editPath][1].s = 'benchmark-modified-text';
+          });
+        });
+        addRow(`Edit AST text (description[${editPath}][1].s)`, fmt(astEditResult.median), 'includes clone');
+      } else {
+        addRow('Edit AST text', 'skipped', 'no suitable text node found', 'warn');
+      }
+
+      // 5d. Replace a subtree
+      const replaceIdx = Math.min(2, descLen - 1);
+      const astReplaceResult = bench(() => {
+        const c = A.clone(doc);
+        A.change(c, 'replace subtree', d => {
+          d.content.description[replaceIdx] = [':p', { s: 'replaced-subtree' }];
+        });
+      });
+      addRow(`Replace AST subtree (index ${replaceIdx})`, fmt(astReplaceResult.median), 'includes clone');
+
+      addRow('content.description array length', descLen.toString(), '');
+    } else {
+      addRow('AST mutations', 'skipped', 'content.description too short or missing', 'warn');
+    }
+  } else {
+    addRow('AST mutations', 'skipped', 'no content.hob in fixture', 'warn');
+  }
+
+  // ── 6. History operations ─────────────────────────────────────────
+  addSection('6. History (50 changes)');
+  log('Building doc with 50 changes...');
+
+  let histDoc = A.from(fixture);
+  const headsBefore = A.getHeads(histDoc);
+
+  for (let i = 0; i < 50; i++) {
+    histDoc = A.change(histDoc, `change ${i}`, d => {
+      d.modified = 1700000000000 + i;
+      d.name = `${fixture.name || 'item'}-v${i}`;
+      // Toggle a tag to simulate real edits
+      if (!d.content.tags) d.content.tags = [];
+      if (i % 2 === 0) {
+        d.content.tags.push(`bench-tag-${i}`);
+      } else if (d.content.tags.length > 1) {
+        d.content.tags.splice(d.content.tags.length - 1, 1);
+      }
+    });
+  }
+
+  const headsAfter = A.getHeads(histDoc);
+  const histBytes = A.save(histDoc);
+  addRow('Doc size after 50 changes', fmtBytes(histBytes.length), `vs ${fmtBytes(savedBytes.length)} with 0 changes`);
+
+  log('Benchmarking A.getHistory()...');
+  let history;
+  const histResult = bench(() => { history = A.getHistory(histDoc); });
+  addRow('A.getHistory()', fmt(histResult.median), `${history.length} entries`);
+
+  log('Benchmarking A.view() at old heads...');
+  const viewResult = bench(() => { A.view(histDoc, headsBefore); });
+  addRow('A.view(doc, oldHeads)', fmt(viewResult.median), 'immutable snapshot, shares memory');
+
+  log('Benchmarking A.diff()...');
+  const diffResult = bench(() => { A.diff(histDoc, headsBefore, headsAfter); });
+  let patches;
+  patches = A.diff(histDoc, headsBefore, headsAfter);
+  addRow('A.diff(before, after)', fmt(diffResult.median), `${patches.length} patches`);
+
+  // Measure accessing a history snapshot (this is the expensive one)
+  log('Benchmarking history snapshot access...');
+  const snapshotResult = bench(() => {
+    const entry = history[Math.floor(history.length / 2)];
+    const _snap = entry.snapshot; // triggers lazy rebuild
+  }, 3);
+  addRow('History snapshot (mid-point)', fmt(snapshotResult.median), 'lazy rebuild — expensive');
+
+  // ── Summary ───────────────────────────────────────────────────────
+  addSection('Summary');
+  const totalReadPath = loadResult.median + readResult.median;
+  const totalWritePath = readResult.median + simpleChangeResult.median + saveResult.median;
+  addRow('Estimated read path (load + convert)', fmt(totalReadPath), 'IDB → doc → plain object');
+  addRow('Estimated write path (convert + change + save)', fmt(totalWritePath), 'plain object → diff → IDB');
+  addRow('Current read path (IDB → JSON.parse)', '~0.1-1ms', 'for comparison');
+
+  log('\nDone!');
+}
+</script>
+</body>
+</html>
