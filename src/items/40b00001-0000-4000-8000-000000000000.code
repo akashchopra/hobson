@@ -1120,6 +1120,9 @@ function gensym(prefix = 'G__') {
 // Evaluator
 // ============================================================
 
+// @self support: set by createInterpreter to return the current code item's GUID.
+let _selfIdProvider = null;
+
 // Sentinel for recur
 const RECUR = Symbol('recur');
 
@@ -1136,7 +1139,15 @@ async function evaluate(ast, env, callStack) {
   // String types: keyword, item-ref, or symbol
   if (typeof ast === 'string') {
     if (ast[0] === ':') return keyword(ast.slice(1));
-    if (ast[0] === '@') return { _hobType: 'item-ref', value: ast.slice(1) };
+    if (ast[0] === '@') {
+      const refName = ast.slice(1);
+      if (refName === 'self') {
+        const selfId = _selfIdProvider?.();
+        if (!selfId) throw hobError('@self — no current item context', null, callStack, ast);
+        return { _hobType: 'item-ref', value: selfId };
+      }
+      return { _hobType: 'item-ref', value: refName };
+    }
     // Symbol lookup
     try {
       return env.lookup(ast);
@@ -2887,9 +2898,15 @@ function registerItemOps(env, api) {
   }, { _hobName: 'find-items' }));
 
   // Resolve item references
+  // @self resolves to the currently-executing code item (view or computed-field owner).
   env.define('resolve-ref', Object.assign(async (ref) => {
     if (!ref || ref._hobType !== 'item-ref') return ref;
     const value = ref.value;
+    if (value === 'self') {
+      const selfId = api._renderViewId || api._renderItemId;
+      if (!selfId) throw new Error('@self — no current item context');
+      return await api.get(selfId);
+    }
     if (UUID_RE.test(value)) {
       return await api.get(value);
     }
@@ -3362,6 +3379,9 @@ const STANDARD_MACROS = `
 
 export function createInterpreter(api, viewApi, eventApi) {
   const stdlib = createStdlib();
+
+  // @self resolves to the currently-executing code item (view during render, data item in computed fields).
+  _selfIdProvider = () => api._renderViewId || api._renderItemId;
 
   // Helper: construct sourceCtx from _hobItemApi render context (set by renderHobView)
   function _hobSourceCtx() {
