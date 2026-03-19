@@ -510,16 +510,21 @@ function renderLeaf(node, state, itemNames, api) {
       span.textContent = '"' + node.value.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n') + '"';
       break;
     case 'item-ref': {
-      const name = itemNames.get(node.value) || node.value.slice(0, 8);
       span.className = 'hob-item-ref';
-      span.textContent = name;
-      span.title = node.value;
-      if (!state.onChange) {
-        span.addEventListener('click', (e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          api.openItem(e, node.value);
-        });
+      if (node.value === 'self') {
+        span.textContent = '@self';
+        span.title = '@self — resolves to this item';
+      } else {
+        const name = itemNames.get(node.value) || node.value.slice(0, 8);
+        span.textContent = name;
+        span.title = node.value;
+        if (!state.onChange) {
+          span.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            api.openItem(e, node.value);
+          });
+        }
       }
       break;
     }
@@ -2774,8 +2779,8 @@ export async function render(value, options, api) {
     helpEl: null
   };
 
-  // Resolve item references (async, batch)
-  const itemRefs = [...nodeMap.values()].filter(n => n.type === 'item-ref');
+  // Resolve item references (async, batch) — skip @self (reserved, not a real item)
+  const itemRefs = [...nodeMap.values()].filter(n => n.type === 'item-ref' && n.value !== 'self');
   const itemNames = new Map();
   await Promise.all(itemRefs.map(async (ref) => {
     try {
