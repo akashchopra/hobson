@@ -1,0 +1,677 @@
+{
+  "id": "c0c0c0c0-0045-0000-0000-000000000000",
+  "name": "Mobile Support",
+  "type": "871ae771-b9b1-4f40-8c7f-d9038bfb69c3",
+  "created": 1774000000000,
+  "modified": 1774000000000,
+  "content": {
+    "description": [
+      ":doc",
+      [
+        ":h1",
+        {
+          "s": "Mobile Support"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Design plan for making Hobson usable on phones. Optimized for phone-first, not \"responsive desktop\"."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Problem"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Hobson is currently unusable on mobile. All navigation depends on keyboard shortcuts (Ctrl+K, Ctrl+E, Ctrl+\\). The context menu requires right-click. The REPL panel takes up too much of the screen even when collapsed (36px fixed bar). The spatial canvas's floating windows don't work on small screens. There is no responsive CSS \u2014 zero media queries \u2014 and no touch event handling."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Design Approach: Separate Views, Not Responsive CSS"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Two approaches were considered:"
+        }
+      ],
+      [
+        ":p",
+        [
+          ":strong",
+          {
+            "s": "Responsive CSS"
+          }
+        ],
+        {
+          "s": " (branch within existing items): One viewport-view with if-mobile checks and media queries. Pro: single source of truth, less to maintain. Con: code accumulates if-mobile branches, different interaction models (right-click dropdown vs long-press bottom sheet) crammed together, fights Hobson's grain \u2014 a view internally switching between two UIs is doing what the view system already does."
+        }
+      ],
+      [
+        ":p",
+        [
+          ":strong",
+          {
+            "s": "Separate views"
+          }
+        ],
+        {
+          "s": " (mobile-specific view items): mobile-viewport-view, item-list-view, etc. are distinct items. Pro: plays to Hobson's strengths (the view system already resolves which view for which context), clean code (no branching), independent iteration, phone UI can be radically different from desktop. Con: shared logic may need extraction into libraries, more items to manage."
+        }
+      ],
+      [
+        ":p",
+        [
+          ":strong",
+          {
+            "s": "Decision:"
+          }
+        ],
+        {
+          "s": " Separate views for presentation (where the interaction model differs), shared libraries for behavior (menu data, search logic), CSS for minor reflow (field layouts, font sizes, touch targets). If the interaction model is different, separate view. If only the size is different, CSS."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Screen-Aware View Resolution"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The core architectural change: views declare minimum screen capabilities they require via a new "
+        },
+        [
+          ":code",
+          {
+            "s": "content.screens"
+          }
+        ],
+        {
+          "s": " field. Views that require capabilities the current environment lacks are excluded from view resolution. No field = no requirements = works everywhere (backwards compatible)."
+        }
+      ],
+      [
+        ":p",
+        [
+          ":strong",
+          {
+            "s": "Capability constraints"
+          }
+        ],
+        {
+          "s": " (all optional, omit any that don't matter):"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":code",
+            {
+              "s": "minWidth"
+            }
+          ],
+          {
+            "s": " \u2014 minimum viewport width in CSS pixels. spatial-canvas-view needs ~800px."
+          }
+        ],
+        [
+          ":li",
+          [
+            ":code",
+            {
+              "s": "pointer"
+            }
+          ],
+          {
+            "s": " \u2014 required pointer precision: "
+          },
+          [
+            ":code",
+            {
+              "s": "\"fine\""
+            }
+          ],
+          {
+            "s": " (mouse/trackpad) or "
+          },
+          [
+            ":code",
+            {
+              "s": "\"coarse\""
+            }
+          ],
+          {
+            "s": " (finger). Maps to CSS "
+          },
+          [
+            ":code",
+            {
+              "s": "pointer"
+            }
+          ],
+          {
+            "s": " media feature."
+          }
+        ],
+        [
+          ":li",
+          [
+            ":code",
+            {
+              "s": "touch"
+            }
+          ],
+          {
+            "s": " \u2014 "
+          },
+          [
+            ":code",
+            {
+              "s": "true"
+            }
+          ],
+          {
+            "s": " if the view requires touch input (long-press, swipe, etc.)."
+          }
+        ]
+      ],
+      [
+        ":p",
+        [
+          ":strong",
+          {
+            "s": "Examples:"
+          }
+        ]
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":item-ref",
+            {
+              "s": "ef793c27-2d4b-4c99-b05a-2769db5bc5a9"
+            },
+            {
+              "s": "spatial-canvas-view"
+            }
+          ],
+          {
+            "s": ": "
+          },
+          [
+            ":code",
+            {
+              "s": "{ minWidth: 800, pointer: \"fine\" }"
+            }
+          ],
+          {
+            "s": " \u2014 needs wide screen and precise pointer."
+          }
+        ],
+        [
+          ":li",
+          [
+            ":item-ref",
+            {
+              "s": "bd74da77-a459-454a-b001-48685d4b536d"
+            },
+            {
+              "s": "viewport-view"
+            }
+          ],
+          {
+            "s": ": "
+          },
+          [
+            ":code",
+            {
+              "s": "{ pointer: \"fine\" }"
+            }
+          ],
+          {
+            "s": " \u2014 needs precise pointer for right-click menus."
+          }
+        ],
+        [
+          ":li",
+          {
+            "s": "mobile-viewport-view: "
+          },
+          [
+            ":code",
+            {
+              "s": "{ touch: true }"
+            }
+          ],
+          {
+            "s": " \u2014 needs touch for long-press, bottom sheet gestures."
+          }
+        ],
+        [
+          ":li",
+          {
+            "s": "item-list-view, generic-view, note views: no "
+          },
+          [
+            ":code",
+            {
+              "s": "screens"
+            }
+          ],
+          {
+            "s": " field \u2014 work everywhere."
+          }
+        ]
+      ],
+      [
+        ":p",
+        [
+          ":strong",
+          {
+            "s": "Resolution change in "
+          }
+        ],
+        [
+          ":item-ref",
+          {
+            "s": "f1111111-0008-0000-0000-000000000000"
+          },
+          {
+            "s": "viewport-rendering"
+          }
+        ],
+        {
+          "s": ":"
+        }
+      ],
+      [
+        ":ol",
+        [
+          ":li",
+          {
+            "s": "Measure the environment once at construction time: "
+          },
+          [
+            ":code",
+            {
+              "s": "this.env = { width, touch, pointer }"
+            }
+          ],
+          {
+            "s": "."
+          }
+        ],
+        [
+          ":li",
+          {
+            "s": "Add a "
+          },
+          [
+            ":code",
+            {
+              "s": "viewMatchesEnv(view)"
+            }
+          ],
+          {
+            "s": " check: if "
+          },
+          [
+            ":code",
+            {
+              "s": "content.screens"
+            }
+          ],
+          {
+            "s": " exists, verify each constraint against the environment. No "
+          },
+          [
+            ":code",
+            {
+              "s": "screens"
+            }
+          ],
+          {
+            "s": " field = always matches."
+          }
+        ],
+        [
+          ":li",
+          {
+            "s": "In "
+          },
+          [
+            ":code",
+            {
+              "s": "resolveView()"
+            }
+          ],
+          {
+            "s": ": at each step (item.preferredView, type.preferredView), skip views that don't match. In "
+          },
+          [
+            ":code",
+            {
+              "s": "findView()"
+            }
+          ],
+          {
+            "s": ": filter candidates, then prefer views with more satisfied constraints over unconstrained views."
+          }
+        ]
+      ],
+      [
+        ":p",
+        {
+          "s": "On a phone (360px, touch, coarse pointer): spatial-canvas-view excluded (too narrow, no fine pointer), viewport-view excluded (no fine pointer). item-list-view and mobile-viewport-view survive. On desktop (1920px, no touch, fine pointer): mobile-viewport-view excluded (no touch). spatial-canvas-view (2 constraints met) preferred over item-list-view (unconstrained). No predefined categories, no keywords \u2014 views describe what they need, the environment is measured, and the matching is mechanical."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Mobile Viewport"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "A new "
+        },
+        [
+          ":code",
+          {
+            "s": "mobile-viewport-view"
+          }
+        ],
+        {
+          "s": " replaces "
+        },
+        [
+          ":item-ref",
+          {
+            "s": "bd74da77-a459-454a-b001-48685d4b536d"
+          },
+          {
+            "s": "viewport-view"
+          }
+        ],
+        {
+          "s": " on phones. Key differences:"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":strong",
+            {
+              "s": "REPL completely hidden."
+            }
+          ],
+          {
+            "s": " No collapsed bar, no panel, no splitter. Available only as a full-screen overlay via the action bar."
+          }
+        ],
+        [
+          ":li",
+          [
+            ":strong",
+            {
+              "s": "Mobile action bar"
+            }
+          ],
+          {
+            "s": " at the bottom: Search (replaces Ctrl+K), Edit (replaces Ctrl+E), More/context menu (replaces right-click), REPL (opens full-screen overlay). 44px touch targets, respects safe-area-inset-bottom."
+          }
+        ],
+        [
+          ":li",
+          [
+            ":strong",
+            {
+              "s": "Context menu as bottom sheet"
+            }
+          ],
+          {
+            "s": " instead of positioned dropdown. Full width, slides up from bottom, max 60vh, rounded top corners, drag-to-dismiss. Triggered by long-press (500ms)."
+          }
+        ],
+        [
+          ":li",
+          [
+            ":strong",
+            {
+              "s": "Full-bleed content."
+            }
+          ],
+          {
+            "s": " No border-radius on #main-view, no padding, no wasted pixels."
+          }
+        ],
+        [
+          ":li",
+          [
+            ":strong",
+            {
+              "s": "Full-screen search overlay"
+            }
+          ],
+          {
+            "s": " instead of modal. Larger input, larger result rows (44px min touch targets), recent items shown by default."
+          }
+        ]
+      ],
+      [
+        ":h2",
+        {
+          "s": "Spatial Canvas Replacement"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The spatial canvas is a desktop UI pattern \u2014 it will never be mobile. A new "
+        },
+        [
+          ":code",
+          {
+            "s": "item-list-view"
+          }
+        ],
+        {
+          "s": " renders attachments as a vertical list of tappable cards. Each card shows name, type, and modified time. Tap navigates into the item. This is the phone equivalent of the canvas \u2014 just a list of the things attached to the current item."
+        }
+      ],
+      [
+        ":p",
+        [
+          ":item-ref",
+          {
+            "s": "ef793c27-2d4b-4c99-b05a-2769db5bc5a9"
+          },
+          {
+            "s": "spatial-canvas-view"
+          }
+        ],
+        {
+          "s": " gets "
+        },
+        [
+          ":code",
+          {
+            "s": "screens: { minWidth: 800, pointer: \"fine\" }"
+          }
+        ],
+        {
+          "s": ". item-list-view has no screens constraints (works everywhere). Both have the same "
+        },
+        [
+          ":code",
+          {
+            "s": "for_type"
+          }
+        ],
+        {
+          "s": ". On desktop, spatial-canvas-view wins (more specific \u2014 it has constraints that match). On phone, spatial-canvas-view is excluded and item-list-view is the only candidate."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "What Doesn't Change"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":strong",
+            {
+              "s": "Kernel"
+            }
+          ],
+          {
+            "s": " \u2014 no UI, no changes needed."
+          }
+        ],
+        [
+          ":li",
+          [
+            ":strong",
+            {
+              "s": "viewport-manager"
+            }
+          ],
+          {
+            "s": " \u2014 stateless navigation via URL + events, no changes needed."
+          }
+        ],
+        [
+          ":li",
+          [
+            ":strong",
+            {
+              "s": "Shared libraries"
+            }
+          ],
+          {
+            "s": " \u2014 context-menu-lib builds menu data (items, submenus, actions) regardless of presentation. item-search-lib handles search logic. These stay as-is; mobile views call them and present differently."
+          }
+        ],
+        [
+          ":li",
+          [
+            ":strong",
+            {
+              "s": "Content views"
+            }
+          ],
+          {
+            "s": " \u2014 generic-view, note views, markdown field views work on both screens. Minor CSS adjustments only (touch targets, font sizes)."
+          }
+        ]
+      ],
+      [
+        ":h2",
+        {
+          "s": "Implementation Phases"
+        }
+      ],
+      [
+        ":ol",
+        [
+          ":li",
+          [
+            ":strong",
+            {
+              "s": "Screen-aware view resolution"
+            }
+          ],
+          {
+            "s": " \u2014 measure environment (width, touch, pointer) in RenderingSystem at construction, add content.screens constraint matching to resolveView/findView, add environment class to #app for CSS. Prerequisite for everything else."
+          }
+        ],
+        [
+          ":li",
+          [
+            ":strong",
+            {
+              "s": "Responsive CSS"
+            }
+          ],
+          {
+            "s": " \u2014 add mobile styles to "
+          },
+          [
+            ":item-ref",
+            {
+              "s": "33333333-8888-0000-0000-000000000000"
+            },
+            {
+              "s": "kernel:styles"
+            }
+          ],
+          {
+            "s": ": full-bleed #main-view, 44px min touch targets, safe-area insets. Immediate improvement even before new views exist."
+          }
+        ],
+        [
+          ":li",
+          [
+            ":strong",
+            {
+              "s": "mobile-viewport-view"
+            }
+          ],
+          {
+            "s": " \u2014 new view for the viewport item. Action bar, no REPL panel, long-press context menu as bottom sheet."
+          }
+        ],
+        [
+          ":li",
+          [
+            ":strong",
+            {
+              "s": "item-list-view"
+            }
+          ],
+          {
+            "s": " \u2014 new view replacing spatial canvas on mobile. Vertical card list of attachments."
+          }
+        ],
+        [
+          ":li",
+          [
+            ":strong",
+            {
+              "s": "Full-screen overlays"
+            }
+          ],
+          {
+            "s": " \u2014 REPL as full-screen overlay, search as full-screen overlay."
+          }
+        ]
+      ]
+    ],
+    "tags": [
+      "bff75873-edb8-412e-81c9-c744e68fe29f",
+      "c0c0c0c0-0040-0000-0000-000000000000"
+    ]
+  },
+  "attachments": []
+}
