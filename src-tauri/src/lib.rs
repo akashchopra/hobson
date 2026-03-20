@@ -13,6 +13,14 @@ pub fn run() {
         .on_page_load(|webview, _payload| {
             let _ = webview.eval(r#"
                 document.addEventListener('keydown', e => {
+                    // Prevent WebKitGTK from consuming Ctrl+ shortcuts
+                    // Allow clipboard operations (Ctrl+C/V/X/A) to keep native behavior
+                    if (e.ctrlKey && !e.altKey) {
+                        const allow = ['c','v','x','a'].includes(e.key.toLowerCase());
+                        if (!allow) e.preventDefault();
+                    }
+                }, { capture: true });
+                document.addEventListener('keydown', e => {
                     if ((e.ctrlKey && e.key === 'r') || e.key === 'F5') {
                         e.preventDefault();
                         location.reload();
