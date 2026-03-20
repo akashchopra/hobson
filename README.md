@@ -7,5 +7,38 @@ The system aims to document itself from within, so the only way to learn more is
 
 Upload the backup.json file (which contains the full system, not just the kernel) and you are ready to go! The system should open at the "New Users" workspace, but if for some reason the backup file was configured to load a different workspace, simply press Ctrl+k and select "New Users" from the choices offered - it is the best starting point for learning about the system.
 
+## Desktop App (Tauri)
+
+Hobson can also run as a native desktop app via [Tauri](https://v2.tauri.app/), giving access to filesystem, shell, networking, and other OS APIs. The Tauri shell lives on the `tauri` branch.
+
+### Prerequisites
+
+- [Rust](https://rustup.rs/) (`curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`)
+- Tauri CLI (`cargo install tauri-cli --version "^2"`)
+- Linux system libraries: `sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev`
+
+### Run
+
+```bash
+git checkout tauri
+cd src-tauri
+cargo tauri dev
+```
+
+### Keyboard Shortcuts
+
+The Tauri app has no browser chrome, so these shortcuts replace browser UI:
+
+| Shortcut | Action |
+|----------|--------|
+| Ctrl+R / F5 | Reload page |
+| Alt+Left | Back |
+| Alt+Right | Forward |
+
+### Known Issues
+
+- WebKitGTK on Linux is somewhat slower than Firefox for Hobson's workload. This is an upstream limitation.
+- The `-webkit-font-smoothing: antialiased` CSS rule is required in kernel:styles to prevent text rendering artifacts under WebKitGTK's GPU compositor.
+
 ## Warning
 This system is almost entirely vibe-coded, and needs serious review. The documentation within the system is also mostly AI-generated, and can sometimes read like marketing material - treat with caution!
