@@ -10,6 +10,22 @@ pub fn run() {
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_process::init())
+        .on_page_load(|webview, _payload| {
+            let _ = webview.eval(r#"
+                document.addEventListener('keydown', e => {
+                    if ((e.ctrlKey && e.key === 'r') || e.key === 'F5') {
+                        e.preventDefault();
+                        location.reload();
+                    } else if (e.altKey && e.key === 'ArrowLeft') {
+                        e.preventDefault();
+                        history.back();
+                    } else if (e.altKey && e.key === 'ArrowRight') {
+                        e.preventDefault();
+                        history.forward();
+                    }
+                });
+            "#);
+        })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
