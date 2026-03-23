@@ -2,9 +2,20 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Project Overview
+## Documentation
 
-Hobson is a personal information management system inspired by Conway's Humane Dozen, Smalltalk live environments, Lisp REPL-first development, Obsidian linking, and Obenauer's itemized OS concept. It's a browser-based system where everything (data, code, UI) is an item.
+**Start here:** Read [`docs/system-orientation.md`](docs/system-orientation.md) for a complete overview of the system — philosophy, architecture, features, and links to all detailed docs. This is the recommended first read at session start.
+
+Detailed documentation lives in the item system. Key items for deep dives:
+
+| Item | ID | Purpose |
+|------|----|---------|
+| [System Layers](src/items/c0c0c0c0-0091-0000-0000-000000000000.json) | `c0c0c0c0-0091-0000-0000-000000000000` | Three-layer architecture, boot flow, layer responsibilities |
+| [Project Context](src/items/c0c0c0c0-0030-0000-0000-000000000000.json) | `c0c0c0c0-0030-0000-0000-000000000000` | User preferences, working style, open design tensions |
+| [Roadmap](src/items/c0c0c0c0-0090-0000-0000-000000000000.json) | `c0c0c0c0-0090-0000-0000-000000000000` | Current priorities and recent accomplishments |
+
+Documentation items follow the `c0c0c0c0-XXXX-0000-0000-000000000000` GUID pattern. The system orientation doc links to all of them by topic.
+
 
 ## Development Commands
 
@@ -14,57 +25,11 @@ No traditional build system - the project is a single HTML file (`src/bootloader
 - **Safe Mode:** Add `?safe=1` to URL to boot kernel only (no user code items) - useful for recovery
 - **Testing:** Manual testing via the built-in REPL
 
-## System Architecture: Three-Layer Split
-
-Hobson has three distinct layers. **Respect these boundaries strictly** — logic must live in the correct layer.
-
-| Layer | Responsibility | May depend on |
-|-------|---------------|---------------|
-| **Kernel** | Storage, events, code/module loading, bootstrap. **No UI** (except safe-mode fallback). | Nothing — it is the foundation |
-| **Viewport** | Rendering engine, navigation, view resolution, chrome (REPL bar, help dialog). Built from regular items but rarely modified by users. | Kernel |
-| **Userland** | Views, libraries, type definitions, user data, documentation. Everything the user creates or customizes. | Kernel + Viewport |
-
-**The kernel boundary rule:** If it can be built as a userland/viewport item, it **must not** be in the kernel. The kernel provides only what cannot be implemented as items: IndexedDB storage, the event bus, code evaluation, and bootstrap sequencing.
-
-**Rendering is NOT in the kernel.** It lives in `viewport-rendering` (a library item). The kernel has no rendering code.
-
-For full details, read the [System Layers](src/items/c0c0c0c0-0091-0000-0000-000000000000.json) doc.
-
-## Documentation
-
-All documentation lives in the item system. Read these items for full context:
-
-| Item | ID | Purpose |
-|------|----|---------|
-| [System Layers](src/items/c0c0c0c0-0091-0000-0000-000000000000.json) | `c0c0c0c0-0091-0000-0000-000000000000` | Three-layer architecture (kernel/viewport/userland), boot flow, responsibilities |
-| [Feature Overview](src/items/c0c0c0c0-0092-0000-0000-000000000000.json) | `c0c0c0c0-0092-0000-0000-000000000000` | All user-facing features with descriptions and links |
-| [Architecture Overview](src/items/a0a0a0a0-d0c0-4000-8000-000000000003.json) | `a0a0a0a0-d0c0-4000-8000-000000000003` | System architecture, kernel modules, storage, bootstrap |
-| [Core Concepts](src/items/a0a0a0a0-d0c0-4000-8000-000000000002.json) | `a0a0a0a0-d0c0-4000-8000-000000000002` | Items, types, code, libraries, views |
-| [Project Context](src/items/c0c0c0c0-0030-0000-0000-000000000000.json) | `c0c0c0c0-0030-0000-0000-000000000000` | User preferences, working style, open design tensions |
-
-Documentation items follow the `c0c0c0c0-XXXX-0000-0000-000000000000` GUID pattern and are tagged with the `concept` tag.
-
 ## Key Source Files
 
 - `src/bootloader.html` - The minimal bootloader. Almost never modified; contains no kernel or application logic.
 - `src/items/{guid}.json` - The most recent export of item with id {guid}. Use these as the reference implementation for all items.
 - `src/items/backup.json` - The most recent dump of all items in the database. Do not read this file! Use the individual item exports.
-
-## Seed Item GUIDs
-```
-ATOM: "00000000-0000-0000-0000-000000000000",
-TYPE_DEFINITION: "11111111-0000-0000-0000-000000000000",
-CODE: "22222222-0000-0000-0000-000000000000",
-KERNEL_MODULE: "33333333-0000-0000-0000-000000000000",
-KERNEL_CORE: "33333333-1111-0000-0000-000000000000",
-KERNEL_STORAGE: "33333333-2222-0000-0000-000000000000",
-KERNEL_MODULE_SYSTEM: "33333333-4444-0000-0000-000000000000",
-KERNEL_SAFE_MODE: "33333333-7777-0000-0000-000000000000",
-KERNEL_STYLES: "33333333-8888-0000-0000-000000000000",
-LIBRARY: "66666666-0000-0000-0000-000000000000",
-VIEW: "aaaaaaaa-0000-0000-0000-000000000000",
-DEFAULT_VIEW: "aaaaaaaa-1111-0000-0000-000000000000",
-```
 
 ## Item Structure
 ```javascript
