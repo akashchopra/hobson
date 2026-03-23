@@ -2,7 +2,12 @@
 // Reads from URL (root) and viewport item (view config).
 // RenderingSystem singleton is lazily (re)constructed after cache clear.
 
-const VIEWPORT_ID = "88888888-0000-0000-0000-000000000000";
+const VIEWPORT_ID_DESKTOP = "88888888-0000-0000-0000-000000000000";
+const VIEWPORT_ID_MOBILE = "88888888-0001-0000-0000-000000000000";
+let activeViewportId = VIEWPORT_ID_DESKTOP;
+
+export function getViewportId() { return activeViewportId; }
+
 const VIEWPORT_RENDERING_ID = "f1111111-0008-0000-0000-000000000000";
 const EVENT_IDS = {
   VIEWPORT_ROOT_CHANGED: "e0e00000-0003-0002-0000-000000000000",
@@ -51,6 +56,11 @@ export async function onKernelBootComplete({ safeMode, rootElement }, _api) {
   const { RenderingSystem } = await window.kernel.moduleSystem.require(VIEWPORT_RENDERING_ID);
   ViewportManager._instance = new ViewportManager(RenderingSystem, window.kernel, rootElement);
 
+  // Resolve active viewport based on environment
+  const rs = ViewportManager._instance.rendering;
+  activeViewportId = (rs.env.touch || rs.env.pointer === 'coarse')
+    ? VIEWPORT_ID_MOBILE : VIEWPORT_ID_DESKTOP;
+
   // Register popstate handler for browser back/forward
   if (!window._hobsonPopstateHandler) {
     window._hobsonPopstateHandler = handlePopstate;
@@ -60,7 +70,7 @@ export async function onKernelBootComplete({ safeMode, rootElement }, _api) {
   // If URL has a root, ensure viewport item is in sync
   const urlRoot = getRoot();
   if (urlRoot) {
-    const viewport = await window.kernel.storage.get(VIEWPORT_ID);
+    const viewport = await window.kernel.storage.get(activeViewportId);
     const currentChild = viewport.attachments?.[0];
     if (currentChild?.id !== urlRoot) {
       await persistRootChange(urlRoot, currentChild?.id);
@@ -87,7 +97,7 @@ export async function onKernelBootComplete({ safeMode, rootElement }, _api) {
 async function handlePopstate(e) {
   const urlRoot = getRoot();
   if (urlRoot) {
-    const viewport = await window.kernel.storage.get(VIEWPORT_ID);
+    const viewport = await window.kernel.storage.get(activeViewportId);
     const previous = viewport.attachments?.[0]?.id;
 
     if (previous !== urlRoot) {
@@ -105,7 +115,7 @@ async function handlePopstate(e) {
 }
 
 async function persistRootChange(newRootId, previousRootId, viewId) {
-  const viewport = await window.kernel.storage.get(VIEWPORT_ID);
+  const viewport = await window.kernel.storage.get(activeViewportId);
   if (newRootId === previousRootId && !viewId) return;
 
   const spec = newRootId ? { id: newRootId } : null;
@@ -118,7 +128,7 @@ async function persistRootChange(newRootId, previousRootId, viewId) {
 
 async function getChildSpec() {
   try {
-    const viewport = await window.kernel.storage.get(VIEWPORT_ID);
+    const viewport = await window.kernel.storage.get(activeViewportId);
     return viewport.attachments?.[0] || null;
   } catch (e) {
     console.warn('[viewport-manager] Failed to read viewport item:', e);
@@ -128,7 +138,7 @@ async function getChildSpec() {
 
 async function updateChildSpec(updater) {
   try {
-    const viewport = await window.kernel.storage.get(VIEWPORT_ID);
+    const viewport = await window.kernel.storage.get(activeViewportId);
     const root = getRoot();
     if (!root) return;
 
@@ -157,7 +167,7 @@ export function getRendering() {
 export async function navigate(itemId, params = {}) {
   const { view, ...urlParams } = params;
 
-  const viewport = await window.kernel.storage.get(VIEWPORT_ID);
+  const viewport = await window.kernel.storage.get(activeViewportId);
   const previous = viewport.attachments?.[0]?.id;
 
   const url = new URL(window.location);
@@ -201,30 +211,11 @@ export async function getRootView() {
 }
 
 export async function setRootView(viewId, storePrevious = true) {
-  const root = getRoot();
   const childSpec = await getChildSpec();
   const currentViewType = childSpec?.view?.type;
 
   // No-op if already on this view
   if (currentViewType === viewId) return;
-
-  // Snapshot current child view configs from root item
-  let currentChildViews = null;
-  if (storePrevious && currentViewType && root) {
-    try {
-      const rootItem = await window.kernel.storage.get(root);
-      if (rootItem.attachments) {
-        const cvs = {};
-        let has = false;
-        for (const att of rootItem.attachments) {
-          if (att?.view) { cvs[att.id] = att.view; has = true; }
-        }
-        if (has) currentChildViews = cvs;
-      }
-    } catch (e) {
-      console.warn('[viewport-manager] Failed to read child views:', e);
-    }
-  }
 
   // Look up saved state for target view
   const savedState = viewId ? childSpec?.savedViewStates?.[viewId] : null;
@@ -237,8 +228,7 @@ export async function setRootView(viewId, storePrevious = true) {
     // Save current view state to map
     if (storePrevious && currentViewType && child.view) {
       savedViewStates[currentViewType] = {
-        viewConfig: { ...child.view },
-        childViews: currentChildViews
+        viewConfig: { ...child.view }
       };
     }
 
@@ -257,36 +247,6 @@ export async function setRootView(viewId, storePrevious = true) {
     delete newChild.previousView; // migrate away from legacy
     return newChild;
   });
-
-  // Update root item's child views
-  if (root) {
-    try {
-      const rootItem = await window.kernel.storage.get(root);
-      if (rootItem.attachments) {
-        let changed = false;
-        // Clear existing child views
-        for (let i = 0; i < rootItem.attachments.length; i++) {
-          if (rootItem.attachments[i]?.view) {
-            delete rootItem.attachments[i].view;
-            changed = true;
-          }
-        }
-        // Restore from saved state if available
-        if (savedState?.childViews) {
-          for (let i = 0; i < rootItem.attachments.length; i++) {
-            const att = rootItem.attachments[i];
-            if (att?.id && savedState.childViews[att.id]) {
-              rootItem.attachments[i] = { ...att, view: savedState.childViews[att.id] };
-              changed = true;
-            }
-          }
-        }
-        if (changed) await window.kernel.saveItem(rootItem);
-      }
-    } catch (e) {
-      console.warn('[viewport-manager] Failed to update child views:', e);
-    }
-  }
 }
 
 export async function getRootViewConfig() {

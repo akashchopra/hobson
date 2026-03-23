@@ -1,6 +1,9 @@
 
-// Viewport rendering constants (resolved from kernel on first use)
-const VIEWPORT_ID = "88888888-0000-0000-0000-000000000000";
+// Viewport ID resolved dynamically from viewport-manager
+function getActiveViewportId() {
+  const vpMgr = window.kernel?.moduleSystem?.getCached('viewport-manager');
+  return vpMgr?.getViewportId?.() || "88888888-0000-0000-0000-000000000000";
+}
 
 /** Get the view config for an item from its render context (attachment spec or viewport).
  * @param {Object} kernel - Kernel instance
@@ -12,7 +15,7 @@ async function getViewConfig(kernel, containerItem, context) {
   if (context.viewConfig) {
     return context.viewConfig;
   }
-  if (context.parentId === VIEWPORT_ID) {
+  if (context.parentId === getActiveViewportId()) {
     const vpMgr = await kernel.moduleSystem.require('viewport-manager');
     if (vpMgr.getRoot() === containerItem.id) {
       return await vpMgr.getRootViewConfig();
@@ -31,7 +34,7 @@ async function getViewConfig(kernel, containerItem, context) {
 async function updateViewConfig(kernel, containerItem, context, updates) {
   const parentId = context.parentId;
 
-  if (parentId === VIEWPORT_ID) {
+  if (parentId === getActiveViewportId()) {
     const vpMgr = await kernel.moduleSystem.require('viewport-manager');
     if (vpMgr.getRoot() === containerItem.id) {
       await vpMgr.updateRootViewConfig(updates);
@@ -518,7 +521,7 @@ export class RenderingSystem {
           cleanupDOMTree(mainView);
           this.registry.clear();
 
-          const dom = await this.renderItem(VIEWPORT_ID);
+          const dom = await this.renderItem(getActiveViewportId());
           mainView.innerHTML = '';
           mainView.appendChild(dom);
         } catch (error) {
@@ -641,13 +644,13 @@ export class RenderingSystem {
       // Viewport as open-in means we're inside a viewport attachment (modal) with
       // no explicit container target — navigate and detach the modal.
       const openIn = api.getOpenIn?.();
-      if (openIn === VIEWPORT_ID) {
+      if (openIn === getActiveViewportId()) {
         const parentId = api.getParentId?.();
-        if (parentId) await rendering.kernel.detach(VIEWPORT_ID, parentId);
+        if (parentId) await rendering.kernel.detach(getActiveViewportId(), parentId);
         await api.navigate(itemId, navigateTo);
       } else {
         const target = openIn || api.getParentId?.() || api.getCurrentRoot?.();
-        if (target && target !== VIEWPORT_ID) {
+        if (target && target !== getActiveViewportId()) {
           await rendering.kernel.attach(target, itemIdOrAttachment);
         } else {
           await api.navigate(itemId, navigateTo);
@@ -838,24 +841,6 @@ export class RenderingSystem {
       // No-op if already on this view
       if (currentViewType === viewId) return;
 
-      // Snapshot current child view configs from the item being switched
-      let currentChildViews = null;
-      if (currentViewType) {
-        try {
-          const childItem = await rendering.kernel.storage.get(itemId);
-          if (childItem.attachments) {
-            const cvs = {};
-            let has = false;
-            for (const att of childItem.attachments) {
-              if (att?.view) { cvs[att.id] = att.view; has = true; }
-            }
-            if (has) currentChildViews = cvs;
-          }
-        } catch (e) {
-          console.warn('[setAttachmentView] Failed to read child views:', e);
-        }
-      }
-
       // Look up saved state for target view
       const savedState = viewId ? currentChild.savedViewStates?.[viewId] : null;
 
@@ -866,8 +851,7 @@ export class RenderingSystem {
       // Save current view state to map
       if (currentViewType && currentChild.view) {
         savedViewStates[currentViewType] = {
-          viewConfig: { ...currentChild.view },
-          childViews: currentChildViews
+          viewConfig: { ...currentChild.view }
         };
       }
 
@@ -892,32 +876,6 @@ export class RenderingSystem {
         ...parent,
         attachments: updatedAttachments
       });
-
-      // Update child item's attachment views
-      try {
-        const childItem = await rendering.kernel.storage.get(itemId);
-        if (childItem.attachments) {
-          let changed = false;
-          for (let i = 0; i < childItem.attachments.length; i++) {
-            if (childItem.attachments[i]?.view) {
-              delete childItem.attachments[i].view;
-              changed = true;
-            }
-          }
-          if (savedState?.childViews) {
-            for (let i = 0; i < childItem.attachments.length; i++) {
-              const att = childItem.attachments[i];
-              if (att?.id && savedState.childViews[att.id]) {
-                childItem.attachments[i] = { ...att, view: savedState.childViews[att.id] };
-                changed = true;
-              }
-            }
-          }
-          if (changed) await rendering.kernel.saveItem(childItem);
-        }
-      } catch (e) {
-        console.warn('[setAttachmentView] Failed to update child views:', e);
-      }
     };
 
     // --- UI operations (moved from kernel) ---
@@ -2142,8 +2100,8 @@ export class RenderingSystem {
       // The viewport item must use full renderViewport() instead of morphdom rerenderItem().
       // viewport-view has body-appended elements and document-level event listeners whose
       // closures don't survive morphdom's handler-preservation strategy.
-      if (itemsToReRender.has(VIEWPORT_ID)) {
-        itemsToReRender.delete(VIEWPORT_ID);
+      if (itemsToReRender.has(getActiveViewportId())) {
+        itemsToReRender.delete(getActiveViewportId());
         try { await this.renderViewport(); }
         catch (e) { console.error(`[Reactivity] renderViewport error:`, e); }
         // renderViewport() clears the registry and re-renders everything, so skip
