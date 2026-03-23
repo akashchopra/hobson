@@ -1,0 +1,279 @@
+// mobile-viewport-view — Phone-optimized viewport with bottom action bar, no REPL panel.
+// Replaces viewport-view on touch devices (screens: { touch: true }).
+
+export async function render(item, api) {
+  // === URL root resolution (same logic as viewport-view) ===
+  const params = new URLSearchParams(window.location.search);
+  const urlRoot = params.get('root');
+  const storedSpec = item.attachments?.[0];
+  const storedRootId = typeof storedSpec === 'string' ? storedSpec : storedSpec?.id;
+
+  let rootId = storedRootId;
+  let rootSpec = storedSpec;
+
+  if (urlRoot && urlRoot !== storedRootId) {
+    try {
+      await api.get(urlRoot);
+      await api.set(
+        { ...item, attachments: [{ id: urlRoot }], modified: Date.now() },
+        { silent: true }
+      );
+      rootId = urlRoot;
+      rootSpec = { id: urlRoot };
+    } catch {
+      // URL root not found, keep stored
+    }
+  }
+
+  // Honor the user's explicit view choice if it matches this environment,
+  // otherwise let resolveView pick an appropriate view.
+  const storedViewId = rootSpec?.view?.type || rootSpec?.view || rootSpec?.renderer || null;
+  let rootViewId = null;
+  if (storedViewId) {
+    try {
+      const rs = document.getElementById('app')._renderingSystem;
+      const storedView = await api.get(storedViewId);
+      if (rs.viewMatchesEnv(storedView)) rootViewId = storedViewId;
+    } catch { /* view not found, let resolveView handle it */ }
+  }
+
+  // === Set document title ===
+  if (rootId) {
+    try {
+      const rootItem = await api.get(rootId);
+      const name = rootItem.content?.title || rootItem.name || rootId.slice(0, 8);
+      document.title = `${name} - Hobson`;
+    } catch {
+      document.title = 'Hobson';
+    }
+  } else {
+    document.title = 'Hobson';
+  }
+
+  // === Selection state ===
+  let selectedItemId = null;
+  let selectedElement = null;
+
+  function findItemElement(target) {
+    return target.closest('[data-parent-id][data-item-id]')
+      || target.closest('[data-item-id]');
+  }
+
+  function updateSelectionVisual() {
+    container.querySelectorAll('[data-item-id].item-selected').forEach(el =>
+      el.classList.remove('item-selected')
+    );
+    if (selectedElement) selectedElement.classList.add('item-selected');
+  }
+
+  function selectItem(iid, el) {
+    selectedItemId = iid;
+    selectedElement = el;
+    api.viewport.select(iid, el?.getAttribute('data-parent-id'));
+    updateSelectionVisual();
+  }
+
+  function clearSelection() {
+    selectedItemId = null;
+    selectedElement = null;
+    api.viewport.clearSelection();
+    updateSelectionVisual();
+  }
+
+  // === Build DOM ===
+  const container = api.createElement('div', {
+    class: 'mobile-viewport',
+    style: 'display:flex; flex-direction:column; height:100%; position:relative;'
+  });
+
+  // --- Content area ---
+  const contentArea = api.createElement('div', {
+    class: 'mobile-viewport-content',
+    style: 'flex:1; overflow:auto; display:flex; flex-direction:column; min-height:0;'
+  });
+
+  if (rootId) {
+    const decorator = (dom, itemId, theItem) => {
+      dom.setAttribute('data-item-id', itemId);
+      const iname = theItem?.name || theItem?.content?.title || itemId.slice(0, 8);
+      let typeName;
+      try {
+        const ti = theItem?.type;
+        typeName = ti ? ti.slice(0, 8) : '?';
+      } catch { typeName = '?'; }
+      dom.setAttribute('title', `${iname} (${typeName})`);
+    };
+
+    const rootDom = await api.renderItem(rootId, rootViewId, {
+      decorator,
+      onCycle: () => {
+        const el = api.createElement('div', {
+          style: 'padding:20px; color:var(--color-text-secondary); font-style:italic; text-align:center;'
+        });
+        el.textContent = rootId.slice(0, 8) + ' (cycle)';
+        return el;
+      }
+    });
+    if (rootDom) {
+      rootDom.style.cssText = 'flex:1; min-height:0; display:flex; flex-direction:column;';
+      contentArea.appendChild(rootDom);
+    }
+  } else {
+    const empty = api.createElement('div', {
+      style: 'padding:40px; text-align:center; color:var(--color-text-secondary); flex:1; display:flex; align-items:center; justify-content:center;'
+    });
+    empty.innerHTML = 'No item selected.<br><br>Tap Search to find items.';
+    contentArea.appendChild(empty);
+  }
+
+  // Tap to select
+  contentArea.addEventListener('click', (e) => {
+    hideSheet();
+    const el = findItemElement(e.target);
+    if (el) {
+      selectItem(el.getAttribute('data-item-id'), el);
+      e.stopPropagation();
+    } else {
+      clearSelection();
+    }
+  });
+
+  container.appendChild(contentArea);
+
+  // --- Bottom sheet (context menu) ---
+  const backdrop = api.createElement('div', {
+    class: 'mobile-bottom-sheet-backdrop',
+    style: 'display:none; position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.4); z-index:10000;'
+  });
+
+  const sheet = api.createElement('div', {
+    class: 'mobile-bottom-sheet',
+    style: 'position:fixed; bottom:0; left:0; right:0; max-height:60vh; background:var(--color-bg-surface); border-radius:12px 12px 0 0; overflow-y:auto; z-index:10001; padding-bottom:env(safe-area-inset-bottom);'
+  });
+
+  const handle = api.createElement('div', {
+    style: 'width:36px; height:4px; background:var(--color-border); border-radius:2px; margin:8px auto 4px;'
+  });
+  sheet.appendChild(handle);
+
+  const sheetBody = api.createElement('div', { class: 'mobile-sheet-body' });
+  sheet.appendChild(sheetBody);
+  backdrop.appendChild(sheet);
+
+  function hideSheet() {
+    backdrop.style.display = 'none';
+    sheetBody.innerHTML = '';
+  }
+
+  backdrop.addEventListener('click', (e) => {
+    if (e.target === backdrop) hideSheet();
+  });
+
+  async function showContextMenu(itemId) {
+    sheetBody.innerHTML = '';
+    const menuLib = await api.require('context-menu-lib');
+    const dismiss = () => {
+      hideSheet();
+    };
+    const menuEl = await menuLib.buildItemMenu(api, itemId, { onDismiss: dismiss, rootId });
+    // Override desktop positioning for bottom sheet
+    menuEl.style.cssText = 'position:static; display:block; box-shadow:none; max-width:none; border:none; min-width:0; padding:0;';
+    sheetBody.appendChild(menuEl);
+    backdrop.style.display = 'block';
+  }
+
+  container.appendChild(backdrop);
+
+  // --- Overlay rendering (search palette, etc.) ---
+  const overlaySpecs = (item.attachments || []).slice(1);
+  for (const spec of overlaySpecs) {
+    const oid = typeof spec === 'string' ? spec : spec.id;
+    const wrapper = api.createElement('div', {
+      style: 'position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.5); display:flex; align-items:flex-start; justify-content:center; padding-top:5vh; z-index:10000000;'
+    });
+    const modal = api.createElement('div', {
+      style: 'background:var(--color-bg-surface); border-radius:8px; width:92vw; max-height:80vh; display:flex; flex-direction:column; box-shadow:0 4px 20px rgba(0,0,0,0.3); overflow:auto;'
+    });
+
+    const closeOverlay = async () => {
+      await api.detach(item.id, oid);
+      document.getElementById('app')._renderingSystem.renderViewport();
+    };
+    wrapper.addEventListener('click', (e) => {
+      if (e.target === wrapper) closeOverlay();
+    });
+    document.addEventListener('keydown', function escHandler(e) {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        document.removeEventListener('keydown', escHandler);
+        closeOverlay();
+      }
+    });
+
+    const childDom = await api.renderItem(oid);
+    if (childDom) modal.appendChild(childDom);
+
+    wrapper.appendChild(modal);
+    container.appendChild(wrapper);
+
+    setTimeout(() => {
+      const input = modal.querySelector('input');
+      if (input) input.focus();
+    }, 0);
+  }
+
+  // --- Bottom action bar ---
+  const actionBar = api.createElement('div', {
+    class: 'mobile-action-bar',
+    style: [
+      'display:flex', 'background:var(--color-bg-surface)',
+      'border-top:1px solid var(--color-border)',
+      'padding-bottom:env(safe-area-inset-bottom)',
+      'flex-shrink:0'
+    ].join(';')
+  });
+
+  function actionButton(label, icon, handler) {
+    const btn = api.createElement('button', {
+      style: [
+        'flex:1', 'display:flex', 'flex-direction:column', 'align-items:center', 'justify-content:center',
+        'background:none', 'border:none', 'color:var(--color-text-secondary)',
+        'font-size:0.625rem', 'gap:2px', 'cursor:pointer', 'min-height:48px',
+        'padding:4px 0', '-webkit-tap-highlight-color:transparent'
+      ].join(';')
+    });
+    const iconEl = api.createElement('span', { style: 'font-size:1.25rem;' });
+    iconEl.textContent = icon;
+    btn.appendChild(iconEl);
+    const labelEl = api.createElement('span');
+    labelEl.textContent = label;
+    btn.appendChild(labelEl);
+    btn.addEventListener('click', handler);
+    return btn;
+  }
+
+  actionBar.appendChild(actionButton('Search', '\u2315', async () => {
+    await api.showItemList();
+    document.getElementById('app')._renderingSystem.renderViewport();
+  }));
+  actionBar.appendChild(actionButton('Edit', '\u270e', () => {
+    const targetId = selectedItemId || rootId;
+    if (targetId) api.editRaw(targetId);
+  }));
+  actionBar.appendChild(actionButton('More', '\u22ef', () => {
+    const targetId = selectedItemId || rootId;
+    if (targetId) showContextMenu(targetId);
+  }));
+  actionBar.appendChild(actionButton('REPL', '\u2328', async () => {
+    try {
+      const replUi = await api.require('repl-ui');
+      await replUi.toggle();
+    } catch {
+      await window.kernel?.repl?.toggle();
+    }
+  }));
+
+  container.appendChild(actionBar);
+
+  return container;
+}

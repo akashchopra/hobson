@@ -201,18 +201,92 @@ export async function getRootView() {
 }
 
 export async function setRootView(viewId, storePrevious = true) {
+  const root = getRoot();
+  const childSpec = await getChildSpec();
+  const currentViewType = childSpec?.view?.type;
+
+  // No-op if already on this view
+  if (currentViewType === viewId) return;
+
+  // Snapshot current child view configs from root item
+  let currentChildViews = null;
+  if (storePrevious && currentViewType && root) {
+    try {
+      const rootItem = await window.kernel.storage.get(root);
+      if (rootItem.attachments) {
+        const cvs = {};
+        let has = false;
+        for (const att of rootItem.attachments) {
+          if (att?.view) { cvs[att.id] = att.view; has = true; }
+        }
+        if (has) currentChildViews = cvs;
+      }
+    } catch (e) {
+      console.warn('[viewport-manager] Failed to read child views:', e);
+    }
+  }
+
+  // Look up saved state for target view
+  const savedState = viewId ? childSpec?.savedViewStates?.[viewId] : null;
+
+  // Update viewport spec atomically: save current state, set new view
   await updateChildSpec(child => {
     const newChild = { ...child };
-    if (storePrevious && child.view) {
-      newChild.previousView = { ...child.view };
+    const savedViewStates = { ...(child.savedViewStates || {}) };
+
+    // Save current view state to map
+    if (storePrevious && currentViewType && child.view) {
+      savedViewStates[currentViewType] = {
+        viewConfig: { ...child.view },
+        childViews: currentChildViews
+      };
     }
-    if (viewId) {
-      newChild.view = { ...(child.view || {}), type: viewId };
+
+    // Set new view (restore from saved or fresh)
+    if (savedState) {
+      newChild.view = { ...savedState.viewConfig };
+      delete savedViewStates[viewId];
+    } else if (viewId) {
+      newChild.view = { type: viewId };
     } else {
       delete newChild.view;
     }
+
+    newChild.savedViewStates = Object.keys(savedViewStates).length > 0 ? savedViewStates : undefined;
+    if (currentViewType) newChild.previousViewType = currentViewType;
+    delete newChild.previousView; // migrate away from legacy
     return newChild;
   });
+
+  // Update root item's child views
+  if (root) {
+    try {
+      const rootItem = await window.kernel.storage.get(root);
+      if (rootItem.attachments) {
+        let changed = false;
+        // Clear existing child views
+        for (let i = 0; i < rootItem.attachments.length; i++) {
+          if (rootItem.attachments[i]?.view) {
+            delete rootItem.attachments[i].view;
+            changed = true;
+          }
+        }
+        // Restore from saved state if available
+        if (savedState?.childViews) {
+          for (let i = 0; i < rootItem.attachments.length; i++) {
+            const att = rootItem.attachments[i];
+            if (att?.id && savedState.childViews[att.id]) {
+              rootItem.attachments[i] = { ...att, view: savedState.childViews[att.id] };
+              changed = true;
+            }
+          }
+        }
+        if (changed) await window.kernel.saveItem(rootItem);
+      }
+    } catch (e) {
+      console.warn('[viewport-manager] Failed to update child views:', e);
+    }
+  }
 }
 
 export async function getRootViewConfig() {
@@ -231,19 +305,22 @@ export async function updateRootViewConfig(updates) {
 
 export async function restorePreviousRootView() {
   const child = await getChildSpec();
-  if (!child?.previousView) return false;
-  await updateChildSpec(child => {
-    const newChild = { ...child };
-    newChild.view = { ...child.previousView };
-    delete newChild.previousView;
-    return newChild;
-  });
-  return true;
+  // New mechanism: switch to the previous view type via savedViewStates
+  if (child?.previousViewType) {
+    await setRootView(child.previousViewType);
+    return true;
+  }
+  // Legacy fallback: old previousView field
+  if (child?.previousView) {
+    await setRootView(child.previousView.type);
+    return true;
+  }
+  return false;
 }
 
 export async function hasPreviousView() {
   const child = await getChildSpec();
-  return !!child?.previousView;
+  return !!(child?.previousViewType || child?.previousView);
 }
 
 // No-op — kept for API compatibility

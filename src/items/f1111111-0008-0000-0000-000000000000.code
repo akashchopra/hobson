@@ -101,25 +101,45 @@ async function restorePreviousView(kernel, context, itemId, renderViewport) {
   if (childIndex < 0) return false;
 
   const childSpec = parent.attachments[childIndex];
+
+  // New mechanism: use previousViewType + savedViewStates
+  if (childSpec.previousViewType) {
+    // Delegate to setAttachmentView which handles savedViewStates
+    const rendering = document.getElementById('app')?._renderingSystem;
+    if (rendering) {
+      const api = kernel.createAPI(parent, context);
+      rendering.enrichAPI(api, context, parent);
+      await api.setAttachmentView(parent.id, itemId, childSpec.previousViewType);
+      await renderViewport();
+      return true;
+    }
+  }
+
+  // Legacy fallback: old previousView field
   if (childSpec.previousView) {
     parent.attachments[childIndex] = {
       ...childSpec,
       view: { ...childSpec.previousView },
       previousView: undefined
     };
-  } else if (childSpec.view && 'type' in childSpec.view) {
+    await kernel.saveItem(parent);
+    await renderViewport();
+    return true;
+  }
+
+  // No previous view — just clear the current view type
+  if (childSpec.view && 'type' in childSpec.view) {
     const { type, ...viewWithoutType } = childSpec.view;
     parent.attachments[childIndex] = {
       ...childSpec,
-      view: Object.keys(viewWithoutType).length > 0 ? viewWithoutType : undefined,
-      previousView: undefined
+      view: Object.keys(viewWithoutType).length > 0 ? viewWithoutType : undefined
     };
-  } else {
-    return false;
+    await kernel.saveItem(parent);
+    await renderViewport();
+    return true;
   }
-  await kernel.saveItem(parent);
-  await renderViewport();
-  return true;
+
+  return false;
 }
 
 /** Parse a stack trace to extract the source item name and line number.
@@ -462,7 +482,20 @@ export class RenderingSystem {
     this._reRenderDepth = new Map(); // itemId -> count (tracks by itemId, not instanceId)
     this._depthClearTimeout = null;
     this._MAX_RERENDER_DEPTH = 3;
-    this._debugRender = new URLSearchParams(window.location.search).has('debug-render');
+    const params = new URLSearchParams(window.location.search);
+    this._debugRender = params.has('debug-render');
+    if (params.get('env') === 'mobile') {
+      this.env = { width: window.innerWidth, pointer: 'coarse', touch: true };
+    } else {
+      this.env = {
+        width: window.innerWidth,
+        pointer: matchMedia('(pointer: fine)').matches ? 'fine' : 'coarse',
+        touch: 'ontouchstart' in window || navigator.maxTouchPoints > 0
+      };
+    }
+    document.documentElement.classList.add(
+      this.env.pointer === 'coarse' || this.env.touch ? 'env-mobile' : 'env-desktop'
+    );
     this.rootElement = null; // Set by viewport-manager after construction
   }
 
@@ -799,20 +832,92 @@ export class RenderingSystem {
         throw new Error(`Item ${itemId} not found in container ${parentId}`);
       }
 
+      const currentChild = parent.attachments[childIndex];
+      const currentViewType = currentChild.view?.type;
+
+      // No-op if already on this view
+      if (currentViewType === viewId) return;
+
+      // Snapshot current child view configs from the item being switched
+      let currentChildViews = null;
+      if (currentViewType) {
+        try {
+          const childItem = await rendering.kernel.storage.get(itemId);
+          if (childItem.attachments) {
+            const cvs = {};
+            let has = false;
+            for (const att of childItem.attachments) {
+              if (att?.view) { cvs[att.id] = att.view; has = true; }
+            }
+            if (has) currentChildViews = cvs;
+          }
+        } catch (e) {
+          console.warn('[setAttachmentView] Failed to read child views:', e);
+        }
+      }
+
+      // Look up saved state for target view
+      const savedState = viewId ? currentChild.savedViewStates?.[viewId] : null;
+
+      // Update parent attachment spec
       const updatedAttachments = [...parent.attachments];
-      const currentChild = updatedAttachments[childIndex];
-      const currentView = currentChild.view;
+      const savedViewStates = { ...(currentChild.savedViewStates || {}) };
+
+      // Save current view state to map
+      if (currentViewType && currentChild.view) {
+        savedViewStates[currentViewType] = {
+          viewConfig: { ...currentChild.view },
+          childViews: currentChildViews
+        };
+      }
+
+      // Set new view (restore from saved or fresh)
+      let newView;
+      if (savedState) {
+        newView = { ...savedState.viewConfig };
+        delete savedViewStates[viewId];
+      } else if (viewId) {
+        newView = { type: viewId };
+      }
 
       updatedAttachments[childIndex] = {
         ...currentChild,
-        previousView: currentView ? { ...currentView } : null,
-        view: { ...(currentView || {}), type: viewId }
+        view: newView,
+        savedViewStates: Object.keys(savedViewStates).length > 0 ? savedViewStates : undefined,
+        previousViewType: currentViewType || undefined
       };
+      delete updatedAttachments[childIndex].previousView; // migrate away from legacy
 
       await rendering.kernel.saveItem({
         ...parent,
         attachments: updatedAttachments
       });
+
+      // Update child item's attachment views
+      try {
+        const childItem = await rendering.kernel.storage.get(itemId);
+        if (childItem.attachments) {
+          let changed = false;
+          for (let i = 0; i < childItem.attachments.length; i++) {
+            if (childItem.attachments[i]?.view) {
+              delete childItem.attachments[i].view;
+              changed = true;
+            }
+          }
+          if (savedState?.childViews) {
+            for (let i = 0; i < childItem.attachments.length; i++) {
+              const att = childItem.attachments[i];
+              if (att?.id && savedState.childViews[att.id]) {
+                childItem.attachments[i] = { ...att, view: savedState.childViews[att.id] };
+                changed = true;
+              }
+            }
+          }
+          if (changed) await rendering.kernel.saveItem(childItem);
+        }
+      } catch (e) {
+        console.warn('[setAttachmentView] Failed to update child views:', e);
+      }
     };
 
     // --- UI operations (moved from kernel) ---
@@ -1446,28 +1551,42 @@ export class RenderingSystem {
     return el;
   }
 
+  /** Check whether a view's screen constraints are satisfied by the current environment.
+   * Views without content.screens match all environments (backwards compatible).
+   * @param {Object} view - The view item
+   * @returns {boolean}
+   */
+  viewMatchesEnv(view) {
+    const screens = view.content?.screens;
+    if (!screens) return true;
+    if (screens.minWidth && this.env.width < screens.minWidth) return false;
+    if (screens.pointer && this.env.pointer !== screens.pointer) return false;
+    if (screens.touch && !this.env.touch) return false;
+    return true;
+  }
+
   /** Resolve a view using the preference hierarchy: item.preferredView → type.preferredView → type chain.
    * @param {Object} item - The item to find a view for
    * @returns {Promise<Object>} The resolved view item
    */
   async resolveView(item) {
-    // 1. Check item's preferred view
+    // 1. Check item's preferred view (skip if it doesn't match this screen)
     if (item.preferredView) {
       try {
         const view = await this.kernel.storage.get(item.preferredView);
-        if (view) return view;
+        if (view && this.viewMatchesEnv(view)) return view;
       } catch (e) {
         console.warn(`Preferred view ${item.preferredView} not found for item ${item.id}, checking type preference`);
       }
     }
 
-    // 2. Check type definition's preferred view
+    // 2. Check type definition's preferred view (skip if it doesn't match this screen)
     try {
       const typeItem = await this.kernel.storage.get(item.type);
       if (typeItem.preferredView) {
         try {
           const view = await this.kernel.storage.get(typeItem.preferredView);
-          if (view) return view;
+          if (view && this.viewMatchesEnv(view)) return view;
         } catch (e) {
           console.warn(`Preferred view ${typeItem.preferredView} not found for type ${typeItem.name}, using type chain lookup`);
         }
@@ -1496,10 +1615,17 @@ export class RenderingSystem {
     while (currentType && !visited.has(currentType)) {
       visited.add(currentType);
 
-      // Look for VIEW items
-      const view = allViews.find(v => v.content?.for_type === currentType);
-      if (view) {
-        return view;
+      // Look for VIEW items that match this screen environment.
+      // Prefer views with more constraints (more specific to this environment).
+      const candidates = allViews.filter(v =>
+        v.content?.for_type === currentType && this.viewMatchesEnv(v)
+      );
+      if (candidates.length > 0) {
+        candidates.sort((a, b) => {
+          const countScreens = v => Object.keys(v.content?.screens || {}).length;
+          return countScreens(b) - countScreens(a);
+        });
+        return candidates[0];
       }
 
       // Stop at ITEM (root)

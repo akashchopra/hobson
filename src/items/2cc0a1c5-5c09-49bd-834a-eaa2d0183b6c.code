@@ -496,33 +496,28 @@ export async function buildViewAsSubmenu(api, itemId, context) {
         if (context) {
           viewOption.onclick = async () => {
             context.onDismiss();
-            if (context.parentId) {
-              const parent = await api.get(context.parentId);
-              const childIndex = parent.attachments.findIndex(c => c.id === itemId);
-              if (childIndex >= 0) {
-                const currentChild = parent.attachments[childIndex];
-                const currentView = currentChild.view || {};
-
-                const newView = {
-                  ...currentView,
-                  type: view.id,
-                  innerView: currentlyRenderedViewId ? { type: currentlyRenderedViewId } : undefined
-                };
-
-                parent.attachments[childIndex] = {
-                  ...currentChild,
-                  previousView: currentView.type ? { ...currentView } : null,
-                  view: newView
-                };
-                parent.modified = Date.now();
-                await api.set(parent);
+            if (context.parentId && context.parentId !== itemId) {
+              await api.setAttachmentView(context.parentId, itemId, view.id);
+              if (currentlyRenderedViewId) {
+                const parent = await api.get(context.parentId);
+                const ci = parent.attachments.findIndex(c => c.id === itemId);
+                if (ci >= 0) {
+                  parent.attachments[ci].view = {
+                    ...parent.attachments[ci].view,
+                    innerView: { type: currentlyRenderedViewId }
+                  };
+                  parent.modified = Date.now();
+                  await api.set(parent, { silent: true });
+                }
               }
               await api.rerenderItem(itemId);
             } else {
-              await api.viewport.updateRootViewConfig({
-                type: view.id,
-                innerView: currentlyRenderedViewId ? { type: currentlyRenderedViewId } : undefined
-              });
+              await api.viewport.setRootView(view.id);
+              if (currentlyRenderedViewId) {
+                await api.viewport.updateRootViewConfig({
+                  innerView: { type: currentlyRenderedViewId }
+                });
+              }
               await api.rerenderItem(itemId);
             }
           };
