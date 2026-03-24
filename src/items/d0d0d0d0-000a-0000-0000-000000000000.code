@@ -270,12 +270,58 @@ export async function render(item, api) {
     if (targetId) showContextMenu(targetId);
   }));
   actionBar.appendChild(actionButton('REPL', '\u2328', async () => {
+    // Toggle: if already open, close it
+    const existing = container.querySelector('.mobile-repl-overlay');
+    if (existing) { existing.remove(); return; }
+
+    const overlay = api.createElement('div', {
+      class: 'mobile-repl-overlay',
+      style: 'position:fixed; top:0; left:0; right:0; bottom:0; background:var(--color-bg-surface); display:flex; flex-direction:column; z-index:10000;'
+    });
+
+    // Header with close button
+    const hdr = api.createElement('div', {
+      style: 'display:flex; align-items:center; justify-content:space-between; padding:8px 12px; border-bottom:1px solid var(--color-border); flex-shrink:0; background:var(--color-bg-surface);'
+    });
+    const titleEl = api.createElement('span', { style: 'font-weight:600; font-size:0.875rem;' });
+    titleEl.textContent = 'REPL';
+    hdr.appendChild(titleEl);
+    const closeBtn = api.createElement('button', {
+      style: 'background:none; border:none; color:var(--color-text-secondary); font-size:1.25rem; cursor:pointer; padding:4px 8px; -webkit-tap-highlight-color:transparent;'
+    });
+    closeBtn.textContent = '\u2715';
+    closeBtn.addEventListener('click', () => overlay.remove());
+    hdr.appendChild(closeBtn);
+    overlay.appendChild(hdr);
+
+    // Override REPL layout to stack vertically on mobile
+    const mobileStyle = api.createElement('style');
+    mobileStyle.textContent = '.mobile-repl-overlay .repl-panel-content{flex-direction:column!important;flex:1;min-height:0} .mobile-repl-overlay .repl-input-section{flex:1!important;min-height:0} .mobile-repl-overlay .repl-vertical-splitter{display:none!important} .mobile-repl-overlay .repl-output-section{flex:1!important;min-height:0}';
+    overlay.appendChild(mobileStyle);
+
+    // Render REPL view into overlay body
+    const body = api.createElement('div', { style: 'flex:1; min-height:0; display:flex; flex-direction:column;' });
     try {
-      const replUi = await api.require('repl-ui');
-      await replUi.toggle();
-    } catch {
-      await window.kernel?.repl?.toggle();
+      const replItem = await api.get('f1111111-0003-0003-0000-000000000000');
+      const replView = await api.require('f1111111-0003-0002-0000-000000000000');
+      const replDom = await replView.render(replItem, api);
+      replDom.style.cssText = 'flex:1; min-height:0; display:flex; flex-direction:column;';
+      body.appendChild(replDom);
+    } catch (e) {
+      const err = api.createElement('div', { style: 'padding:16px; color:var(--color-danger);' });
+      err.textContent = 'Failed to load REPL: ' + e.message;
+      body.appendChild(err);
     }
+    overlay.appendChild(body);
+
+    // Escape to close
+    const escHandler = (e) => {
+      if (e.key === 'Escape') { overlay.remove(); document.removeEventListener('keydown', escHandler); }
+    };
+    document.addEventListener('keydown', escHandler);
+
+    container.appendChild(overlay);
+    setTimeout(() => { const ta = overlay.querySelector('textarea'); if (ta) ta.focus(); }, 0);
   }));
 
   container.appendChild(actionBar);
