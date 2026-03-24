@@ -1,0 +1,60 @@
+// http-adapter — Bridges Tauri HTTP server to Hobson events.
+// Starts an HTTP server via Tauri IPC and emits http:request events
+// with a respond callback for each incoming request.
+
+const HTTP_REQUEST_EVENT = 'e0e00000-0004-0001-0000-000000000000';
+const DEFAULT_PORT = 8384;
+
+let unlisten = null;
+
+export async function onKernelBootComplete({ safeMode }, api) {
+  if (safeMode) return;
+
+  const tauri = window.__TAURI__;
+  if (!tauri) {
+    console.warn('[http-adapter] Not running in Tauri — HTTP server disabled');
+    return;
+  }
+
+  // Read config from this item
+  const self = await api.get('f1111111-0010-0000-0000-000000000000');
+  const port = self.content?.port || DEFAULT_PORT;
+  const enabled = self.content?.enabled !== false;
+
+  if (!enabled) {
+    console.log('[http-adapter] HTTP server disabled by config');
+    return;
+  }
+
+  // Listen for incoming HTTP requests from Rust
+  unlisten = await tauri.event.listen('http-request', (event) => {
+    const { requestId, method, path, body } = event.payload;
+
+    const respond = ({ status = 200, body: responseBody = '' }) => {
+      tauri.core.invoke('http_response', {
+        payload: { requestId, status, body: responseBody }
+      });
+    };
+
+    // Emit Hobson event — handlers call respond()
+    api.events.emit({
+      type: HTTP_REQUEST_EVENT,
+      content: { method, path, body, respond }
+    });
+  });
+
+  // Start the HTTP server
+  try {
+    const result = await tauri.core.invoke('start_http_server', { port });
+    console.log('[http-adapter]', result);
+  } catch (e) {
+    console.error('[http-adapter] Failed to start HTTP server:', e);
+  }
+}
+
+export function cleanup() {
+  if (unlisten) {
+    unlisten();
+    unlisten = null;
+  }
+}

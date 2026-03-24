@@ -258,6 +258,25 @@ export class Storage {
     });
   }
 
+  /** Get all deletion records since a given timestamp.
+   * Used by sync to inform the other device about deleted items.
+   * @param {number} since - Timestamp threshold
+   * @returns {Promise<Array<{itemId, timestamp}>>}
+   */
+  async getDeletedSince(since) {
+    return new Promise((resolve, reject) => {
+      const tx = this._db.transaction('item-history', 'readonly');
+      const req = tx.objectStore('item-history').getAll();
+      req.onsuccess = () => {
+        const deletions = req.result
+          .filter(e => e.deleted && e.timestamp > since)
+          .map(e => ({ itemId: e.itemId, timestamp: e.timestamp }));
+        resolve(deletions);
+      };
+      req.onerror = () => reject(req.error);
+    });
+  }
+
   // [BEGIN:validateItem]
   /** Validate an item before storage — checks type chain and code name uniqueness.
    * @param {Object} item - The item to validate

@@ -1,0 +1,78 @@
+// sync-server — Handles /sync requests from mobile devices.
+// Pure Hobson — no Tauri knowledge. Receives http:request events
+// from http-adapter and responds via the callback.
+
+const SYNC_CONFIG_ID = 'f1111111-0010-0000-0000-000000000000'; // http-adapter (skip syncing)
+const SYNC_SERVER_ID = 'f1111111-0011-0000-0000-000000000000'; // self (skip syncing)
+
+export async function onHttpRequest({ method, path, body, respond }, api) {
+  if (path !== '/sync') return;
+
+  if (method !== 'POST') {
+    respond({ status: 405, body: JSON.stringify({ error: 'POST required' }) });
+    return;
+  }
+
+  try {
+    const request = JSON.parse(body);
+    const { since = 0, items: incomingItems = [] } = request;
+    const serverTime = Date.now();
+
+    // --- Apply incoming items (LWW) ---
+    let accepted = 0;
+    let rejected = 0;
+
+    for (const incoming of incomingItems) {
+      if (!incoming.id) { rejected++; continue; }
+
+      // Check if this item was deleted locally
+      const history = await api.getHistory(incoming.id);
+      const deletionRecord = history.find(e => e.deleted && e.timestamp > incoming.modified);
+      if (deletionRecord) {
+        // Local deletion is newer — don't resurrect
+        rejected++;
+        continue;
+      }
+
+      try {
+        const local = await api.get(incoming.id);
+        if (incoming.modified > local.modified) {
+          await api.set(incoming, { silent: true });
+          accepted++;
+        } else {
+          rejected++;
+        }
+      } catch {
+        // Item doesn't exist locally — accept it
+        await api.set(incoming, { silent: true });
+        accepted++;
+      }
+    }
+
+    // --- Collect local changes since `since` ---
+    const allItems = await api.getAll();
+    const changedItems = allItems.filter(item =>
+      item.modified > since
+      && item.id !== SYNC_CONFIG_ID
+      && item.id !== SYNC_SERVER_ID
+    );
+
+    // --- Collect local deletions since `since` ---
+    const deletions = await api.getDeletedSince(since);
+
+    console.log(`[sync-server] Received ${incomingItems.length} items (accepted: ${accepted}, rejected: ${rejected}), sending ${changedItems.length} items + ${deletions.length} deletions`);
+
+    respond({
+      status: 200,
+      body: JSON.stringify({
+        items: changedItems,
+        deletions,
+        serverTime
+      })
+    });
+
+  } catch (e) {
+    console.error('[sync-server] Error:', e);
+    respond({ status: 500, body: JSON.stringify({ error: e.message }) });
+  }
+}

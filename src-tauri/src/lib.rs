@@ -1,6 +1,116 @@
+use axum::{body::Bytes, extract::State, http::{HeaderMap, Method, StatusCode}, response::IntoResponse, routing::any, Router};
+use serde::{Deserialize, Serialize};
+use std::{collections::HashMap, net::SocketAddr, sync::Arc};
+use tauri::{AppHandle, Emitter, Manager};
+use tokio::sync::{oneshot, Mutex};
+use tower_http::cors::CorsLayer;
+
+type PendingRequests = Arc<Mutex<HashMap<String, oneshot::Sender<HttpResponsePayload>>>>;
+
+#[derive(Clone, Serialize)]
+struct HttpRequestPayload {
+    #[serde(rename = "requestId")]
+    request_id: String,
+    method: String,
+    path: String,
+    body: String,
+}
+
+#[derive(Deserialize)]
+struct HttpResponsePayload {
+    #[serde(rename = "requestId")]
+    request_id: String,
+    status: u16,
+    body: String,
+}
+
+#[derive(Clone)]
+struct ProxyState {
+    app: AppHandle,
+    pending: PendingRequests,
+}
+
+async fn proxy_handler(
+    State(state): State<ProxyState>,
+    method: Method,
+    axum::extract::Path(path): axum::extract::Path<String>,
+    _headers: HeaderMap,
+    body: Bytes,
+) -> impl IntoResponse {
+    let request_id = uuid::Uuid::new_v4().to_string();
+    let body_str = String::from_utf8_lossy(&body).to_string();
+
+    let (tx, rx) = oneshot::channel();
+    state.pending.lock().await.insert(request_id.clone(), tx);
+
+    let payload = HttpRequestPayload {
+        request_id: request_id.clone(),
+        method: method.to_string(),
+        path: format!("/{path}"),
+        body: body_str,
+    };
+
+    if state.app.emit("http-request", &payload).is_err() {
+        state.pending.lock().await.remove(&request_id);
+        return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to forward request".to_string());
+    }
+
+    match tokio::time::timeout(std::time::Duration::from_secs(30), rx).await {
+        Ok(Ok(response)) => {
+            let status = StatusCode::from_u16(response.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+            (status, response.body)
+        }
+        _ => {
+            state.pending.lock().await.remove(&request_id);
+            (StatusCode::GATEWAY_TIMEOUT, "Request timed out".to_string())
+        }
+    }
+}
+
+#[tauri::command]
+async fn http_response(
+    state: tauri::State<'_, PendingRequests>,
+    payload: HttpResponsePayload,
+) -> Result<(), String> {
+    if let Some(tx) = state.lock().await.remove(&payload.request_id) {
+        let _ = tx.send(payload);
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn start_http_server(app: AppHandle, port: u16) -> Result<String, String> {
+    let pending: PendingRequests = app.state::<PendingRequests>().inner().clone();
+
+    let state = ProxyState {
+        app: app.clone(),
+        pending,
+    };
+
+    let router = Router::new()
+        .route("/{*path}", any(proxy_handler))
+        .layer(CorsLayer::permissive())
+        .with_state(state);
+
+    let addr = SocketAddr::from(([0, 0, 0, 0], port));
+
+    tokio::spawn(async move {
+        let listener = tokio::net::TcpListener::bind(addr).await
+            .map_err(|e| format!("Failed to bind: {e}"))
+            .unwrap();
+        axum::serve(listener, router).await.unwrap();
+    });
+
+    Ok(format!("HTTP server listening on 0.0.0.0:{port}"))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let pending: PendingRequests = Arc::new(Mutex::new(HashMap::new()));
+
     tauri::Builder::default()
+        .manage(pending)
+        .invoke_handler(tauri::generate_handler![start_http_server, http_response])
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_http::init())
