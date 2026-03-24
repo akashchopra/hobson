@@ -1,4 +1,4 @@
-use axum::{body::Bytes, extract::State, http::{HeaderMap, Method, StatusCode}, response::IntoResponse, routing::any, Router};
+use axum::{body::Bytes, extract::{DefaultBodyLimit, State}, http::{HeaderMap, Method, StatusCode}, response::IntoResponse, routing::any, Router};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, net::SocketAddr, sync::Arc};
 use tauri::{AppHandle, Emitter, Manager};
@@ -89,6 +89,7 @@ async fn start_http_server(app: AppHandle, port: u16) -> Result<String, String> 
 
     let router = Router::new()
         .route("/{*path}", any(proxy_handler))
+        .layer(DefaultBodyLimit::max(64 * 1024 * 1024)) // 64MB
         .layer(CorsLayer::permissive())
         .with_state(state);
 

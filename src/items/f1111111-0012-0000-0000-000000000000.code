@@ -1,0 +1,97 @@
+// sync-client — Runs on mobile, syncs with desktop.
+// Collects locally modified items, POSTs to desktop's sync endpoint,
+// applies the response. Triggered manually via exported sync() function.
+
+const SELF_ID = 'f1111111-0012-0000-0000-000000000000';
+
+let _api = null;
+
+export async function onKernelBootComplete({ safeMode }, api) {
+  if (safeMode) return;
+  _api = api;
+  console.log('[sync-client] Ready');
+}
+
+/** Trigger a sync with the desktop server. Callable from REPL: (await api.require('sync-client')).sync() */
+export async function sync() {
+  if (!_api) throw new Error('sync-client not initialized');
+  const api = _api;
+
+  // Read config from this item
+  const self = await api.get(SELF_ID);
+  const serverAddress = self.content?.serverAddress;
+  if (!serverAddress) throw new Error('No serverAddress configured in sync-client item');
+
+  const lastSync = self.content?.lastSyncTimestamp || 0;
+
+  // Collect locally modified items since last sync
+  const allItems = await api.getAll();
+  const changedItems = lastSync === 0
+    ? allItems  // First sync: send everything
+    : allItems.filter(item => item.modified > lastSync);
+
+  console.log(`[sync-client] Syncing with ${serverAddress}: sending ${changedItems.length} items (since ${lastSync === 0 ? 'initial' : new Date(lastSync).toLocaleString()})`);
+
+  // POST to desktop
+  const url = serverAddress.startsWith('http') ? serverAddress : `http://${serverAddress}`;
+  const response = await fetch(`${url}/sync`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ since: lastSync, items: changedItems })
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Sync failed (${response.status}): ${text}`);
+  }
+
+  const result = await response.json();
+  const { items: incomingItems = [], deletions = [], serverTime } = result;
+
+  // Apply incoming items (LWW)
+  let accepted = 0;
+  let rejected = 0;
+
+  for (const incoming of incomingItems) {
+    if (!incoming.id) { rejected++; continue; }
+
+    try {
+      const local = await api.get(incoming.id);
+      if (incoming.modified > local.modified) {
+        await api.set(incoming, { silent: true, preserveModified: true });
+        accepted++;
+      } else {
+        rejected++;
+      }
+    } catch {
+      // Item doesn't exist locally — accept it
+      await api.set(incoming, { silent: true, preserveModified: true });
+      accepted++;
+    }
+  }
+
+  // Apply deletions
+  let deleted = 0;
+  for (const deletion of deletions) {
+    try {
+      const local = await api.get(deletion.itemId);
+      if (local.modified < deletion.timestamp) {
+        await api.delete(deletion.itemId);
+        deleted++;
+      }
+    } catch {
+      // Item already doesn't exist locally — skip
+    }
+  }
+
+  // Re-read self (may have been updated by incoming sync) and save lastSyncTimestamp.
+  // Use preserveModified so this operational state update doesn't affect LWW.
+  const updated = await api.get(SELF_ID);
+  updated.content = updated.content || {};
+  updated.content.lastSyncTimestamp = serverTime;
+  await api.set(updated, { silent: true, preserveModified: true });
+
+  console.log(`[sync-client] Done: received ${incomingItems.length} items (accepted: ${accepted}, rejected: ${rejected}), ${deleted} deletions applied`);
+
+  return { sent: changedItems.length, accepted, rejected, deleted, serverTime };
+}

@@ -2,9 +2,6 @@
 // Pure Hobson — no Tauri knowledge. Receives http:request events
 // from http-adapter and responds via the callback.
 
-const SYNC_CONFIG_ID = 'f1111111-0010-0000-0000-000000000000'; // http-adapter (skip syncing)
-const SYNC_SERVER_ID = 'f1111111-0011-0000-0000-000000000000'; // self (skip syncing)
-
 export async function onHttpRequest({ method, path, body, respond }, api) {
   if (path !== '/sync') return;
 
@@ -37,25 +34,21 @@ export async function onHttpRequest({ method, path, body, respond }, api) {
       try {
         const local = await api.get(incoming.id);
         if (incoming.modified > local.modified) {
-          await api.set(incoming, { silent: true });
+          await api.set(incoming, { silent: true, preserveModified: true });
           accepted++;
         } else {
           rejected++;
         }
       } catch {
         // Item doesn't exist locally — accept it
-        await api.set(incoming, { silent: true });
+        await api.set(incoming, { silent: true, preserveModified: true });
         accepted++;
       }
     }
 
     // --- Collect local changes since `since` ---
     const allItems = await api.getAll();
-    const changedItems = allItems.filter(item =>
-      item.modified > since
-      && item.id !== SYNC_CONFIG_ID
-      && item.id !== SYNC_SERVER_ID
-    );
+    const changedItems = allItems.filter(item => item.modified > since);
 
     // --- Collect local deletions since `since` ---
     const deletions = await api.getDeletedSince(since);
