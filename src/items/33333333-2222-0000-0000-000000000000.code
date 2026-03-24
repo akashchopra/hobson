@@ -211,6 +211,53 @@ export class Storage {
     }
   }
 
+  // --- History operations (item-history IDB store) ---
+
+  /** Write a history entry (previous state before an update or deletion).
+   * @param {string} itemId - Item GUID
+   * @param {number} timestamp - Timestamp for this entry (previous.modified or Date.now() for deletions)
+   * @param {Object} snapshot - Full item state at this point
+   * @param {boolean} [deleted=false] - True if this records a deletion
+   */
+  async writeHistory(itemId, timestamp, snapshot, deleted = false) {
+    return new Promise((resolve, reject) => {
+      const tx = this._db.transaction('item-history', 'readwrite');
+      const req = tx.objectStore('item-history').put({ itemId, timestamp, snapshot, deleted });
+      req.onsuccess = () => resolve();
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  /** Get history entries for an item (without snapshots, for listing).
+   * @param {string} itemId - Item GUID
+   * @returns {Promise<Array<{itemId, timestamp, deleted}>>}
+   */
+  async getHistory(itemId) {
+    return new Promise((resolve, reject) => {
+      const tx = this._db.transaction('item-history', 'readonly');
+      const index = tx.objectStore('item-history').index('itemId');
+      const req = index.getAll(itemId);
+      req.onsuccess = () => {
+        resolve(req.result.map(e => ({ itemId: e.itemId, timestamp: e.timestamp, deleted: !!e.deleted })));
+      };
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  /** Get a specific history entry with full snapshot.
+   * @param {string} itemId - Item GUID
+   * @param {number} timestamp - Exact timestamp of the entry
+   * @returns {Promise<Object|null>} The full history entry or null
+   */
+  async getHistoryEntry(itemId, timestamp) {
+    return new Promise((resolve, reject) => {
+      const tx = this._db.transaction('item-history', 'readonly');
+      const req = tx.objectStore('item-history').get([itemId, timestamp]);
+      req.onsuccess = () => resolve(req.result || null);
+      req.onerror = () => reject(req.error);
+    });
+  }
+
   // [BEGIN:validateItem]
   /** Validate an item before storage — checks type chain and code name uniqueness.
    * @param {Object} item - The item to validate

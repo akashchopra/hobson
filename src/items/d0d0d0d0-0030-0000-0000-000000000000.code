@@ -1,0 +1,192 @@
+// item-history-view — shows change history for any item.
+// Select an item to see its timeline of changes with auto-generated descriptions.
+
+export async function render(item, api) {
+  const container = api.createElement('div');
+  container.style.cssText = 'width:100%; max-width:800px; margin:0 auto; padding:20px; box-sizing:border-box;';
+
+  // Header
+  const h2 = api.createElement('h2');
+  h2.textContent = item.name || 'History Viewer';
+  h2.style.cssText = 'margin:0 0 20px; font-size:1.25rem;';
+  container.appendChild(h2);
+
+  // Item selector
+  const selectRow = api.createElement('div');
+  selectRow.style.cssText = 'display:flex; gap:8px; margin-bottom:20px;';
+
+  const select = api.createElement('select');
+  select.style.cssText = 'flex:1; padding:8px; font-size:0.9rem; border:1px solid var(--color-border,#ccc); border-radius:4px; background:var(--color-bg-surface,#fff); color:var(--color-text,#333);';
+
+  const allItems = await api.getAll();
+  allItems.sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id));
+
+  const defaultOpt = api.createElement('option');
+  defaultOpt.value = '';
+  defaultOpt.textContent = 'Select an item\u2026';
+  select.appendChild(defaultOpt);
+
+  const selectedId = item.content?.selectedItemId;
+  for (const it of allItems) {
+    const opt = api.createElement('option');
+    opt.value = it.id;
+    opt.textContent = it.name || it.id.substring(0, 12);
+    if (selectedId === it.id) opt.selected = true;
+    select.appendChild(opt);
+  }
+  selectRow.appendChild(select);
+  container.appendChild(selectRow);
+
+  // Timeline container
+  const timeline = api.createElement('div');
+  container.appendChild(timeline);
+
+  // Show history for selected item
+  if (selectedId) {
+    await showHistory(selectedId, timeline, api);
+  }
+
+  // On selection change, persist choice and re-render
+  select.onchange = async () => {
+    await api.set({
+      ...item,
+      content: { ...item.content, selectedItemId: select.value },
+      modified: Date.now()
+    });
+  };
+
+  return container;
+}
+
+function formatTime(ts) {
+  const now = Date.now();
+  const diff = now - ts;
+  if (diff < 60000) return 'just now';
+  if (diff < 3600000) return Math.floor(diff / 60000) + 'm ago';
+  if (diff < 86400000) return Math.floor(diff / 3600000) + 'h ago';
+  if (diff < 604800000) return Math.floor(diff / 86400000) + 'd ago';
+  return new Date(ts).toLocaleString();
+}
+
+function describeChange(prev, curr) {
+  if (!prev) return 'created';
+  const changed = [];
+  for (const key of ['name', 'type', 'content', 'attachments']) {
+    if (JSON.stringify(prev[key]) !== JSON.stringify(curr[key])) {
+      changed.push(key);
+    }
+  }
+  return changed.length > 0 ? changed.join(', ') + ' changed' : 'modified';
+}
+
+function snapshotSummary(snapshot, api) {
+  const lines = [];
+  for (const key of ['id', 'name', 'type', 'created', 'modified']) {
+    if (key in snapshot) {
+      let val = snapshot[key];
+      if (key === 'created' || key === 'modified') val = new Date(val).toLocaleString();
+      lines.push(key + ': ' + val);
+    }
+  }
+  if (snapshot.content) {
+    const contentKeys = Object.keys(snapshot.content);
+    lines.push('content: {' + contentKeys.join(', ') + '}');
+  }
+  if (snapshot.attachments) {
+    lines.push('attachments: [' + snapshot.attachments.length + ' items]');
+  }
+  const pre = api.createElement('pre');
+  pre.style.cssText = 'margin:0; white-space:pre-wrap; font-family:monospace; line-height:1.5;';
+  pre.textContent = lines.join('\n');
+  return pre;
+}
+
+async function showHistory(itemId, container, api) {
+  container.innerHTML = '';
+
+  let entries;
+  try {
+    entries = await api.getHistory(itemId);
+  } catch (e) {
+    container.textContent = 'Error loading history: ' + e.message;
+    return;
+  }
+
+  if (!entries || entries.length === 0) {
+    container.textContent = 'No history yet. History is recorded from now on \u2014 future edits will appear here.';
+    return;
+  }
+
+  // Load snapshots for diffing
+  const snapshots = [];
+  for (const entry of entries) {
+    try {
+      const full = await api.viewAt(itemId, entry.timestamp);
+      snapshots.push(full);
+    } catch {
+      snapshots.push(null);
+    }
+  }
+
+  // Get current item state for the header
+  let targetName = itemId.substring(0, 12);
+  try {
+    const targetItem = await api.get(itemId);
+    targetName = targetItem.name || targetItem.content?.title || targetName;
+  } catch { /* item may have been deleted */ }
+
+  const header = api.createElement('div');
+  header.style.cssText = 'margin-bottom:15px; font-size:0.875rem; color:var(--color-text-secondary,#888);';
+  header.textContent = entries.length + ' version' + (entries.length === 1 ? '' : 's') + ' of \u201c' + targetName + '\u201d';
+  container.appendChild(header);
+
+  // Reverse chronological order
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i];
+    const snapshot = snapshots[i];
+    const prevSnapshot = i > 0 ? snapshots[i - 1] : null;
+
+    const isDeleted = entry.deleted;
+    const borderColor = isDeleted ? 'var(--color-danger,#c00)' : 'var(--color-border,#ddd)';
+
+    const row = api.createElement('div');
+    row.style.cssText = 'padding:10px 12px; border-left:3px solid ' + borderColor + '; margin-bottom:2px; cursor:pointer; transition:background 0.1s;';
+    row.onmouseenter = function() { this.style.background = 'var(--color-bg-hover,rgba(0,0,0,0.04))'; };
+    row.onmouseleave = function() { this.style.background = ''; };
+
+    const time = api.createElement('span');
+    time.style.cssText = 'color:var(--color-text-secondary,#888); font-size:0.8rem; margin-right:10px; min-width:70px; display:inline-block;';
+    time.textContent = formatTime(entry.timestamp);
+    time.title = new Date(entry.timestamp).toLocaleString();
+    row.appendChild(time);
+
+    const msg = api.createElement('span');
+    msg.style.cssText = 'font-size:0.875rem;';
+    if (isDeleted) {
+      msg.textContent = 'deleted';
+      msg.style.color = 'var(--color-danger,#c00)';
+    } else {
+      msg.textContent = describeChange(prevSnapshot, snapshot);
+    }
+    row.appendChild(msg);
+
+    // Click to toggle snapshot detail
+    const idx = i;
+    row.onclick = function() {
+      const existing = row.nextElementSibling;
+      if (existing && existing.dataset.historyDetail) {
+        existing.remove();
+        return;
+      }
+      if (!snapshots[idx]) return;
+
+      const detail = api.createElement('div');
+      detail.dataset.historyDetail = '1';
+      detail.style.cssText = 'padding:10px 12px; margin-bottom:2px; background:var(--color-bg-secondary,#f5f5f5); border-radius:4px; font-size:0.8rem; overflow-x:auto;';
+      detail.appendChild(snapshotSummary(snapshots[idx], api));
+      row.after(detail);
+    };
+
+    container.appendChild(row);
+  }
+}

@@ -670,6 +670,38 @@ export async function loadKernel(require, db, instanceId) {
          */
         getAllRaw: () => kernel.storage.getAllRaw(),
 
+        // --- History operations ---
+
+        /** Get history entries for an item (timestamps and metadata, no snapshots).
+         * @param {string} id - Item GUID
+         * @returns {Promise<Array<{itemId, timestamp, deleted}>>}
+         */
+        getHistory: (id) => kernel.storage.getHistory(id),
+
+        /** Get the full item snapshot at a specific history timestamp.
+         * @param {string} id - Item GUID
+         * @param {number} timestamp - Exact timestamp of the history entry
+         * @returns {Promise<Object>} The item as it was at that point
+         */
+        viewAt: async (id, timestamp) => {
+          const entry = await kernel.storage.getHistoryEntry(id, timestamp);
+          if (!entry) throw new Error(`No history entry for ${id} at ${timestamp}`);
+          return entry.snapshot;
+        },
+
+        /** Restore an item to a previous state. The revert itself is recorded in history.
+         * @param {string} id - Item GUID
+         * @param {number} timestamp - Timestamp of the version to restore
+         * @returns {Promise<Object>} The restored item
+         */
+        revertTo: async (id, timestamp) => {
+          const entry = await kernel.storage.getHistoryEntry(id, timestamp);
+          if (!entry) throw new Error(`No history entry for ${id} at ${timestamp}`);
+          const restored = { ...entry.snapshot };
+          await kernel.saveItem(restored);
+          return restored;
+        },
+
         // --- Code operations ---
 
         /** Load a library or code module by name or ID.
@@ -1121,8 +1153,11 @@ export async function loadKernel(require, db, instanceId) {
         throw error;
       }
 
-      // Get the item before deleting (for event)
+      // Get the item before deleting (for event and history)
       const item = await this.storage.get(itemId);
+
+      // Record deletion in history
+      await this.storage.writeHistory(itemId, Date.now(), item, true);
 
       // Find all parents
       const allItems = await this.storage.getAll();
@@ -1178,6 +1213,11 @@ export async function loadKernel(require, db, instanceId) {
 
       const exists = await this.storage.exists(item.id);
       const previous = exists ? await this.storage.get(item.id) : null;
+
+      // Capture previous state in history before overwriting
+      if (previous) {
+        await this.storage.writeHistory(item.id, previous.modified, previous, false);
+      }
 
       item.modified = Date.now();
       if (!exists && !item.created) {
