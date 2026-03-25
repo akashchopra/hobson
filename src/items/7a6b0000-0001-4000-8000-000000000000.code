@@ -1,8 +1,10 @@
 (defn render [item api]
   (:doc
-    (:p "Mobile workspace view that shows one attachment at a time.")
-    (:p "Swipe in from the right edge to open a full-screen tab switcher overlay. "
-        "A small hint nub on the right edge indicates the gesture is available."))
+    (:p "Workspace view that shows one attachment at a time as a tab.")
+    (:p "On mobile: swipe in from the right edge or tap the nub to open a "
+        "full-screen tab switcher overlay.")
+    (:p "On desktop: horizontal tab bar at the top. Available as an "
+        "alternative to the spatial canvas via Change View."))
 
   (def tab-lib (require "tab-state-lib"))
 
@@ -17,7 +19,7 @@
         stored
         (when (seq specs) (:id (first specs))))))
 
-  ;; Resolve tab info for the overlay
+  ;; Resolve tab info for the overlay and tab bar
   (def tab-info
     (for [spec (seq specs)]
       (let [id (:id spec)
@@ -50,6 +52,31 @@
 
   (def EDGE-ZONE 24)
   (def SWIPE-THRESHOLD 50)
+
+  ;; Show workspace context menu (Change View, etc.) positioned near the trigger
+  (defn show-workspace-menu [container x y]
+    (let [existing (invoke container "querySelector" ".ws-menu-backdrop")]
+      (when existing (invoke existing "remove")))
+    (let [ctx-lib (require "context-menu-lib")
+          dismiss (fn []
+                    (let [bg (invoke container "querySelector" ".ws-menu-backdrop")
+                          mn (invoke container "querySelector" ".ws-menu-pos")]
+                      (when bg (invoke bg "remove"))
+                      (when mn (invoke mn "remove"))))
+          menu (invoke ctx-lib "buildItemMenu" api (:id item) {:onDismiss dismiss})
+          _ (invoke (dom-get menu :classList) "add" "submenu-left")
+          backdrop (hiccup->dom
+                     [:div.ws-menu-backdrop
+                       {:style "position:fixed; top:0; left:0; right:0; bottom:0; z-index:9999;"}])
+          pos (hiccup->dom
+                [:div.ws-menu-pos
+                  {:style (str "position:fixed; top:" y "px; right:8px; z-index:10000; "
+                               "background:var(--color-bg-surface); border-radius:var(--border-radius-lg); "
+                               "box-shadow:var(--shadow-md);")}])]
+      (dom-on! backdrop :click (fn [_] (dismiss)))
+      (invoke pos "appendChild" menu)
+      (invoke container "appendChild" backdrop)
+      (invoke container "appendChild" pos)))
 
   ;; Show the tab switcher overlay imperatively (no re-render needed)
   (defn show-tab-overlay [container]
@@ -119,6 +146,60 @@
      :on-touchend
      (fn [_] (reset! tracking false))}
 
+    ;; CSS for environment-specific visibility
+    [:style ".env-desktop .tabbed-workspace-hint { display: none; }
+            .env-mobile .tabbed-workspace-tabbar { display: none; }
+            .tab-scroll-track::-webkit-scrollbar { display: none; }"]
+
+    ;; Desktop tab bar with scroll controls
+    [:div.tabbed-workspace-tabbar
+      {:style "display:flex; border-bottom:1px solid var(--color-border); background:var(--color-bg-surface); flex-shrink:0; align-items:stretch;"}
+
+      ;; Scroll left
+      [:button.tab-scroll-left
+        {:style "flex-shrink:0; width:20px; border:none; background:transparent; cursor:pointer; font-size:0.675rem; color:var(--color-text-tertiary); display:flex; align-items:center; justify-content:center; opacity:0.3;"
+         :on-click (fn [e]
+                     (let [track (invoke (invoke (dom-get e :target) "closest" ".tabbed-workspace-tabbar") "querySelector" ".tab-scroll-track")]
+                       (dom-set! track :scrollLeft (- (dom-get track :scrollLeft) 120))))}
+        "◀"]
+
+      ;; Scrollable tab track
+      [:div.tab-scroll-track
+        {:style "flex:1; min-width:0; display:flex; align-items:stretch; overflow-x:auto; scrollbar-width:none; scroll-behavior:smooth; gap:0;"}
+        (for [tab (seq tab-info)]
+          (let [is-active (= (:id tab) active-id)]
+            [:div {:style (str
+                            "display:flex; align-items:center; padding:6px 12px; "
+                            "cursor:pointer; white-space:nowrap; font-size:0.8125rem; flex-shrink:0; "
+                            "border-bottom:2px solid "
+                            (if is-active "var(--color-primary);" "transparent;")
+                            " color:" (if is-active "var(--color-text);" "var(--color-text-secondary);"))}
+              [:span {:on-click (fn [_]
+                                  ((:set-active-tab! tab-lib) (:id item) (:id tab))
+                                  (rerender!))}
+                (:name tab)]
+              [:button {:style "background:none; border:none; color:var(--color-text-tertiary); font-size:0.75rem; cursor:pointer; padding:2px 4px; margin-left:6px; border-radius:3px; line-height:1;"
+                        :on-click (fn [_]
+                                    (detach! (:id tab))
+                                    (rerender!))}
+                "✕"]]))]
+
+      ;; Scroll right
+      [:button.tab-scroll-right
+        {:style "flex-shrink:0; width:20px; border:none; background:transparent; cursor:pointer; font-size:0.675rem; color:var(--color-text-tertiary); display:flex; align-items:center; justify-content:center; opacity:0.3;"
+         :on-click (fn [e]
+                     (let [track (invoke (invoke (dom-get e :target) "closest" ".tabbed-workspace-tabbar") "querySelector" ".tab-scroll-track")]
+                       (dom-set! track :scrollLeft (+ (dom-get track :scrollLeft) 120))))}
+        "▶"]
+
+      ;; Workspace menu button — access Change View, etc.
+      [:div {:style "flex-shrink:0; display:flex; align-items:center; padding:4px 8px; cursor:pointer; color:var(--color-text-secondary); font-size:0.875rem; border-bottom:2px solid transparent;"
+             :on-click (fn [e]
+                         (let [container (invoke (dom-get e :target) "closest" ".tabbed-workspace")
+                               rect (invoke (dom-get e :currentTarget) "getBoundingClientRect")]
+                           (show-workspace-menu container (dom-get rect :left) (dom-get rect :bottom))))}
+        "⋯"]]
+
     ;; Content area — render the active tab
     [:div.tabbed-workspace-content
       {:style "flex:1; overflow:auto; min-height:0; display:flex; flex-direction:column;"}
@@ -129,7 +210,7 @@
         [:div {:style "padding:40px; text-align:center; color:var(--color-text-secondary); flex:1; display:flex; align-items:center; justify-content:center;"}
           "No items in this workspace."])]
 
-    ;; Tab switcher nub on right edge — tappable
+    ;; Mobile: tab switcher nub on right edge — tappable
     [:div.tabbed-workspace-hint
       {:style "position:absolute; right:0; top:50%; transform:translateY(-50%); width:20px; height:56px; background:var(--color-bg-surface); border:1px solid var(--color-border); border-right:none; border-radius:8px 0 0 8px; display:flex; align-items:center; justify-content:center; opacity:0.7; cursor:pointer; z-index:10; -webkit-tap-highlight-color:transparent;"
        :on-click (fn [e]
