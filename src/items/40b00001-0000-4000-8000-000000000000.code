@@ -2915,8 +2915,11 @@ function registerItemOps(env, api) {
     return items[0];
   }, { _hobName: 'resolve-ref' }));
 
-  // Module loading — available everywhere, not just in views
+  // Module loading — available everywhere, not just in views.
+  // Hob modules are cached by item ID with timestamp-based staleness check,
+  // giving them the same persistent-scope semantics as JS ES modules.
   if (api.require) {
+    const _hobModuleCache = new Map();
     env.define('require', Object.assign(async (name) => {
       // Accept item-ref objects: (require @uuid)
       if (name && name._hobType === 'item-ref') name = name.value;
@@ -2932,15 +2935,20 @@ function registerItemOps(env, api) {
         }
       } catch {}
       if (item && Array.isArray(item.content?.hob)) {
+        const cached = _hobModuleCache.get(item.id);
+        if (cached && cached.timestamp >= item.modified) {
+          return cached.exports;
+        }
         const childEnv = new Environment(env);
         for (const form of item.content.hob) {
           await evaluate(form, childEnv, []);
         }
-        const result = {};
+        const exports = {};
         for (const [k, v] of childEnv.bindings) {
-          result[`:${k}`] = v;
+          exports[k] = v;
         }
-        return result;
+        _hobModuleCache.set(item.id, { exports, timestamp: item.modified });
+        return exports;
       }
       return await api.require(name);
     }, { _hobName: 'require' }));
