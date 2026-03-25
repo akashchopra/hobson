@@ -1038,9 +1038,48 @@ export class RenderingSystem {
           openItemFn: instance.openItemFn || null
         });
 
+        const viewChanged = currentViewId !== instance.viewId;
+
         // Replace content in existing container (re-check parentNode — async work above may have changed it)
-        if (oldDom.parentNode) {
-          // === Morphdom path: patch existing DOM in-place ===
+        if (oldDom.parentNode && viewChanged) {
+          // === View changed: full DOM replacement (morphdom can't patch across different view structures) ===
+          if (this._debugRender) console.log(`[rerender] REPLACE itemId=${String(itemId).slice(0,8)} view=${instance.viewId?.slice(0,8)} → ${currentViewId?.slice(0,8)}`);
+
+          // Clean up old DOM tree
+          cleanupDOMTree(oldDom);
+          const oldNested = oldDom.querySelectorAll?.('[data-render-instance]');
+          if (oldNested) {
+            for (const el of oldNested) {
+              this.registry.unregister(parseInt(el.getAttribute('data-render-instance'), 10));
+            }
+          }
+          this.registry.unregister(instance.instanceId);
+
+          // Preserve parent-set attributes
+          const oldParentId = oldDom.getAttribute('data-parent-id');
+          if (oldParentId) newDom.setAttribute('data-parent-id', oldParentId);
+          const oldItemId = oldDom.getAttribute('data-item-id');
+          if (oldItemId) newDom.setAttribute('data-item-id', oldItemId);
+
+          // Replace in DOM
+          oldDom.parentNode.replaceChild(newDom, oldDom);
+
+          // Fill mount points on the new DOM
+          const unfilled = newDom.querySelectorAll('[data-render-child]:not([data-render-child-filled])');
+          if (unfilled.length > 0) {
+            const freshItem = await this.kernel.storage.get(itemId);
+            await this.fillMountPoints(newDom, {
+              parentId: instance.parentId,
+              decorator: instance.decorator,
+              openIn: instance.openIn,
+              ancestors: instance.ancestors,
+              renderPath: [`${itemId}:${currentViewId}`]
+            }, freshItem);
+          }
+
+          updated++;
+        } else if (oldDom.parentNode) {
+          // === Same view: morphdom patch in-place ===
           if (this._debugRender) console.log(`[rerender] MORPHDOM itemId=${String(itemId).slice(0,8)} view=${instance.viewId?.slice(0,8)}`);
           // Clean up old root's document/event listeners before patching.
           // morphdom's onNodeDiscarded handles discarded children, but the
