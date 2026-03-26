@@ -108,7 +108,7 @@ async function restorePreviousView(kernel, context, itemId, renderViewport) {
   // New mechanism: use previousViewType + savedViewStates
   if (childSpec.previousViewType) {
     // Delegate to setAttachmentView which handles savedViewStates
-    const rendering = document.getElementById('app')?._renderingSystem;
+    const rendering = _instance;
     if (rendering) {
       const api = kernel.createAPI(parent, context);
       rendering.enrichAPI(api, context, parent);
@@ -500,6 +500,7 @@ export class RenderingSystem {
       this.env.pointer === 'coarse' || this.env.touch ? 'env-mobile' : 'env-desktop'
     );
     this.rootElement = null; // Set by viewport-manager after construction
+    this._initReactiveSubscriptions();
   }
 
   /** Render the viewport item into #main-view. Re-entrant safe. */
@@ -1863,12 +1864,6 @@ export class RenderingSystem {
   async renderHobView(view, item, api, context) {
     await this._ensureInterpreter();
 
-    // Initialize reactive subscriptions once after first Hob module load
-    if (!this._reactiveInit) {
-      this._reactiveInit = true;
-      this._initReactiveSubscriptions();
-    }
-
     // Set up selector registration channel on the interpreter-level API object
     // (the one captured by get-item's closure). During evaluation, get-item with
     // :select stores selector info here when the requested item matches _renderItemId.
@@ -2040,13 +2035,14 @@ export class RenderingSystem {
   // Reactive infrastructure
   // ============================================================
 
-  /** Initialize reactive event subscriptions. Called once on first Hob render.
-   * Uses registry.getByItemId for reactive lookups — no separate dep tracker needed.
+  /** Initialize reactive event subscriptions. Called from constructor.
+   * Uses registry indexes for targeted re-renders; falls back to full viewport
+   * re-render for untracked code items (libraries).
    */
   _initReactiveSubscriptions() {
     const EVENT_IDS = this.kernel.EVENT_IDS;
     // item:updated → registry lookup → schedule re-render
-    this.kernel.events.on(EVENT_IDS.ITEM_UPDATED, (event) => {
+    this._unsubItemUpdated = this.kernel.events.on(EVENT_IDS.ITEM_UPDATED, (event) => {
       const itemId = event.content?.id;
       if (!itemId) return;
       const instanceIds = this.registry.byItemId.get(itemId);
@@ -2059,9 +2055,24 @@ export class RenderingSystem {
       if (crossDepIds && crossDepIds.size > 0) {
         this._scheduleReRenders(crossDepIds, itemId);
       }
+      // Library/code module hot-reload: if a code item changed that isn't tracked
+      // as a rendered item or view, it's a library — full viewport re-render
+      const item = event.content?.item;
+      if (item && (item.content?.code || item.content?.hob) &&
+          !this.registry.byItemId.has(itemId) &&
+          !this.registry.byViewId.has(itemId)) {
+        if (!this._pendingLibraryReRender) {
+          this._pendingLibraryReRender = true;
+          queueMicrotask(async () => {
+            this._pendingLibraryReRender = false;
+            try { await this.renderViewport(); }
+            catch (e) { console.error('[Library hot-reload] renderViewport error:', e); }
+          });
+        }
+      }
     });
-    // item:deleted → same
-    this.kernel.events.on(EVENT_IDS.ITEM_DELETED, (event) => {
+    // item:deleted → same (without library detection — deletion doesn't need re-render)
+    this._unsubItemDeleted = this.kernel.events.on(EVENT_IDS.ITEM_DELETED, (event) => {
       const itemId = event.content?.id;
       if (!itemId) return;
       const instanceIds = this.registry.byItemId.get(itemId);
@@ -2124,7 +2135,7 @@ export class RenderingSystem {
             const currentItem = await this.kernel.storage.get(instance.itemId);
             let currentValue = instance.selector.selector(currentItem);
             if (currentValue && typeof currentValue.then === 'function') currentValue = await currentValue;
-            if (this._hobModule.deepEquals(instance.selector.lastValue, currentValue)) {
+            if (this._hobModule?.deepEquals(instance.selector.lastValue, currentValue)) {
               needsReRender = false;
             } else {
               instance.selector.lastValue = currentValue;
@@ -2246,5 +2257,35 @@ export class RenderingSystem {
     container.appendChild(editBtn);
 
     return container;
+  }
+}
+
+// ============================================================================
+// Module-level singleton — resets on module re-evaluation (hot-reload safe)
+// ============================================================================
+
+let _instance = null;
+
+/** Get the RenderingSystem singleton. Creates on first call, returns cached thereafter.
+ * After module cache invalidation, the module is re-evaluated and _instance resets to null,
+ * so the next getRendering() call creates a fresh instance from the new code.
+ * @returns {RenderingSystem}
+ */
+export function getRendering() {
+  if (!_instance) {
+    _instance = new RenderingSystem(window.kernel);
+    _instance.rootElement = document.getElementById('app');
+  }
+  return _instance;
+}
+
+/** Tear down the singleton. Called by the module system before cache eviction.
+ * Unsubscribes event listeners so the old instance doesn't ghost-handle events.
+ */
+export function cleanup() {
+  if (_instance) {
+    if (_instance._unsubItemUpdated) _instance._unsubItemUpdated();
+    if (_instance._unsubItemDeleted) _instance._unsubItemDeleted();
+    _instance = null;
   }
 }

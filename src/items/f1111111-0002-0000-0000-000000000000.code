@@ -1,6 +1,6 @@
 // Viewport Manager Library
 // Reads from URL (root) and viewport item (view config).
-// RenderingSystem singleton is lazily (re)constructed after cache clear.
+// RenderingSystem singleton is managed by viewport-rendering module.
 
 const VIEWPORT_ID_DESKTOP = "88888888-0000-0000-0000-000000000000";
 const VIEWPORT_ID_MOBILE = "88888888-0001-0000-0000-000000000000";
@@ -16,48 +16,18 @@ const EVENT_IDS = {
 };
 
 // ============================================================================
-// Lazy Singleton — survives module re-evaluation after cache clear
-// ============================================================================
-
-export class ViewportManager {
-  static _instance = null;
-
-  constructor(RenderingSystemClass, kernel, rootElement) {
-    this.rendering = new RenderingSystemClass(kernel);
-    this.rendering.rootElement = rootElement;
-    rootElement._renderingSystem = this.rendering;
-  }
-
-  /**
-   * Get the singleton instance. If the module was re-evaluated after cache
-   * clear, lazily reconstructs a new instance from the current kernel and
-   * the cached viewport-rendering module.
-   */
-  static getSingletonInstance() {
-    if (!this._instance) {
-      const vpRendering = window.kernel.moduleSystem.getCached(VIEWPORT_RENDERING_ID);
-      if (vpRendering?.RenderingSystem) {
-        const rootElement = document.getElementById('app');
-        this._instance = new ViewportManager(vpRendering.RenderingSystem, window.kernel, rootElement);
-      }
-    }
-    return this._instance;
-  }
-}
-
-// ============================================================================
-// Boot handler — creates the singleton with full async init
+// Boot handler — initializes the rendering singleton and performs first render
 // ============================================================================
 
 export async function onKernelBootComplete({ safeMode, rootElement }, _api) {
   if (safeMode) return;
 
-  // Load viewport-rendering (async, first time)
-  const { RenderingSystem } = await window.kernel.moduleSystem.require(VIEWPORT_RENDERING_ID);
-  ViewportManager._instance = new ViewportManager(RenderingSystem, window.kernel, rootElement);
+  // Load viewport-rendering and initialize its singleton
+  const vpRendering = await window.kernel.moduleSystem.require(VIEWPORT_RENDERING_ID);
+  const rs = vpRendering.getRendering();
+  rs.rootElement = rootElement;
 
   // Resolve active viewport based on environment
-  const rs = ViewportManager._instance.rendering;
   activeViewportId = (rs.env.touch || rs.env.pointer === 'coarse')
     ? VIEWPORT_ID_MOBILE : VIEWPORT_ID_DESKTOP;
 
@@ -78,7 +48,7 @@ export async function onKernelBootComplete({ safeMode, rootElement }, _api) {
   }
 
   // Initial render
-  await ViewportManager._instance.rendering.renderViewport();
+  await rs.renderViewport();
 
   // Signal that viewport infrastructure is ready (sticky: replays for late subscribers)
   window.kernel.events.emit({
@@ -109,8 +79,8 @@ async function handlePopstate(e) {
       content: { rootId: urlRoot, previous, initial: false, popstate: true }
     });
 
-    const instance = ViewportManager.getSingletonInstance();
-    if (instance) await instance.rendering.renderViewport();
+    const rs = await getRenderingAsync();
+    if (rs) await rs.renderViewport();
   }
 }
 
@@ -162,8 +132,16 @@ async function updateChildSpec(updater) {
 // Public API — exported functions delegate to the singleton
 // ============================================================================
 
+/** Get the RenderingSystem synchronously (returns null if not yet initialized). */
 export function getRendering() {
-  return ViewportManager.getSingletonInstance()?.rendering || null;
+  const vpRendering = window.kernel?.moduleSystem?.getCached(VIEWPORT_RENDERING_ID);
+  return vpRendering?.getRendering() || null;
+}
+
+/** Get the RenderingSystem asynchronously (loads viewport-rendering if needed). */
+async function getRenderingAsync() {
+  const vpRendering = await window.kernel.moduleSystem.require(VIEWPORT_RENDERING_ID);
+  return vpRendering.getRendering();
 }
 
 export async function navigate(itemId, params = {}) {
@@ -197,8 +175,8 @@ export async function navigate(itemId, params = {}) {
     content: { rootId: itemId, previous, initial: false, popstate: false }
   });
 
-  const instance = ViewportManager.getSingletonInstance();
-  if (instance) await instance.rendering.renderViewport();
+  const rs = await getRenderingAsync();
+  if (rs) await rs.renderViewport();
 }
 
 export function getRoot() {

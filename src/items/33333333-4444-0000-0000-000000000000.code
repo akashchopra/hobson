@@ -19,7 +19,14 @@ export class ModuleSystem {
       if (!id) return;
 
       // Invalidate module cache for changed item
-      if (this.moduleCache.has(id)) {
+      const cached = this.moduleCache.get(id);
+      if (cached) {
+        // Call cleanup() on the old module before eviction (tears down singletons, event subscriptions, etc.)
+        if (typeof cached.module?.cleanup === 'function') {
+          try { cached.module.cleanup(); } catch (e) {
+            console.warn(`[module-system] cleanup() failed for ${cached.name || id}:`, e);
+          }
+        }
         this.moduleCache.delete(id);
       }
       // Invalidate name cache if this item's name was cached
