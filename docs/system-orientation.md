@@ -44,7 +44,7 @@ An item is a JSON object with `id` (GUID), `type` (GUID of a type-definition ite
 
 Active Text is a JSON AST format used in `content.description`. It replaces plain markdown strings. The AST uses tagged arrays: `[":doc", [":p", {"s": "text"}], [":h2", {"s": "heading"}], ...]`. Block nodes include `:p`, `:h1`–`:h6`, `:ul`/`:ol`/`:li`, `:blockquote`, `:code-block`, `:table`, `:hr`, `:eval` (embedded Hob expressions). Inline nodes include `:strong`, `:em`, `:code`, `:s` (strikethrough), `:mark` (highlight), `:item-ref`, `:transclusion`, `:field-ref`, `:link`.
 
-The Active Text editor supports contenteditable editing with per-block granularity, markdown shortcuts for block creation, `@` autocomplete for item references, `@@` for transclusions, `{{` for field references, inline formatting via keyboard shortcuts, and click-to-edit popovers for links and references.
+The Active Text editor supports contenteditable editing with per-block granularity, markdown shortcuts for block creation, `@` autocomplete for item references, `@@` for transclusions, `\{\{` (remove escaping, only there to keep github pages happy) for field references, inline formatting via keyboard shortcuts, and click-to-edit popovers for links and references.
 
 **Rendering:** The `doc-renderer` library converts AST to DOM. Read-only rendering is handled by `field-view-doc-readonly`, editable by `field-view-doc-editable`.
 
