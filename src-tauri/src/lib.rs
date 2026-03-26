@@ -1,6 +1,6 @@
 use axum::{body::Bytes, extract::{DefaultBodyLimit, State}, http::{HeaderMap, Method, StatusCode}, response::IntoResponse, routing::any, Router};
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, net::SocketAddr, sync::Arc};
+use std::{collections::HashMap, net::SocketAddr, sync::{atomic::{AtomicBool, Ordering}, Arc}};
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::{oneshot, Mutex};
 use tower_http::cors::CorsLayer;
@@ -80,6 +80,11 @@ async fn http_response(
 
 #[tauri::command]
 async fn start_http_server(app: AppHandle, port: u16) -> Result<String, String> {
+    let running: tauri::State<'_, Arc<AtomicBool>> = app.state();
+    if running.swap(true, Ordering::SeqCst) {
+        return Ok("HTTP server already running".to_string());
+    }
+
     let pending: PendingRequests = app.state::<PendingRequests>().inner().clone();
 
     let state = ProxyState {
@@ -95,11 +100,20 @@ async fn start_http_server(app: AppHandle, port: u16) -> Result<String, String> 
 
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
 
+    let running_flag = running.inner().clone();
     tokio::spawn(async move {
-        let listener = tokio::net::TcpListener::bind(addr).await
-            .map_err(|e| format!("Failed to bind: {e}"))
-            .unwrap();
-        axum::serve(listener, router).await.unwrap();
+        let listener = match tokio::net::TcpListener::bind(addr).await {
+            Ok(l) => l,
+            Err(e) => {
+                running_flag.store(false, Ordering::SeqCst);
+                eprintln!("Failed to bind HTTP server: {e}");
+                return;
+            }
+        };
+        if let Err(e) = axum::serve(listener, router).await {
+            running_flag.store(false, Ordering::SeqCst);
+            eprintln!("HTTP server error: {e}");
+        }
     });
 
     Ok(format!("HTTP server listening on 0.0.0.0:{port}"))
@@ -108,9 +122,11 @@ async fn start_http_server(app: AppHandle, port: u16) -> Result<String, String> 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let pending: PendingRequests = Arc::new(Mutex::new(HashMap::new()));
+    let server_running = Arc::new(AtomicBool::new(false));
 
     tauri::Builder::default()
         .manage(pending)
+        .manage(server_running)
         .invoke_handler(tauri::generate_handler![start_http_server, http_response])
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_shell::init())
