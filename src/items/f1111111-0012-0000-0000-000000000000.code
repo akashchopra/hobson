@@ -30,14 +30,17 @@ export async function sync() {
     ? allItems  // First sync: send everything
     : allItems.filter(item => item.modified > lastSync);
 
-  console.log(`[sync-client] Syncing with ${serverAddress}: sending ${changedItems.length} items (since ${lastSync === 0 ? 'initial' : new Date(lastSync).toLocaleString()})`);
+  // Collect local deletions since last sync
+  const deletions = lastSync === 0 ? [] : await api.getDeletedSince(lastSync);
+
+  console.log(`[sync-client] Syncing with ${serverAddress}: sending ${changedItems.length} items + ${deletions.length} deletions (since ${lastSync === 0 ? 'initial' : new Date(lastSync).toLocaleString()})`);
 
   // POST to desktop
   const url = serverAddress.startsWith('http') ? serverAddress : `http://${serverAddress}`;
   const response = await fetch(`${url}/sync`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ since: lastSync, items: changedItems })
+    body: JSON.stringify({ since: lastSync, items: changedItems, deletions })
   });
 
   if (!response.ok) {
@@ -46,7 +49,7 @@ export async function sync() {
   }
 
   const result = await response.json();
-  const { items: incomingItems = [], deletions = [], serverTime } = result;
+  const { items: incomingItems = [], deletions: incomingDeletions = [], serverTime } = result;
 
   // Apply incoming items (LWW)
   let accepted = 0;
@@ -70,9 +73,9 @@ export async function sync() {
     }
   }
 
-  // Apply deletions
+  // Apply incoming deletions
   let deleted = 0;
-  for (const deletion of deletions) {
+  for (const deletion of incomingDeletions) {
     try {
       const local = await api.get(deletion.itemId);
       if (local.modified < deletion.timestamp) {

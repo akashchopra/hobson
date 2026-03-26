@@ -46,7 +46,7 @@ export async function onHttpRequest({ method, path, body, respond }, api) {
 
   try {
     const request = JSON.parse(body);
-    const { since = 0, items: incomingItems = [] } = request;
+    const { since = 0, items: incomingItems = [], deletions: incomingDeletions = [] } = request;
     const serverTime = Date.now();
 
     // --- Apply incoming items (LWW) ---
@@ -80,6 +80,20 @@ export async function onHttpRequest({ method, path, body, respond }, api) {
       }
     }
 
+    // --- Apply incoming deletions ---
+    let deleted = 0;
+    for (const deletion of incomingDeletions) {
+      try {
+        const local = await api.get(deletion.itemId);
+        if (local.modified < deletion.timestamp) {
+          await api.delete(deletion.itemId);
+          deleted++;
+        }
+      } catch {
+        // Item already doesn't exist locally — skip
+      }
+    }
+
     // --- Collect local changes since `since` ---
     const allItems = await api.getAll();
     const changedItems = allItems.filter(item => item.modified > since);
@@ -87,13 +101,13 @@ export async function onHttpRequest({ method, path, body, respond }, api) {
     // --- Collect local deletions since `since` ---
     const deletions = await api.getDeletedSince(since);
 
-    // Re-render if any items were accepted
-    if (accepted > 0) {
+    // Re-render if any items were accepted or deleted
+    if (accepted > 0 || deleted > 0) {
       const vpRendering = await api.require('viewport-rendering');
       vpRendering.getRendering()?.renderViewport();
     }
 
-    console.log(`[sync-server] Received ${incomingItems.length} items (accepted: ${accepted}, rejected: ${rejected}), sending ${changedItems.length} items + ${deletions.length} deletions`);
+    console.log(`[sync-server] Received ${incomingItems.length} items (accepted: ${accepted}, rejected: ${rejected}) + ${incomingDeletions.length} deletions (applied: ${deleted}), sending ${changedItems.length} items + ${deletions.length} deletions`);
 
     const title = accepted > 0 ? `Sync: ${accepted} item${accepted === 1 ? '' : 's'} received` : 'Sync complete';
     showSyncToast(title, `Sent ${changedItems.length}, received ${incomingItems.length}`);
