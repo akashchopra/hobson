@@ -1,0 +1,124 @@
+// Find-in-Page — browser-style Ctrl+F text search
+// Uses window.find() for native match highlighting and navigation.
+// Activated by viewport:ready.
+
+export async function onViewportReady(event, api) {
+  cleanup();
+
+  let overlay = null;
+  let input = null;
+  let lastQuery = '';
+
+  function open() {
+    if (overlay) { input.focus(); input.select(); return; }
+
+    overlay = document.createElement('div');
+    overlay.id = 'find-in-page-overlay';
+    overlay.style.cssText = `
+      position: fixed; top: 8px; right: 8px; z-index: 99999;
+      display: flex; align-items: center; gap: 6px;
+      background: var(--color-bg-surface, #fff);
+      border: 1px solid var(--color-border, #ccc);
+      border-radius: var(--border-radius, 4px);
+      box-shadow: var(--shadow-md, 0 2px 8px rgba(0,0,0,0.15));
+      padding: 6px 8px;
+      font-size: 0.8125rem;
+    `;
+
+    input = document.createElement('input');
+    input.type = 'text';
+    input.placeholder = 'Find...';
+    input.style.cssText = `
+      border: 1px solid var(--color-border-light, #ddd);
+      border-radius: var(--border-radius, 4px);
+      padding: 4px 8px; font-size: 0.8125rem;
+      outline: none; min-width: 200px;
+    `;
+
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        findNext(e.shiftKey);
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        close();
+      }
+    });
+
+    const prevBtn = document.createElement('button');
+    prevBtn.textContent = '\u25B2';
+    prevBtn.title = 'Previous (Shift+Enter)';
+    prevBtn.style.cssText = btnStyle();
+    prevBtn.onclick = () => findNext(true);
+
+    const nextBtn = document.createElement('button');
+    nextBtn.textContent = '\u25BC';
+    nextBtn.title = 'Next (Enter)';
+    nextBtn.style.cssText = btnStyle();
+    nextBtn.onclick = () => findNext(false);
+
+    const closeBtn = document.createElement('button');
+    closeBtn.textContent = '\u2715';
+    closeBtn.title = 'Close (Escape)';
+    closeBtn.style.cssText = btnStyle();
+    closeBtn.onclick = () => close();
+
+    overlay.appendChild(input);
+    overlay.appendChild(prevBtn);
+    overlay.appendChild(nextBtn);
+    overlay.appendChild(closeBtn);
+    document.body.appendChild(overlay);
+
+    input.focus();
+    if (lastQuery) { input.value = lastQuery; input.select(); }
+  }
+
+  function btnStyle() {
+    return `
+      background: var(--color-bg-surface, #fff);
+      border: 1px solid var(--color-border-light, #ddd);
+      border-radius: var(--border-radius, 4px);
+      cursor: pointer; padding: 2px 6px;
+      font-size: 0.75rem; line-height: 1;
+      color: var(--color-text-secondary, #666);
+    `;
+  }
+
+  function findNext(backwards) {
+    const query = input?.value;
+    if (!query) return;
+    lastQuery = query;
+    input.blur();
+    window.find(query, false, backwards);
+  }
+
+  function close() {
+    if (overlay) {
+      overlay.remove();
+      overlay = null;
+      input = null;
+      window.getSelection().removeAllRanges();
+    }
+  }
+
+  window._findInPageHandler = (e) => {
+    if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'f') {
+      e.preventDefault();
+      open();
+    }
+    if (e.key === 'Escape' && overlay) {
+      e.preventDefault();
+      close();
+    }
+  };
+
+  document.addEventListener('keydown', window._findInPageHandler);
+}
+
+export function cleanup() {
+  if (window._findInPageHandler) {
+    document.removeEventListener('keydown', window._findInPageHandler);
+    delete window._findInPageHandler;
+  }
+  document.getElementById('find-in-page-overlay')?.remove();
+}

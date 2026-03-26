@@ -143,7 +143,7 @@ pub fn run() {
                     // Prevent WebKitGTK from consuming Ctrl+ shortcuts
                     // Allow clipboard operations (Ctrl+C/V/X/A) to keep native behavior
                     if (e.ctrlKey && !e.altKey) {
-                        const allow = ['c','v','x','a'].includes(e.key.toLowerCase());
+                        const allow = ['c','v','x','a','f'].includes(e.key.toLowerCase());
                         if (!allow) e.preventDefault();
                     }
                 }, { capture: true });
