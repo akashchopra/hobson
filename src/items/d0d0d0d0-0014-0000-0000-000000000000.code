@@ -38,8 +38,13 @@ async function _importVault(api, tauri, opts) {
   log('Scanning vault: ' + vaultPath);
 
   // --- Clean up previous import ---
+  // Also remove old flat tags from prior imports (they weren't tagged with OBSIDIAN_TAG,
+  // but their description contains the importer signature string)
   const allItems = await api.getAll();
-  const previousImport = allItems.filter(it => it.content?.tags?.includes(OBSIDIAN_TAG));
+  const previousImport = allItems.filter(it =>
+    it.content?.tags?.includes(OBSIDIAN_TAG) ||
+    JSON.stringify(it.content?.description || '').includes('Imported from Obsidian tag')
+  );
   if (previousImport.length > 0) {
     log(`Removing ${previousImport.length} items from previous import...`);
     for (const item of previousImport) {
@@ -134,7 +139,7 @@ async function _importVault(api, tauri, opts) {
       const obsidianTags = extractTags(frontmatter, body);
       for (const tagName of obsidianTags) {
         if (!tagItemCache[tagName]) {
-          tagItemCache[tagName] = await findOrCreateTag(api, tagName);
+          await findOrCreateTag(api, tagName, tagItemCache);
         }
         tagGuids.push(tagItemCache[tagName]);
       }
@@ -344,29 +349,56 @@ function extractTags(frontmatter, body) {
   return [...tags];
 }
 
-async function findOrCreateTag(api, tagName) {
-  // Search for existing tag item by name
-  const existing = await api.query({ name: tagName });
-  for (const item of existing) {
-    // Check if it's actually used as a tag (has the right characteristics)
-    if (item.name === tagName && item.content?.tags?.length === 0 || !item.content?.tags) {
-      // Good enough — reuse it
-      return item.id;
+async function findOrCreateTag(api, tagName, tagItemCache) {
+  // Handle hierarchical tags: "sailing/glossary" → create "sailing", then "glossary" under it
+  const segments = tagName.split('/');
+  let parentId = null;
+  let pathSoFar = '';
+
+  for (const segment of segments) {
+    pathSoFar = pathSoFar ? pathSoFar + '/' + segment : segment;
+
+    // Check cache first (covers intermediate segments from earlier tags)
+    if (tagItemCache[pathSoFar]) {
+      parentId = tagItemCache[pathSoFar];
+      continue;
+    }
+
+    // Search for existing tag with matching name and parent
+    const existing = await api.query({ name: segment });
+    let found = null;
+    for (const item of existing) {
+      if (item.name === segment && (item.content?.parent || null) === parentId) {
+        found = item;
+        break;
+      }
+    }
+
+    if (found) {
+      tagItemCache[pathSoFar] = found.id;
+      parentId = found.id;
+    } else {
+      const id = crypto.randomUUID();
+      const content = {
+        description: [':doc', [':p', { s: 'Imported from Obsidian tag #' + tagName }]],
+        tags: [OBSIDIAN_TAG]
+      };
+      if (parentId) content.parent = parentId;
+
+      await api.set({
+        id,
+        name: segment,
+        type: NOTE_TYPE,
+        created: Date.now(),
+        modified: Date.now(),
+        content,
+        attachments: []
+      });
+
+      tagItemCache[pathSoFar] = id;
+      parentId = id;
     }
   }
 
-  // Create a new tag item
-  const id = crypto.randomUUID();
-  await api.set({
-    id,
-    name: tagName,
-    type: NOTE_TYPE, // Tags are just items; note type is fine
-    created: Date.now(),
-    modified: Date.now(),
-    content: {
-      description: [':doc', [':p', { s: 'Imported from Obsidian tag #' + tagName }]]
-    },
-    attachments: []
-  });
-  return id;
+  return parentId; // leaf tag ID
 }
