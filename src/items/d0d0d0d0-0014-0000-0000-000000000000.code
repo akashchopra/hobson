@@ -1,0 +1,372 @@
+// obsidian-import — Imports an Obsidian vault into Hobson
+// Uses Tauri fs/dialog for filesystem access, markdown-to-active-text for conversion,
+// image-import-lib for image files. REPL-invocable:
+//   const imp = await api.require('obsidian-import');
+//   await imp.importVault(api);
+
+const NOTE_TYPE = '871ae771-b9b1-4f40-8c7f-d9038bfb69c3';
+const IMAGE_TYPE = 'd0d0d0d0-0010-0000-0000-000000000000';
+const OBSIDIAN_TAG = 'efd6b48b-59b9-4ce6-8b4b-96f41f58cb9c';
+const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico']);
+const SKIP_EXTENSIONS = new Set(['base', 'canvas']); // Obsidian Bases and Canvas files
+
+/**
+ * Import an Obsidian vault into Hobson.
+ * @param {Object} api - Hobson API
+ * @param {Object} [opts]
+ * @param {string} [opts.path] - Vault path (opens folder picker if omitted)
+ * @param {Function} [opts.onProgress] - Callback: (message, current, total) => void
+ * @returns {Promise<Object>} Import summary
+ */
+export async function importVault(api, opts = {}) {
+  const tauri = window.__TAURI__;
+  if (!tauri) throw new Error('Obsidian import requires Tauri (filesystem access)');
+  try { return await _importVault(api, tauri, opts); }
+  catch (e) { const msg = e?.message || e?.toString?.() || JSON.stringify(e); console.error('[obsidian-import]', e); throw new Error(msg); }
+}
+
+async function _importVault(api, tauri, opts) {
+
+  const log = opts.onProgress || ((msg) => console.log('[obsidian-import] ' + msg));
+
+  // --- Pick vault folder ---
+  const vaultPath = opts.path || await tauri.dialog.open({
+    directory: true,
+    title: 'Select Obsidian Vault Folder'
+  });
+  if (!vaultPath) return { message: 'Cancelled' };
+  log('Scanning vault: ' + vaultPath);
+
+  // --- Clean up previous import ---
+  const allItems = await api.getAll();
+  const previousImport = allItems.filter(it => it.content?.tags?.includes(OBSIDIAN_TAG));
+  if (previousImport.length > 0) {
+    log(`Removing ${previousImport.length} items from previous import...`);
+    for (const item of previousImport) {
+      await api.delete(item.id);
+    }
+    log('Cleanup complete');
+  }
+
+  // --- Phase 1: Scan all files ---
+  const allFiles = await walkDir(tauri, vaultPath);
+  log(`Scanned ${allFiles.length} files`);
+  const mdFiles = [];
+  const imageFiles = [];
+  const otherFiles = [];
+
+  for (const file of allFiles) {
+    // Skip hidden files and .obsidian config
+    if (file.relativePath.startsWith('.')) continue;
+    if (file.relativePath.includes('/.')) continue;
+
+    const ext = (file.name.split('.').pop() || '').toLowerCase();
+    if (ext === 'md') {
+      mdFiles.push(file);
+    } else if (IMAGE_EXTENSIONS.has(ext)) {
+      imageFiles.push(file);
+    } else if (!SKIP_EXTENSIONS.has(ext)) {
+      otherFiles.push(file);
+    }
+  }
+  log(`Found ${mdFiles.length} notes, ${imageFiles.length} images, ${otherFiles.length} other files`);
+
+  // --- Phase 2: Assign GUIDs and build name maps ---
+  const noteNameToGuid = {};
+  const noteGuidToFile = {};
+  for (const file of mdFiles) {
+    const guid = crypto.randomUUID();
+    const noteName = file.name.replace(/\.md$/i, '');
+    // Handle duplicate names: first one wins, warn on duplicates
+    if (noteNameToGuid[noteName]) {
+      log(`Warning: duplicate note name "${noteName}" — using first occurrence`);
+      continue;
+    }
+    noteNameToGuid[noteName] = guid;
+    noteGuidToFile[guid] = { ...file, noteName };
+  }
+
+  // --- Phase 3: Import images ---
+  const imageImport = await api.require('image-import-lib');
+  const imageNameToGuid = {};
+  let imageCount = 0;
+  for (const file of imageFiles) {
+    try {
+      const guid = await imageImport.fromFile(api, file.path, { name: file.name.replace(/\.[^.]+$/, '') });
+      // Tag with obsidian tag
+      const imgItem = await api.get(guid);
+      imgItem.content.tags = [OBSIDIAN_TAG];
+      await api.set(imgItem, { silent: true });
+      imageNameToGuid[file.name] = guid;
+      // Also map without path (Obsidian often references by filename only)
+      const baseName = file.name;
+      if (!imageNameToGuid[baseName]) imageNameToGuid[baseName] = guid;
+      imageCount++;
+      if (imageCount % 10 === 0) log(`Images: ${imageCount}/${imageFiles.length}`);
+    } catch (e) {
+      log(`Warning: failed to import image ${file.name}: ${e.message}`);
+    }
+  }
+  log(`Imported ${imageCount} images`);
+
+  // --- Phase 4: Import notes ---
+  const converter = await api.require('markdown-to-active-text');
+  let noteCount = 0;
+  let errorCount = 0;
+  const tagItemCache = {}; // obsidian tag → hobson tag GUID
+
+  for (const [guid, file] of Object.entries(noteGuidToFile)) {
+    try {
+      const text = await tauri.fs.readTextFile(file.path);
+      const { frontmatter, body } = parseFrontmatter(text);
+
+      // Rewrite wikilinks and image embeds
+      const rewritten = rewriteObsidianSyntax(body, noteNameToGuid, imageNameToGuid);
+
+      // Convert markdown to Active Text
+      const ast = converter.convert(rewritten);
+
+      // Build content from frontmatter
+      const content = { description: ast };
+
+      // Handle Obsidian tags (from frontmatter and inline) + obsidian import tag
+      const tagGuids = [OBSIDIAN_TAG];
+      const obsidianTags = extractTags(frontmatter, body);
+      for (const tagName of obsidianTags) {
+        if (!tagItemCache[tagName]) {
+          tagItemCache[tagName] = await findOrCreateTag(api, tagName);
+        }
+        tagGuids.push(tagItemCache[tagName]);
+      }
+      content.tags = tagGuids;
+
+      // Store frontmatter fields (excluding tags, which we handled above)
+      for (const [key, value] of Object.entries(frontmatter)) {
+        if (key === 'tags' || key === 'tag') continue;
+        if (key === 'aliases' || key === 'cssclass') continue; // Obsidian-specific, skip
+        content[key] = value;
+      }
+
+      // Store source path for reference
+      content.sourcePath = file.relativePath;
+
+      const item = {
+        id: guid,
+        name: file.noteName,
+        type: NOTE_TYPE,
+        created: Date.now(),
+        modified: Date.now(),
+        content,
+        attachments: []
+      };
+
+      await api.set(item);
+      noteCount++;
+      if (noteCount % 25 === 0) log(`Notes: ${noteCount}/${Object.keys(noteGuidToFile).length}`);
+    } catch (e) {
+      log(`Error importing "${file.noteName}": ${e?.message || e?.toString?.() || JSON.stringify(e)}`);
+      console.error('[obsidian-import] Failed:', file.noteName, file.path, e);
+      errorCount++;
+    }
+  }
+
+  const summary = {
+    message: `Import complete: ${noteCount} notes, ${imageCount} images` + (errorCount ? `, ${errorCount} errors` : ''),
+    notes: noteCount,
+    images: imageCount,
+    errors: errorCount,
+    tags: Object.keys(tagItemCache).length
+  };
+  log(summary.message);
+  return summary;
+}
+
+// --- Filesystem helpers ---
+
+async function walkDir(tauri, dirPath, basePath = null) {
+  if (!basePath) basePath = dirPath;
+  const entries = await tauri.fs.readDir(dirPath);
+  const results = [];
+  for (const entry of entries) {
+    const name = entry.name ?? entry.path?.split('/').pop();
+    if (!name) continue;
+    const fullPath = dirPath + '/' + name;
+    const relativePath = fullPath.substring(basePath.length + 1);
+    // Tauri v2: entry.isDirectory is a boolean; some versions use entry.children !== undefined
+    const isDir = entry.isDirectory === true || entry.isDirectory === undefined && entry.children != null;
+    if (isDir) {
+      try {
+        const children = await walkDir(tauri, fullPath, basePath);
+        results.push(...children);
+      } catch (e) {
+        console.warn('[obsidian-import] Could not read directory:', fullPath, e);
+      }
+    } else {
+      results.push({ path: fullPath, name, relativePath });
+    }
+  }
+  return results;
+}
+
+// --- Frontmatter parsing ---
+
+function parseFrontmatter(text) {
+  const frontmatter = {};
+  let body = text;
+
+  if (text.startsWith('---')) {
+    const endIdx = text.indexOf('\n---', 3);
+    if (endIdx !== -1) {
+      const yamlBlock = text.substring(4, endIdx).trim();
+      body = text.substring(endIdx + 4).trim();
+
+      // Simple YAML parser (handles key: value, key: [array], key: list)
+      let currentKey = null;
+      let currentList = null;
+      for (const line of yamlBlock.split('\n')) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith('#')) continue;
+
+        // List continuation
+        if (trimmed.startsWith('- ') && currentKey) {
+          if (!currentList) currentList = [];
+          currentList.push(trimmed.substring(2).trim().replace(/^["']|["']$/g, ''));
+          frontmatter[currentKey] = currentList;
+          continue;
+        }
+
+        // Flush previous list
+        currentList = null;
+
+        const colonIdx = trimmed.indexOf(':');
+        if (colonIdx === -1) continue;
+
+        currentKey = trimmed.substring(0, colonIdx).trim();
+        let value = trimmed.substring(colonIdx + 1).trim();
+
+        // Inline array: [a, b, c]
+        if (value.startsWith('[') && value.endsWith(']')) {
+          value = value.slice(1, -1).split(',').map(s => s.trim().replace(/^["']|["']$/g, ''));
+          frontmatter[currentKey] = value;
+          currentList = null;
+          continue;
+        }
+
+        // Strip quotes
+        if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+          value = value.slice(1, -1);
+        }
+
+        // Boolean/number coercion
+        if (value === 'true') value = true;
+        else if (value === 'false') value = false;
+        else if (value !== '' && !isNaN(value)) value = Number(value);
+
+        if (value !== '') {
+          frontmatter[currentKey] = value;
+        } else {
+          // Key with no value — might be start of list
+          currentList = [];
+        }
+      }
+    }
+  }
+
+  return { frontmatter, body };
+}
+
+// --- Wikilink and image rewriting ---
+
+function rewriteObsidianSyntax(markdown, noteNameToGuid, imageNameToGuid) {
+  // ![[image.png]] → ![image](item://guid) (becomes transclusion)
+  // ![[Note Name]] → ![Note Name](item://guid) (becomes transclusion)
+  // [[Note Name|display]] → [display](item://guid)
+  // [[Note Name#heading|display]] → [display](item://guid)
+  // [[Note Name]] → [Note Name](item://guid)
+  // [[Note Name#heading]] → [Note Name](item://guid)
+
+  let result = markdown;
+
+  // Image/file embeds: ![[filename]]
+  result = result.replace(/!\[\[([^\]]+)\]\]/g, (match, ref) => {
+    const name = ref.split('|')[0].split('#')[0].trim();
+    // Check images first
+    if (imageNameToGuid[name]) {
+      return '![' + name + '](item://' + imageNameToGuid[name] + '?embed)';
+    }
+    // Then notes (transclusion)
+    if (noteNameToGuid[name]) {
+      return '![' + name + '](item://' + noteNameToGuid[name] + ')';
+    }
+    // Unresolved — leave as text
+    return match;
+  });
+
+  // Wikilinks: [[Note Name]] or [[Note Name|display]] or [[Note Name#heading]]
+  result = result.replace(/\[\[([^\]]+)\]\]/g, (match, ref) => {
+    const parts = ref.split('|');
+    const target = parts[0].split('#')[0].trim();
+    const display = parts.length > 1 ? parts[1].trim() : target;
+    const guid = noteNameToGuid[target];
+    if (guid) {
+      return '[' + display + '](item://' + guid + ')';
+    }
+    // Unresolved — render as plain text
+    return display;
+  });
+
+  return result;
+}
+
+// --- Tag handling ---
+
+function extractTags(frontmatter, body) {
+  const tags = new Set();
+
+  // From frontmatter
+  const fmTags = frontmatter.tags || frontmatter.tag;
+  if (Array.isArray(fmTags)) {
+    for (const t of fmTags) tags.add(String(t).replace(/^#/, ''));
+  } else if (typeof fmTags === 'string') {
+    for (const t of fmTags.split(/[,\s]+/)) {
+      const clean = t.trim().replace(/^#/, '');
+      if (clean) tags.add(clean);
+    }
+  }
+
+  // From inline #tags in body (but not inside code blocks or links)
+  const tagPattern = /(?:^|\s)#([a-zA-Z][a-zA-Z0-9_/-]*)/g;
+  let match;
+  while ((match = tagPattern.exec(body)) !== null) {
+    tags.add(match[1]);
+  }
+
+  return [...tags];
+}
+
+async function findOrCreateTag(api, tagName) {
+  // Search for existing tag item by name
+  const existing = await api.query({ name: tagName });
+  for (const item of existing) {
+    // Check if it's actually used as a tag (has the right characteristics)
+    if (item.name === tagName && item.content?.tags?.length === 0 || !item.content?.tags) {
+      // Good enough — reuse it
+      return item.id;
+    }
+  }
+
+  // Create a new tag item
+  const id = crypto.randomUUID();
+  await api.set({
+    id,
+    name: tagName,
+    type: NOTE_TYPE, // Tags are just items; note type is fine
+    created: Date.now(),
+    modified: Date.now(),
+    content: {
+      description: [':doc', [':p', { s: 'Imported from Obsidian tag #' + tagName }]]
+    },
+    attachments: []
+  });
+  return id;
+}

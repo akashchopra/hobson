@@ -320,8 +320,8 @@ function parseInline(text) {
   if (!text) return [{ s: '' }];
 
   const nodes = [];
-  // Regex for inline patterns: {{field}}, ![alt](url), [text](url), **bold**, *italic*, `code`, ~~strikethrough~~, ==highlight==
-  const re = /(\{\{([^}]+)\}\}|!\[([^\]]*)\]\(([^)]+)\)|\[([^\]]*)\]\(([^)]+)\)|\*\*(.+?)\*\*|\*(.+?)\*|`([^`]+)`|~~(.+?)~~|==(.+?)==)/g;
+  // Regex for inline patterns: {{field}}, ![alt](url), [text](url), **bold**, *italic*, `code`, ~~strikethrough~~, ==highlight==, bare URLs
+  const re = /(\{\{([^}]+)\}\}|!\[([^\]]*)\]\(([^)]+)\)|\[([^\]]*)\]\(([^)]+)\)|\*\*(.+?)\*\*|\*(.+?)\*|`([^`]+)`|~~(.+?)~~|==(.+?)==|(?<=^|[\s(])((https?:\/\/)[^\s)<>]+))/g;
 
   let last = 0;
   let match;
@@ -350,7 +350,10 @@ function parseInline(text) {
             params[k] = rest.join('=');
           }
         }
-        if (params.call) {
+        if ('embed' in params) {
+          // ?embed → full-item embed (no field, renders using item's view)
+          nodes.push(['transclude', '@' + itemId]);
+        } else if (params.call) {
           // ?call= transclusions → comment placeholder for manual conversion
           const paramStr = Object.entries(params).filter(([k]) => k !== 'call').map(([k, v]) => k + '=' + v).join(', ');
           nodes.push([':code', { s: 'TODO: (transclusion-chrome (call-export @' + itemId + ' "' + params.call + '" api' + (paramStr ? ' {' + paramStr + '}' : '') + ') :source @' + itemId + ' :symbol "' + params.call + '")' }]);
@@ -397,6 +400,9 @@ function parseInline(text) {
     } else if (match[11] !== undefined) {
       // ==highlight==
       nodes.push([':mark', { s: match[11] }]);
+    } else if (match[12] !== undefined) {
+      // Bare URL (https://... or http://...)
+      nodes.push([':link', { s: match[12] }]);
     }
 
     last = match.index + match[0].length;
