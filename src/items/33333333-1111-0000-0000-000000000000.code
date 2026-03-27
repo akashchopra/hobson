@@ -1237,18 +1237,23 @@ export async function loadKernel(require, db, instanceId) {
         this.watcherIndex.delete(item.id);
       }
 
-      // Module lifecycle: cleanup old module before cache invalidation
-      if (!silent && exists && item.watches?.length > 0) {
-        const oldModule = this.moduleSystem.moduleCache.get(item.id)?.module;
-        if (oldModule?.cleanup) {
-          try { await oldModule.cleanup(); } catch(e) {
+      // Module cache invalidation — always runs, even when silent, but only
+      // when content.code actually changed. silent suppresses events and watchers,
+      // but a stale module cache is a correctness issue (e.g. sync saves with
+      // silent:true must still pick up new code on next require()). Data-only
+      // saves (e.g. updating lastSyncTimestamp) must not evict the module.
+      const cached = this.moduleSystem.moduleCache.get(item.id);
+      if (cached && (!previous || previous.content?.code !== item.content?.code)) {
+        if (typeof cached.module?.cleanup === 'function') {
+          try { await cached.module.cleanup(); } catch(e) {
             console.warn(`Cleanup for ${item.name || item.id} failed:`, e);
           }
         }
+        this.moduleSystem.moduleCache.delete(item.id);
+        for (const [name, cachedId] of this.moduleSystem.nameCache) {
+          if (cachedId === item.id) { this.moduleSystem.nameCache.delete(name); break; }
+        }
       }
-
-      // Per-item cache invalidation happens via ITEM_UPDATED event handler
-      // in moduleSystem.initEventListeners() — no global clearCache needed.
 
       if (!silent) {
         if (exists) {
