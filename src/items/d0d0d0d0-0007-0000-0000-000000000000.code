@@ -802,7 +802,7 @@ export async function render(value, options, api) {
           const t = node.textContent.replace(/\u200B/g, '');
           if (t) result.push([':mark', { s: t }]);
         } else if (node.classList.contains('doc-field-ref')) {
-          result.push(['get-field', ':self', ':' + node.dataset.field]);
+          result.push([':field-ref', { s: node.dataset.field }]);
         } else if (node.classList.contains('doc-item-ref')) {
           const parts = [[':item-ref', { s: node.dataset.refId }]];
           if (node.dataset.display) parts[0].push({ s: node.dataset.display });
@@ -986,10 +986,19 @@ export async function render(value, options, api) {
     if (!ac) return;
     let results = [];
     if (ac.type === 'field') {
-      const computed = item?.content?.computed || {};
-      results = Object.keys(computed)
-        .filter(k => !ac.query || k.toLowerCase().includes(ac.query.toLowerCase()))
-        .map(k => ({ id: k, label: k, sub: 'computed field' }));
+      const content = item?.content || {};
+      for (const [k, v] of Object.entries(content)) {
+        if (k === 'computed' || k === 'tags' || k === 'parent' || k === '_symbols') continue;
+        if (ac.query && !k.toLowerCase().includes(ac.query.toLowerCase())) continue;
+        results.push({ id: k, label: k, sub: typeof v === 'string' ? 'text' : typeof v });
+      }
+      if (content.computed) {
+        for (const k of Object.keys(content.computed)) {
+          if (ac.query && !k.toLowerCase().includes(ac.query.toLowerCase())) continue;
+          results.push({ id: k, label: k, sub: 'computed' });
+        }
+      }
+      results.sort((a, b) => a.id === 'description' ? -1 : b.id === 'description' ? 1 : a.label.localeCompare(b.label));
     } else if (ac.type === 'transclusion' && ac.step === 'field') {
       // Field picker for transclusion target — includes embed, fields, symbols, and exports
       results.push({ id: '_embed', label: '\u25A3 Embed (full item)', sub: 'render via view', _type: 'embed' });
