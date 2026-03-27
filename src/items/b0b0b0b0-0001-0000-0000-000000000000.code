@@ -1,5 +1,7 @@
 (defn render [item api]
-  (def target-id (:id item))
+  (def child-id (:id (first (:attachments item))))
+  (def closed (atom false))
+  (def close-fn (atom nil))
   (def
     [root refs]
     (hiccup->dom+
@@ -7,11 +9,16 @@
              :style "position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0, 0, 0, 0.5); display: flex; align-items: flex-start; justify-content: center; padding-top: 10vh; z-index: 10000000;"}
         [:div {:ref :modal
                :style "background: var(--color-bg-surface); border-radius: 8px; width: 600px; min-width: 600px; max-width: 90vw; max-height: 70vh; display: flex; flex-direction: column; box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3); overflow: auto;"}
-          [:render-child {:item target-id}]]]))
+          [:render-child {:item child-id
+                          :open-item (fn [id-or-att]
+                                       (let [parent-open (dom-get (:overlay refs) :__parentOpenItem)
+                                             item-id (if (map? id-or-att) (:id id-or-att) id-or-att)]
+                                         (if (fn? parent-open)
+                                           (parent-open nil id-or-att)
+                                           (navigate! item-id))
+                                         ((deref close-fn))))}]]]))
   (def overlay-el (:overlay refs))
   (def modal-el (:modal refs))
-  (def closed (atom false))
-  (def close-fn (atom nil))
   (defn esc-handler [e] (when (= (get e :key) "Escape") ((deref close-fn))))
   (def remove-esc (on-document! :keydown esc-handler))
   (reset!
@@ -21,7 +28,7 @@
         (not (deref closed))
         (reset! closed true)
         (remove-esc)
-        (detach! (get-viewport-id) target-id))))
+        (invoke overlay-el "remove"))))
   (dom-on!
     overlay-el
     :click
