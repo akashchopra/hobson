@@ -106,7 +106,8 @@ async function restorePreviousView(kernel, context, itemId, renderViewport) {
   const childSpec = parent.attachments[childIndex];
 
   // New mechanism: use previousViewType + savedViewStates
-  if (childSpec.previousViewType) {
+  const currentViewType = childSpec.view?.type;
+  if (childSpec.previousViewType && childSpec.previousViewType !== currentViewType) {
     // Delegate to setAttachmentView which handles savedViewStates
     const rendering = _instance;
     if (rendering) {
@@ -118,8 +119,8 @@ async function restorePreviousView(kernel, context, itemId, renderViewport) {
     }
   }
 
-  // Legacy fallback: old previousView field
-  if (childSpec.previousView) {
+  // Legacy fallback: old previousView object
+  if (childSpec.previousView && typeof childSpec.previousView === 'object') {
     parent.attachments[childIndex] = {
       ...childSpec,
       view: { ...childSpec.previousView },
@@ -130,11 +131,12 @@ async function restorePreviousView(kernel, context, itemId, renderViewport) {
     return true;
   }
 
-  // No previous view — just clear the current view type
+  // Clear the current view type — falls back to type's preferredView
   if (childSpec.view && 'type' in childSpec.view) {
-    const { type, ...viewWithoutType } = childSpec.view;
+    const { type, previousViewType, previousView, savedViewStates, ...rest } = childSpec;
+    const { type: _viewType, innerView, ...viewWithoutType } = childSpec.view;
     parent.attachments[childIndex] = {
-      ...childSpec,
+      ...rest,
       view: Object.keys(viewWithoutType).length > 0 ? viewWithoutType : undefined
     };
     await kernel.saveItem(parent);
