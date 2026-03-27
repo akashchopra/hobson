@@ -1,0 +1,79 @@
+// image-import-lib — Creates image items from various sources
+// Used by obsidian-import, paste handlers, and the image editor
+
+const IMAGE_TYPE = 'd0d0d0d0-0010-0000-0000-000000000000';
+
+/** Create an image item from a base64 data URL.
+ * @param {Object} api - Hobson API
+ * @param {string} dataUrl - Base64 data URL (data:image/png;base64,...)
+ * @param {Object} [opts] - Options: name, alt
+ * @returns {Promise<string>} The new image item's ID
+ */
+export async function fromDataUrl(api, dataUrl, opts = {}) {
+  const mimeMatch = dataUrl.match(/^data:([^;]+);/);
+  const mimeType = mimeMatch ? mimeMatch[1] : 'image/png';
+  const id = crypto.randomUUID();
+  const item = {
+    id,
+    name: opts.name || 'Image',
+    type: IMAGE_TYPE,
+    created: Date.now(),
+    modified: Date.now(),
+    content: {
+      data: dataUrl,
+      mimeType,
+      alt: opts.alt || undefined
+    },
+    attachments: []
+  };
+  await api.set(item);
+  return id;
+}
+
+/** Create an image item from a Blob or File.
+ * @param {Object} api - Hobson API
+ * @param {Blob|File} blob - Image blob
+ * @param {Object} [opts] - Options: name, alt
+ * @returns {Promise<string>} The new image item's ID
+ */
+export async function fromBlob(api, blob, opts = {}) {
+  const dataUrl = await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+  const name = opts.name || (blob.name ? blob.name.replace(/\.[^.]+$/, '') : 'Image');
+  return fromDataUrl(api, dataUrl, { ...opts, name });
+}
+
+/** Create an image item from a file path (Tauri only).
+ * @param {Object} api - Hobson API
+ * @param {string} filePath - Absolute file path
+ * @param {Object} [opts] - Options: name, alt
+ * @returns {Promise<string>} The new image item's ID
+ */
+export async function fromFile(api, filePath, opts = {}) {
+  const tauri = window.__TAURI__;
+  if (!tauri) throw new Error('fromFile requires Tauri (filesystem access)');
+
+  const bytes = await tauri.fs.readFile(filePath);
+  const ext = filePath.split('.').pop().toLowerCase();
+  const mimeMap = {
+    png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg',
+    gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml',
+    bmp: 'image/bmp', ico: 'image/x-icon'
+  };
+  const mimeType = mimeMap[ext] || 'image/png';
+
+  // Convert Uint8Array to base64
+  let binary = '';
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+  const b64 = btoa(binary);
+  const dataUrl = 'data:' + mimeType + ';base64,' + b64;
+
+  const fileName = filePath.split('/').pop().split('\\').pop().replace(/\.[^.]+$/, '');
+  const name = opts.name || fileName || 'Image';
+
+  return fromDataUrl(api, dataUrl, { ...opts, name });
+}

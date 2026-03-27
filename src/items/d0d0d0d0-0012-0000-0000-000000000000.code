@@ -1,0 +1,171 @@
+// image-editor-view — Editor for image items
+// Provides file picker (Tauri dialog or input[type=file]), drag-and-drop, paste from clipboard
+
+export async function render(item, api) {
+  const el = api.createElement('div', { className: 'image-editor-view' });
+  el.style.cssText = 'display: flex; flex-direction: column; gap: 12px; padding: 8px;';
+
+  // --- Name field ---
+  const nameInput = api.createElement('input');
+  nameInput.type = 'text';
+  nameInput.value = item.name || '';
+  nameInput.placeholder = 'Image name';
+  nameInput.style.cssText = 'font-size: 1.25rem; font-weight: 600; padding: 4px 8px; border: 1px solid var(--color-border); border-radius: var(--border-radius); background: var(--color-bg-surface); color: var(--color-text); outline: none;';
+
+  // --- Alt text field ---
+  const altInput = api.createElement('input');
+  altInput.type = 'text';
+  altInput.value = item.content?.alt || '';
+  altInput.placeholder = 'Alt text (accessibility)';
+  altInput.style.cssText = 'font-size: 0.875rem; padding: 4px 8px; border: 1px solid var(--color-border); border-radius: var(--border-radius); background: var(--color-bg-surface); color: var(--color-text); outline: none;';
+
+  // --- Preview area ---
+  const preview = api.createElement('div');
+  preview.style.cssText = 'display: flex; justify-content: center; align-items: center; min-height: 120px;';
+
+  function renderPreview() {
+    preview.innerHTML = '';
+    const data = item.content?.data;
+    if (data) {
+      const img = api.createElement('img');
+      img.src = data;
+      img.alt = item.content?.alt || item.name || '';
+      img.style.cssText = 'max-width: 100%; max-height: 60vh; height: auto; border-radius: var(--border-radius);';
+      img.draggable = false;
+      preview.appendChild(img);
+    }
+  }
+  renderPreview();
+
+  // --- Drop zone (shown when no image, or as overlay) ---
+  const dropZone = api.createElement('div');
+  dropZone.style.cssText = 'padding: 2em; text-align: center; border: 2px dashed var(--color-border); border-radius: var(--border-radius); color: var(--color-text-secondary); cursor: pointer; transition: border-color 0.15s, background 0.15s;';
+  dropZone.textContent = item.content?.data ? 'Drop image to replace, paste, or click to browse' : 'Drop image here, paste, or click to browse';
+
+  // --- File reading helper ---
+  async function loadFile(file) {
+    if (!file || !file.type.startsWith('image/')) return;
+    const dataUrl = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+    item.content = item.content || {};
+    item.content.data = dataUrl;
+    item.content.mimeType = file.type;
+    if (!item.name || item.name === 'Untitled') item.name = file.name.replace(/\.[^.]+$/, '');
+    nameInput.value = item.name;
+    renderPreview();
+    dropZone.textContent = 'Drop image to replace, paste, or click to browse';
+  }
+
+  // --- Tauri file picker or fallback ---
+  async function pickFile() {
+    const tauri = window.__TAURI__;
+    if (tauri) {
+      try {
+        const result = await tauri.dialog.open({
+          multiple: false,
+          filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico'] }]
+        });
+        if (result) {
+          const bytes = await tauri.fs.readFile(result);
+          // Detect mime type from extension
+          const ext = result.split('.').pop().toLowerCase();
+          const mimeMap = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml', bmp: 'image/bmp', ico: 'image/x-icon' };
+          const mimeType = mimeMap[ext] || 'image/png';
+          // Convert to base64 data URL
+          let binary = '';
+          for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+          const b64 = btoa(binary);
+          item.content = item.content || {};
+          item.content.data = 'data:' + mimeType + ';base64,' + b64;
+          item.content.mimeType = mimeType;
+          const fileName = result.split('/').pop().split('\\').pop().replace(/\.[^.]+$/, '');
+          if (!item.name || item.name === 'Untitled') item.name = fileName;
+          nameInput.value = item.name;
+          renderPreview();
+          dropZone.textContent = 'Drop image to replace, paste, or click to browse';
+        }
+      } catch (e) {
+        console.error('[image-editor] Tauri file picker error:', e);
+      }
+    } else {
+      // Browser fallback
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = 'image/*';
+      input.onchange = () => { if (input.files[0]) loadFile(input.files[0]); };
+      input.click();
+    }
+  }
+
+  dropZone.addEventListener('click', pickFile);
+
+  // --- Drag and drop ---
+  dropZone.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    dropZone.style.borderColor = 'var(--color-primary)';
+    dropZone.style.background = 'var(--color-primary-light)';
+  });
+  dropZone.addEventListener('dragleave', () => {
+    dropZone.style.borderColor = 'var(--color-border)';
+    dropZone.style.background = '';
+  });
+  dropZone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    dropZone.style.borderColor = 'var(--color-border)';
+    dropZone.style.background = '';
+    const file = e.dataTransfer.files[0];
+    if (file) loadFile(file);
+  });
+
+  // --- Paste from clipboard ---
+  el.addEventListener('paste', (e) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    for (const clipItem of items) {
+      if (clipItem.type.startsWith('image/')) {
+        e.preventDefault();
+        loadFile(clipItem.getAsFile());
+        return;
+      }
+    }
+  });
+  // Make el focusable for paste events
+  el.tabIndex = 0;
+
+  // --- Action buttons ---
+  const actions = api.createElement('div');
+  actions.style.cssText = 'display: flex; gap: 8px; justify-content: flex-end;';
+
+  const cancelBtn = api.createElement('button');
+  cancelBtn.textContent = 'Cancel';
+  cancelBtn.style.cssText = 'padding: 6px 16px; background: var(--color-bg-surface-alt); color: var(--color-text); border: 1px solid var(--color-border); border-radius: var(--border-radius); cursor: pointer; font-size: 0.875rem;';
+  cancelBtn.addEventListener('click', async () => {
+    if (api.restorePreviousView) await api.restorePreviousView(item.id);
+  });
+  actions.appendChild(cancelBtn);
+
+  const saveBtn = api.createElement('button');
+  saveBtn.textContent = 'Save';
+  saveBtn.style.cssText = 'padding: 6px 16px; background: var(--color-primary); color: white; border: none; border-radius: var(--border-radius); cursor: pointer; font-size: 0.875rem;';
+  saveBtn.addEventListener('click', async () => {
+    item.name = nameInput.value || item.name;
+    item.content = item.content || {};
+    if (altInput.value) item.content.alt = altInput.value;
+    else delete item.content.alt;
+    await api.update(item);
+    if (api.restorePreviousView) await api.restorePreviousView(item.id);
+  });
+  actions.appendChild(saveBtn);
+
+  el.appendChild(nameInput);
+  el.appendChild(altInput);
+  el.appendChild(preview);
+  el.appendChild(dropZone);
+  el.appendChild(actions);
+
+  return el;
+}
