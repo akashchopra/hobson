@@ -35,56 +35,73 @@ export async function sync() {
 
   console.log(`[sync-client] Syncing with ${serverAddress}: sending ${changedItems.length} items + ${deletions.length} deletions (since ${lastSync === 0 ? 'initial' : new Date(lastSync).toLocaleString()})`);
 
-  // POST to desktop
   const url = serverAddress.startsWith('http') ? serverAddress : `http://${serverAddress}`;
-  const response = await fetch(`${url}/sync`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ since: lastSync, items: changedItems, deletions })
-  });
-
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`Sync failed (${response.status}): ${text}`);
-  }
-
-  const result = await response.json();
-  const { items: incomingItems = [], deletions: incomingDeletions = [], serverTime } = result;
-
-  // Apply incoming items (LWW)
   let accepted = 0;
   let rejected = 0;
+  let deleted = 0;
+  let serverTime = 0;
+  let totalReceived = 0;
+  let offset = 0;
+  let hasMore = true;
 
-  for (const incoming of incomingItems) {
-    if (!incoming.id) { rejected++; continue; }
+  while (hasMore) {
+    // Only send client items/deletions on first request
+    const payload = { since: lastSync, offset };
+    if (offset === 0) {
+      payload.items = changedItems;
+      payload.deletions = deletions;
+    } else {
+      payload.items = [];
+      payload.deletions = [];
+    }
 
-    try {
-      const local = await api.get(incoming.id);
-      if (incoming.modified > local.modified) {
+    const response = await fetch(`${url}/sync`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(`Sync failed (${response.status}): ${text}`);
+    }
+
+    const result = await response.json();
+    const { items: incomingItems = [], deletions: incomingDeletions = [] } = result;
+    serverTime = result.serverTime;
+    hasMore = result.hasMore;
+
+    // Apply incoming items (LWW)
+    for (const incoming of incomingItems) {
+      if (!incoming.id) { rejected++; continue; }
+      try {
+        const local = await api.get(incoming.id);
+        if (incoming.modified > local.modified) {
+          await api.set(incoming, { silent: true, preserveModified: true });
+          accepted++;
+        } else {
+          rejected++;
+        }
+      } catch {
         await api.set(incoming, { silent: true, preserveModified: true });
         accepted++;
-      } else {
-        rejected++;
       }
-    } catch {
-      // Item doesn't exist locally — accept it
-      await api.set(incoming, { silent: true, preserveModified: true });
-      accepted++;
     }
-  }
+    totalReceived += incomingItems.length;
 
-  // Apply incoming deletions
-  let deleted = 0;
-  for (const deletion of incomingDeletions) {
-    try {
-      const local = await api.get(deletion.itemId);
-      if (local.modified < deletion.timestamp) {
-        await api.delete(deletion.itemId);
-        deleted++;
-      }
-    } catch {
-      // Item already doesn't exist locally — skip
+    // Apply incoming deletions (first page only)
+    for (const deletion of incomingDeletions) {
+      try {
+        const local = await api.get(deletion.itemId);
+        if (local.modified < deletion.timestamp) {
+          await api.delete(deletion.itemId);
+          deleted++;
+        }
+      } catch {}
     }
+
+    console.log(`[sync-client] Offset ${offset}: received ${incomingItems.length} items${hasMore ? ', fetching more...' : ''}`);
+    offset = result.nextOffset || (offset + incomingItems.length);
   }
 
   // Re-render if any items were accepted or deleted
@@ -93,14 +110,13 @@ export async function sync() {
     vpRendering.getRendering()?.renderViewport();
   }
 
-  // Re-read self (may have been updated by incoming sync) and save lastSyncTimestamp.
-  // Use preserveModified so this operational state update doesn't affect LWW.
+  // Save lastSyncTimestamp
   const updated = await api.get(SELF_ID);
   updated.content = updated.content || {};
   updated.content.lastSyncTimestamp = serverTime;
   await api.set(updated, { silent: true, preserveModified: true });
 
-  console.log(`[sync-client] Done: received ${incomingItems.length} items (accepted: ${accepted}, rejected: ${rejected}), ${deleted} deletions applied`);
+  console.log(`[sync-client] Done: received ${totalReceived} items (accepted: ${accepted}, rejected: ${rejected}), ${deleted} deletions applied`);
 
   return { sent: changedItems.length, accepted, rejected, deleted, serverTime };
 }
