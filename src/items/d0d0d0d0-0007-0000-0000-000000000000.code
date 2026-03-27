@@ -346,6 +346,41 @@ export async function render(value, options, api) {
             parent.appendChild(span);
             break;
           }
+          case ':checkbox': {
+            const checked = child[1]?.checked ?? false;
+            const span = document.createElement('span');
+            span.contentEditable = 'false';
+            span.className = 'doc-checkbox';
+            span.dataset.checked = String(checked);
+            span.style.cssText = 'display: inline-block; cursor: pointer; user-select: none; margin-right: 0.25em;';
+            const cb = document.createElement('input');
+            cb.type = 'checkbox';
+            cb.checked = checked;
+            cb.style.cssText = 'vertical-align: middle; margin: 0 0.125em 0 0; pointer-events: none; accent-color: var(--color-primary);';
+            span.appendChild(cb);
+            if (editable) {
+              span.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                const blockEl = span.closest('[data-block-path]');
+                if (!blockEl) return;
+                const bPath = blockEl.dataset.blockPath.split('.').map(Number);
+                pushUndo();
+                const blk = getBlock(bPath);
+                // Find and toggle the :checkbox node in this :p
+                for (let ci = 1; ci < blk.length; ci++) {
+                  if (Array.isArray(blk[ci]) && blk[ci][0] === ':checkbox') {
+                    blk[ci][1] = { checked: !blk[ci][1]?.checked };
+                    break;
+                  }
+                }
+                renderAllBlocks();
+                emitChange();
+              });
+            }
+            parent.appendChild(span);
+            break;
+          }
           default:
             for (let i = 1; i < child.length; i++) parent.appendChild(document.createTextNode(textOf(child[i])));
         }
@@ -364,7 +399,10 @@ export async function render(value, options, api) {
       const liBlock = block[liIdx + 1];
       if (tagOf(liBlock) !== ':li') continue;
       const li = document.createElement('li');
-      li.style.cssText = 'margin: 0.125em 0;';
+      // Hide bullet for task items (first :p starts with :checkbox)
+      const firstP = liBlock[1];
+      const isTask = tagOf(firstP) === ':p' && Array.isArray(firstP[1]) && firstP[1][0] === ':checkbox';
+      li.style.cssText = isTask ? 'margin: 0.125em 0; list-style: none; margin-left: -1.5em;' : 'margin: 0.125em 0;';
       for (let childIdx = 0; childIdx < liBlock.length - 1; childIdx++) {
         const child = liBlock[childIdx + 1];
         const childPath = [...path, liIdx, childIdx];
@@ -782,6 +820,8 @@ export async function render(value, options, api) {
           } else {
             result.push(['transclude', '@' + node.dataset.itemId, ':' + (node.dataset.field || 'description')]);
           }
+        } else if (node.classList.contains('doc-checkbox')) {
+          result.push([':checkbox', { checked: node.dataset.checked === 'true' }]);
         } else if (tag === 'br') {
           // Browser inserts <br> in empty blocks — skip
         } else {
@@ -1692,6 +1732,21 @@ export async function render(value, options, api) {
       return true;
     }
 
+    // [] or [x] → task list (unordered list with checkbox)
+    const taskMatch = /^\[( |x|X)?\]$/.exec(before);
+    if (taskMatch) {
+      pushUndo();
+      const checked = taskMatch[1] === 'x' || taskMatch[1] === 'X';
+      const content = stripPrefix(before.length);
+      content.unshift([':checkbox', { checked }]);
+      setBlock(path, [':ul', [':li', [':p', ...content]]]);
+      renderAllBlocks();
+      emitChange();
+      const innerPath = [...path, 0, 0];
+      requestAnimationFrame(() => focusAfterCheckbox(innerPath));
+      return true;
+    }
+
     // - or * or + → unordered list
     if (before === '-' || before === '*' || before === '+') {
       pushUndo();
@@ -1798,6 +1853,48 @@ export async function render(value, options, api) {
     if (e.key === ' ' && !e.ctrlKey && !e.metaKey && checkShortcutOnSpace(blockEl, path)) {
       e.preventDefault();
       return;
+    }
+
+    // [] or [x] + space at start of list item → add checkbox
+    if (e.key === ' ' && !e.ctrlKey && !e.metaKey) {
+      const listCtx = getListContext(path);
+      if (listCtx) {
+        const sel = blockEl.ownerDocument.defaultView.getSelection();
+        if (sel.rangeCount && sel.isCollapsed) {
+          const range = sel.getRangeAt(0);
+          if (range.startContainer.nodeType === 3) {
+            const before = range.startContainer.textContent.substring(0, range.startOffset);
+            const cbMatch = /^\[( |x|X)\]$/.exec(before);
+            if (cbMatch) {
+              // Ensure nothing before the trigger
+              const preRange = document.createRange();
+              preRange.setStart(blockEl, 0);
+              preRange.setEnd(range.startContainer, 0);
+              if (preRange.toString().replace(/\u200B/g, '').length === 0) {
+                e.preventDefault();
+                pushUndo();
+                const checked = cbMatch[1] !== ' ';
+                const blk = getBlock(path);
+                // Strip the [] or [x] prefix from inline content
+                const inlineAst = domToInlineAst(blockEl);
+                const prefixLen = cbMatch[0].length;
+                if (inlineAst.length > 0 && isText(inlineAst[0])) {
+                  const stripped = inlineAst[0].s.substring(prefixLen);
+                  if (stripped) inlineAst[0] = { s: stripped };
+                  else inlineAst.shift();
+                }
+                const content = inlineAst.length ? inlineAst : [{ s: '' }];
+                content.unshift([':checkbox', { checked }]);
+                setBlock(path, [blk[0], ...content]);
+                renderAllBlocks();
+                emitChange();
+                requestAnimationFrame(() => focusAfterCheckbox(path));
+                return;
+              }
+            }
+          }
+        }
+      }
     }
 
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -2126,9 +2223,13 @@ export async function render(value, options, api) {
     pushUndo();
     const block = getBlock(path);
     const inlineContent = domToInlineAst(blockEl);
-    const isEmpty = inlineContent.length === 0 ||
-      (inlineContent.length === 1 && isText(inlineContent[0]) &&
-       inlineContent[0].s.replace(/\u200B/g, '').trim() === '');
+    // Check for task checkbox — first inline node is [:checkbox, {checked}]
+    const hasCheckbox = Array.isArray(block[1]) && block[1][0] === ':checkbox';
+    // Treat checkbox-only items as empty (so Enter exits the list)
+    const textContent = inlineContent.filter(n => !(Array.isArray(n) && n[0] === ':checkbox'));
+    const isEmpty = textContent.length === 0 ||
+      (textContent.length === 1 && isText(textContent[0]) &&
+       textContent[0].s.replace(/\u200B/g, '').trim() === '');
 
     if (isEmpty && ctx.pIdx === 0 && ctx.li.length <= 2) {
       // Empty :li with only one :p — exit list
@@ -2169,14 +2270,19 @@ export async function render(value, options, api) {
     // Update current :p with before-cursor content
     setBlock(path, [block[0], ...(beforeAst.length ? beforeAst : [{ s: '' }])]);
 
-    // Create new :li after current :li
-    const newLi = [':li', [':p', ...(afterAst.length ? afterAst : [{ s: '' }])]];
+    // Create new :li after current :li — propagate checkbox if task list
+    const newContent = afterAst.length ? afterAst : [{ s: '' }];
+    if (hasCheckbox) newContent.unshift([':checkbox', { checked: false }]);
+    const newLi = [':li', [':p', ...newContent]];
     ctx.list.splice(ctx.liIdx + 2, 0, newLi);
 
     renderAllBlocks();
     emitChange();
     const newPPath = [...ctx.listPath, ctx.liIdx + 1, 0];
-    requestAnimationFrame(() => focusBlock(newPPath, 0));
+    requestAnimationFrame(() => {
+      if (hasCheckbox) focusAfterCheckbox(newPPath);
+      else focusBlock(newPPath, 0);
+    });
   }
 
   function liftListItem(path, ctx, content) {
@@ -2780,6 +2886,24 @@ export async function render(value, options, api) {
       range.selectNodeContents(el);
       range.collapse(false);
     }
+    sel.removeAllRanges();
+    sel.addRange(range);
+  }
+
+  function focusAfterCheckbox(path) {
+    const el = editor.querySelector(`[data-block-path="${pathStr(path)}"]`);
+    if (!el) return;
+    el.focus();
+    const sel = el.ownerDocument.defaultView.getSelection();
+    const range = document.createRange();
+    // Position cursor after the first child (the checkbox span)
+    const afterIdx = el.childNodes.length > 1 ? 1 : el.childNodes.length;
+    if (el.childNodes[afterIdx] && el.childNodes[afterIdx].nodeType === 3) {
+      range.setStart(el.childNodes[afterIdx], 0);
+    } else {
+      range.setStart(el, afterIdx);
+    }
+    range.collapse(true);
     sel.removeAllRanges();
     sel.addRange(range);
   }

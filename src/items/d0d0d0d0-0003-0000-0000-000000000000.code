@@ -358,8 +358,11 @@ async function renderNode(node, parent, api, item) {
     }
     case ':li': {
       const el = api.createElement('li');
-      el.style.cssText = 'margin: 0.125em 0;';
       el.setAttribute('data-provenance-node', ':li');
+      // Hide bullet for task items (first :p starts with :checkbox)
+      const firstP = children[0];
+      const isTask = Array.isArray(firstP) && tagOf(firstP) === ':p' && Array.isArray(firstP[1]) && firstP[1][0] === ':checkbox';
+      el.style.cssText = isTask ? 'margin: 0.125em 0; list-style: none; margin-left: -1.5em;' : 'margin: 0.125em 0;';
       for (const child of children) await renderNode(child, el, api, item);
       parent.appendChild(el);
       break;
@@ -657,6 +660,28 @@ async function renderInlineNode(node, parent, api, item) {
         span.setAttribute('data-provenance-error', String(e.message || e));
       }
       parent.appendChild(span);
+      break;
+    }
+    case ':checkbox': {
+      // [:checkbox {checked: bool}] — task list checkbox (clickable even in readonly)
+      const cbAttrs = children[0] ?? {};
+      const checked = cbAttrs.checked ?? false;
+      const label = api.createElement('span');
+      label.className = 'doc-checkbox';
+      label.setAttribute('data-provenance-node', ':checkbox');
+      label.style.cssText = 'cursor: pointer; margin-right: 0.25em; user-select: none;';
+      const cb = api.createElement('input');
+      cb.type = 'checkbox';
+      cb.checked = checked;
+      cb.style.cssText = 'vertical-align: middle; margin: 0 0.25em 0 0; cursor: pointer; accent-color: var(--color-primary);';
+      if (item) {
+        cb.addEventListener('change', async () => {
+          cbAttrs.checked = cb.checked;
+          await api.update(item);
+        });
+      }
+      label.appendChild(cb);
+      parent.appendChild(label);
       break;
     }
     default:

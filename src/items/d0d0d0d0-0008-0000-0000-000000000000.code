@@ -1,6 +1,6 @@
 // markdown-to-active-text — Converts markdown description fields to Active Text
 // Handles: headings, paragraphs, bold, italic, code, code blocks, lists,
-// blockquotes, {{field-ref}}, [text](item://id), [text](url)
+// task checkboxes (- [ ] / - [x]), blockquotes, {{field-ref}}, [text](item://id), [text](url)
 
 export function convert(markdown) {
   if (!markdown || typeof markdown !== 'string') return [':doc', [':p', { s: '' }]];
@@ -170,8 +170,16 @@ function parseList(lines, start, type) {
 
     const match = line.match(pattern);
     if (match && match[1].length === baseIndent) {
-      // Same-level list item
-      const inline = parseInline(match[2].trim());
+      // Same-level list item — check for task checkbox (- [ ] or - [x])
+      let text = match[2].trim();
+      const cbMatch = text.match(/^\[( |x|X)\]\s+([\s\S]*)$/);
+      if (cbMatch) {
+        text = cbMatch[2];
+      }
+      const inline = parseInline(text);
+      if (cbMatch) {
+        inline.unshift([':checkbox', { checked: cbMatch[1] !== ' ' }]);
+      }
       const li = [':li', [':p', ...inline]];
       i++;
 
