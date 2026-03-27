@@ -184,6 +184,7 @@ export async function render(value, options, api) {
     }
 
     if (editable) {
+      el.addEventListener('beforeinput', (e) => handleBeforeInput(e, el, path));
       el.addEventListener('input', () => handleInput(el, path));
       el.addEventListener('keydown', (e) => handleKeyDown(e, el, path));
     }
@@ -550,6 +551,7 @@ export async function render(value, options, api) {
             if (cellEl.textContent === '') {
               cellEl.appendChild(document.createElement('br'));
             }
+            cellEl.addEventListener('beforeinput', (e) => handleBeforeInput(e, cellEl, cellPath));
             cellEl.addEventListener('input', () => handleInput(cellEl, cellPath));
             cellEl.addEventListener('keydown', (e) => handleKeyDown(e, cellEl, cellPath));
             cellEl.addEventListener('contextmenu', (e) => {
@@ -1818,6 +1820,64 @@ export async function render(value, options, api) {
     }
   }
 
+  function handleBeforeInput(e, blockEl, path) {
+    // Backspace right after a checkbox → remove the checkbox
+    // (beforeinput handles this because mobile keydown may fire as 'Unidentified')
+    if (e.inputType === 'deleteContentBackward' && isCursorRightAfterCheckbox(blockEl)) {
+      e.preventDefault();
+      removeCheckboxFromBlock(path);
+      return;
+    }
+
+    // Space-triggered markdown shortcuts — uses beforeinput instead of keydown
+    // because mobile virtual keyboards don't reliably fire keydown for space.
+    if (e.inputType !== 'insertText' || e.data !== ' ') return;
+
+    // Top-level paragraph shortcuts (# heading, - list, [] checkbox, etc.)
+    if (checkShortcutOnSpace(blockEl, path)) {
+      e.preventDefault();
+      return;
+    }
+
+    // [] or [x] + space at start of existing list item → add checkbox
+    const listCtx = getListContext(path);
+    if (listCtx) {
+      const sel = blockEl.ownerDocument.defaultView.getSelection();
+      if (sel.rangeCount && sel.isCollapsed) {
+        const range = sel.getRangeAt(0);
+        if (range.startContainer.nodeType === 3) {
+          const before = range.startContainer.textContent.substring(0, range.startOffset);
+          const cbMatch = /^\[( |x|X)\]$/.exec(before);
+          if (cbMatch) {
+            const preRange = document.createRange();
+            preRange.setStart(blockEl, 0);
+            preRange.setEnd(range.startContainer, 0);
+            if (preRange.toString().replace(/\u200B/g, '').length === 0) {
+              e.preventDefault();
+              pushUndo();
+              const checked = cbMatch[1] !== ' ';
+              const blk = getBlock(path);
+              const inlineAst = domToInlineAst(blockEl);
+              const prefixLen = cbMatch[0].length;
+              if (inlineAst.length > 0 && isText(inlineAst[0])) {
+                const stripped = inlineAst[0].s.substring(prefixLen);
+                if (stripped) inlineAst[0] = { s: stripped };
+                else inlineAst.shift();
+              }
+              const content = inlineAst.length ? inlineAst : [{ s: '' }];
+              content.unshift([':checkbox', { checked }]);
+              setBlock(path, [blk[0], ...content]);
+              renderAllBlocks();
+              emitChange();
+              requestAnimationFrame(() => focusAfterCheckbox(path));
+              return;
+            }
+          }
+        }
+      }
+    }
+  }
+
   function handleKeyDown(e, blockEl, path) {
     // Autocomplete navigation
     if (ac) {
@@ -1850,53 +1910,6 @@ export async function render(value, options, api) {
       return;
     }
 
-    if (e.key === ' ' && !e.ctrlKey && !e.metaKey && checkShortcutOnSpace(blockEl, path)) {
-      e.preventDefault();
-      return;
-    }
-
-    // [] or [x] + space at start of list item → add checkbox
-    if (e.key === ' ' && !e.ctrlKey && !e.metaKey) {
-      const listCtx = getListContext(path);
-      if (listCtx) {
-        const sel = blockEl.ownerDocument.defaultView.getSelection();
-        if (sel.rangeCount && sel.isCollapsed) {
-          const range = sel.getRangeAt(0);
-          if (range.startContainer.nodeType === 3) {
-            const before = range.startContainer.textContent.substring(0, range.startOffset);
-            const cbMatch = /^\[( |x|X)\]$/.exec(before);
-            if (cbMatch) {
-              // Ensure nothing before the trigger
-              const preRange = document.createRange();
-              preRange.setStart(blockEl, 0);
-              preRange.setEnd(range.startContainer, 0);
-              if (preRange.toString().replace(/\u200B/g, '').length === 0) {
-                e.preventDefault();
-                pushUndo();
-                const checked = cbMatch[1] !== ' ';
-                const blk = getBlock(path);
-                // Strip the [] or [x] prefix from inline content
-                const inlineAst = domToInlineAst(blockEl);
-                const prefixLen = cbMatch[0].length;
-                if (inlineAst.length > 0 && isText(inlineAst[0])) {
-                  const stripped = inlineAst[0].s.substring(prefixLen);
-                  if (stripped) inlineAst[0] = { s: stripped };
-                  else inlineAst.shift();
-                }
-                const content = inlineAst.length ? inlineAst : [{ s: '' }];
-                content.unshift([':checkbox', { checked }]);
-                setBlock(path, [blk[0], ...content]);
-                renderAllBlocks();
-                emitChange();
-                requestAnimationFrame(() => focusAfterCheckbox(path));
-                return;
-              }
-            }
-          }
-        }
-      }
-    }
-
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       if (checkShortcutOnEnter(blockEl, path)) return;
@@ -1904,6 +1917,11 @@ export async function render(value, options, api) {
       if (listCtx) { handleListEnter(blockEl, path, listCtx); return; }
       splitBlock(blockEl, path);
     } else if (e.key === 'Backspace' && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
+      if (isCursorRightAfterCheckbox(blockEl)) {
+        e.preventDefault();
+        removeCheckboxFromBlock(path);
+        return;
+      }
       if (isCursorAtStart(blockEl)) {
         const listCtx = getListContext(path);
         if (listCtx && listCtx.pIdx === 0) {
@@ -2033,6 +2051,38 @@ export async function render(value, options, api) {
     testRange.setStart(range.startContainer, range.startOffset);
     testRange.setEnd(blockEl, blockEl.childNodes.length);
     return testRange.toString().replace(/\u200B/g, '').length === 0;
+  }
+
+  function isCursorRightAfterCheckbox(blockEl) {
+    const first = blockEl.firstChild;
+    if (!first || !first.classList?.contains('doc-checkbox')) return false;
+    const sel = blockEl.ownerDocument.defaultView.getSelection();
+    if (!sel.rangeCount || !sel.isCollapsed) return false;
+    const range = sel.getRangeAt(0);
+    // Cursor at blockEl offset 0 means BEFORE the checkbox — not after it
+    if (range.startContainer === blockEl && range.startOffset === 0) return false;
+    // Check that no visible text exists between block start and cursor
+    // (the checkbox span has no text content, so this is true when cursor
+    // is anywhere between the checkbox and the first real character)
+    const testRange = document.createRange();
+    testRange.setStart(blockEl, 0);
+    testRange.setEnd(range.startContainer, range.startOffset);
+    return testRange.toString().replace(/\u200B/g, '').length === 0;
+  }
+
+  function removeCheckboxFromBlock(path) {
+    pushUndo();
+    const block = getBlock(path);
+    for (let i = 1; i < block.length; i++) {
+      if (Array.isArray(block[i]) && block[i][0] === ':checkbox') {
+        block.splice(i, 1);
+        break;
+      }
+    }
+    if (block.length <= 1) block.push({ s: '' });
+    renderAllBlocks();
+    emitChange();
+    requestAnimationFrame(() => focusBlock(path, 0));
   }
 
   function splitBlock(blockEl, path) {
