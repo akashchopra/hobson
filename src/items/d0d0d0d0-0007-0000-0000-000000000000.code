@@ -192,6 +192,16 @@ export async function render(value, options, api) {
     return el;
   }
 
+  function appendNonEditable(parent, span) {
+    // Pad with zero-width spaces so the cursor can be positioned adjacent
+    // to contentEditable=false islands on mobile (where without a neighboring
+    // text node the caret can't land and backspace/delete won't fire).
+    const prev = parent.lastChild;
+    if (!prev || prev.nodeType !== 3) parent.appendChild(document.createTextNode('\u200B'));
+    parent.appendChild(span);
+    parent.appendChild(document.createTextNode('\u200B'));
+  }
+
   function renderInlineContent(children, parent) {
     for (const child of children) {
       if (isText(child)) {
@@ -209,7 +219,7 @@ export async function render(value, options, api) {
             span.dataset.field = fieldName;
             span.textContent = '{{' + fieldName + '}}';
             span.style.cssText = 'display: inline-block; background: var(--color-bg-surface-alt); padding: 1px 6px; border-radius: 3px; border: 1px dashed var(--color-border); font-size: 0.8125em; font-family: monospace; cursor: default; user-select: none;';
-            parent.appendChild(span);
+            appendNonEditable(parent, span);
           } else if (tag === 'transclude') {
             // Parse transclude expression args
             const itemId = typeof child[1] === 'string' && child[1].startsWith('@') ? child[1].substring(1) : String(child[1]);
@@ -255,7 +265,7 @@ export async function render(value, options, api) {
                 else span.textContent = refItem.name + ((fieldName && fieldName !== 'description') ? '.' + fieldName : '');
               }
             }).catch(() => {});
-            parent.appendChild(span);
+            appendNonEditable(parent, span);
           }
           continue;
         }
@@ -299,7 +309,7 @@ export async function render(value, options, api) {
             span.dataset.field = textOf(child[1]);
             span.textContent = '{{' + textOf(child[1]) + '}}';
             span.style.cssText = 'display: inline-block; background: var(--color-bg-surface-alt); padding: 1px 6px; border-radius: 3px; border: 1px dashed var(--color-border); font-size: 0.8125em; font-family: monospace; cursor: default; user-select: none;';
-            parent.appendChild(span);
+            appendNonEditable(parent, span);
             break;
           }
           case ':item-ref': {
@@ -320,7 +330,7 @@ export async function render(value, options, api) {
                 }
               }).catch(() => {});
             }
-            parent.appendChild(span);
+            appendNonEditable(parent, span);
             break;
           }
           case ':link': {
@@ -332,7 +342,7 @@ export async function render(value, options, api) {
             const linkText = child.length > 2 ? textOf(child[2]) : textOf(child[1]);
             span.textContent = linkText + ' \u2197';
             span.style.cssText = 'display: inline; color: var(--color-primary); text-decoration: underline; cursor: default; user-select: none;';
-            parent.appendChild(span);
+            appendNonEditable(parent, span);
             break;
           }
           case ':transclusion': {
@@ -344,7 +354,7 @@ export async function render(value, options, api) {
             if (child.length > 3) span.dataset.display = textOf(child[3]);
             span.textContent = span.dataset.display || span.dataset.itemId.substring(0, 8) + (span.dataset.field !== 'description' ? '.' + span.dataset.field : '');
             span.style.cssText = 'display: inline-block; background: var(--color-warning-light, #fef3c7); padding: 1px 6px; border-radius: 3px; border: 1px solid var(--color-warning, #f59e0b); font-size: 0.8125em; cursor: default; user-select: none;';
-            parent.appendChild(span);
+            appendNonEditable(parent, span);
             break;
           }
           case ':checkbox': {
@@ -1123,8 +1133,8 @@ export async function render(value, options, api) {
         sub.style.cssText = 'font-size: 0.6875rem; color: var(--color-text-secondary, #999);';
         row.appendChild(sub);
       }
-      row.addEventListener('mouseenter', () => { ac.active = i; acRender(); });
-      row.addEventListener('mousedown', (e) => { e.preventDefault(); acSelect(r); });
+      row.addEventListener('pointerenter', () => { ac.active = i; acRender(); });
+      row.addEventListener('pointerdown', (e) => { e.preventDefault(); acSelect(r); });
       acPopup.appendChild(row);
     });
   }
@@ -1375,14 +1385,14 @@ export async function render(value, options, api) {
     popoverEl.style.left = rect.left + 'px';
     popoverEl.style.top = (rect.bottom + 4) + 'px';
     popoverEl.style.display = 'block';
-    setTimeout(() => document.addEventListener('mousedown', popoverOutside), 0);
+    setTimeout(() => document.addEventListener('pointerdown', popoverOutside), 0);
   }
 
   function hidePopover() {
     popover = null;
     popoverEl.style.display = 'none';
     popoverEl.innerHTML = '';
-    document.removeEventListener('mousedown', popoverOutside);
+    document.removeEventListener('pointerdown', popoverOutside);
   }
 
   function popoverOutside(e) {
@@ -1436,9 +1446,9 @@ export async function render(value, options, api) {
             const row = document.createElement('div');
             row.style.cssText = 'padding: 4px 6px; cursor: pointer; font-size: 0.8125rem;';
             row.textContent = it.name;
-            row.addEventListener('mouseenter', () => row.style.background = 'var(--color-bg-surface-alt, #f3f4f6)');
-            row.addEventListener('mouseleave', () => row.style.background = '');
-            row.addEventListener('mousedown', (e) => {
+            row.addEventListener('pointerenter', () => row.style.background = 'var(--color-bg-surface-alt, #f3f4f6)');
+            row.addEventListener('pointerleave', () => row.style.background = '');
+            row.addEventListener('pointerdown', (e) => {
               e.preventDefault();
               input.value = it.name;
               input._picked = true;
@@ -1814,6 +1824,7 @@ export async function render(value, options, api) {
 
   function handleInput(blockEl, path) {
     if (_acInserting) return;
+    if (!editor.contains(blockEl)) return; // skip orphaned elements after renderAllBlocks()
     inlineCheckpoint();
     const inlineAst = domToInlineAst(blockEl);
     const block = getBlock(path);
@@ -1830,12 +1841,73 @@ export async function render(value, options, api) {
   }
 
   function handleBeforeInput(e, blockEl, path) {
+    if (!editor.contains(blockEl)) return;
+    const _tr = e.getTargetRanges ? e.getTargetRanges() : [];
+    // Android IME may unwrap a non-editable island as insertCompositionText
+    // instead of deleteContentBackward.  Detect by checking saved selection.
+    if (e.inputType === 'insertCompositionText' && _savedSel && _savedSel.collapsed) {
+      const _compTarget = getNonEditableNodeBefore(blockEl);
+      if (_compTarget && e.data != null && _compTarget.textContent.includes(e.data)) {
+        e.preventDefault();
+        removeNonEditableNode(_compTarget, blockEl, path);
+        return;
+      }
+    }
     // Backspace right after a checkbox → remove the checkbox
     // (beforeinput handles this because mobile keydown may fire as 'Unidentified')
     if (e.inputType === 'deleteContentBackward' && isCursorRightAfterCheckbox(blockEl)) {
       e.preventDefault();
       removeCheckboxFromBlock(path);
       return;
+    }
+
+    // Delete with non-collapsed selection — Android IME selects content before
+    // firing deleteContentBackward.  Two cases:
+    //   (a) selection is ZWS-only text adjacent to a non-editable island
+    //   (b) selection directly contains a non-editable island
+    if (e.inputType === 'deleteContentBackward' || e.inputType === 'deleteContentForward') {
+      const sel = blockEl.ownerDocument.defaultView.getSelection();
+      if (sel.rangeCount && !sel.isCollapsed) {
+        const r = sel.getRangeAt(0);
+        const _selText = r.toString();
+
+        // (a) ZWS-only selection — look for adjacent non-editable island
+        if (_selText.replace(/\u200B/g, '') === '') {
+          let node = r.startContainer;
+          while (node && node !== blockEl && node.parentNode !== blockEl) {
+            if (node === node.parentNode.firstChild) node = node.parentNode;
+            else break;
+          }
+          if (node && node.parentNode === blockEl) {
+            let prev = node.previousSibling;
+            while (prev && prev.nodeType === 3 && prev.textContent.replace(/\u200B/g, '') === '') prev = prev.previousSibling;
+            if (isNonEditableIsland(prev)) {
+              e.preventDefault();
+              removeNonEditableNode(prev, blockEl, path);
+              return;
+            }
+          }
+        }
+
+        // (b) selection directly contains a non-editable island
+        for (const child of blockEl.childNodes) {
+          if (isNonEditableIsland(child) && sel.containsNode(child, true)) {
+            e.preventDefault();
+            removeNonEditableNode(child, blockEl, path);
+            return;
+          }
+        }
+      }
+    }
+
+    // Backspace/delete adjacent to a non-editable inline node (collapsed cursor).
+    if (e.inputType === 'deleteContentBackward') {
+      const target = getNonEditableNodeBefore(blockEl);
+      if (target) { e.preventDefault(); removeNonEditableNode(target, blockEl, path); return; }
+    }
+    if (e.inputType === 'deleteContentForward') {
+      const target = getNonEditableNodeAfter(blockEl);
+      if (target) { e.preventDefault(); removeNonEditableNode(target, blockEl, path); return; }
     }
 
     // Space-triggered markdown shortcuts — uses beforeinput instead of keydown
@@ -1887,7 +1959,18 @@ export async function render(value, options, api) {
     }
   }
 
+  // Save selection state during keydown — Android may clear selection before beforeinput fires
+  let _savedSel = null;
+  function _captureSelection(blockEl) {
+    const sel = blockEl.ownerDocument.defaultView.getSelection();
+    if (!sel.rangeCount) return; // keep previous _savedSel — Android fires multiple keydowns
+    const r = sel.getRangeAt(0);
+    _savedSel = { collapsed: sel.isCollapsed, startContainer: r.startContainer, startOffset: r.startOffset, endContainer: r.endContainer, endOffset: r.endOffset };
+  }
+
   function handleKeyDown(e, blockEl, path) {
+    if (!editor.contains(blockEl)) return;
+    _captureSelection(blockEl);
     // Autocomplete navigation
     if (ac) {
       if (e.key === 'ArrowDown') { e.preventDefault(); acNavigate(1); return; }
@@ -1921,6 +2004,17 @@ export async function render(value, options, api) {
 
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
+      // Restore selection if Android IME cleared it (keyCode 229 composition events)
+      const sel = blockEl.ownerDocument.defaultView.getSelection();
+      if (!sel.rangeCount && _savedSel) {
+        try {
+          const r = document.createRange();
+          r.setStart(_savedSel.startContainer, _savedSel.startOffset);
+          r.collapse(true);
+          sel.removeAllRanges();
+          sel.addRange(r);
+        } catch(e) {}
+      }
       if (checkShortcutOnEnter(blockEl, path)) return;
       const listCtx = getListContext(path);
       if (listCtx) { handleListEnter(blockEl, path, listCtx); return; }
@@ -1972,6 +2066,14 @@ export async function render(value, options, api) {
           emitChange();
           requestAnimationFrame(() => focusBlock(path, 0));
         }
+      } else {
+        // Not at block start — check if cursor is adjacent to a non-editable inline node
+        const target = getNonEditableNodeBefore(blockEl);
+        if (target) {
+          e.preventDefault();
+          removeNonEditableNode(target, blockEl, path);
+          return;
+        }
       }
     } else if (e.key === 'Delete' && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
       if (isCursorAtEnd(blockEl)) {
@@ -1998,6 +2100,13 @@ export async function render(value, options, api) {
             emitChange();
             requestAnimationFrame(() => focusBlockAtOffset(path, inlineTextLength(getBlock(path).slice(1))));
           }
+        }
+      } else {
+        const target = getNonEditableNodeAfter(blockEl);
+        if (target) {
+          e.preventDefault();
+          removeNonEditableNode(target, blockEl, path);
+          return;
         }
       }
     } else if (e.key === 'Tab') {
@@ -2077,6 +2186,129 @@ export async function render(value, options, api) {
     testRange.setStart(blockEl, 0);
     testRange.setEnd(range.startContainer, range.startOffset);
     return testRange.toString().replace(/\u200B/g, '').length === 0;
+  }
+
+  function isNonEditableIsland(node) {
+    return node && node.nodeType === 1 && node.contentEditable === 'false'
+      && !node.classList.contains('doc-checkbox');
+  }
+
+  function getNonEditableNodeBefore(blockEl) {
+    const sel = blockEl.ownerDocument.defaultView.getSelection();
+    let container, offset;
+    if (sel.rangeCount && sel.isCollapsed) {
+      const range = sel.getRangeAt(0);
+      container = range.startContainer;
+      offset = range.startOffset;
+    } else if (_savedSel && _savedSel.collapsed) {
+      container = _savedSel.startContainer;
+      offset = _savedSel.startOffset;
+    } else {
+      return null;
+    }
+
+    // If cursor is in a text node with visible (non-ZWS) text before it, there's
+    // regular text to delete — not a non-editable node.
+    if (container.nodeType === 3) {
+      const textBefore = container.textContent.substring(0, offset).replace(/\u200B/g, '');
+      if (textBefore.length > 0) {
+        return null;
+      }
+    }
+
+    // Walk up from cursor node to a direct child of blockEl
+    let node = container;
+    if (container === blockEl) {
+      node = offset > 0 ? blockEl.childNodes[offset - 1] : null;
+      // node is now the child before cursor; skip ZWS text nodes
+      while (node && node.nodeType === 3 && node.textContent.replace(/\u200B/g, '') === '') node = node.previousSibling;
+      return isNonEditableIsland(node) ? node : null;
+    }
+    while (node && node !== blockEl && node.parentNode !== blockEl) {
+      if (node === node.parentNode.firstChild) node = node.parentNode;
+      else return null;
+    }
+    if (node && node.parentNode === blockEl) {
+      let prev = node.previousSibling;
+      while (prev && prev.nodeType === 3 && prev.textContent.replace(/\u200B/g, '') === '') prev = prev.previousSibling;
+      return isNonEditableIsland(prev) ? prev : null;
+    }
+    return null;
+  }
+
+  function getNonEditableNodeAfter(blockEl) {
+    const sel = blockEl.ownerDocument.defaultView.getSelection();
+    let container, offset;
+    if (sel.rangeCount && sel.isCollapsed) {
+      const range = sel.getRangeAt(0);
+      container = range.startContainer;
+      offset = range.startOffset;
+    } else if (_savedSel && _savedSel.collapsed) {
+      container = _savedSel.startContainer;
+      offset = _savedSel.startOffset;
+    } else {
+      return null;
+    }
+
+    if (container.nodeType === 3) {
+      if (container.textContent.substring(offset).replace(/\u200B/g, '').length > 0) return null;
+    }
+
+    let node = container;
+    if (container === blockEl) {
+      node = offset < blockEl.childNodes.length ? blockEl.childNodes[offset] : null;
+      while (node && node.nodeType === 3 && node.textContent.replace(/\u200B/g, '') === '') node = node.nextSibling;
+      return isNonEditableIsland(node) ? node : null;
+    }
+    while (node && node !== blockEl && node.parentNode !== blockEl) {
+      if (node === node.parentNode.lastChild) node = node.parentNode;
+      else return null;
+    }
+    if (node && node.parentNode === blockEl) {
+      let next = node.nextSibling;
+      while (next && next.nodeType === 3 && next.textContent.replace(/\u200B/g, '') === '') next = next.nextSibling;
+      return isNonEditableIsland(next) ? next : null;
+    }
+    return null;
+  }
+
+  function removeNonEditableNode(target, blockEl, path) {
+    // Find which non-editable island in the DOM this target is (0-based index
+    // among all non-editable islands in this block), then find and remove the
+    // corresponding AST element.  Works entirely on the AST — no DOM mutation —
+    // so the browser's concurrent default action can't cause a race.
+    let islandIdx = 0;
+    for (const child of blockEl.childNodes) {
+      if (child === target) break;
+      if (isNonEditableIsland(child)) islandIdx++;
+    }
+
+    pushUndo();
+    const block = getBlock(path);
+    // Walk inline AST (indices 1+) to find the Nth non-editable element
+    let count = 0;
+    let spliceIdx = -1;
+    for (let i = 1; i < block.length; i++) {
+      const node = block[i];
+      if (Array.isArray(node)) {
+        const tag = node[0];
+        const isEditable = tag === ':strong' || tag === ':em' || tag === ':code'
+          || tag === ':del' || tag === ':mark' || tag === ':checkbox';
+        if (!isEditable) {
+          if (count === islandIdx) { spliceIdx = i; break; }
+          count++;
+        }
+      }
+    }
+    if (spliceIdx < 0) return;
+
+    // Calculate cursor offset: text length of everything before the removed node
+    const cursorOffset = inlineTextLength(block.slice(1, spliceIdx));
+    block.splice(spliceIdx, 1);
+    if (block.length <= 1) block.push({ s: '' });
+    renderAllBlocks();
+    emitChange();
+    requestAnimationFrame(() => focusBlockAtOffset(path, cursorOffset));
   }
 
   function removeCheckboxFromBlock(path) {
@@ -2820,7 +3052,7 @@ export async function render(value, options, api) {
   function tableMenuHide() {
     tableMenu.style.display = 'none';
     tableMenu.innerHTML = '';
-    document.removeEventListener('mousedown', tableMenuOutside);
+    document.removeEventListener('pointerdown', tableMenuOutside);
   }
 
   function tableMenuOutside(e) {
@@ -2831,9 +3063,9 @@ export async function render(value, options, api) {
     const item = document.createElement('div');
     item.textContent = label;
     item.style.cssText = 'padding: 5px 14px; cursor: pointer;';
-    item.addEventListener('mouseenter', () => item.style.background = 'var(--color-bg-surface-alt, #f3f4f6)');
-    item.addEventListener('mouseleave', () => item.style.background = '');
-    item.addEventListener('mousedown', (e) => {
+    item.addEventListener('pointerenter', () => item.style.background = 'var(--color-bg-surface-alt, #f3f4f6)');
+    item.addEventListener('pointerleave', () => item.style.background = '');
+    item.addEventListener('pointerdown', (e) => {
       e.preventDefault();
       e.stopPropagation();
       tableMenuHide();
@@ -2871,7 +3103,7 @@ export async function render(value, options, api) {
     tableMenu.style.left = e.clientX + 'px';
     tableMenu.style.top = e.clientY + 'px';
     tableMenu.style.display = 'block';
-    setTimeout(() => document.addEventListener('mousedown', tableMenuOutside), 0);
+    setTimeout(() => document.addEventListener('pointerdown', tableMenuOutside), 0);
   }
 
   function inlineTextLength(nodes) {
