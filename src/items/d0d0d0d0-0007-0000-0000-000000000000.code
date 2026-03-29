@@ -3185,6 +3185,20 @@ export async function render(value, options, api) {
     function walk(node) {
       if (found) return;
       if (node.nodeType === 3) {
+        // ZWS-only text nodes adjacent to non-editable islands are padding —
+        // don't count them toward the offset budget (inlineTextLength doesn't).
+        // But use them as cursor landing spots when remaining reaches 0.
+        const _isZwsPad = node.textContent.replace(/\u200B/g, '') === ''
+          && ((node.previousSibling?.nodeType === 1 && node.previousSibling.contentEditable === 'false')
+           || (node.nextSibling?.nodeType === 1 && node.nextSibling.contentEditable === 'false'));
+        if (_isZwsPad) {
+          if (remaining === 0) {
+            range.setStart(node, node.textContent.length);
+            range.collapse(true);
+            found = true;
+          }
+          return;
+        }
         if (remaining <= node.textContent.length) {
           range.setStart(node, remaining);
           range.collapse(true);
