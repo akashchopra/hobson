@@ -1267,9 +1267,13 @@ export async function render(value, options, api) {
       if (!fmtParent.textContent.replace(/\u200B/g, '')) fmtParent.remove();
     }
 
-    // Ensure there's a text node after for cursor placement
+    // Ensure there's a text node with ZWS after for cursor placement.
+    // Range.insertNode() splits text nodes, leaving empty (0-char) nodes
+    // that can't anchor Android IME's cursor — must have at least ZWS.
     if (!node.nextSibling || (node.nextSibling.nodeType !== 3)) {
       node.parentNode.insertBefore(document.createTextNode('\u200B'), node.nextSibling);
+    } else if (node.nextSibling.textContent === '') {
+      node.nextSibling.textContent = '\u200B';
     }
 
     // Place cursor after the node
@@ -1894,6 +1898,34 @@ export async function render(value, options, api) {
           if (isNonEditableIsland(child) && sel.containsNode(child, true)) {
             e.preventDefault();
             removeNonEditableNode(child, blockEl, path);
+            return;
+          }
+        }
+
+        // (c) Android IME selected entire content of a text node adjacent to
+        //     a non-editable island.  If the browser handles this, it removes
+        //     the text node and leaves the cursor at element level (P:N),
+        //     which has no text-node anchor for the IME → keyboard dismisses.
+        //     Use renderAllBlocks to rebuild DOM with proper ZWS padding
+        //     (preventDefault alone is unreliable on Android WebView).
+        const _sn = r.startContainer;
+        if (_sn.nodeType === 3 && r.endContainer === _sn
+            && r.startOffset === 0 && r.endOffset >= _sn.textContent.length) {
+          let _pn = _sn.previousSibling;
+          while (_pn && _pn.nodeType === 3 && _pn.textContent.replace(/\u200B/g, '') === '') _pn = _pn.previousSibling;
+          let _nn = _sn.nextSibling;
+          while (_nn && _nn.nodeType === 3 && _nn.textContent.replace(/\u200B/g, '') === '') _nn = _nn.nextSibling;
+          if (isNonEditableIsland(_pn) || isNonEditableIsland(_nn)) {
+            e.preventDefault();
+            pushUndo();
+            _sn.textContent = '';
+            const _ia = domToInlineAst(blockEl);
+            const _blk = getBlock(path);
+            setBlock(path, [_blk[0], ...(_ia.length ? _ia : [{ s: '' }])]);
+            renderAllBlocks();
+            emitChange();
+            const _co = inlineTextLength(getBlock(path).slice(1));
+            requestAnimationFrame(() => focusBlockAtOffset(path, _co));
             return;
           }
         }
