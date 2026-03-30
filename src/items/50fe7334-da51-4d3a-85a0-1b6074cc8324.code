@@ -1616,21 +1616,21 @@ function updateAutocomplete(state, ctx) {
     state.acMode = 'item';
     const query = buf.slice(1);
 
-    if (!state._itemSearchLib) {
-      hideAutocomplete(state);
-      return;
-    }
-
     const doSearch = async () => {
       try {
         let results;
-        if (!query) {
+        if (!query && state._itemSearchLib) {
           results = await state._itemSearchLib.getStarredItems(api);
         } else {
-          results = await state._itemSearchLib.searchItems(query, api);
+          // Name-only search — don't match against code/description/IDs
+          const all = await api.getAll();
+          const q = query.toLowerCase();
+          results = all
+            .filter(it => it.name && (!q || it.name.toLowerCase().includes(q)))
+            .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
         }
         if (gen !== state._acGeneration) return;
-        state.acItems = results.slice(0, 8).map(item => ({
+        state.acItems = results.slice(0, 12).map(item => ({
           label: item.name || item.id.slice(0, 8),
           detail: '',
           value: item.id,
