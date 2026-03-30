@@ -48,7 +48,7 @@ export async function render(value, options, api) {
   if (item) {
     wrapper.addEventListener('click', (e) => {
       const ref = e.target.closest('.field-ref');
-      if (!ref) return;
+      if (!ref || ref.tagName === 'INPUT') return;
       const fieldName = ref.getAttribute('data-field');
       if (!fieldName) return;
       const entry = ref.ownerDocument.getElementById('field-' + fieldName);
@@ -621,51 +621,88 @@ async function renderInlineNode(node, parent, api, item) {
     }
     case ':field-ref': {
       // [:field-ref field-name-string]
+      // Stored fields render as editable inline inputs (save on blur).
+      // Computed fields render as display-only spans.
       const fieldName = textOf(children[0]);
-      const span = api.createElement('span');
-      span.className = 'field-ref';
-      span.setAttribute('data-field', fieldName);
-      span.setAttribute('data-provenance-node', ':field-ref');
-      span.setAttribute('data-provenance-field-name', fieldName);
-      span.style.cssText = 'border-bottom: 1px dashed currentColor; cursor: pointer; opacity: 0.8;';
-      span.title = fieldName;
-      if (item) {
-        // Look up the expression if it's a computed field
-        const computed = item.content?.computed?.[fieldName];
-        if (computed) {
-          span.setAttribute('data-provenance-expression', JSON.stringify(computed));
-        }
-        try {
-          const val = await api.getField(item.id, fieldName);
-          if (val != null && val._hobType === 'computed-field-error') {
+      const isComputed = !!item?.content?.computed?.[fieldName];
+      if (item && !isComputed) {
+        // Stored field — editable inline input
+        const input = api.createElement('input');
+        input.type = 'text';
+        input.className = 'field-ref field-ref-input';
+        input.setAttribute('data-field', fieldName);
+        input.setAttribute('data-provenance-node', ':field-ref');
+        input.setAttribute('data-provenance-field-name', fieldName);
+        input.title = fieldName;
+        const rawVal = item.content?.[fieldName];
+        input.value = rawVal != null ? String(rawVal) : '';
+        input.style.cssText = 'border: 1px solid var(--color-border); border-radius: 3px; padding: 1px 4px; background: var(--color-bg-surface-alt); font: inherit; color: inherit; margin: 0; outline: none; min-width: 2em; width: auto; cursor: text;';
+        // Auto-size to content
+        const autoSize = () => {
+          input.style.width = Math.max(2, input.value.length + 2) + 'ch';
+        };
+        autoSize();
+        input.addEventListener('input', autoSize);
+        input.addEventListener('blur', async () => {
+          const newVal = input.value;
+          const oldVal = item.content?.[fieldName];
+          const coerced = oldVal != null && typeof oldVal === 'number' && !isNaN(Number(newVal)) ? Number(newVal) : newVal;
+          if (String(coerced) !== String(oldVal ?? '')) {
+            if (!item.content) item.content = {};
+            item.content[fieldName] = coerced;
+            await api.update(item);
+          }
+        });
+        input.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
+          if (e.key === 'Escape') { input.value = rawVal != null ? String(rawVal) : ''; input.blur(); }
+        });
+        parent.appendChild(input);
+      } else {
+        // Computed field or no item context — display-only span
+        const span = api.createElement('span');
+        span.className = 'field-ref';
+        span.setAttribute('data-field', fieldName);
+        span.setAttribute('data-provenance-node', ':field-ref');
+        span.setAttribute('data-provenance-field-name', fieldName);
+        span.style.cssText = 'border-bottom: 1px dashed currentColor; cursor: pointer; opacity: 0.8;';
+        span.title = fieldName;
+        if (item) {
+          const computed = item.content?.computed?.[fieldName];
+          if (computed) {
+            span.setAttribute('data-provenance-expression', JSON.stringify(computed));
+          }
+          try {
+            const val = await api.getField(item.id, fieldName);
+            if (val != null && val._hobType === 'computed-field-error') {
+              span.className = 'field-ref field-ref-error';
+              span.style.cssText = 'border-bottom: 1px dashed var(--color-danger); cursor: pointer; color: var(--color-danger); font-size: 0.8125rem;';
+              span.title = val.message;
+              span.textContent = 'ERR';
+              span.setAttribute('data-provenance-error', val.message);
+            } else if (val?.nodeType) {
+              span.appendChild(val);
+              span.setAttribute('data-provenance-resolved', '[DOM node]');
+            } else if (Array.isArray(val) && typeof val[0] === 'string' && val[0].startsWith(':')) {
+              await renderNode(val, span, api, item);
+              span.setAttribute('data-provenance-resolved', '[AST ' + val[0] + ']');
+            } else {
+              const display = val != null ? String(val) : '';
+              span.textContent = display;
+              span.setAttribute('data-provenance-resolved', display);
+            }
+          } catch (e) {
             span.className = 'field-ref field-ref-error';
             span.style.cssText = 'border-bottom: 1px dashed var(--color-danger); cursor: pointer; color: var(--color-danger); font-size: 0.8125rem;';
-            span.title = val.message;
+            span.title = String(e.message || e);
             span.textContent = 'ERR';
-            span.setAttribute('data-provenance-error', val.message);
-          } else if (val?.nodeType) {
-            span.appendChild(val);
-            span.setAttribute('data-provenance-resolved', '[DOM node]');
-          } else if (Array.isArray(val) && typeof val[0] === 'string' && val[0].startsWith(':')) {
-            // Resolved to a Hob AST — render it recursively
-            await renderNode(val, span, api, item);
-            span.setAttribute('data-provenance-resolved', '[AST ' + val[0] + ']');
-          } else {
-            const display = val != null ? String(val) : '';
-            span.textContent = display;
-            span.setAttribute('data-provenance-resolved', display);
+            span.setAttribute('data-provenance-error', String(e.message || e));
           }
-        } catch (e) {
-          span.className = 'field-ref field-ref-error';
-          span.style.cssText = 'border-bottom: 1px dashed var(--color-danger); cursor: pointer; color: var(--color-danger); font-size: 0.8125rem;';
-          span.title = String(e.message || e);
-          span.textContent = 'ERR';
-          span.setAttribute('data-provenance-error', String(e.message || e));
+        } else {
+          span.textContent = '{{' + fieldName + '}}';
         }
-      } else {
-        span.textContent = '{{' + fieldName + '}}';
+        parent.appendChild(span);
       }
-      parent.appendChild(span);
       break;
     }
     case ':transclusion': {
