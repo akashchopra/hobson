@@ -222,7 +222,8 @@ export async function render(value, options, api) {
             appendNonEditable(parent, span);
           } else if (tag === 'transclude') {
             // Parse transclude expression args
-            const itemId = typeof child[1] === 'string' && child[1].startsWith('@') ? child[1].substring(1) : String(child[1]);
+            const isSelf = child[1] === '@self' || child[1] === ':self';
+            const itemId = isSelf ? ':self' : (typeof child[1] === 'string' && child[1].startsWith('@') ? child[1].substring(1) : String(child[1]));
             let fieldName = null, symbolName = null, viewId = null, isEmbed = true;
             for (let ci = 2; ci < child.length; ci++) {
               const arg = child[ci];
@@ -241,8 +242,9 @@ export async function render(value, options, api) {
             span.contentEditable = 'false';
             span.className = 'doc-transclusion';
             span.dataset.itemId = itemId;
-            if (isEmbed && !fieldName) {
-              // Full-item embed
+            const selfLabel = 'This item';
+            if (isEmbed && !fieldName && !isSelf) {
+              // Full-item embed (not allowed for :self)
               span.dataset.embed = 'true';
               if (viewId) span.dataset.viewId = viewId;
               span.textContent = '\u25A3 ' + itemId.substring(0, 8);
@@ -250,21 +252,26 @@ export async function render(value, options, api) {
             } else if (symbolName) {
               span.dataset.symbol = symbolName;
               span.dataset.field = fieldName || 'code';
-              span.textContent = itemId.substring(0, 8) + '.' + symbolName;
+              span.textContent = (isSelf ? selfLabel : itemId.substring(0, 8)) + '.' + symbolName;
               span.style.cssText = 'display: inline-block; background: var(--color-warning-light, #fef3c7); padding: 1px 6px; border-radius: 3px; border: 1px solid var(--color-warning, #f59e0b); font-size: 0.8125em; cursor: default; user-select: none;';
             } else {
               span.dataset.field = fieldName || 'description';
-              span.textContent = itemId.substring(0, 8) + ((fieldName && fieldName !== 'description') ? '.' + fieldName : '');
+              const displayLabel = isSelf ? selfLabel : itemId.substring(0, 8);
+              span.textContent = displayLabel + ((fieldName && fieldName !== 'description') ? '.' + fieldName : '');
               span.style.cssText = 'display: inline-block; background: var(--color-warning-light, #fef3c7); padding: 1px 6px; border-radius: 3px; border: 1px solid var(--color-warning, #f59e0b); font-size: 0.8125em; cursor: default; user-select: none;';
             }
-            api.get(itemId).then(refItem => {
-              if (refItem?.name) {
-                span.dataset.display = refItem.name;
-                if (span.dataset.embed === 'true') span.textContent = '\u25A3 ' + refItem.name;
-                else if (symbolName) span.textContent = refItem.name + '.' + symbolName;
-                else span.textContent = refItem.name + ((fieldName && fieldName !== 'description') ? '.' + fieldName : '');
-              }
-            }).catch(() => {});
+            if (isSelf) {
+              span.dataset.display = selfLabel;
+            } else {
+              api.get(itemId).then(refItem => {
+                if (refItem?.name) {
+                  span.dataset.display = refItem.name;
+                  if (span.dataset.embed === 'true') span.textContent = '\u25A3 ' + refItem.name;
+                  else if (symbolName) span.textContent = refItem.name + '.' + symbolName;
+                  else span.textContent = refItem.name + ((fieldName && fieldName !== 'description') ? '.' + fieldName : '');
+                }
+              }).catch(() => {});
+            }
             appendNonEditable(parent, span);
           }
           continue;
@@ -822,15 +829,17 @@ export async function render(value, options, api) {
           if (node.dataset.display) parts[0].push({ s: node.dataset.display });
           result.push(parts[0]);
         } else if (node.classList.contains('doc-transclusion')) {
+          const isSelf = node.dataset.itemId === ':self';
+          const itemRef = isSelf ? '@self' : '@' + node.dataset.itemId;
           if (node.dataset.embed === 'true') {
-            const expr = ['transclude', '@' + node.dataset.itemId];
+            const expr = ['transclude', itemRef];
             if (node.dataset.viewId) expr.push(':view', '@' + node.dataset.viewId);
             result.push(expr);
           } else if (node.dataset.symbol) {
-            const expr = ['transclude', '@' + node.dataset.itemId, ':' + (node.dataset.field || 'code'), ':symbol', { s: node.dataset.symbol }];
+            const expr = ['transclude', itemRef, ':' + (node.dataset.field || 'code'), ':symbol', { s: node.dataset.symbol }];
             result.push(expr);
           } else {
-            result.push(['transclude', '@' + node.dataset.itemId, ':' + (node.dataset.field || 'description')]);
+            result.push(['transclude', itemRef, ':' + (node.dataset.field || 'description')]);
           }
         } else if (node.classList.contains('doc-checkbox')) {
           result.push([':checkbox', { checked: node.dataset.checked === 'true' }]);
@@ -1011,10 +1020,13 @@ export async function render(value, options, api) {
       results.sort((a, b) => a.id === 'description' ? -1 : b.id === 'description' ? 1 : a.label.localeCompare(b.label));
     } else if (ac.type === 'transclusion' && ac.step === 'field') {
       // Field picker for transclusion target — includes embed, fields, symbols, and exports
-      results.push({ id: '_embed', label: '\u25A3 Embed (full item)', sub: 'render via view', _type: 'embed' });
+      const isSelf = ac.targetItem.id === ':self';
+      if (!isSelf) {
+        results.push({ id: '_embed', label: '\u25A3 Embed (full item)', sub: 'render via view', _type: 'embed' });
+      }
       results.push({ _separator: true, label: 'Fields' });
       try {
-        const targetItem = await api.get(ac.targetItem.id);
+        const targetItem = isSelf ? item : await api.get(ac.targetItem.id);
         const content = targetItem?.content || {};
         for (const [k, v] of Object.entries(content)) {
           if (k === 'computed' || k === 'tags' || k === 'parent' || k === '_symbols') continue;
@@ -1085,6 +1097,13 @@ export async function render(value, options, api) {
           .slice(0, 12)
           .map(it => ({ id: it.id, label: it.name, sub: it.id.substring(0, 8) }));
       } catch { results = []; }
+      // Prepend "This item" option for transclusion mode
+      if (ac.type === 'transclusion' && ac.step === 'item' && item) {
+        const selfLabel = 'This item';
+        if (!ac.query || selfLabel.toLowerCase().includes(ac.query.toLowerCase()) || (item.name && item.name.toLowerCase().includes(ac.query.toLowerCase()))) {
+          results.unshift({ id: ':self', label: selfLabel, sub: item.name || item.id.substring(0, 8) });
+        }
+      }
       // Offer URL link if query looks like a URL (only for @, not @@)
       if (ac.type === 'item' && ac.query &&
           (/^https?:\/\//.test(ac.query) || /^www\./.test(ac.query) ||
@@ -1293,11 +1312,12 @@ export async function render(value, options, api) {
 
   function acInsertTransclusion(fieldResult) {
     const { targetItem } = ac;
+    const isSelf = targetItem.id === ':self';
     const node = document.createElement('span');
     node.contentEditable = 'false';
     node.className = 'doc-transclusion';
-    node.dataset.itemId = targetItem.id;
-    node.dataset.display = targetItem.label;
+    node.dataset.itemId = isSelf ? ':self' : targetItem.id;
+    node.dataset.display = isSelf ? 'This item' : targetItem.label;
 
     if (fieldResult._type === 'embed') {
       node.dataset.embed = 'true';
@@ -1555,22 +1575,28 @@ export async function render(value, options, api) {
 
   function showTransclusionPopover(span) {
     showPopover(span, (span, blockEl, path) => {
+      const isSelf = span.dataset.itemId === ':self';
       let newItemId = null;
       let newName = null;
-      const searchInput = addItemSearch('Source', span.dataset.itemId, (id, name) => {
+      const searchInput = addItemSearch('Source', isSelf ? null : span.dataset.itemId, (id, name) => {
         newItemId = id;
         newName = name;
       });
+      if (isSelf) searchInput.value = 'This item';
 
-      // Mode: embed vs field vs symbol
+      // Mode: embed vs field vs symbol (embed not available for :self)
       const isEmbed = span.dataset.embed === 'true';
       const hasSymbol = !!span.dataset.symbol;
       const currentMode = isEmbed ? 'embed' : hasSymbol ? 'symbol' : 'field';
-      const modeSelect = addSelect('Type', [
+      const modeOptions = isSelf ? [
+        { value: 'field', label: 'Field' },
+        { value: 'symbol', label: 'Symbol' }
+      ] : [
         { value: 'embed', label: '\u25A3 Embed (full item)' },
         { value: 'field', label: 'Field' },
         { value: 'symbol', label: 'Symbol' }
-      ], currentMode);
+      ];
+      const modeSelect = addSelect('Type', modeOptions, currentMode);
 
       // Field input (for field/symbol modes)
       const fieldInput = addField('Field', span.dataset.field || 'description');
@@ -1595,7 +1621,7 @@ export async function render(value, options, api) {
       (async () => {
         try {
           const targetId = newItemId || span.dataset.itemId;
-          const targetItem = await api.get(targetId);
+          const targetItem = targetId === ':self' ? item : await api.get(targetId);
           const VIEW_TYPE = 'aaaaaaaa-0000-0000-0000-000000000000';
           const allViews = await api.query({ type: VIEW_TYPE });
           const typeChain = [targetItem.type];
@@ -1640,7 +1666,7 @@ export async function render(value, options, api) {
           if (newName) span.dataset.display = newName;
         }
         const mode = modeSelect.value;
-        const displayName = span.dataset.display || span.dataset.itemId.substring(0, 8);
+        const displayName = span.dataset.itemId === ':self' ? 'This item' : (span.dataset.display || span.dataset.itemId.substring(0, 8));
         if (mode === 'embed') {
           span.dataset.embed = 'true';
           delete span.dataset.field;

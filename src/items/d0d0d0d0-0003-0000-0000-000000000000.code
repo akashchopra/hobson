@@ -207,16 +207,29 @@ async function renderTransclusion(wrapper, parent, api, item, inline) {
         else container.appendChild(link);
       }
     } else {
-      container.style.cssText = 'border-bottom: 1.5px dotted var(--color-border); cursor: pointer;';
-      if (sourceId) {
-        let name;
-        try { name = (await api.get(sourceId))?.name; } catch {}
-        const displaySuffix = sourceSymbol ? '.' + sourceSymbol : (sourceField && sourceField !== 'description' ? '.' + sourceField : '');
-        container.title = 'Source: ' + (name || sourceId.substring(0, 8)) + displaySuffix;
-        const target = sourceSymbol ? { id: sourceId, view: { navigateTo: { symbol: sourceSymbol } } } : sourceId;
-        container.onclick = (e) => { e.preventDefault(); api.openItem(e, target); };
+      const isSelfTransclusion = sourceId && item && sourceId === item.id;
+      if (isSelfTransclusion) {
+        // Self-transclusion: style like field-ref, scroll-to-field on click
+        container.className = 'field-ref';
+        container.setAttribute('data-field', sourceField || '');
+        container.style.cssText = 'border-bottom: 1px dashed currentColor; cursor: pointer; opacity: 0.8;';
+        container.title = sourceField || '';
+      } else {
+        container.style.cssText = 'border-bottom: 1.5px dotted var(--color-border); cursor: pointer;';
+        if (sourceId) {
+          let name;
+          try { name = (await api.get(sourceId))?.name; } catch {}
+          const displaySuffix = sourceSymbol ? '.' + sourceSymbol : (sourceField && sourceField !== 'description' ? '.' + sourceField : '');
+          container.title = 'Source: ' + (name || sourceId.substring(0, 8)) + displaySuffix;
+          const target = sourceSymbol ? { id: sourceId, view: { navigateTo: { symbol: sourceSymbol } } } : sourceId;
+          container.onclick = (e) => { e.preventDefault(); api.openItem(e, target); };
+        }
       }
-      await renderInlineNode(value, container, api, item);
+      if (Array.isArray(value)) {
+        await renderInlineNode(value, container, api, item);
+      } else {
+        container.appendChild(document.createTextNode(value != null ? String(value) : ''));
+      }
     }
     parent.appendChild(container);
     return;
@@ -295,7 +308,13 @@ async function renderNode(node, parent, api, item) {
   if (!tag) {
     if (api.evaluateHob) {
       try {
-        const result = await api.evaluateHob(node, { item });
+        // Pre-resolve @self so self-transclusions don't depend on _renderItemId timing
+        let evalNode = node;
+        if (item && node[0] === 'transclude' && node[1] === '@self') {
+          evalNode = node.slice();
+          evalNode[1] = '@' + item.id;
+        }
+        const result = await api.evaluateHob(evalNode, { item });
         if (result != null) {
           if (result._hobType === 'transclusion') await renderTransclusion(result, parent, api, item, false);
           else await renderNode(result, parent, api, item);
@@ -488,7 +507,13 @@ async function renderInlineNode(node, parent, api, item) {
   if (!tag) {
     if (api.evaluateHob) {
       try {
-        const result = await api.evaluateHob(node, { item });
+        // Pre-resolve @self so self-transclusions don't depend on _renderItemId timing
+        let evalNode = node;
+        if (item && node[0] === 'transclude' && node[1] === '@self') {
+          evalNode = node.slice();
+          evalNode[1] = '@' + item.id;
+        }
+        const result = await api.evaluateHob(evalNode, { item });
         if (result != null) {
           if (result._hobType === 'transclusion') await renderTransclusion(result, parent, api, item, true);
           else await renderInlineNode(result, parent, api, item);
