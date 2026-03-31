@@ -224,7 +224,7 @@ export async function render(value, options, api) {
             // Parse transclude expression args
             const isSelf = child[1] === '@self' || child[1] === ':self';
             const itemId = isSelf ? ':self' : (typeof child[1] === 'string' && child[1].startsWith('@') ? child[1].substring(1) : String(child[1]));
-            let fieldName = null, symbolName = null, viewId = null, isEmbed = true;
+            let fieldName = null, symbolName = null, viewId = null, transformAst = null, isEmbed = true;
             for (let ci = 2; ci < child.length; ci++) {
               const arg = child[ci];
               if (typeof arg === 'string' && arg.startsWith(':')) {
@@ -234,6 +234,7 @@ export async function render(value, options, api) {
                   const varg = child[++ci];
                   viewId = typeof varg === 'string' && varg.startsWith('@') ? varg.substring(1) : textOf(varg);
                 }
+                else if (kw === 'transform' && ci + 1 < child.length) { transformAst = child[++ci]; }
                 else if (kw === 'chrome') { ci++; } // skip value of :chrome
                 else { fieldName = kw; isEmbed = false; }
               }
@@ -260,6 +261,7 @@ export async function render(value, options, api) {
               span.textContent = displayLabel + ((fieldName && fieldName !== 'description') ? '.' + fieldName : '');
               span.style.cssText = 'display: inline-block; background: var(--color-warning-light, #fef3c7); padding: 1px 6px; border-radius: 3px; border: 1px solid var(--color-warning, #f59e0b); font-size: 0.8125em; cursor: default; user-select: none;';
             }
+            if (transformAst) span.dataset.transform = JSON.stringify(transformAst);
             if (isSelf) {
               span.dataset.display = selfLabel;
             } else {
@@ -834,12 +836,16 @@ export async function render(value, options, api) {
           if (node.dataset.embed === 'true') {
             const expr = ['transclude', itemRef];
             if (node.dataset.viewId) expr.push(':view', '@' + node.dataset.viewId);
+            if (node.dataset.transform) expr.push(':transform', JSON.parse(node.dataset.transform));
             result.push(expr);
           } else if (node.dataset.symbol) {
             const expr = ['transclude', itemRef, ':' + (node.dataset.field || 'code'), ':symbol', { s: node.dataset.symbol }];
+            if (node.dataset.transform) expr.push(':transform', JSON.parse(node.dataset.transform));
             result.push(expr);
           } else {
-            result.push(['transclude', itemRef, ':' + (node.dataset.field || 'description')]);
+            const expr = ['transclude', itemRef, ':' + (node.dataset.field || 'description')];
+            if (node.dataset.transform) expr.push(':transform', JSON.parse(node.dataset.transform));
+            result.push(expr);
           }
         } else if (node.classList.contains('doc-checkbox')) {
           result.push([':checkbox', { checked: node.dataset.checked === 'true' }]);
@@ -1647,6 +1653,21 @@ export async function render(value, options, api) {
         } catch {}
       })();
 
+      // Transform input (Hob expression text)
+      const transformInput = addField('Transform', '');
+      const transformLabel = transformInput.previousElementSibling;
+      transformInput.placeholder = '#(get % :key)';
+      // Initialize from existing transform AST
+      if (span.dataset.transform) {
+        (async () => {
+          try {
+            const hob = await api.require('hob-interpreter');
+            const ast = JSON.parse(span.dataset.transform);
+            transformInput.value = hob.prettyPrint(ast);
+          } catch {}
+        })();
+      }
+
       // Show/hide fields based on mode
       const updateVisibility = () => {
         const mode = modeSelect.value;
@@ -1656,14 +1677,31 @@ export async function render(value, options, api) {
         fieldInput.style.display = mode !== 'embed' ? '' : 'none';
         symbolLabel.style.display = mode === 'symbol' ? '' : 'none';
         symbolInput.style.display = mode === 'symbol' ? '' : 'none';
+        transformLabel.style.display = mode !== 'embed' ? '' : 'none';
+        transformInput.style.display = mode !== 'embed' ? '' : 'none';
       };
       modeSelect.addEventListener('change', updateVisibility);
       updateVisibility();
 
-      const apply = () => {
+      const apply = async () => {
         if (newItemId) {
           span.dataset.itemId = newItemId;
           if (newName) span.dataset.display = newName;
+        }
+        // Parse transform expression
+        const transformText = transformInput.value.trim();
+        if (transformText) {
+          try {
+            const hob = await api.require('hob-interpreter');
+            const ast = hob.read(transformText);
+            span.dataset.transform = JSON.stringify(ast);
+          } catch (e) {
+            transformInput.style.borderColor = 'var(--color-danger, #ef4444)';
+            transformInput.title = String(e.message || e);
+            return; // Don't close popover on parse error
+          }
+        } else {
+          delete span.dataset.transform;
         }
         const mode = modeSelect.value;
         const displayName = span.dataset.itemId === ':self' ? 'This item' : (span.dataset.display || span.dataset.itemId.substring(0, 8));
@@ -1698,7 +1736,7 @@ export async function render(value, options, api) {
         hidePopover();
         handleInput(blockEl, path);
       }, apply);
-      bindKeys([fieldInput, symbolInput], apply, hidePopover);
+      bindKeys([fieldInput, symbolInput, transformInput], apply, hidePopover);
       requestAnimationFrame(() => searchInput.focus());
     });
   }

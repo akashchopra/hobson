@@ -4,8 +4,20 @@
 //   Text content is {s: "..."} string literals
 //   Nodes are arrays: [keyword, ...children]
 
+// Module-level prStr — initialized on first render
+let prStr = String;
+
 export async function render(value, options, api) {
   const { label, item } = options;
+
+  // Load prStr for displaying non-primitive values
+  if (prStr === String) {
+    try {
+      const hob = await api.require('hob-interpreter');
+      prStr = (v) => hob.prStr(v, false);
+    } catch {}
+  }
+
 
   const wrapper = api.createElement('div', { className: 'field-doc' });
   wrapper.style.cssText = 'display: flex; flex-direction: column; gap: 4px;';
@@ -228,7 +240,7 @@ async function renderTransclusion(wrapper, parent, api, item, inline) {
       if (Array.isArray(value)) {
         await renderInlineNode(value, container, api, item);
       } else {
-        container.appendChild(document.createTextNode(value != null ? String(value) : ''));
+        container.appendChild(document.createTextNode(value != null ? prStr(value) : ''));
       }
     }
     parent.appendChild(container);
@@ -687,7 +699,7 @@ async function renderInlineNode(node, parent, api, item) {
               await renderNode(val, span, api, item);
               span.setAttribute('data-provenance-resolved', '[AST ' + val[0] + ']');
             } else {
-              const display = val != null ? String(val) : '';
+              const display = val != null ? prStr(val) : '';
               span.textContent = display;
               span.setAttribute('data-provenance-resolved', display);
             }
@@ -727,7 +739,7 @@ async function renderInlineNode(node, parent, api, item) {
         } else if (Array.isArray(val) && typeof val[0] === 'string' && val[0].startsWith(':')) {
           await renderNode(val, span, api, item);
         } else {
-          span.textContent = val != null ? String(val) : (display || refId.substring(0, 8) + '...');
+          span.textContent = val != null ? prStr(val) : (display || refId.substring(0, 8) + '...');
         }
       } catch (e) {
         span.className = 'field-ref field-ref-error';
