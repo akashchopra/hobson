@@ -4,11 +4,11 @@ A concise guide for Claude to read at session start. Covers what exists, what it
 
 ## Philosophy & Goals
 
-Hobson is a personal information management system where everything — data, code, UI, documentation — is an **item** stored in IndexedDB. The system is inspired by Smalltalk's live image, Lisp's REPL-first development, Obsidian's linking, and Obenauer's itemized OS concept. The north star is a system that defines itself in terms of itself: views are items, types are items, the documentation you're reading about items is itself made of items.
+Hobson is a single-user live programming environment where everything — data, code, UI, documentation — is an **item** stored in IndexedDB. The system is inspired by Smalltalk's live image, Lisp's REPL-first development, Obsidian's linking, and Obenauer's itemized OS concept. The north star is a system that defines itself in terms of itself: views are items, types are items, the documentation you're reading about items is itself made of items.
 
 Key design values: radical uniformity (one abstraction for everything), user sovereignty (everything is inspectable and modifiable), minimal kernel (if it can be an item, it must be an item), and self-revealing code (every API call expresses its intent through its arguments).
 
-**Detailed docs:** Philosophy & Inspirations (`a0a0a0a0-d0c0-4000-8000-000000000001`), Project Context (`c0c0c0c0-0030`)
+**Detailed docs:** Philosophy & Inspirations (`a0a0a0a0-d0c0-4000-8000-000000000001`)
 
 ## The Item Model
 
@@ -26,19 +26,7 @@ An item is a JSON object with `id` (GUID), `type` (GUID of a type-definition ite
 
 ## Three-Layer Architecture
 
-| Layer | Responsibility | Key items |
-|-------|---------------|-----------|
-| **Kernel** | Storage (IndexedDB), event bus, code/module loading, bootstrap. No UI except safe-mode fallback. | `kernel:core` (`33333333-1111`), `kernel:storage` (`33333333-2222`), `kernel:module-system` (`33333333-4444`), `kernel:safe-mode` (`33333333-7777`), `kernel:styles` (`33333333-8888`) |
-| **Viewport** | Rendering engine, navigation, view resolution, chrome (REPL bar, help dialog). Built from regular items but core infrastructure. | `viewport-rendering` (`f1111111-0008`), `viewport-manager`, `selection-manager`, `keyboard-shortcuts` |
-| **Userland** | Views, libraries, type definitions, user data, documentation. Everything the user creates or customizes. | All views, libraries, notes, workspaces, etc. |
-
-**The kernel boundary rule:** If it can be built as an item, it must not be in the kernel. The kernel provides only what cannot be implemented as items.
-
-**Boot sequence:** `bootloader.html` opens IndexedDB → loads `kernel:core` as ES module → kernel initializes storage, seeds, styles, safe-mode screen → emits `kernel:boot-complete` → `viewport-manager` takes over and renders the UI.
-
-**API layering:** `kernel.createAPI()` provides base API (storage, events, modules). `viewport-rendering.enrichAPI()` adds rendering methods (createElement, setRootView, editRaw, etc.).
-
-**Detailed docs:** System Layers (`c0c0c0c0-0091`), Architecture Overview (`a0a0a0a0-d0c0-4000-8000-000000000003`), Kernel (`c0c0c0c0-0001`), Bootstrap (`c0c0c0c0-0002`)
+See System Layers (`c0c0c0c0-0091`).
 
 ## Active Text (Document Format)
 

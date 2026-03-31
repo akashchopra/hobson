@@ -31,19 +31,6 @@ No traditional build system - the project is a single HTML file (`src/bootloader
 - `src/items/{guid}.json` - The most recent export of item with id {guid}. Use these as the reference implementation for all items.
 - `src/items/backup.json` - The most recent dump of all items in the database. Do not read this file! Use the individual item exports.
 
-## Item Structure
-```javascript
-{
-  id: String,                    // GUID
-  name?: String,                 // Required for code items only
-  type: String,                  // GUID of type item
-  created: Timestamp,
-  modified: Timestamp,
-  attachments: String[],         // Compositional - items attached to this item (or positioned objects)
-  content: Map<String, Any>      // content.parent for taxonomical hierarchy
-}
-```
-
 ## Item Naming Conventions
 
 **Namespaces:**
@@ -70,3 +57,4 @@ These rules are very important!
 - Before editing existing items, *always* confirm that the `src/items` directory contains the latest versions.
 - **Edit JSON files directly** rather than writing REPL scripts. Edit the exported JSON files in `src/items/*.json` - this makes changes immediately ready for git commit. The user will import the updated files into Hobson.
 - If REPL scripts are needed for some reason, place them in `src/REPL Scripts` (not /tmp).
+- Avoid "quick fixes". Every time you find yourself thinking "the quickest fix is to...", stop and ask yourself whether it is the right long-term approach. Ask the user to decide the correct approach if there is conflict between quick and correct approaches.
