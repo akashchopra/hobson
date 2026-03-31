@@ -1148,7 +1148,26 @@ async function evaluate(ast, env, callStack) {
       }
       return { _hobType: 'item-ref', value: refName };
     }
-    // Symbol lookup
+    // Symbol lookup — try exact name first (handles existing str/includes? etc.)
+    if (env.has(ast)) return env.lookup(ast);
+    // Qualified symbol fallback: ns/name — property access on the namespace value
+    const slashIdx = ast.indexOf('/');
+    if (slashIdx > 0 && slashIdx < ast.length - 1) {
+      const ns = ast.slice(0, slashIdx);
+      const name = ast.slice(slashIdx + 1);
+      let nsVal;
+      try { nsVal = env.lookup(ns); } catch (e) {
+        throw hobError(`Undefined symbol '${ast}'`, null, callStack, ast);
+      }
+      if (nsVal == null || typeof nsVal !== 'object') {
+        throw hobError(`'${ns}' is not an object in '${ast}'`, null, callStack, ast);
+      }
+      const val = nsVal[name];
+      if (val === undefined) {
+        throw hobError(`'${name}' not found in '${ns}'`, null, callStack, ast);
+      }
+      return val;
+    }
     try {
       return env.lookup(ast);
     } catch (e) {
@@ -3525,6 +3544,14 @@ export function createInterpreter(api, viewApi, eventApi) {
             const innerGF = evalEnv.lookup('get-field');
             evalEnv = evalEnv.extend({});
             evalEnv.define('get-field', Object.assign(async (a, b) => innerGF(a, b, _tracker), { _hobName: 'get-field' }));
+          }
+          // Multi-form: if formula is an array of forms, evaluate sequentially, return last
+          if (Array.isArray(formula) && formula.length > 0 && typeof formula[0] !== 'string') {
+            let result = null;
+            for (const form of formula) {
+              result = await evaluate(form, evalEnv, []);
+            }
+            return result;
           }
           return await evaluate(formula, evalEnv, []);
         } catch (e) {
