@@ -37,13 +37,24 @@ export async function onKernelBootComplete({ safeMode, rootElement }, _api) {
     window.addEventListener('popstate', handlePopstate);
   }
 
-  // If URL has a root, ensure viewport item is in sync
-  const urlRoot = getRoot();
+  // Sync URL ↔ viewport item
+  let urlRoot = getRoot();
   if (urlRoot) {
     const viewport = await window.kernel.storage.get(activeViewportId);
     const currentChild = viewport.attachments?.[0];
     if (currentChild?.id !== urlRoot) {
       await persistRootChange(urlRoot, currentChild?.id);
+    }
+  } else {
+    // No ?root= in URL (Tauri default, direct file load) — populate from stored state
+    const viewport = await window.kernel.storage.get(activeViewportId);
+    const storedRoot = viewport.attachments?.[0]?.id
+      || (typeof viewport.attachments?.[0] === 'string' ? viewport.attachments[0] : null);
+    if (storedRoot) {
+      const url = new URL(window.location);
+      url.searchParams.set('root', storedRoot);
+      window.history.replaceState({ itemId: storedRoot }, '', url);
+      urlRoot = storedRoot;
     }
   }
 
