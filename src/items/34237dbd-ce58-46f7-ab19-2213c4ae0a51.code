@@ -3,6 +3,13 @@
 
 const WIDGET_TYPE_ID = '1e9ffc8d-0e0d-4020-9865-b4ca6a05cbae';
 
+// State survives moduleSystem.clearCache()
+const CACHE_KEY = '__relatedItemsView__';
+if (!globalThis[CACHE_KEY]) {
+  globalThis[CACHE_KEY] = { rendering: false, pending: false };
+}
+const S = globalThis[CACHE_KEY];
+
 export async function onViewportSelectionChanged(payload, api) {
   const selectedId = payload?.current?.itemId;
   if (selectedId) {
@@ -10,9 +17,24 @@ export async function onViewportSelectionChanged(payload, api) {
     try { item = await api.get(selectedId); } catch (e) { item = null; }
     if (item && item.type === WIDGET_TYPE_ID) return;
   }
-  const vpMgr = await api.require('viewport-manager');
-  const rendering = vpMgr.getRendering();
-  if (rendering) await rendering.rerenderByType(WIDGET_TYPE_ID);
+  // Serialize re-renders: if one is in progress, mark pending and let
+  // the current cycle pick it up. Prevents concurrent morphdom passes
+  // on the same DOM node which can cause visual duplicates.
+  if (S.rendering) {
+    S.pending = true;
+    return;
+  }
+  S.rendering = true;
+  try {
+    do {
+      S.pending = false;
+      const vpMgr = await api.require('viewport-manager');
+      const rendering = vpMgr.getRendering();
+      if (rendering) await rendering.rerenderByType(WIDGET_TYPE_ID);
+    } while (S.pending);
+  } finally {
+    S.rendering = false;
+  }
 }
 
 
@@ -41,13 +63,14 @@ export async function onViewportSelectionChanged(payload, api) {
      ["Code Used By" :incomingCodeRefs false]
      ["Views For" :viewsFor false]
      ["Preferred View For" :preferredBy false]])
-  (defn render-link [id display-name]
-    (let [it (get-item id)]
+  (defn render-link [id display-name key-prefix]
+    (let [it (get-item id) sort-key (str key-prefix ":" id)]
       (if
         it
         (let [type-item (get-item (:type it))]
           [:div {:style "display: flex; align-items: baseline; gap: 6px; padding: 3px 0; cursor: pointer; border-radius: var(--border-radius);"
-                 :on-click (fn [e] (open-item! e id))}
+                 :on-click (fn [e] (open-item! e id))
+                 :data-sort-key sort-key}
             [:span {:style "color: var(--color-link, #2563eb); font-size: 0.8125rem;"}
 
               (or display-name (:name it) (subs id 0 8))]
@@ -56,12 +79,12 @@ export async function onViewportSelectionChanged(payload, api) {
               [:span {:style "color: var(--color-border-dark); font-size: 0.6875rem;"}
 
                 (or (:name type-item) "")])])
-        [:div {:style "padding: 3px 0;"}
+        [:div {:style "padding: 3px 0;" :data-sort-key sort-key}
           [:span {:style "color: var(--color-border-dark); font-style: italic; font-size: 0.8125rem;"}
 
             (str "[deleted: " (subs id 0 13) "]")]])))
   (def truncate-limit 30)
-  (defn render-group [label ids use-fqn]
+  (defn render-group [label ids use-fqn group-key]
     (let [unique (distinct ids)
           sorted (sort-by
                    (fn [id]
@@ -73,23 +96,24 @@ export async function onViewportSelectionChanged(payload, api) {
                    unique)
           truncated (> (count sorted) truncate-limit)
           display (if truncated (take truncate-limit sorted) sorted)]
-      [:div {:style "margin-bottom: 12px;"}
+      [:div {:style "margin-bottom: 12px;" :data-sort-key (name group-key)}
         [:div {:style "font-weight: 600; margin-bottom: 4px; font-size: 0.8125rem;"}
 
           label]
         [:div {:style "padding-left: 8px;"}
-          (for [id display] (render-link id (when use-fqn (get-fqn! id nil))))
+          (for [id display]
+            (render-link id (when use-fqn (get-fqn! id nil)) (name group-key)))
           (when
             truncated
             [:div {:style "font-size: 0.75rem; color: var(--color-border-dark); font-style: italic; padding: 2px 0;"}
 
               (str "… and " (- (count sorted) truncate-limit) " more")])]]))
-  (defn render-tagged-with [label selected-id]
+  (defn render-tagged-with [label selected-id group-key]
     (let [tag-groups (get-tagged-with-grouped! selected-id)
           root-name (get-fqn! selected-id nil)]
       (if
         (> (count tag-groups) 1)
-        [:div {:style "margin-bottom: 12px;"}
+        [:div {:style "margin-bottom: 12px;" :data-sort-key (name group-key)}
           [:div {:style "font-weight: 600; margin-bottom: 4px; font-size: 0.8125rem;"}
 
             label]
@@ -112,14 +136,15 @@ export async function onViewportSelectionChanged(payload, api) {
 
                   (str path " (" (count sorted) ")")]
                 [:div {:style "padding-left: 8px;"}
-                  (for [id display] (render-link id nil))
+                  (for [id display]
+                    (render-link id nil (str (name group-key) ":" tag-id)))
                   (when
                     truncated
                     [:div {:style "font-size: 0.75rem; color: var(--color-border-dark); font-style: italic; padding: 2px 0;"}
 
                       (str "… and " (- (count sorted) truncate-limit) " more")])]]))]
         (let [all-ids (vec (mapcat (fn [g] (:items g)) tag-groups))]
-          (when (seq all-ids) (render-group label all-ids false))))))
+          (when (seq all-ids) (render-group label all-ids false group-key))))))
   (defn render-section [section-label groups related selected-id]
     (let [non-empty (vec
                       (filter
@@ -147,11 +172,11 @@ export async function onViewportSelectionChanged(payload, api) {
                   ids (if is-single [value] value)]
               (cond
                 (= key :taggedWith)
-                (render-tagged-with label selected-id)
+                (render-tagged-with label selected-id key)
                 (= key :tags)
-                (render-group label ids true)
+                (render-group label ids true key)
                 :else
-                (render-group label ids false))))])))
+                (render-group label ids false key))))])))
   (def selected-id (or (get-in item [:content :targetId]) (get-selection!)))
   (def selected-item (when selected-id (get-item selected-id)))
   (def related (when selected-item (get-related! selected-id)))

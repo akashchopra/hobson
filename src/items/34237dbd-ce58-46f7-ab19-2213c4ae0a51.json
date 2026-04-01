@@ -3,7 +3,7 @@
   "name": "related-items-view",
   "type": "aaaaaaaa-0000-0000-0000-000000000000",
   "created": 1770302367077,
-  "modified": 1774988046313,
+  "modified": 1775074253674,
   "content": {
     "for_type": "1e9ffc8d-0e0d-4020-9865-b4ca6a05cbae",
     "displayName": "Related Items",
@@ -220,7 +220,8 @@
           {
             "v": [
               "id",
-              "display-name"
+              "display-name",
+              "key-prefix"
             ]
           },
           [
@@ -230,6 +231,15 @@
                 "it",
                 [
                   "get-item",
+                  "id"
+                ],
+                "sort-key",
+                [
+                  "str",
+                  "key-prefix",
+                  {
+                    "s": ":"
+                  },
                   "id"
                 ]
               ]
@@ -277,6 +287,10 @@
                               "id"
                             ]
                           ]
+                        ],
+                        [
+                          ":data-sort-key",
+                          "sort-key"
                         ]
                       ]
                     },
@@ -351,6 +365,10 @@
                         {
                           "s": "padding: 3px 0;"
                         }
+                      ],
+                      [
+                        ":data-sort-key",
+                        "sort-key"
                       ]
                     ]
                   },
@@ -401,7 +419,8 @@
             "v": [
               "label",
               "ids",
-              "use-fqn"
+              "use-fqn",
+              "group-key"
             ]
           },
           [
@@ -489,6 +508,13 @@
                       {
                         "s": "margin-bottom: 12px;"
                       }
+                    ],
+                    [
+                      ":data-sort-key",
+                      [
+                        "name",
+                        "group-key"
+                      ]
                     ]
                   ]
                 },
@@ -540,6 +566,10 @@
                             "id",
                             null
                           ]
+                        ],
+                        [
+                          "name",
+                          "group-key"
                         ]
                       ]
                     ],
@@ -591,7 +621,8 @@
           {
             "v": [
               "label",
-              "selected-id"
+              "selected-id",
+              "group-key"
             ]
           },
           [
@@ -631,6 +662,13 @@
                         {
                           "s": "margin-bottom: 12px;"
                         }
+                      ],
+                      [
+                        ":data-sort-key",
+                        [
+                          "name",
+                          "group-key"
+                        ]
                       ]
                     ]
                   },
@@ -816,7 +854,18 @@
                                 [
                                   "render-link",
                                   "id",
-                                  null
+                                  null,
+                                  [
+                                    "str",
+                                    [
+                                      "name",
+                                      "group-key"
+                                    ],
+                                    {
+                                      "s": ":"
+                                    },
+                                    "tag-id"
+                                  ]
                                 ]
                               ],
                               [
@@ -899,7 +948,8 @@
                     "render-group",
                     "label",
                     "all-ids",
-                    false
+                    false,
+                    "group-key"
                   ]
                 ]
               ]
@@ -1080,7 +1130,8 @@
                         [
                           "render-tagged-with",
                           "label",
-                          "selected-id"
+                          "selected-id",
+                          "key"
                         ],
                         [
                           "=",
@@ -1091,14 +1142,16 @@
                           "render-group",
                           "label",
                           "ids",
-                          true
+                          true,
+                          "key"
                         ],
                         ":else",
                         [
                           "render-group",
                           "label",
                           "ids",
-                          false
+                          false,
+                          "key"
                         ]
                       ]
                     ]
@@ -1296,7 +1349,7 @@
         }
       ]
     ],
-    "code": "// Related Items View — JS watch handler triggers re-render on selection change\n\nconst WIDGET_TYPE_ID = '1e9ffc8d-0e0d-4020-9865-b4ca6a05cbae';\n\nexport async function onViewportSelectionChanged(payload, api) {\n  const selectedId = payload?.current?.itemId;\n  if (selectedId) {\n    let item;\n    try { item = await api.get(selectedId); } catch (e) { item = null; }\n    if (item && item.type === WIDGET_TYPE_ID) return;\n  }\n  const vpMgr = await api.require('viewport-manager');\n  const rendering = vpMgr.getRendering();\n  if (rendering) await rendering.rerenderByType(WIDGET_TYPE_ID);\n}\n",
+    "code": "// Related Items View — JS watch handler triggers re-render on selection change\n\nconst WIDGET_TYPE_ID = '1e9ffc8d-0e0d-4020-9865-b4ca6a05cbae';\n\n// State survives moduleSystem.clearCache()\nconst CACHE_KEY = '__relatedItemsView__';\nif (!globalThis[CACHE_KEY]) {\n  globalThis[CACHE_KEY] = { rendering: false, pending: false };\n}\nconst S = globalThis[CACHE_KEY];\n\nexport async function onViewportSelectionChanged(payload, api) {\n  const selectedId = payload?.current?.itemId;\n  if (selectedId) {\n    let item;\n    try { item = await api.get(selectedId); } catch (e) { item = null; }\n    if (item && item.type === WIDGET_TYPE_ID) return;\n  }\n  // Serialize re-renders: if one is in progress, mark pending and let\n  // the current cycle pick it up. Prevents concurrent morphdom passes\n  // on the same DOM node which can cause visual duplicates.\n  if (S.rendering) {\n    S.pending = true;\n    return;\n  }\n  S.rendering = true;\n  try {\n    do {\n      S.pending = false;\n      const vpMgr = await api.require('viewport-manager');\n      const rendering = vpMgr.getRendering();\n      if (rendering) await rendering.rerenderByType(WIDGET_TYPE_ID);\n    } while (S.pending);\n  } finally {\n    S.rendering = false;\n  }\n}\n",
     "_symbols": {
       "render": {
         "name": "render",
