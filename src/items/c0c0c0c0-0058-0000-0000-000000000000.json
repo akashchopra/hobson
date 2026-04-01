@@ -1,1 +1,692 @@
-{"id": "c0c0c0c0-0058-0000-0000-000000000000", "name": "Hob Language Design Direction", "type": "871ae771-b9b1-4f40-8c7f-d9038bfb69c3", "created": 1771286400000, "modified": 1773243817607, "content": {"description": [":doc", [":h1", {"s": "Hob Language Design Direction"}], [":h2", {"s": "The Goal"}], [":p", {"s": "Hob should be the obvious choice for any user-programming within Hobson. There should be no reason to choose JS except for familiarity. Hob — and the way it integrates with Hobson — should be better than JS for most things, and as good for the rest."}], [":p", {"s": "This is not \"Hob is a nice option\" or \"Hob works for simple views.\" It's a stronger claim: a Hobson user who knows both JS and Hob should reach for Hob every time, because Hob understands Hobson in ways that JS never can."}], [":h2", {"s": "Why Hob can be better than JS"}], [":p", {"s": "Hob's advantage is not that it's a better general-purpose language — it isn't, and doesn't need to be. Its advantage is that it's a "}, [":strong", {"s": "domain-native"}], {"s": " language. Hobson concepts are Hob concepts:"}], [":ul", [":li", [":p", [":strong", {"s": "Items are first-class."}], {"s": " "}, [":code", {"s": "@my-note"}], {"s": " is a reference to an item, not a string constant you look up. "}, [":code", {"s": "get-field"}], {"s": ", "}, [":code", {"s": "set-field!"}], {"s": ", "}, [":code", {"s": "navigate!"}], {"s": " are language-level operations, not API calls."}]], [":li", [":p", [":strong", {"s": "Code is data."}], {"s": " With JSON AST as canonical representation (see "}, [":link", {"s": "c0c0c0c0-0051-0000-0000-000000000000"}, {"s": "proposal"}], {"s": "), Hob code is stored in the same format as everything else in Hobson. It's queryable, transformable, and inspectable with the same tools as any item property."}]], [":li", [":p", [":strong", {"s": "The system understands your code."}], {"s": " Because Hob code runs through an evaluator (not "}, [":code", {"s": "new Function()"}], {"s": "), the system can sandbox it, track its dependencies, inspect its state, and assist meaningfully. JS is opaque; Hob is transparent."}]], [":li", [":p", [":strong", {"s": "Macros extend the language."}], {"s": " Users can define new syntactic patterns that operate on code structure. This is impossible in JS without a build system."}]], [":li", [":p", [":strong", {"s": "Structural editing."}], {"s": " Enabled by code-as-data. Edit code structure directly, no syntax errors possible. The editor understands what you're editing because the code is structured data, not text."}]]], [":h2", {"s": "Design principles"}], [":h3", [":code", {"s": "invoke"}], {"s": " is the escape hatch, not the goal"}], [":p", [":code", {"s": "invoke"}], {"s": " provides general JS interop — call any JS function, access any API. It's necessary but should feel like reaching for a screwdriver when the toolbox is right there. If a Hob view is mostly "}, [":code", {"s": "invoke"}], {"s": " calls, that's a signal that Hob is missing a primitive, not that the view is inherently JS-native."}], [":h3", {"s": "Domain-specific ops are the ergonomic layer"}], [":p", {"s": "Every pattern that recurs across Hobson programming should eventually have a Hob-native expression. The progression:"}], [":ol", [":li", [":p", {"s": "First occurrence: use "}, [":code", {"s": "invoke"}], {"s": " (prove the pattern is needed)"}]], [":li", [":p", {"s": "Recurrence: identify the awkward "}, [":code", {"s": "invoke"}], {"s": " pattern"}]], [":li", [":p", {"s": "Promotion: add a Hob primitive that expresses the concept directly"}]]], [":p", {"s": "This is how "}, [":code", {"s": "get-field"}], {"s": ", "}, [":code", {"s": "set-field!"}], {"s": ", "}, [":code", {"s": "navigate!"}], {"s": ", "}, [":code", {"s": "get-item"}], {"s": ", etc. were born. The same process continues for interactive/spatial concepts."}], [":h3", {"s": "Primitives should be better, not just equivalent"}], [":p", {"s": "When adding a new capability, don't just match what JS can do — make it better:"}], [":ul", [":li", [":p", [":strong", {"s": "Persistent view state"}], {"s": " should be inspectable and auto-cleaned-up, not just mutable variables"}]], [":li", [":p", [":strong", {"s": "Sub-item rendering"}], {"s": " should be declarative with automatic lifecycle management, not manual mount/unmount"}]], [":li", [":p", [":strong", {"s": "Event binding"}], {"s": " should be lifecycle-aware with automatic cleanup, not manual bookkeeping"}]], [":li", [":p", [":strong", {"s": "Reactivity"}], {"s": " (eventually) should be language-level dependency tracking, not framework boilerplate"}]]], [":h3", {"s": "Code-as-data is the foundation"}], [":p", {"s": "The "}, [":item-ref", {"s": "c0c0c0c0-0051-0000-0000-000000000000"}, {"s": "JSON AST proposal"}], {"s": " is not an optimization — it's the foundation for everything that makes Hob categorically better than JS. Queryable code, structural editing, safe macro expansion, and deep tooling all depend on code being stored as structured data."}], [":h2", {"s": "Current state"}], [":p", {"s": "See: "}, [":item-ref", {"s": "149546fb-4cf0-4a28-a79b-7cf313286bdf"}, {"s": "Hob View Conversion Tracker"}]], [":p", [":strong", {"s": "What works well:"}]], [":ul", [":li", [":p", {"s": "19 views converted to Hob, including the spatial-canvas-view (most complex view in the system — 5 JS libraries, nested render-item, selector-filtered reactivity)"}]], [":li", [":p", {"s": "JSON AST is the canonical code representation — all Hob items stored as compact JSON, evaluator dispatches directly on JSON types"}]], [":li", [":p", {"s": "Persistent view state via atoms + get-view-config/update-view-config!"}]], [":li", [":p", {"s": "Sub-item rendering with options map (view, sibling-container, on-cycle, decorator, navigate-to)"}]], [":li", [":p", {"s": "Document-level events with automatic cleanup (on-document!, on-cleanup!)"}]], [":li", [":p", {"s": "Selector-filtered reactivity via "}, [":code", {"s": "(get-item id :select fn)"}], {"s": " — views declare what slice of data they care about, re-renders fire only when that slice changes"}]], [":li", [":p", {"s": "Selector pins — explicit selectors can't be widened by later bare get-item calls"}]], [":li", [":p", {"s": "Morphdom handler retention — old event handlers kept (correct DOM refs) instead of transferred from discarded tree"}]], [":li", [":p", {"s": "Domain ops cover the common cases for item-centric programming"}]], [":li", [":p", {"s": "Macro system works and is used in practice"}]], [":li", [":p", {"s": "Structural editor phases 1–6 complete"}]]], [":p", [":strong", {"s": "What's next:"}]], [":ul", [":li", [":p", {"s": "More view conversions (test-suite, hobson-instance, type-workshop are ready now)"}]], [":li", [":p", {"s": "Structural editor phase 7 (copy/paste, comment support, context-sensitive hints)"}]], [":li", [":p", {"s": "Reactive transclusion (static transclusion works; making it reactive/editable is the next leap)"}]], [":li", [":p", {"s": "Making Hob the default language for new items"}]]], [":h2", {"s": "Decision heuristic"}], [":p", {"s": "When evaluating any change to Hob, ask: "}, [":em", {"s": "does this make Hob more obviously the right choice for Hobson programming?"}]], [":ul", [":li", [":p", {"s": "Adding a primitive? It should make the Hob version better than the JS version, not just possible."}]], [":li", [":p", {"s": "Designing an API? Express Hobson concepts directly, don't just wrap JS APIs."}]], [":li", [":p", {"s": "Building tooling? Leverage code-as-data — do things JS tooling can't."}]], [":li", [":p", {"s": "Converting a view? If it's mostly "}, [":code", {"s": "invoke"}], {"s": ", pause and build the missing primitive first."}]]]], "tags": ["bff75873-edb8-412e-81c9-c744e68fe29f", "c0c0c0c0-0085-0000-0000-000000000000"]}, "attachments": []}
+{
+  "id": "c0c0c0c0-0058-0000-0000-000000000000",
+  "name": "Hob Language Design Direction",
+  "type": "871ae771-b9b1-4f40-8c7f-d9038bfb69c3",
+  "created": 1771286400000,
+  "modified": 1774988061110,
+  "content": {
+    "description": [
+      ":doc",
+      [
+        ":h1",
+        {
+          "s": "Hob Language Design Direction"
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "The Goal"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Hob should be the obvious choice for any user-programming within Hobson. There should be no reason to choose JS except for familiarity. Hob — and the way it integrates with Hobson — should be better than JS for most things, and as good for the rest."
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "This is not \"Hob is a nice option\" or \"Hob works for simple views.\" It's a stronger claim: a Hobson user who knows both JS and Hob should reach for Hob every time, because Hob understands Hobson in ways that JS never can."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Why Hob can be better than JS"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Hob's advantage is not that it's a better general-purpose language — it isn't, and doesn't need to be. Its advantage is that it's a "
+        },
+        [
+          ":strong",
+          {
+            "s": "domain-native"
+          }
+        ],
+        {
+          "s": " language. Hobson concepts are Hob concepts:"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Items are first-class."
+              }
+            ],
+            {
+              "s": " "
+            },
+            [
+              ":code",
+              {
+                "s": "@my-note"
+              }
+            ],
+            {
+              "s": " is a reference to an item, not a string constant you look up. "
+            },
+            [
+              ":code",
+              {
+                "s": "get-field"
+              }
+            ],
+            {
+              "s": ", "
+            },
+            [
+              ":code",
+              {
+                "s": "set-field!"
+              }
+            ],
+            {
+              "s": ", "
+            },
+            [
+              ":code",
+              {
+                "s": "navigate!"
+              }
+            ],
+            {
+              "s": " are language-level operations, not API calls."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Code is data."
+              }
+            ],
+            {
+              "s": " With JSON AST as canonical representation (see "
+            },
+            [
+              ":link",
+              {
+                "s": "c0c0c0c0-0051-0000-0000-000000000000"
+              },
+              {
+                "s": "proposal"
+              }
+            ],
+            {
+              "s": "), Hob code is stored in the same format as everything else in Hobson. It's queryable, transformable, and inspectable with the same tools as any item property."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "The system understands your code."
+              }
+            ],
+            {
+              "s": " Because Hob code runs through an evaluator (not "
+            },
+            [
+              ":code",
+              {
+                "s": "new Function()"
+              }
+            ],
+            {
+              "s": "), the system can sandbox it, track its dependencies, inspect its state, and assist meaningfully. JS is opaque; Hob is transparent."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Macros extend the language."
+              }
+            ],
+            {
+              "s": " Users can define new syntactic patterns that operate on code structure. This is impossible in JS without a build system."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Structural editing."
+              }
+            ],
+            {
+              "s": " Enabled by code-as-data. Edit code structure directly, no syntax errors possible. The editor understands what you're editing because the code is structured data, not text."
+            }
+          ]
+        ]
+      ],
+      [
+        ":h2",
+        {
+          "s": "Design principles"
+        }
+      ],
+      [
+        ":h3",
+        [
+          ":code",
+          {
+            "s": "invoke"
+          }
+        ],
+        {
+          "s": " is the escape hatch, not the goal"
+        }
+      ],
+      [
+        ":p",
+        [
+          ":code",
+          {
+            "s": "invoke"
+          }
+        ],
+        {
+          "s": " provides general JS interop — call any JS function, access any API. It's necessary but should feel like reaching for a screwdriver when the toolbox is right there. If a Hob view is mostly "
+        },
+        [
+          ":code",
+          {
+            "s": "invoke"
+          }
+        ],
+        {
+          "s": " calls, that's a signal that Hob is missing a primitive, not that the view is inherently JS-native."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Domain-specific ops are the ergonomic layer"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Every pattern that recurs across Hobson programming should eventually have a Hob-native expression. The progression:"
+        }
+      ],
+      [
+        ":ol",
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "First occurrence: use "
+            },
+            [
+              ":code",
+              {
+                "s": "invoke"
+              }
+            ],
+            {
+              "s": " (prove the pattern is needed)"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Recurrence: identify the awkward "
+            },
+            [
+              ":code",
+              {
+                "s": "invoke"
+              }
+            ],
+            {
+              "s": " pattern"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Promotion: add a Hob primitive that expresses the concept directly"
+            }
+          ]
+        ]
+      ],
+      [
+        ":p",
+        {
+          "s": "This is how "
+        },
+        [
+          ":code",
+          {
+            "s": "get-field"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "set-field!"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "navigate!"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "get-item"
+          }
+        ],
+        {
+          "s": ", etc. were born. The same process continues for interactive/spatial concepts."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Primitives should be better, not just equivalent"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "When adding a new capability, don't just match what JS can do — make it better:"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Persistent view state"
+              }
+            ],
+            {
+              "s": " should be inspectable and auto-cleaned-up, not just mutable variables"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Sub-item rendering"
+              }
+            ],
+            {
+              "s": " should be declarative with automatic lifecycle management, not manual mount/unmount"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Event binding"
+              }
+            ],
+            {
+              "s": " should be lifecycle-aware with automatic cleanup, not manual bookkeeping"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Reactivity"
+              }
+            ],
+            {
+              "s": " (eventually) should be language-level dependency tracking, not framework boilerplate"
+            }
+          ]
+        ]
+      ],
+      [
+        ":h3",
+        {
+          "s": "Code-as-data is the foundation"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The "
+        },
+        [
+          ":item-ref",
+          {
+            "s": "c0c0c0c0-0051-0000-0000-000000000000"
+          },
+          {
+            "s": "JSON AST proposal"
+          }
+        ],
+        {
+          "s": " is not an optimization — it's the foundation for everything that makes Hob categorically better than JS. Queryable code, structural editing, safe macro expansion, and deep tooling all depend on code being stored as structured data."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Current state"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "See: "
+        },
+        [
+          ":item-ref",
+          {
+            "s": "149546fb-4cf0-4a28-a79b-7cf313286bdf"
+          },
+          {
+            "s": "Hob View Conversion Tracker"
+          }
+        ]
+      ],
+      [
+        ":p",
+        [
+          ":strong",
+          {
+            "s": "What works well:"
+          }
+        ]
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "19 views converted to Hob, including the spatial-canvas-view (most complex view in the system — 5 JS libraries, nested render-item, selector-filtered reactivity)"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "JSON AST is the canonical code representation — all Hob items stored as compact JSON, evaluator dispatches directly on JSON types"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Persistent view state via atoms + get-view-config/update-view-config!"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Sub-item rendering with options map (view, sibling-container, on-cycle, decorator, navigate-to)"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Document-level events with automatic cleanup (on-document!, on-cleanup!)"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Selector-filtered reactivity via "
+            },
+            [
+              ":code",
+              {
+                "s": "(get-item id :select fn)"
+              }
+            ],
+            {
+              "s": " — views declare what slice of data they care about, re-renders fire only when that slice changes"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Selector pins — explicit selectors can't be widened by later bare get-item calls"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Morphdom handler retention — old event handlers kept (correct DOM refs) instead of transferred from discarded tree"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Domain ops cover the common cases for item-centric programming"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Macro system works and is used in practice"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Structural editor phases 1–6 complete"
+            }
+          ]
+        ]
+      ],
+      [
+        ":p",
+        [
+          ":strong",
+          {
+            "s": "What's next:"
+          }
+        ]
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "More view conversions (test-suite, hobson-instance, type-workshop are ready now)"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Structural editor phase 7 (copy/paste, comment support, context-sensitive hints)"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Reactive transclusion (static transclusion works; making it reactive/editable is the next leap)"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Making Hob the default language for new items"
+            }
+          ]
+        ]
+      ],
+      [
+        ":h2",
+        {
+          "s": "Decision heuristic"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "When evaluating any change to Hob, ask: "
+        },
+        [
+          ":em",
+          {
+            "s": "does this make Hob more obviously the right choice for Hobson programming?"
+          }
+        ]
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Adding a primitive? It should make the Hob version better than the JS version, not just possible."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Designing an API? Express Hobson concepts directly, don't just wrap JS APIs."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Building tooling? Leverage code-as-data — do things JS tooling can't."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Converting a view? If it's mostly "
+            },
+            [
+              ":code",
+              {
+                "s": "invoke"
+              }
+            ],
+            {
+              "s": ", pause and build the missing primitive first."
+            }
+          ]
+        ]
+      ]
+    ],
+    "tags": [
+      "bff75873-edb8-412e-81c9-c744e68fe29f",
+      "c0c0c0c0-0085-0000-0000-000000000000"
+    ]
+  },
+  "attachments": []
+}

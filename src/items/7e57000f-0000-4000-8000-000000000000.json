@@ -1,1 +1,490 @@
-{"id": "7e57000f-0000-4000-8000-000000000000", "name": "hob-destructuring-tests", "type": "22222222-0000-0000-0000-000000000000", "created": 1739318400000, "modified": 1774532371045, "content": {"code": "// Hob Destructuring Tests\n\nexport async function run(api) {\n  const { createSuite, assert, assertEquals, assertDeepEquals } = await api.require('test-lib');\n  const { test, testAsync, getResults } = createSuite('Hob Destructuring');\n  const hob = await api.require('hob-interpreter');\n  const interp = hob.createInterpreter(api);\n  await interp.macrosReady;\n\n  // --- Vector destructuring in let ---\n\n  async function vecDestrBasic() {\n    const result = await interp.eval('(let [[a b c] [1 2 3]] (+ a b c))');\n    assertEquals(result, 6);\n  }\n\n  async function vecDestrFewer() {\n    const result = await interp.eval('(let [[a b] [1 2 3]] b)');\n    assertEquals(result, 2);\n  }\n\n  async function vecDestrMore() {\n    const result = await interp.eval('(let [[a b c] [1 2]] c)');\n    assertEquals(result, null);\n  }\n\n  async function vecDestrRest() {\n    const result = await interp.eval('(let [[a & rest] [1 2 3 4]] rest)');\n    assertDeepEquals(result, [2, 3, 4]);\n  }\n\n  async function vecDestrUnderscore() {\n    const result = await interp.eval('(let [[_ b _] [1 2 3]] b)');\n    assertEquals(result, 2);\n  }\n\n  async function vecDestrNested() {\n    const result = await interp.eval('(let [[[a b] c] [[1 2] 3]] (+ a b c))');\n    assertEquals(result, 6);\n  }\n\n  // --- Map destructuring in let ---\n\n  async function mapDestrDirect() {\n    const result = await interp.eval('(let [{a :a b :b} {:a 1 :b 2}] (+ a b))');\n    assertEquals(result, 3);\n  }\n\n  async function mapDestrKeys() {\n    const result = await interp.eval('(let [{:keys [a b]} {:a 1 :b 2}] (+ a b))');\n    assertEquals(result, 3);\n  }\n\n  async function mapDestrKeysMissing() {\n    const result = await interp.eval('(let [{:keys [a b c]} {:a 1 :b 2}] c)');\n    assertEquals(result, null);\n  }\n\n  async function mapDestrOr() {\n    const result = await interp.eval('(let [{:keys [a b] :or {b 10}} {:a 1}] (+ a b))');\n    assertEquals(result, 11);\n  }\n\n  async function mapDestrAs() {\n    const result = await interp.eval('(let [{:keys [a] :as m} {:a 1 :b 2}] (count m))');\n    assertEquals(result, 2);\n  }\n\n  async function mapDestrStrs() {\n    const result = await interp.eval('(let [{:strs [name]} {\"name\" \"Alice\"}] name)');\n    assertEquals(result, 'Alice');\n  }\n\n  // --- Destructuring in fn params ---\n\n  async function fnVecDestr() {\n    const result = await interp.eval('((fn [[a b]] (+ a b)) [1 2])');\n    assertEquals(result, 3);\n  }\n\n  async function fnMapDestr() {\n    const result = await interp.eval('((fn [{:keys [x y]}] (+ x y)) {:x 3 :y 4})');\n    assertEquals(result, 7);\n  }\n\n  // --- Destructuring in loop ---\n\n  async function loopVecDestr() {\n    const result = await interp.eval(`\n      (loop [[x & xs] [1 2 3] acc 0]\n        (if (nil? x) acc (recur xs (+ acc x))))\n    `);\n    assertEquals(result, 6);\n  }\n\n  async function loopMapDestr() {\n    const result = await interp.eval(`\n      (loop [{:keys [n acc]} {:n 5 :acc 1}]\n        (if (<= n 1) acc (recur {:n (dec n) :acc (* acc n)})))\n    `);\n    assertEquals(result, 120);\n  }\n\n  // --- Edge cases ---\n\n  async function emptyVecDestr() {\n    const result = await interp.eval('(let [[] []] nil)');\n    assertEquals(result, null);\n  }\n\n  async function emptyMapDestr() {\n    const result = await interp.eval('(let [{} {}] nil)');\n    assertEquals(result, null);\n  }\n\n  async function nilVecDestr() {\n    const result = await interp.eval('(let [[a b] nil] [a b])');\n    assertDeepEquals(result, [null, null]);\n  }\n\n  async function nilMapDestr() {\n    const result = await interp.eval('(let [{:keys [a]} nil] a)');\n    assertEquals(result, null);\n  }\n\n  // --- defn with destructured params ---\n\n  async function defnDestr() {\n    const result = await interp.eval(`\n      (do\n        (defn point-str [{:keys [x y]}] (str x \",\" y))\n        (point-str {:x 1 :y 2}))\n    `);\n    assertEquals(result, '1,2');\n  }\n\n  // --- Error on bad vector destructuring ---\n\n  async function errorVecDestrNonSeq() {\n    let caught = false;\n    try {\n      await interp.eval('(let [[a] 42] a)');\n    } catch (e) {\n      caught = true;\n      assert(e.message.includes('destructure') || e.message.includes('non-sequential') || e.message.includes('vector'), 'Should mention destructuring error');\n    }\n    assert(caught, 'Should throw on destructuring non-sequential');\n  }\n\n  // --- Deeply nested ---\n\n  async function deeplyNested() {\n    const result = await interp.eval(`\n      (let [{:keys [a] [{:keys [x]}] :items} {:a 1 :items [{:x 42}]}]\n        [a x])\n    `);\n    assertDeepEquals(result, [1, 42]);\n  }\n\n  // --- Run all tests ---\n\n  await testAsync('vector destructuring basic', vecDestrBasic);\n  await testAsync('vector destructuring fewer elements', vecDestrFewer);\n  await testAsync('vector destructuring more elements', vecDestrMore);\n  await testAsync('vector destructuring rest', vecDestrRest);\n  await testAsync('vector destructuring underscore', vecDestrUnderscore);\n  await testAsync('nested vector destructuring', vecDestrNested);\n  await testAsync('map destructuring direct', mapDestrDirect);\n  await testAsync('map :keys shorthand', mapDestrKeys);\n  await testAsync('map :keys missing key', mapDestrKeysMissing);\n  await testAsync('map :or defaults', mapDestrOr);\n  await testAsync('map :as whole', mapDestrAs);\n  await testAsync('map :strs shorthand', mapDestrStrs);\n  await testAsync('fn vector destructuring', fnVecDestr);\n  await testAsync('fn map destructuring', fnMapDestr);\n  await testAsync('loop vector destructuring', loopVecDestr);\n  await testAsync('loop map destructuring', loopMapDestr);\n  await testAsync('empty vector destructuring', emptyVecDestr);\n  await testAsync('empty map destructuring', emptyMapDestr);\n  await testAsync('nil vector destructuring', nilVecDestr);\n  await testAsync('nil map destructuring', nilMapDestr);\n  await testAsync('defn with destructured params', defnDestr);\n  await testAsync('error on non-sequential vector destructuring', errorVecDestrNonSeq);\n  await testAsync('deeply nested destructuring', deeplyNested);\n\n  return getResults();\n}\n", "description": [":doc", [":p", {"s": "Destructuring test suite for the Hob language interpreter. Tests vector and map destructuring in let, fn, and loop bindings, including :keys, :strs, :or, :as, rest bindings, nested patterns, and edge cases."}]], "tags": ["c0c0c0c0-0070-0000-0000-000000000000"], "_symbols": {"run": {"name": "run", "line": 3, "col": 7, "endLine": 187, "endCol": 1, "kind": "function", "scope": null, "signature": "(api)"}, "run.hob": {"name": "hob", "line": 6, "col": 8, "endLine": 6, "endCol": 50, "kind": "variable", "scope": "run"}, "run.interp": {"name": "interp", "line": 7, "col": 8, "endLine": 7, "endCol": 43, "kind": "variable", "scope": "run"}, "run.vecDestrBasic": {"name": "vecDestrBasic", "line": 12, "col": 2, "endLine": 15, "endCol": 3, "kind": "function", "scope": "run", "signature": "()"}, "vecDestrBasic.result": {"name": "result", "line": 13, "col": 10, "endLine": 13, "endCol": 73, "kind": "variable", "scope": "vecDestrBasic"}, "run.vecDestrFewer": {"name": "vecDestrFewer", "line": 17, "col": 2, "endLine": 20, "endCol": 3, "kind": "function", "scope": "run", "signature": "()"}, "vecDestrFewer.result": {"name": "result", "line": 18, "col": 10, "endLine": 18, "endCol": 63, "kind": "variable", "scope": "vecDestrFewer"}, "run.vecDestrMore": {"name": "vecDestrMore", "line": 22, "col": 2, "endLine": 25, "endCol": 3, "kind": "function", "scope": "run", "signature": "()"}, "vecDestrMore.result": {"name": "result", "line": 23, "col": 10, "endLine": 23, "endCol": 63, "kind": "variable", "scope": "vecDestrMore"}, "run.vecDestrRest": {"name": "vecDestrRest", "line": 27, "col": 2, "endLine": 30, "endCol": 3, "kind": "function", "scope": "run", "signature": "()"}, "vecDestrRest.result": {"name": "result", "line": 28, "col": 10, "endLine": 28, "endCol": 73, "kind": "variable", "scope": "vecDestrRest"}, "run.vecDestrUnderscore": {"name": "vecDestrUnderscore", "line": 32, "col": 2, "endLine": 35, "endCol": 3, "kind": "function", "scope": "run", "signature": "()"}, "vecDestrUnderscore.result": {"name": "result", "line": 33, "col": 10, "endLine": 33, "endCol": 65, "kind": "variable", "scope": "vecDestrUnderscore"}, "run.vecDestrNested": {"name": "vecDestrNested", "line": 37, "col": 2, "endLine": 40, "endCol": 3, "kind": "function", "scope": "run", "signature": "()"}, "vecDestrNested.result": {"name": "result", "line": 38, "col": 10, "endLine": 38, "endCol": 77, "kind": "variable", "scope": "vecDestrNested"}, "run.mapDestrDirect": {"name": "mapDestrDirect", "line": 44, "col": 2, "endLine": 47, "endCol": 3, "kind": "function", "scope": "run", "signature": "()"}, "mapDestrDirect.result": {"name": "result", "line": 45, "col": 10, "endLine": 45, "endCol": 79, "kind": "variable", "scope": "mapDestrDirect"}, "run.mapDestrKeys": {"name": "mapDestrKeys", "line": 49, "col": 2, "endLine": 52, "endCol": 3, "kind": "function", "scope": "run", "signature": "()"}, "mapDestrKeys.result": {"name": "result", "line": 50, "col": 10, "endLine": 50, "endCol": 81, "kind": "variable", "scope": "mapDestrKeys"}, "run.mapDestrKeysMissing": {"name": "mapDestrKeysMissing", "line": 54, "col": 2, "endLine": 57, "endCol": 3, "kind": "function", "scope": "run", "signature": "()"}, "mapDestrKeysMissing.result": {"name": "result", "line": 55, "col": 10, "endLine": 55, "endCol": 77, "kind": "variable", "scope": "mapDestrKeysMissing"}, "run.mapDestrOr": {"name": "mapDestrOr", "line": 59, "col": 2, "endLine": 62, "endCol": 3, "kind": "function", "scope": "run", "signature": "()"}, "mapDestrOr.result": {"name": "result", "line": 60, "col": 10, "endLine": 60, "endCol": 87, "kind": "variable", "scope": "mapDestrOr"}, "run.mapDestrAs": {"name": "mapDestrAs", "line": 64, "col": 2, "endLine": 67, "endCol": 3, "kind": "function", "scope": "run", "signature": "()"}, "mapDestrAs.result": {"name": "result", "line": 65, "col": 10, "endLine": 65, "endCol": 87, "kind": "variable", "scope": "mapDestrAs"}, "run.mapDestrStrs": {"name": "mapDestrStrs", "line": 69, "col": 2, "endLine": 72, "endCol": 3, "kind": "function", "scope": "run", "signature": "()"}, "mapDestrStrs.result": {"name": "result", "line": 70, "col": 10, "endLine": 70, "endCol": 84, "kind": "variable", "scope": "mapDestrStrs"}, "run.fnVecDestr": {"name": "fnVecDestr", "line": 76, "col": 2, "endLine": 79, "endCol": 3, "kind": "function", "scope": "run", "signature": "()"}, "fnVecDestr.result": {"name": "result", "line": 77, "col": 10, "endLine": 77, "endCol": 68, "kind": "variable", "scope": "fnVecDestr"}, "run.fnMapDestr": {"name": "fnMapDestr", "line": 81, "col": 2, "endLine": 84, "endCol": 3, "kind": "function", "scope": "run", "signature": "()"}, "fnMapDestr.result": {"name": "result", "line": 82, "col": 10, "endLine": 82, "endCol": 82, "kind": "variable", "scope": "fnMapDestr"}, "run.loopVecDestr": {"name": "loopVecDestr", "line": 88, "col": 2, "endLine": 94, "endCol": 3, "kind": "function", "scope": "run", "signature": "()"}, "loopVecDestr.result": {"name": "result", "line": 89, "col": 10, "endLine": 92, "endCol": 6, "kind": "variable", "scope": "loopVecDestr"}, "run.loopMapDestr": {"name": "loopMapDestr", "line": 96, "col": 2, "endLine": 102, "endCol": 3, "kind": "function", "scope": "run", "signature": "()"}, "loopMapDestr.result": {"name": "result", "line": 97, "col": 10, "endLine": 100, "endCol": 6, "kind": "variable", "scope": "loopMapDestr"}, "run.emptyVecDestr": {"name": "emptyVecDestr", "line": 106, "col": 2, "endLine": 109, "endCol": 3, "kind": "function", "scope": "run", "signature": "()"}, "emptyVecDestr.result": {"name": "result", "line": 107, "col": 10, "endLine": 107, "endCol": 57, "kind": "variable", "scope": "emptyVecDestr"}, "run.emptyMapDestr": {"name": "emptyMapDestr", "line": 111, "col": 2, "endLine": 114, "endCol": 3, "kind": "function", "scope": "run", "signature": "()"}, "emptyMapDestr.result": {"name": "result", "line": 112, "col": 10, "endLine": 112, "endCol": 57, "kind": "variable", "scope": "emptyMapDestr"}, "run.nilVecDestr": {"name": "nilVecDestr", "line": 116, "col": 2, "endLine": 119, "endCol": 3, "kind": "function", "scope": "run", "signature": "()"}, "nilVecDestr.result": {"name": "result", "line": 117, "col": 10, "endLine": 117, "endCol": 63, "kind": "variable", "scope": "nilVecDestr"}, "run.nilMapDestr": {"name": "nilMapDestr", "line": 121, "col": 2, "endLine": 124, "endCol": 3, "kind": "function", "scope": "run", "signature": "()"}, "nilMapDestr.result": {"name": "result", "line": 122, "col": 10, "endLine": 122, "endCol": 65, "kind": "variable", "scope": "nilMapDestr"}, "run.defnDestr": {"name": "defnDestr", "line": 128, "col": 2, "endLine": 135, "endCol": 3, "kind": "function", "scope": "run", "signature": "()"}, "defnDestr.result": {"name": "result", "line": 129, "col": 10, "endLine": 133, "endCol": 6, "kind": "variable", "scope": "defnDestr"}, "run.errorVecDestrNonSeq": {"name": "errorVecDestrNonSeq", "line": 139, "col": 2, "endLine": 148, "endCol": 3, "kind": "function", "scope": "run", "signature": "()"}, "errorVecDestrNonSeq.caught": {"name": "caught", "line": 140, "col": 8, "endLine": 140, "endCol": 22, "kind": "variable", "scope": "errorVecDestrNonSeq"}, "run.deeplyNested": {"name": "deeplyNested", "line": 152, "col": 2, "endLine": 158, "endCol": 3, "kind": "function", "scope": "run", "signature": "()"}, "deeplyNested.result": {"name": "result", "line": 153, "col": 10, "endLine": 156, "endCol": 6, "kind": "variable", "scope": "deeplyNested"}}}, "attachments": []}
+{
+  "id": "7e57000f-0000-4000-8000-000000000000",
+  "name": "hob-destructuring-tests",
+  "type": "22222222-0000-0000-0000-000000000000",
+  "created": 1739318400000,
+  "modified": 1774988051536,
+  "content": {
+    "code": "// Hob Destructuring Tests\n\nexport async function run(api) {\n  const { createSuite, assert, assertEquals, assertDeepEquals } = await api.require('test-lib');\n  const { test, testAsync, getResults } = createSuite('Hob Destructuring');\n  const hob = await api.require('hob-interpreter');\n  const interp = hob.createInterpreter(api);\n  await interp.macrosReady;\n\n  // --- Vector destructuring in let ---\n\n  async function vecDestrBasic() {\n    const result = await interp.eval('(let [[a b c] [1 2 3]] (+ a b c))');\n    assertEquals(result, 6);\n  }\n\n  async function vecDestrFewer() {\n    const result = await interp.eval('(let [[a b] [1 2 3]] b)');\n    assertEquals(result, 2);\n  }\n\n  async function vecDestrMore() {\n    const result = await interp.eval('(let [[a b c] [1 2]] c)');\n    assertEquals(result, null);\n  }\n\n  async function vecDestrRest() {\n    const result = await interp.eval('(let [[a & rest] [1 2 3 4]] rest)');\n    assertDeepEquals(result, [2, 3, 4]);\n  }\n\n  async function vecDestrUnderscore() {\n    const result = await interp.eval('(let [[_ b _] [1 2 3]] b)');\n    assertEquals(result, 2);\n  }\n\n  async function vecDestrNested() {\n    const result = await interp.eval('(let [[[a b] c] [[1 2] 3]] (+ a b c))');\n    assertEquals(result, 6);\n  }\n\n  // --- Map destructuring in let ---\n\n  async function mapDestrDirect() {\n    const result = await interp.eval('(let [{a :a b :b} {:a 1 :b 2}] (+ a b))');\n    assertEquals(result, 3);\n  }\n\n  async function mapDestrKeys() {\n    const result = await interp.eval('(let [{:keys [a b]} {:a 1 :b 2}] (+ a b))');\n    assertEquals(result, 3);\n  }\n\n  async function mapDestrKeysMissing() {\n    const result = await interp.eval('(let [{:keys [a b c]} {:a 1 :b 2}] c)');\n    assertEquals(result, null);\n  }\n\n  async function mapDestrOr() {\n    const result = await interp.eval('(let [{:keys [a b] :or {b 10}} {:a 1}] (+ a b))');\n    assertEquals(result, 11);\n  }\n\n  async function mapDestrAs() {\n    const result = await interp.eval('(let [{:keys [a] :as m} {:a 1 :b 2}] (count m))');\n    assertEquals(result, 2);\n  }\n\n  async function mapDestrStrs() {\n    const result = await interp.eval('(let [{:strs [name]} {\"name\" \"Alice\"}] name)');\n    assertEquals(result, 'Alice');\n  }\n\n  // --- Destructuring in fn params ---\n\n  async function fnVecDestr() {\n    const result = await interp.eval('((fn [[a b]] (+ a b)) [1 2])');\n    assertEquals(result, 3);\n  }\n\n  async function fnMapDestr() {\n    const result = await interp.eval('((fn [{:keys [x y]}] (+ x y)) {:x 3 :y 4})');\n    assertEquals(result, 7);\n  }\n\n  // --- Destructuring in loop ---\n\n  async function loopVecDestr() {\n    const result = await interp.eval(`\n      (loop [[x & xs] [1 2 3] acc 0]\n        (if (nil? x) acc (recur xs (+ acc x))))\n    `);\n    assertEquals(result, 6);\n  }\n\n  async function loopMapDestr() {\n    const result = await interp.eval(`\n      (loop [{:keys [n acc]} {:n 5 :acc 1}]\n        (if (<= n 1) acc (recur {:n (dec n) :acc (* acc n)})))\n    `);\n    assertEquals(result, 120);\n  }\n\n  // --- Edge cases ---\n\n  async function emptyVecDestr() {\n    const result = await interp.eval('(let [[] []] nil)');\n    assertEquals(result, null);\n  }\n\n  async function emptyMapDestr() {\n    const result = await interp.eval('(let [{} {}] nil)');\n    assertEquals(result, null);\n  }\n\n  async function nilVecDestr() {\n    const result = await interp.eval('(let [[a b] nil] [a b])');\n    assertDeepEquals(result, [null, null]);\n  }\n\n  async function nilMapDestr() {\n    const result = await interp.eval('(let [{:keys [a]} nil] a)');\n    assertEquals(result, null);\n  }\n\n  // --- defn with destructured params ---\n\n  async function defnDestr() {\n    const result = await interp.eval(`\n      (do\n        (defn point-str [{:keys [x y]}] (str x \",\" y))\n        (point-str {:x 1 :y 2}))\n    `);\n    assertEquals(result, '1,2');\n  }\n\n  // --- Error on bad vector destructuring ---\n\n  async function errorVecDestrNonSeq() {\n    let caught = false;\n    try {\n      await interp.eval('(let [[a] 42] a)');\n    } catch (e) {\n      caught = true;\n      assert(e.message.includes('destructure') || e.message.includes('non-sequential') || e.message.includes('vector'), 'Should mention destructuring error');\n    }\n    assert(caught, 'Should throw on destructuring non-sequential');\n  }\n\n  // --- Deeply nested ---\n\n  async function deeplyNested() {\n    const result = await interp.eval(`\n      (let [{:keys [a] [{:keys [x]}] :items} {:a 1 :items [{:x 42}]}]\n        [a x])\n    `);\n    assertDeepEquals(result, [1, 42]);\n  }\n\n  // --- Run all tests ---\n\n  await testAsync('vector destructuring basic', vecDestrBasic);\n  await testAsync('vector destructuring fewer elements', vecDestrFewer);\n  await testAsync('vector destructuring more elements', vecDestrMore);\n  await testAsync('vector destructuring rest', vecDestrRest);\n  await testAsync('vector destructuring underscore', vecDestrUnderscore);\n  await testAsync('nested vector destructuring', vecDestrNested);\n  await testAsync('map destructuring direct', mapDestrDirect);\n  await testAsync('map :keys shorthand', mapDestrKeys);\n  await testAsync('map :keys missing key', mapDestrKeysMissing);\n  await testAsync('map :or defaults', mapDestrOr);\n  await testAsync('map :as whole', mapDestrAs);\n  await testAsync('map :strs shorthand', mapDestrStrs);\n  await testAsync('fn vector destructuring', fnVecDestr);\n  await testAsync('fn map destructuring', fnMapDestr);\n  await testAsync('loop vector destructuring', loopVecDestr);\n  await testAsync('loop map destructuring', loopMapDestr);\n  await testAsync('empty vector destructuring', emptyVecDestr);\n  await testAsync('empty map destructuring', emptyMapDestr);\n  await testAsync('nil vector destructuring', nilVecDestr);\n  await testAsync('nil map destructuring', nilMapDestr);\n  await testAsync('defn with destructured params', defnDestr);\n  await testAsync('error on non-sequential vector destructuring', errorVecDestrNonSeq);\n  await testAsync('deeply nested destructuring', deeplyNested);\n\n  return getResults();\n}\n",
+    "description": [
+      ":doc",
+      [
+        ":p",
+        {
+          "s": "Destructuring test suite for the Hob language interpreter. Tests vector and map destructuring in let, fn, and loop bindings, including :keys, :strs, :or, :as, rest bindings, nested patterns, and edge cases."
+        }
+      ]
+    ],
+    "tags": [
+      "c0c0c0c0-0070-0000-0000-000000000000"
+    ],
+    "_symbols": {
+      "run": {
+        "name": "run",
+        "line": 3,
+        "col": 7,
+        "endLine": 187,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(api)"
+      },
+      "run.hob": {
+        "name": "hob",
+        "line": 6,
+        "col": 8,
+        "endLine": 6,
+        "endCol": 50,
+        "kind": "variable",
+        "scope": "run"
+      },
+      "run.interp": {
+        "name": "interp",
+        "line": 7,
+        "col": 8,
+        "endLine": 7,
+        "endCol": 43,
+        "kind": "variable",
+        "scope": "run"
+      },
+      "run.vecDestrBasic": {
+        "name": "vecDestrBasic",
+        "line": 12,
+        "col": 2,
+        "endLine": 15,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "run",
+        "signature": "()"
+      },
+      "vecDestrBasic.result": {
+        "name": "result",
+        "line": 13,
+        "col": 10,
+        "endLine": 13,
+        "endCol": 73,
+        "kind": "variable",
+        "scope": "vecDestrBasic"
+      },
+      "run.vecDestrFewer": {
+        "name": "vecDestrFewer",
+        "line": 17,
+        "col": 2,
+        "endLine": 20,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "run",
+        "signature": "()"
+      },
+      "vecDestrFewer.result": {
+        "name": "result",
+        "line": 18,
+        "col": 10,
+        "endLine": 18,
+        "endCol": 63,
+        "kind": "variable",
+        "scope": "vecDestrFewer"
+      },
+      "run.vecDestrMore": {
+        "name": "vecDestrMore",
+        "line": 22,
+        "col": 2,
+        "endLine": 25,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "run",
+        "signature": "()"
+      },
+      "vecDestrMore.result": {
+        "name": "result",
+        "line": 23,
+        "col": 10,
+        "endLine": 23,
+        "endCol": 63,
+        "kind": "variable",
+        "scope": "vecDestrMore"
+      },
+      "run.vecDestrRest": {
+        "name": "vecDestrRest",
+        "line": 27,
+        "col": 2,
+        "endLine": 30,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "run",
+        "signature": "()"
+      },
+      "vecDestrRest.result": {
+        "name": "result",
+        "line": 28,
+        "col": 10,
+        "endLine": 28,
+        "endCol": 73,
+        "kind": "variable",
+        "scope": "vecDestrRest"
+      },
+      "run.vecDestrUnderscore": {
+        "name": "vecDestrUnderscore",
+        "line": 32,
+        "col": 2,
+        "endLine": 35,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "run",
+        "signature": "()"
+      },
+      "vecDestrUnderscore.result": {
+        "name": "result",
+        "line": 33,
+        "col": 10,
+        "endLine": 33,
+        "endCol": 65,
+        "kind": "variable",
+        "scope": "vecDestrUnderscore"
+      },
+      "run.vecDestrNested": {
+        "name": "vecDestrNested",
+        "line": 37,
+        "col": 2,
+        "endLine": 40,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "run",
+        "signature": "()"
+      },
+      "vecDestrNested.result": {
+        "name": "result",
+        "line": 38,
+        "col": 10,
+        "endLine": 38,
+        "endCol": 77,
+        "kind": "variable",
+        "scope": "vecDestrNested"
+      },
+      "run.mapDestrDirect": {
+        "name": "mapDestrDirect",
+        "line": 44,
+        "col": 2,
+        "endLine": 47,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "run",
+        "signature": "()"
+      },
+      "mapDestrDirect.result": {
+        "name": "result",
+        "line": 45,
+        "col": 10,
+        "endLine": 45,
+        "endCol": 79,
+        "kind": "variable",
+        "scope": "mapDestrDirect"
+      },
+      "run.mapDestrKeys": {
+        "name": "mapDestrKeys",
+        "line": 49,
+        "col": 2,
+        "endLine": 52,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "run",
+        "signature": "()"
+      },
+      "mapDestrKeys.result": {
+        "name": "result",
+        "line": 50,
+        "col": 10,
+        "endLine": 50,
+        "endCol": 81,
+        "kind": "variable",
+        "scope": "mapDestrKeys"
+      },
+      "run.mapDestrKeysMissing": {
+        "name": "mapDestrKeysMissing",
+        "line": 54,
+        "col": 2,
+        "endLine": 57,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "run",
+        "signature": "()"
+      },
+      "mapDestrKeysMissing.result": {
+        "name": "result",
+        "line": 55,
+        "col": 10,
+        "endLine": 55,
+        "endCol": 77,
+        "kind": "variable",
+        "scope": "mapDestrKeysMissing"
+      },
+      "run.mapDestrOr": {
+        "name": "mapDestrOr",
+        "line": 59,
+        "col": 2,
+        "endLine": 62,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "run",
+        "signature": "()"
+      },
+      "mapDestrOr.result": {
+        "name": "result",
+        "line": 60,
+        "col": 10,
+        "endLine": 60,
+        "endCol": 87,
+        "kind": "variable",
+        "scope": "mapDestrOr"
+      },
+      "run.mapDestrAs": {
+        "name": "mapDestrAs",
+        "line": 64,
+        "col": 2,
+        "endLine": 67,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "run",
+        "signature": "()"
+      },
+      "mapDestrAs.result": {
+        "name": "result",
+        "line": 65,
+        "col": 10,
+        "endLine": 65,
+        "endCol": 87,
+        "kind": "variable",
+        "scope": "mapDestrAs"
+      },
+      "run.mapDestrStrs": {
+        "name": "mapDestrStrs",
+        "line": 69,
+        "col": 2,
+        "endLine": 72,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "run",
+        "signature": "()"
+      },
+      "mapDestrStrs.result": {
+        "name": "result",
+        "line": 70,
+        "col": 10,
+        "endLine": 70,
+        "endCol": 84,
+        "kind": "variable",
+        "scope": "mapDestrStrs"
+      },
+      "run.fnVecDestr": {
+        "name": "fnVecDestr",
+        "line": 76,
+        "col": 2,
+        "endLine": 79,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "run",
+        "signature": "()"
+      },
+      "fnVecDestr.result": {
+        "name": "result",
+        "line": 77,
+        "col": 10,
+        "endLine": 77,
+        "endCol": 68,
+        "kind": "variable",
+        "scope": "fnVecDestr"
+      },
+      "run.fnMapDestr": {
+        "name": "fnMapDestr",
+        "line": 81,
+        "col": 2,
+        "endLine": 84,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "run",
+        "signature": "()"
+      },
+      "fnMapDestr.result": {
+        "name": "result",
+        "line": 82,
+        "col": 10,
+        "endLine": 82,
+        "endCol": 82,
+        "kind": "variable",
+        "scope": "fnMapDestr"
+      },
+      "run.loopVecDestr": {
+        "name": "loopVecDestr",
+        "line": 88,
+        "col": 2,
+        "endLine": 94,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "run",
+        "signature": "()"
+      },
+      "loopVecDestr.result": {
+        "name": "result",
+        "line": 89,
+        "col": 10,
+        "endLine": 92,
+        "endCol": 6,
+        "kind": "variable",
+        "scope": "loopVecDestr"
+      },
+      "run.loopMapDestr": {
+        "name": "loopMapDestr",
+        "line": 96,
+        "col": 2,
+        "endLine": 102,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "run",
+        "signature": "()"
+      },
+      "loopMapDestr.result": {
+        "name": "result",
+        "line": 97,
+        "col": 10,
+        "endLine": 100,
+        "endCol": 6,
+        "kind": "variable",
+        "scope": "loopMapDestr"
+      },
+      "run.emptyVecDestr": {
+        "name": "emptyVecDestr",
+        "line": 106,
+        "col": 2,
+        "endLine": 109,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "run",
+        "signature": "()"
+      },
+      "emptyVecDestr.result": {
+        "name": "result",
+        "line": 107,
+        "col": 10,
+        "endLine": 107,
+        "endCol": 57,
+        "kind": "variable",
+        "scope": "emptyVecDestr"
+      },
+      "run.emptyMapDestr": {
+        "name": "emptyMapDestr",
+        "line": 111,
+        "col": 2,
+        "endLine": 114,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "run",
+        "signature": "()"
+      },
+      "emptyMapDestr.result": {
+        "name": "result",
+        "line": 112,
+        "col": 10,
+        "endLine": 112,
+        "endCol": 57,
+        "kind": "variable",
+        "scope": "emptyMapDestr"
+      },
+      "run.nilVecDestr": {
+        "name": "nilVecDestr",
+        "line": 116,
+        "col": 2,
+        "endLine": 119,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "run",
+        "signature": "()"
+      },
+      "nilVecDestr.result": {
+        "name": "result",
+        "line": 117,
+        "col": 10,
+        "endLine": 117,
+        "endCol": 63,
+        "kind": "variable",
+        "scope": "nilVecDestr"
+      },
+      "run.nilMapDestr": {
+        "name": "nilMapDestr",
+        "line": 121,
+        "col": 2,
+        "endLine": 124,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "run",
+        "signature": "()"
+      },
+      "nilMapDestr.result": {
+        "name": "result",
+        "line": 122,
+        "col": 10,
+        "endLine": 122,
+        "endCol": 65,
+        "kind": "variable",
+        "scope": "nilMapDestr"
+      },
+      "run.defnDestr": {
+        "name": "defnDestr",
+        "line": 128,
+        "col": 2,
+        "endLine": 135,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "run",
+        "signature": "()"
+      },
+      "defnDestr.result": {
+        "name": "result",
+        "line": 129,
+        "col": 10,
+        "endLine": 133,
+        "endCol": 6,
+        "kind": "variable",
+        "scope": "defnDestr"
+      },
+      "run.errorVecDestrNonSeq": {
+        "name": "errorVecDestrNonSeq",
+        "line": 139,
+        "col": 2,
+        "endLine": 148,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "run",
+        "signature": "()"
+      },
+      "errorVecDestrNonSeq.caught": {
+        "name": "caught",
+        "line": 140,
+        "col": 8,
+        "endLine": 140,
+        "endCol": 22,
+        "kind": "variable",
+        "scope": "errorVecDestrNonSeq"
+      },
+      "run.deeplyNested": {
+        "name": "deeplyNested",
+        "line": 152,
+        "col": 2,
+        "endLine": 158,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "run",
+        "signature": "()"
+      },
+      "deeplyNested.result": {
+        "name": "result",
+        "line": 153,
+        "col": 10,
+        "endLine": 156,
+        "endCol": 6,
+        "kind": "variable",
+        "scope": "deeplyNested"
+      }
+    }
+  },
+  "attachments": []
+}

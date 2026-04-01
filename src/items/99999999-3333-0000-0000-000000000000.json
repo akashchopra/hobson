@@ -1,1 +1,126 @@
-{"id": "99999999-3333-0000-0000-000000000000", "name": "iframe-nav-tracker", "type": "66666666-0000-0000-0000-000000000000", "created": 1772150400000, "modified": 1774532372280, "content": {"code": "// iframe-nav-tracker — synchronous pushState patching for iframe navigation depth tracking\n//\n// Hob functions are always async, but browsers reject async calls to\n// History.pushState as insecure. This library provides a synchronous JS\n// wrapper that patches pushState inside an iframe's contentWindow.\n//\n// Uses replaceState + renderViewport() instead of history.back() because\n// the viewport-manager's popstate handler doesn't handle back-to-no-root.\n\n/**\n * Patch pushState on an iframe to track navigation depth.\n * Call this from the iframe's onload handler.\n *\n * Returns an object with:\n *   - depth()  — current navigation depth (0 = at initial page)\n *   - back()   — go back if depth > 0; returns true if navigated\n *   - reset()  — reset depth to 0 (call on iframe reload)\n *\n * Returns null if the iframe's contentWindow is inaccessible (cross-origin).\n */\nexport function patch(iframe) {\n  // Stack of URLs before each pushState — used for back navigation\n  const urlStack = [];\n\n  try {\n    const iframeHistory = iframe.contentWindow.history;\n    const origPushState = iframeHistory.pushState.bind(iframeHistory);\n    iframeHistory.pushState = function(...args) {\n      // Capture current URL before the push so we can go back to it\n      urlStack.push(iframe.contentWindow.location.href);\n      return origPushState(...args);\n    };\n  } catch (e) {\n    return null;\n  }\n\n  return {\n    depth() { return urlStack.length; },\n    back() {\n      if (urlStack.length > 0) {\n        const prevUrl = urlStack.pop();\n        // Replace current URL with the previous one (no new history entry)\n        iframe.contentWindow.history.replaceState(null, '', prevUrl);\n        // Tell the nested kernel to re-render from the updated URL\n        iframe.contentWindow.kernel.renderViewport();\n        return true;\n      }\n      return false;\n    },\n    reset() { urlStack.length = 0; }\n  };\n}\n", "description": [":doc", [":p", {"s": "Synchronous pushState patching for tracking iframe navigation depth."}], [":p", {"s": "Hob functions are always async, but browsers reject async calls to "}, [":code", {"s": "History.pushState"}], {"s": " as insecure. This library provides a synchronous JS wrapper."}], [":h2", {"s": "Usage"}], [":code-block", {"s": "const tracker = require('iframe-nav-tracker');\nconst nav = tracker.patch(iframe);  // call in onload\nnav.back();   // safe back — won't escape iframe\nnav.depth();  // current depth\nnav.reset();  // reset on reload"}]], "_symbols": {"patch": {"name": "patch", "line": 21, "col": 7, "endLine": 52, "endCol": 1, "kind": "function", "scope": null, "signature": "(iframe)", "description": "Patch pushState on an iframe to track navigation depth.\nCall this from the iframe's onload handler.\n\nReturns an object with:\n  - depth()  — current navigation depth (0 = at initial page)\n  - back()   — go back if depth > 0; returns true if navigated\n  - reset()  — reset depth to 0 (call on iframe reload)\n\nReturns null if the iframe's contentWindow is inaccessible (cross-origin)."}, "patch.urlStack": {"name": "urlStack", "line": 23, "col": 8, "endLine": 23, "endCol": 21, "kind": "variable", "scope": "patch"}, "patch.iframeHistory": {"name": "iframeHistory", "line": 26, "col": 10, "endLine": 26, "endCol": 54, "kind": "variable", "scope": "patch"}, "patch.origPushState": {"name": "origPushState", "line": 27, "col": 10, "endLine": 27, "endCol": 69, "kind": "variable", "scope": "patch"}, "patch.depth": {"name": "depth", "line": 38, "col": 4, "endLine": 38, "endCol": 39, "kind": "property-function", "scope": "patch", "signature": "()"}, "patch.back": {"name": "back", "line": 39, "col": 4, "endLine": 49, "endCol": 5, "kind": "property-function", "scope": "patch", "signature": "()"}, "patch.back.prevUrl": {"name": "prevUrl", "line": 41, "col": 14, "endLine": 41, "endCol": 38, "kind": "variable", "scope": "patch.back"}, "patch.reset": {"name": "reset", "line": 50, "col": 4, "endLine": 50, "endCol": 36, "kind": "property-function", "scope": "patch", "signature": "()"}}}, "attachments": []}
+{
+  "id": "99999999-3333-0000-0000-000000000000",
+  "name": "iframe-nav-tracker",
+  "type": "66666666-0000-0000-0000-000000000000",
+  "created": 1772150400000,
+  "modified": 1774988055470,
+  "content": {
+    "code": "// iframe-nav-tracker — synchronous pushState patching for iframe navigation depth tracking\n//\n// Hob functions are always async, but browsers reject async calls to\n// History.pushState as insecure. This library provides a synchronous JS\n// wrapper that patches pushState inside an iframe's contentWindow.\n//\n// Uses replaceState + renderViewport() instead of history.back() because\n// the viewport-manager's popstate handler doesn't handle back-to-no-root.\n\n/**\n * Patch pushState on an iframe to track navigation depth.\n * Call this from the iframe's onload handler.\n *\n * Returns an object with:\n *   - depth()  — current navigation depth (0 = at initial page)\n *   - back()   — go back if depth > 0; returns true if navigated\n *   - reset()  — reset depth to 0 (call on iframe reload)\n *\n * Returns null if the iframe's contentWindow is inaccessible (cross-origin).\n */\nexport function patch(iframe) {\n  // Stack of URLs before each pushState — used for back navigation\n  const urlStack = [];\n\n  try {\n    const iframeHistory = iframe.contentWindow.history;\n    const origPushState = iframeHistory.pushState.bind(iframeHistory);\n    iframeHistory.pushState = function(...args) {\n      // Capture current URL before the push so we can go back to it\n      urlStack.push(iframe.contentWindow.location.href);\n      return origPushState(...args);\n    };\n  } catch (e) {\n    return null;\n  }\n\n  return {\n    depth() { return urlStack.length; },\n    back() {\n      if (urlStack.length > 0) {\n        const prevUrl = urlStack.pop();\n        // Replace current URL with the previous one (no new history entry)\n        iframe.contentWindow.history.replaceState(null, '', prevUrl);\n        // Tell the nested kernel to re-render from the updated URL\n        iframe.contentWindow.kernel.renderViewport();\n        return true;\n      }\n      return false;\n    },\n    reset() { urlStack.length = 0; }\n  };\n}\n",
+    "description": [
+      ":doc",
+      [
+        ":p",
+        {
+          "s": "Synchronous pushState patching for tracking iframe navigation depth."
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Hob functions are always async, but browsers reject async calls to "
+        },
+        [
+          ":code",
+          {
+            "s": "History.pushState"
+          }
+        ],
+        {
+          "s": " as insecure. This library provides a synchronous JS wrapper."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Usage"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": "const tracker = require('iframe-nav-tracker');\nconst nav = tracker.patch(iframe);  // call in onload\nnav.back();   // safe back — won't escape iframe\nnav.depth();  // current depth\nnav.reset();  // reset on reload"
+        }
+      ]
+    ],
+    "_symbols": {
+      "patch": {
+        "name": "patch",
+        "line": 21,
+        "col": 7,
+        "endLine": 52,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(iframe)",
+        "description": "Patch pushState on an iframe to track navigation depth.\nCall this from the iframe's onload handler.\n\nReturns an object with:\n  - depth()  — current navigation depth (0 = at initial page)\n  - back()   — go back if depth > 0; returns true if navigated\n  - reset()  — reset depth to 0 (call on iframe reload)\n\nReturns null if the iframe's contentWindow is inaccessible (cross-origin)."
+      },
+      "patch.urlStack": {
+        "name": "urlStack",
+        "line": 23,
+        "col": 8,
+        "endLine": 23,
+        "endCol": 21,
+        "kind": "variable",
+        "scope": "patch"
+      },
+      "patch.iframeHistory": {
+        "name": "iframeHistory",
+        "line": 26,
+        "col": 10,
+        "endLine": 26,
+        "endCol": 54,
+        "kind": "variable",
+        "scope": "patch"
+      },
+      "patch.origPushState": {
+        "name": "origPushState",
+        "line": 27,
+        "col": 10,
+        "endLine": 27,
+        "endCol": 69,
+        "kind": "variable",
+        "scope": "patch"
+      },
+      "patch.depth": {
+        "name": "depth",
+        "line": 38,
+        "col": 4,
+        "endLine": 38,
+        "endCol": 39,
+        "kind": "property-function",
+        "scope": "patch",
+        "signature": "()"
+      },
+      "patch.back": {
+        "name": "back",
+        "line": 39,
+        "col": 4,
+        "endLine": 49,
+        "endCol": 5,
+        "kind": "property-function",
+        "scope": "patch",
+        "signature": "()"
+      },
+      "patch.back.prevUrl": {
+        "name": "prevUrl",
+        "line": 41,
+        "col": 14,
+        "endLine": 41,
+        "endCol": 38,
+        "kind": "variable",
+        "scope": "patch.back"
+      },
+      "patch.reset": {
+        "name": "reset",
+        "line": 50,
+        "col": 4,
+        "endLine": 50,
+        "endCol": 36,
+        "kind": "property-function",
+        "scope": "patch",
+        "signature": "()"
+      }
+    }
+  },
+  "attachments": []
+}

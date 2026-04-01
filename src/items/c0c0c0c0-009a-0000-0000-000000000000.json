@@ -1,1 +1,1094 @@
-{"id": "c0c0c0c0-009a-0000-0000-000000000000", "name": "Platform Capabilities & Limits", "type": "871ae771-b9b1-4f40-8c7f-d9038bfb69c3", "created": 1773931560072, "modified": 1774631599828, "content": {"description": [":doc", [":p", {"s": "Hobson runs in a browser today. This doc maps platform capabilities across browser-only, desktop shell, mobile shell, and hard limits. The chosen direction is all-Tauri (desktop + Android mobile) with Automerge running as native Rust in the Tauri backend. See the Chosen Direction section for implementation order."}], [":h2", {"s": "Browser-Only (Current)"}], [":p", {"s": "The web platform is surprisingly capable. You have Canvas, WebGL, WebGPU, IndexedDB, OPFS, Web Workers, WASM, WebRTC, audio/video capture, and service workers (if served from localhost). This is enough for rich editors, knowledge tools, drawing apps, visualizations, games, data analysis, peer-to-peer collaboration, and local-first databases."}], [":h3", {"s": "What You Cannot Build"}], [":table", [":thead", [":tr", [":th", {"s": "Constraint"}], [":th", {"s": "What it blocks"}]]], [":tbody", [":tr", [":td", [":strong", {"s": "No filesystem access"}]], [":td", {"s": "Git clients, file managers, \"save to ~/Documents\". The File System Access API exists (Chromium-only) but requires a user gesture each session and can't watch for changes."}]], [":tr", [":td", [":strong", {"s": "No raw sockets"}]], [":td", {"s": "SSH clients, direct database connections (Postgres, Redis), IMAP/SMTP email, custom protocol implementations. You're limited to HTTP(S), WebSocket, and WebRTC."}]], [":tr", [":td", [":strong", {"s": "No process spawning"}]], [":td", {"s": "Terminal emulators, build systems, running scripts, automating other apps."}]], [":tr", [":td", [":strong", {"s": "No server capabilities"}]], [":td", {"s": "Can't listen on ports. Can't serve files to other devices on your LAN."}]], [":tr", [":td", [":strong", {"s": "No OS integration"}]], [":td", {"s": "No global hotkeys, system tray, file-type associations, \"open with Hobson\", or persistent native notifications."}]], [":tr", [":td", [":strong", {"s": "No background execution"}]], [":td", {"s": "Browser can suspend/kill tabs and service workers. No reliable cron, no file watcher, no daemon behavior."}]], [":tr", [":td", [":strong", {"s": "CORS restrictions"}]], [":td", {"s": "Can't talk to arbitrary APIs unless they opt in. This kills a large category of integrations."}]]]], [":h3", {"s": "file:// vs localhost"}], [":p", {"s": "The current "}, [":code", {"s": "file://"}], {"s": " protocol is even more restricted: no service workers, no secure-context APIs (Web Serial, WebBluetooth, WebUSB, credential management), and stricter CORS. Serving from localhost is the minimum viable choice for serious use."}], [":h2", {"s": "Desktop Shell (Tauri)"}], [":p", {"s": "A desktop shell removes nearly every browser sandbox constraint. The webview remains the rendering engine, but you gain a backend with full OS access."}], [":h3", {"s": "What Becomes Possible"}], [":table", [":thead", [":tr", [":th", {"s": "Capability"}], [":th", {"s": "What it enables"}]]], [":tbody", [":tr", [":td", [":strong", {"s": "Full filesystem"}]], [":td", {"s": "Read/write/watch anywhere. Git clients, file managers, backup systems, import/export anything."}]], [":tr", [":td", [":strong", {"s": "Process spawning"}]], [":td", {"s": "Terminal emulators, build tools, shell scripts, launching other apps."}]], [":tr", [":td", [":strong", {"s": "Raw networking"}]], [":td", {"s": "TCP/UDP sockets for SSH, database drivers, SMTP/IMAP, custom protocols."}]], [":tr", [":td", [":strong", {"s": "Server mode"}]], [":td", {"s": "Other apps and devices can talk to Hobson. Local API server, LAN sync."}]], [":tr", [":td", [":strong", {"s": "OS integration"}]], [":td", {"s": "System tray, global hotkeys, deep links, file associations, native menus, auto-launch on boot."}]], [":tr", [":td", [":strong", {"s": "No CORS"}]], [":td", {"s": "Proxy any request through the backend. Every API is reachable."}]], [":tr", [":td", [":strong", {"s": "Background work"}]], [":td", {"s": "File watchers, scheduled tasks, sync engines. True daemon behavior."}]], [":tr", [":td", [":strong", {"s": "Local AI"}]], [":td", {"s": "Spawn llama.cpp, whisper.cpp, or any inference engine as child processes."}]], [":tr", [":td", [":strong", {"s": "Native databases"}]], [":td", {"s": "SQLite on disk, or connect directly to Postgres, Redis, etc."}]]]], [":h3", {"s": "Why Tauri"}], [":p", {"s": "Tauri (Rust backend) gives a smaller binary, better security model, and an explicit API surface. Critically, it shares a Rust backend between desktop and mobile, enabling a single codebase for all platform capabilities. Automerge (also written in Rust) runs natively in the backend with no WASM layer."}], [":p", {"s": "A desktop shell transforms Hobson from \"an app you use in a browser\" into \"a platform that can host other apps.\" It could become your terminal, your file manager, your email client, your IDE — all as items."}], [":h2", {"s": "Mobile Shell (Tauri Mobile, Android)"}], [":p", {"s": "Tauri Mobile wraps a webview in a native Android shell. The same Rust backend used on desktop compiles to Android, sharing all platform capability code including Automerge storage. iOS is not a target."}], [":h3", {"s": "What Mobile Shells Add"}], [":table", [":thead", [":tr", [":th", {"s": "Capability"}], [":th", {"s": "Browser"}], [":th", {"s": "Tauri Mobile"}]]], [":tbody", [":tr", [":td", [":strong", {"s": "Push notifications"}]], [":td", {"s": "No"}], [":td", {"s": "Full APNs/FCM"}]], [":tr", [":td", [":strong", {"s": "Camera / photo library"}]], [":td", {"s": "Partial (MediaDevices)"}], [":td", {"s": "Native picker, full library access"}]], [":tr", [":td", [":strong", {"s": "Biometric auth"}]], [":td", {"s": "WebAuthn only"}], [":td", {"s": "Face ID / fingerprint"}]], [":tr", [":td", [":strong", {"s": "Share sheet"}]], [":td", {"s": "Web Share API (limited)"}], [":td", {"s": "Native share to/from Hobson"}]], [":tr", [":td", [":strong", {"s": "Geolocation"}]], [":td", {"s": "Yes (with prompt)"}], [":td", {"s": "Native, background-capable"}]], [":tr", [":td", [":strong", {"s": "Haptics"}]], [":td", {"s": "No"}], [":td", {"s": "Yes"}]], [":tr", [":td", [":strong", {"s": "Filesystem"}]], [":td", {"s": "No"}], [":td", {"s": "Sandboxed app directory"}]], [":tr", [":td", [":strong", {"s": "App Store distribution"}]], [":td", {"s": "No"}], [":td", {"s": "Yes (it's a real app)"}]], [":tr", [":td", [":strong", {"s": "Offline + installable"}]], [":td", {"s": "PWA (fragile)"}], [":td", {"s": "Yes"}]]]], [":h3", {"s": "What Mobile Shells Still Can't Do"}], [":ul", [":li", [":p", [":strong", {"s": "Home screen widgets"}], {"s": " — require native Kotlin, not webview content"}]], [":li", [":p", [":strong", {"s": "Google Assistant integration"}], {"s": " — requires native intent definitions"}]], [":li", [":p", [":strong", {"s": "Instant Apps"}], {"s": " — native-only feature"}]], [":li", [":p", [":strong", {"s": "Health/Fitness APIs"}], {"s": " — HealthKit/Health Connect need native entitlements and review"}]], [":li", [":p", [":strong", {"s": "NFC payments"}], {"s": " — locked to Google Pay"}]], [":li", [":p", [":strong", {"s": "Smooth 120fps gestures"}], {"s": " — webview has inherent overhead vs native UI for complex touch interactions"}]]], [":h3", {"s": "All-Tauri Architecture"}], [":p", {"s": "One Rust backend compiles to desktop (Linux, macOS, Windows) and mobile (Android). Platform-specific capabilities are exposed to the webview via Tauri's IPC bridge and surfaced as Hobson items or libraries. The item model doesn't change — only the API surface underneath grows. Automerge storage, sync, and MCP server all live in the shared Rust backend."}], [":h2", {"s": "The Full Picture"}], [":p", {"s": "The capability space is a matrix, not a ladder:"}], [":code-block", {"s": "                Desktop              Mobile\n                -------              ------\nCurrent:        Browser (file://)    None\nPlanned:        Tauri                Tauri Mobile (Android)\nHard limits:    real-time, kernel,   real-time, kernel,\n                peak perf            widgets, deep OS integration"}], [":h2", {"s": "Hard Limits (Forever Out of Reach)"}], [":p", {"s": "Even with native shells on every platform, some things remain structurally impossible:"}], [":ol", [":li", [":p", [":strong", {"s": "Hard real-time control"}], {"s": " — JS has a garbage collector, an event loop, and no deterministic scheduling. Medical devices, industrial PLCs, and flight control systems are out."}]], [":li", [":p", [":strong", {"s": "Kernel/driver-level software"}], {"s": " — Hobson is always a userspace guest. No device drivers, no filesystem implementations, no hypervisors."}]], [":li", [":p", [":strong", {"s": "Peak compute performance"}], {"s": " — The JS→WASM→WebGPU abstraction layers have real overhead vs native CUDA/Metal/Vulkan. Good performance, not best performance."}]], [":li", [":p", [":strong", {"s": "Deep mobile OS integration"}], {"s": " — Home screen widgets, voice assistant intents, health/fitness APIs, Instant Apps, and NFC payments require native code that sits outside the webview entirely. A mobile shell gets you most of the way, but not here."}]], [":li", [":p", [":strong", {"s": "Trusted execution"}], {"s": " — DRM, secure enclaves, TPM attestation. These require platform-level integration below the application layer."}]]], [":h2", {"s": "Chosen Direction"}], [":p", {"s": "All-Tauri with native Rust Automerge. One Rust backend shared between desktop and Android, with Automerge running natively (no WASM). The webview renders UI; the backend owns storage, sync, and platform capabilities."}], [":h3", {"s": "Implementation Order"}], [":ol", [":li", [":p", [":strong", {"s": "Tauri desktop shell."}], {"s": " Wrap Hobson in Tauri. Keep IDB storage in the webview initially. Everything works as before, but a Rust backend now exists."}]], [":li", [":p", [":strong", {"s": "Automerge in the Rust backend."}], {"s": " Implement storage with native Automerge, exposed to the webview via Tauri IPC. Replace the IDB storage layer. This gives system-level undo and version history."}]], [":li", [":p", [":strong", {"s": "Tauri Mobile (Android)."}], {"s": " The shared Rust backend compiles to Android. Automerge storage and sync come for free."}]], [":li", [":p", [":strong", {"s": "Sync."}], {"s": " Automerge's CRDT foundation enables device sync. The Rust backend handles network transport; Automerge handles conflict resolution."}]]], [":h3", {"s": "Why Not WASM?"}], [":p", {"s": "Automerge is written in Rust. Running it as WASM in the webview works (benchmarked in the Automerge Investigation) but adds an unnecessary layer: WASM compilation, WASM init time (4-7.5s from CDN), WASM memory boundary. Since the Tauri backend is already Rust, Automerge runs natively with no overhead. The backend can also directly access items for sync, MCP, and backup without crossing the webview boundary."}], [":h2", {"s": "Counter-Arguments"}], [":p", {"s": "The all-Tauri-native direction has real tradeoffs. These concerns don't invalidate the recommendation but should be weighed before committing."}], [":h3", {"s": "The benchmarks don't measure the proposed architecture"}], [":p", {"s": "All numbers in the Automerge Investigation were measured with WASM running in-process in the browser. The proposed architecture puts Automerge in a separate Rust backend behind Tauri IPC. Every api.get() and api.set() would cross a serialization boundary (JS → JSON → IPC → Rust → Automerge → Rust → JSON → IPC → JS). The 1.5ms write path and sub-millisecond reads could look different with IPC round-trip overhead, especially for bulk operations. IPC-specific benchmarks are needed before committing."}], [":h3", {"s": "The “Why Not WASM?” argument overstates the problem"}], [":p", {"s": "The three stated reasons — WASM compilation, 4–7.5s CDN init, memory boundary — are largely deployment problems, not architectural ones. Compilation is one-time and cached by the browser. Init time is 4–7.5s from CDN; bundled locally inside Tauri it drops dramatically. The WASM memory boundary cost is traded for an IPC boundary cost involving serialization on every call — potentially worse for frequent small operations."}], [":h3", {"s": "Loss of the live environment"}], [":p", {"s": "Hobson draws from Smalltalk and Lisp — everything is inspectable and modifiable from inside the system. Moving storage to Rust means the storage layer is no longer accessible from the REPL, no longer modifiable as an item, and no longer written in the language the user works in. This goes beyond the kernel boundary rule: storage moves outside the item system and outside JavaScript entirely."}], [":h3", {"s": "Browser-only operation dies at step 2"}], [":p", {"s": "Step 1 preserves the current single-file-in-a-browser story. Step 2 replaces IDB with native Automerge via IPC, meaning Hobson can only run inside Tauri from that point forward. Maintaining browser fallback would require a dual storage path indefinitely."}], [":h3", {"s": "Alternative: WASM-in-webview under Tauri"}], [":p", {"s": "A middle path: bundle Automerge WASM locally inside Tauri, keeping storage in the webview. This gives undo/history, fast WASM init (local, not CDN), browser fallback capability, live-inspectable storage, and the Tauri shell for OS capabilities. Sync could work via Automerge's built-in protocol from the webview side. The native Rust path becomes an optimization to defer until IPC benchmarks prove it's worth the tradeoffs."}], [":h2", {"s": "The Practical Takeaway"}], [":p", {"s": "The browser sandbox is the single biggest constraint. All-Tauri removes it on both desktop and Android with a single shared Rust backend. Automerge in native Rust gives system-level undo, version history, and device sync without a WASM layer. The remaining hard limits (real-time, kernel, peak perf, deepest OS integration) are things almost no personal tool needs."}]], "tags": ["bff75873-edb8-412e-81c9-c744e68fe29f", "c0c0c0c0-0085-0000-0000-000000000000"]}, "attachments": []}
+{
+  "id": "c0c0c0c0-009a-0000-0000-000000000000",
+  "name": "Platform Capabilities & Limits",
+  "type": "871ae771-b9b1-4f40-8c7f-d9038bfb69c3",
+  "created": 1773931560072,
+  "modified": 1774988061679,
+  "content": {
+    "description": [
+      ":doc",
+      [
+        ":p",
+        {
+          "s": "Hobson runs in a browser today. This doc maps platform capabilities across browser-only, desktop shell, mobile shell, and hard limits. The chosen direction is all-Tauri (desktop + Android mobile) with Automerge running as native Rust in the Tauri backend. See the Chosen Direction section for implementation order."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Browser-Only (Current)"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The web platform is surprisingly capable. You have Canvas, WebGL, WebGPU, IndexedDB, OPFS, Web Workers, WASM, WebRTC, audio/video capture, and service workers (if served from localhost). This is enough for rich editors, knowledge tools, drawing apps, visualizations, games, data analysis, peer-to-peer collaboration, and local-first databases."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "What You Cannot Build"
+        }
+      ],
+      [
+        ":table",
+        [
+          ":thead",
+          [
+            ":tr",
+            [
+              ":th",
+              {
+                "s": "Constraint"
+              }
+            ],
+            [
+              ":th",
+              {
+                "s": "What it blocks"
+              }
+            ]
+          ]
+        ],
+        [
+          ":tbody",
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":strong",
+                {
+                  "s": "No filesystem access"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Git clients, file managers, \"save to ~/Documents\". The File System Access API exists (Chromium-only) but requires a user gesture each session and can't watch for changes."
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":strong",
+                {
+                  "s": "No raw sockets"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "SSH clients, direct database connections (Postgres, Redis), IMAP/SMTP email, custom protocol implementations. You're limited to HTTP(S), WebSocket, and WebRTC."
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":strong",
+                {
+                  "s": "No process spawning"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Terminal emulators, build systems, running scripts, automating other apps."
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":strong",
+                {
+                  "s": "No server capabilities"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Can't listen on ports. Can't serve files to other devices on your LAN."
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":strong",
+                {
+                  "s": "No OS integration"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "No global hotkeys, system tray, file-type associations, \"open with Hobson\", or persistent native notifications."
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":strong",
+                {
+                  "s": "No background execution"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Browser can suspend/kill tabs and service workers. No reliable cron, no file watcher, no daemon behavior."
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":strong",
+                {
+                  "s": "CORS restrictions"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Can't talk to arbitrary APIs unless they opt in. This kills a large category of integrations."
+              }
+            ]
+          ]
+        ]
+      ],
+      [
+        ":h3",
+        {
+          "s": "file:// vs localhost"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The current "
+        },
+        [
+          ":code",
+          {
+            "s": "file://"
+          }
+        ],
+        {
+          "s": " protocol is even more restricted: no service workers, no secure-context APIs (Web Serial, WebBluetooth, WebUSB, credential management), and stricter CORS. Serving from localhost is the minimum viable choice for serious use."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Desktop Shell (Tauri)"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "A desktop shell removes nearly every browser sandbox constraint. The webview remains the rendering engine, but you gain a backend with full OS access."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "What Becomes Possible"
+        }
+      ],
+      [
+        ":table",
+        [
+          ":thead",
+          [
+            ":tr",
+            [
+              ":th",
+              {
+                "s": "Capability"
+              }
+            ],
+            [
+              ":th",
+              {
+                "s": "What it enables"
+              }
+            ]
+          ]
+        ],
+        [
+          ":tbody",
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":strong",
+                {
+                  "s": "Full filesystem"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Read/write/watch anywhere. Git clients, file managers, backup systems, import/export anything."
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":strong",
+                {
+                  "s": "Process spawning"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Terminal emulators, build tools, shell scripts, launching other apps."
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":strong",
+                {
+                  "s": "Raw networking"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "TCP/UDP sockets for SSH, database drivers, SMTP/IMAP, custom protocols."
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":strong",
+                {
+                  "s": "Server mode"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Other apps and devices can talk to Hobson. Local API server, LAN sync."
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":strong",
+                {
+                  "s": "OS integration"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "System tray, global hotkeys, deep links, file associations, native menus, auto-launch on boot."
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":strong",
+                {
+                  "s": "No CORS"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Proxy any request through the backend. Every API is reachable."
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":strong",
+                {
+                  "s": "Background work"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "File watchers, scheduled tasks, sync engines. True daemon behavior."
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":strong",
+                {
+                  "s": "Local AI"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Spawn llama.cpp, whisper.cpp, or any inference engine as child processes."
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":strong",
+                {
+                  "s": "Native databases"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "SQLite on disk, or connect directly to Postgres, Redis, etc."
+              }
+            ]
+          ]
+        ]
+      ],
+      [
+        ":h3",
+        {
+          "s": "Why Tauri"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Tauri (Rust backend) gives a smaller binary, better security model, and an explicit API surface. Critically, it shares a Rust backend between desktop and mobile, enabling a single codebase for all platform capabilities. Automerge (also written in Rust) runs natively in the backend with no WASM layer."
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "A desktop shell transforms Hobson from \"an app you use in a browser\" into \"a platform that can host other apps.\" It could become your terminal, your file manager, your email client, your IDE — all as items."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Mobile Shell (Tauri Mobile, Android)"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Tauri Mobile wraps a webview in a native Android shell. The same Rust backend used on desktop compiles to Android, sharing all platform capability code including Automerge storage. iOS is not a target."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "What Mobile Shells Add"
+        }
+      ],
+      [
+        ":table",
+        [
+          ":thead",
+          [
+            ":tr",
+            [
+              ":th",
+              {
+                "s": "Capability"
+              }
+            ],
+            [
+              ":th",
+              {
+                "s": "Browser"
+              }
+            ],
+            [
+              ":th",
+              {
+                "s": "Tauri Mobile"
+              }
+            ]
+          ]
+        ],
+        [
+          ":tbody",
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":strong",
+                {
+                  "s": "Push notifications"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "No"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Full APNs/FCM"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":strong",
+                {
+                  "s": "Camera / photo library"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Partial (MediaDevices)"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Native picker, full library access"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":strong",
+                {
+                  "s": "Biometric auth"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "WebAuthn only"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Face ID / fingerprint"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":strong",
+                {
+                  "s": "Share sheet"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Web Share API (limited)"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Native share to/from Hobson"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":strong",
+                {
+                  "s": "Geolocation"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Yes (with prompt)"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Native, background-capable"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":strong",
+                {
+                  "s": "Haptics"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "No"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Yes"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":strong",
+                {
+                  "s": "Filesystem"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "No"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Sandboxed app directory"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":strong",
+                {
+                  "s": "App Store distribution"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "No"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Yes (it's a real app)"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":strong",
+                {
+                  "s": "Offline + installable"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "PWA (fragile)"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Yes"
+              }
+            ]
+          ]
+        ]
+      ],
+      [
+        ":h3",
+        {
+          "s": "What Mobile Shells Still Can't Do"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Home screen widgets"
+              }
+            ],
+            {
+              "s": " — require native Kotlin, not webview content"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Google Assistant integration"
+              }
+            ],
+            {
+              "s": " — requires native intent definitions"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Instant Apps"
+              }
+            ],
+            {
+              "s": " — native-only feature"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Health/Fitness APIs"
+              }
+            ],
+            {
+              "s": " — HealthKit/Health Connect need native entitlements and review"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "NFC payments"
+              }
+            ],
+            {
+              "s": " — locked to Google Pay"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Smooth 120fps gestures"
+              }
+            ],
+            {
+              "s": " — webview has inherent overhead vs native UI for complex touch interactions"
+            }
+          ]
+        ]
+      ],
+      [
+        ":h3",
+        {
+          "s": "All-Tauri Architecture"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "One Rust backend compiles to desktop (Linux, macOS, Windows) and mobile (Android). Platform-specific capabilities are exposed to the webview via Tauri's IPC bridge and surfaced as Hobson items or libraries. The item model doesn't change — only the API surface underneath grows. Automerge storage, sync, and MCP server all live in the shared Rust backend."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "The Full Picture"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The capability space is a matrix, not a ladder:"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": "                Desktop              Mobile\n                -------              ------\nCurrent:        Browser (file://)    None\nPlanned:        Tauri                Tauri Mobile (Android)\nHard limits:    real-time, kernel,   real-time, kernel,\n                peak perf            widgets, deep OS integration"
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Hard Limits (Forever Out of Reach)"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Even with native shells on every platform, some things remain structurally impossible:"
+        }
+      ],
+      [
+        ":ol",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Hard real-time control"
+              }
+            ],
+            {
+              "s": " — JS has a garbage collector, an event loop, and no deterministic scheduling. Medical devices, industrial PLCs, and flight control systems are out."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Kernel/driver-level software"
+              }
+            ],
+            {
+              "s": " — Hobson is always a userspace guest. No device drivers, no filesystem implementations, no hypervisors."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Peak compute performance"
+              }
+            ],
+            {
+              "s": " — The JS→WASM→WebGPU abstraction layers have real overhead vs native CUDA/Metal/Vulkan. Good performance, not best performance."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Deep mobile OS integration"
+              }
+            ],
+            {
+              "s": " — Home screen widgets, voice assistant intents, health/fitness APIs, Instant Apps, and NFC payments require native code that sits outside the webview entirely. A mobile shell gets you most of the way, but not here."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Trusted execution"
+              }
+            ],
+            {
+              "s": " — DRM, secure enclaves, TPM attestation. These require platform-level integration below the application layer."
+            }
+          ]
+        ]
+      ],
+      [
+        ":h2",
+        {
+          "s": "Chosen Direction"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "All-Tauri with native Rust Automerge. One Rust backend shared between desktop and Android, with Automerge running natively (no WASM). The webview renders UI; the backend owns storage, sync, and platform capabilities."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Implementation Order"
+        }
+      ],
+      [
+        ":ol",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Tauri desktop shell."
+              }
+            ],
+            {
+              "s": " Wrap Hobson in Tauri. Keep IDB storage in the webview initially. Everything works as before, but a Rust backend now exists."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Automerge in the Rust backend."
+              }
+            ],
+            {
+              "s": " Implement storage with native Automerge, exposed to the webview via Tauri IPC. Replace the IDB storage layer. This gives system-level undo and version history."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Tauri Mobile (Android)."
+              }
+            ],
+            {
+              "s": " The shared Rust backend compiles to Android. Automerge storage and sync come for free."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Sync."
+              }
+            ],
+            {
+              "s": " Automerge's CRDT foundation enables device sync. The Rust backend handles network transport; Automerge handles conflict resolution."
+            }
+          ]
+        ]
+      ],
+      [
+        ":h3",
+        {
+          "s": "Why Not WASM?"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Automerge is written in Rust. Running it as WASM in the webview works (benchmarked in the Automerge Investigation) but adds an unnecessary layer: WASM compilation, WASM init time (4-7.5s from CDN), WASM memory boundary. Since the Tauri backend is already Rust, Automerge runs natively with no overhead. The backend can also directly access items for sync, MCP, and backup without crossing the webview boundary."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Counter-Arguments"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The all-Tauri-native direction has real tradeoffs. These concerns don't invalidate the recommendation but should be weighed before committing."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "The benchmarks don't measure the proposed architecture"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "All numbers in the Automerge Investigation were measured with WASM running in-process in the browser. The proposed architecture puts Automerge in a separate Rust backend behind Tauri IPC. Every api.get() and api.set() would cross a serialization boundary (JS → JSON → IPC → Rust → Automerge → Rust → JSON → IPC → JS). The 1.5ms write path and sub-millisecond reads could look different with IPC round-trip overhead, especially for bulk operations. IPC-specific benchmarks are needed before committing."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "The “Why Not WASM?” argument overstates the problem"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The three stated reasons — WASM compilation, 4–7.5s CDN init, memory boundary — are largely deployment problems, not architectural ones. Compilation is one-time and cached by the browser. Init time is 4–7.5s from CDN; bundled locally inside Tauri it drops dramatically. The WASM memory boundary cost is traded for an IPC boundary cost involving serialization on every call — potentially worse for frequent small operations."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Loss of the live environment"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Hobson draws from Smalltalk and Lisp — everything is inspectable and modifiable from inside the system. Moving storage to Rust means the storage layer is no longer accessible from the REPL, no longer modifiable as an item, and no longer written in the language the user works in. This goes beyond the kernel boundary rule: storage moves outside the item system and outside JavaScript entirely."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Browser-only operation dies at step 2"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Step 1 preserves the current single-file-in-a-browser story. Step 2 replaces IDB with native Automerge via IPC, meaning Hobson can only run inside Tauri from that point forward. Maintaining browser fallback would require a dual storage path indefinitely."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Alternative: WASM-in-webview under Tauri"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "A middle path: bundle Automerge WASM locally inside Tauri, keeping storage in the webview. This gives undo/history, fast WASM init (local, not CDN), browser fallback capability, live-inspectable storage, and the Tauri shell for OS capabilities. Sync could work via Automerge's built-in protocol from the webview side. The native Rust path becomes an optimization to defer until IPC benchmarks prove it's worth the tradeoffs."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "The Practical Takeaway"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The browser sandbox is the single biggest constraint. All-Tauri removes it on both desktop and Android with a single shared Rust backend. Automerge in native Rust gives system-level undo, version history, and device sync without a WASM layer. The remaining hard limits (real-time, kernel, peak perf, deepest OS integration) are things almost no personal tool needs."
+        }
+      ]
+    ],
+    "tags": [
+      "bff75873-edb8-412e-81c9-c744e68fe29f",
+      "c0c0c0c0-0085-0000-0000-000000000000"
+    ]
+  },
+  "attachments": []
+}

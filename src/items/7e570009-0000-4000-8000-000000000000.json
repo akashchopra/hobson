@@ -1,1 +1,483 @@
-{"id": "7e570009-0000-4000-8000-000000000000", "name": "test-runner-service", "type": "22222222-0000-0000-0000-000000000000", "created": 1739145600000, "modified": 1774532370792, "watches": [{"event": "e0e00000-0003-0003-0000-000000000000"}], "content": {"code": "const TEST_TAG_ID = 'c0c0c0c0-0070-0000-0000-000000000000';\n\nexport async function onViewportReady(event, api) {\n  // Only activate in nested instances\n  const instanceId = api.getInstanceId();\n  if (!instanceId) return;\n\n  // Auto-run tests immediately on boot\n  try {\n    window.parent.postMessage({ type: 'test-instance-ready', instanceId }, '*');\n    await runAllTests(api, instanceId);\n  } catch (err) {\n    window.parent.postMessage({ type: 'test-error', error: err.message, instanceId }, '*');\n  }\n}\n\nasync function runAllTests(api, instanceId) {\n  const vpMgr = await api.require('viewport-manager');\n  const rendering = vpMgr.getRendering();\n\n  const allItems = await api.getAll();\n  const testItems = allItems.filter(i =>\n    i.content?.tags?.includes(TEST_TAG_ID) && i.name && i.content?.code\n  );\n\n  // Hidden area for test viewports\n  const testArea = document.createElement('div');\n  testArea.style.cssText = 'position:absolute; left:-9999px; top:-9999px; width:800px; height:600px; overflow:hidden;';\n  document.body.appendChild(testArea);\n\n  let totalPassed = 0;\n  let totalFailed = 0;\n  const suites = [];\n\n  for (const testItem of testItems) {\n    let suite;\n    try {\n      const results = await runTestItem(testItem, api, testArea, rendering);\n      const passed = results.filter(r => r.passed).length;\n      const failed = results.filter(r => !r.passed).length;\n      totalPassed += passed;\n      totalFailed += failed;\n      suite = { testItemId: testItem.id, testItemName: testItem.name, passed, failed, results };\n    } catch (e) {\n      totalFailed += 1;\n      const results = [{ name: testItem.name, passed: false, error: e.message }];\n      suite = { testItemId: testItem.id, testItemName: testItem.name, passed: 0, failed: 1, results };\n    }\n    suites.push(suite);\n    window.parent.postMessage({ type: 'test-progress', suite, instanceId }, '*');\n  }\n\n  const lastRun = { timestamp: Date.now(), totalPassed, totalFailed, suites };\n  window.parent.postMessage({ type: 'test-complete', lastRun, instanceId }, '*');\n\n  testArea.remove();\n}\n\nasync function runTestItem(testItem, api, testArea, rendering) {\n  const testApi = {\n    set: async (item) => {\n      const id = await api.set(item, { silent: true });\n      return api.get(id);\n    },\n    get: async (id) => {\n      try { return await api.get(id); }\n      catch { return null; }\n    },\n    query: (filter) => api.query(filter),\n    getAll: () => api.getAll(),\n    delete: async (id) => {\n      try { await api.delete(id); } catch { /* item may not exist */ }\n    },\n    require: (name) => api.require(name),\n    typeChainIncludes: (typeId, targetId) => api.typeChainIncludes(typeId, targetId),\n    attach: (parentId, itemId) => api.attach(parentId, itemId),\n    detach: (parentId, itemId) => api.detach(parentId, itemId),\n    findContainerOf: (itemId) => api.findContainerOf(itemId),\n    events: api.events,\n\n    openViewport: async (itemId, viewId) => {\n      const viewport = document.createElement('div');\n      viewport.className = 'test-viewport';\n      viewport.style.cssText = 'width:800px; height:600px;';\n      testArea.appendChild(viewport);\n      const dom = await rendering.renderItem(itemId, viewId || null);\n      if (dom) viewport.appendChild(dom);\n      return viewport;\n    },\n\n    closeViewport: (el) => {\n      if (el && el.parentNode) el.remove();\n    }\n  };\n\n  const mod = await api.require(testItem.name);\n  if (!mod || typeof mod.run !== 'function') {\n    throw new Error(`Test item \"${testItem.name}\" does not export a run() function`);\n  }\n\n  const ITEM_TIMEOUT = 30000;\n  const results = await Promise.race([\n    mod.run(testApi),\n    new Promise((_, reject) =>\n      setTimeout(() => reject(new Error(`Test item \"${testItem.name}\" timed out after ${ITEM_TIMEOUT / 1000}s`)), ITEM_TIMEOUT)\n    )\n  ]);\n\n  if (!Array.isArray(results)) {\n    throw new Error(`Test item \"${testItem.name}\" run() must return an array of results`);\n  }\n\n  return results;\n}\n", "description": [":doc", [":p", {"s": "Runs inside nested test instances. Listens for postMessage from parent, executes test suites, and reports results back."}]], "_symbols": {"TEST_TAG_ID": {"name": "TEST_TAG_ID", "line": 1, "col": 6, "endLine": 1, "endCol": 58, "kind": "variable", "scope": null}, "onViewportReady": {"name": "onViewportReady", "line": 3, "col": 7, "endLine": 15, "endCol": 1, "kind": "function", "scope": null, "signature": "(event, api)"}, "onViewportReady.instanceId": {"name": "instanceId", "line": 13, "col": 72, "endLine": 13, "endCol": 82, "kind": "property", "scope": "onViewportReady"}, "onViewportReady.type": {"name": "type", "line": 13, "col": 32, "endLine": 13, "endCol": 50, "kind": "property", "scope": "onViewportReady"}, "onViewportReady.error": {"name": "error", "line": 13, "col": 52, "endLine": 13, "endCol": 70, "kind": "property", "scope": "onViewportReady"}, "runAllTests": {"name": "runAllTests", "line": 17, "col": 0, "endLine": 57, "endCol": 1, "kind": "function", "scope": null, "signature": "(api, instanceId)"}, "runAllTests.vpMgr": {"name": "vpMgr", "line": 18, "col": 8, "endLine": 18, "endCol": 53, "kind": "variable", "scope": "runAllTests"}, "runAllTests.rendering": {"name": "rendering", "line": 19, "col": 8, "endLine": 19, "endCol": 40, "kind": "variable", "scope": "runAllTests"}, "runAllTests.allItems": {"name": "allItems", "line": 21, "col": 8, "endLine": 21, "endCol": 37, "kind": "variable", "scope": "runAllTests"}, "runAllTests.testItems": {"name": "testItems", "line": 22, "col": 8, "endLine": 24, "endCol": 3, "kind": "variable", "scope": "runAllTests"}, "runAllTests.testArea": {"name": "testArea", "line": 27, "col": 8, "endLine": 27, "endCol": 48, "kind": "variable", "scope": "runAllTests"}, "runAllTests.totalPassed": {"name": "totalPassed", "line": 31, "col": 6, "endLine": 31, "endCol": 21, "kind": "variable", "scope": "runAllTests"}, "runAllTests.totalFailed": {"name": "totalFailed", "line": 32, "col": 6, "endLine": 32, "endCol": 21, "kind": "variable", "scope": "runAllTests"}, "runAllTests.suites": {"name": "suites", "line": 33, "col": 8, "endLine": 33, "endCol": 19, "kind": "variable", "scope": "runAllTests"}, "runAllTests.testItem": {"name": "testItem", "line": 35, "col": 13, "endLine": 35, "endCol": 21, "kind": "variable", "scope": "runAllTests"}, "runAllTests.suite": {"name": "suite", "line": 50, "col": 55, "endLine": 50, "endCol": 60, "kind": "property", "scope": "runAllTests"}, "runAllTests.results": {"name": "results", "line": 47, "col": 92, "endLine": 47, "endCol": 99, "kind": "property", "scope": "runAllTests"}, "runAllTests.passed": {"name": "passed", "line": 47, "col": 70, "endLine": 47, "endCol": 79, "kind": "property", "scope": "runAllTests"}, "runAllTests.failed": {"name": "failed", "line": 47, "col": 81, "endLine": 47, "endCol": 90, "kind": "property", "scope": "runAllTests"}, "runAllTests.testItemId": {"name": "testItemId", "line": 47, "col": 16, "endLine": 47, "endCol": 39, "kind": "property", "scope": "runAllTests"}, "runAllTests.testItemName": {"name": "testItemName", "line": 47, "col": 41, "endLine": 47, "endCol": 68, "kind": "property", "scope": "runAllTests"}, "runAllTests.type": {"name": "type", "line": 54, "col": 30, "endLine": 54, "endCol": 51, "kind": "property", "scope": "runAllTests"}, "runAllTests.instanceId": {"name": "instanceId", "line": 54, "col": 62, "endLine": 54, "endCol": 72, "kind": "property", "scope": "runAllTests"}, "runAllTests.lastRun": {"name": "lastRun", "line": 54, "col": 53, "endLine": 54, "endCol": 60, "kind": "property", "scope": "runAllTests"}, "lastRun.timestamp": {"name": "timestamp", "line": 53, "col": 20, "endLine": 53, "endCol": 41, "kind": "property", "scope": "lastRun"}, "lastRun.totalPassed": {"name": "totalPassed", "line": 53, "col": 43, "endLine": 53, "endCol": 54, "kind": "property", "scope": "lastRun"}, "lastRun.totalFailed": {"name": "totalFailed", "line": 53, "col": 56, "endLine": 53, "endCol": 67, "kind": "property", "scope": "lastRun"}, "lastRun.suites": {"name": "suites", "line": 53, "col": 69, "endLine": 53, "endCol": 75, "kind": "property", "scope": "lastRun"}, "runTestItem": {"name": "runTestItem", "line": 59, "col": 0, "endLine": 114, "endCol": 1, "kind": "function", "scope": null, "signature": "(testItem, api, testArea, rendering)"}, "runTestItem.testApi": {"name": "testApi", "line": 60, "col": 8, "endLine": 94, "endCol": 3, "kind": "variable", "scope": "runTestItem"}, "testApi.set": {"name": "set", "line": 61, "col": 4, "endLine": 64, "endCol": 5, "kind": "property-function", "scope": "testApi", "signature": "(item)"}, "testApi.set.id": {"name": "id", "line": 62, "col": 12, "endLine": 62, "endCol": 54, "kind": "variable", "scope": "testApi.set"}, "testApi.get": {"name": "get", "line": 65, "col": 4, "endLine": 68, "endCol": 5, "kind": "property-function", "scope": "testApi", "signature": "(id)"}, "testApi.query": {"name": "query", "line": 69, "col": 4, "endLine": 69, "endCol": 40, "kind": "property-function", "scope": "testApi", "signature": "(filter)"}, "testApi.getAll": {"name": "getAll", "line": 70, "col": 4, "endLine": 70, "endCol": 30, "kind": "property-function", "scope": "testApi", "signature": "()"}, "testApi.delete": {"name": "delete", "line": 71, "col": 4, "endLine": 73, "endCol": 5, "kind": "property-function", "scope": "testApi", "signature": "(id)"}, "testApi.require": {"name": "require", "line": 74, "col": 4, "endLine": 74, "endCol": 40, "kind": "property-function", "scope": "testApi", "signature": "(name)"}, "testApi.typeChainIncludes": {"name": "typeChainIncludes", "line": 75, "col": 4, "endLine": 75, "endCol": 84, "kind": "property-function", "scope": "testApi", "signature": "(typeId, targetId)"}, "testApi.attach": {"name": "attach", "line": 76, "col": 4, "endLine": 76, "endCol": 62, "kind": "property-function", "scope": "testApi", "signature": "(parentId, itemId)"}, "testApi.detach": {"name": "detach", "line": 77, "col": 4, "endLine": 77, "endCol": 62, "kind": "property-function", "scope": "testApi", "signature": "(parentId, itemId)"}, "testApi.findContainerOf": {"name": "findContainerOf", "line": 78, "col": 4, "endLine": 78, "endCol": 60, "kind": "property-function", "scope": "testApi", "signature": "(itemId)"}, "testApi.events": {"name": "events", "line": 79, "col": 4, "endLine": 79, "endCol": 22, "kind": "property", "scope": "testApi"}, "testApi.openViewport": {"name": "openViewport", "line": 81, "col": 4, "endLine": 89, "endCol": 5, "kind": "property-function", "scope": "testApi", "signature": "(itemId, viewId)"}, "testApi.openViewport.viewport": {"name": "viewport", "line": 82, "col": 12, "endLine": 82, "endCol": 52, "kind": "variable", "scope": "testApi.openViewport"}, "testApi.openViewport.dom": {"name": "dom", "line": 86, "col": 12, "endLine": 86, "endCol": 68, "kind": "variable", "scope": "testApi.openViewport"}, "testApi.closeViewport": {"name": "closeViewport", "line": 91, "col": 4, "endLine": 93, "endCol": 5, "kind": "property-function", "scope": "testApi", "signature": "(el)"}, "runTestItem.mod": {"name": "mod", "line": 96, "col": 8, "endLine": 96, "endCol": 46, "kind": "variable", "scope": "runTestItem"}, "runTestItem.ITEM_TIMEOUT": {"name": "ITEM_TIMEOUT", "line": 101, "col": 8, "endLine": 101, "endCol": 28, "kind": "variable", "scope": "runTestItem"}, "runTestItem.results": {"name": "results", "line": 102, "col": 8, "endLine": 107, "endCol": 4, "kind": "variable", "scope": "runTestItem"}}}, "attachments": []}
+{
+  "id": "7e570009-0000-4000-8000-000000000000",
+  "name": "test-runner-service",
+  "type": "22222222-0000-0000-0000-000000000000",
+  "created": 1739145600000,
+  "modified": 1774988050601,
+  "watches": [
+    {
+      "event": "e0e00000-0003-0003-0000-000000000000"
+    }
+  ],
+  "content": {
+    "code": "const TEST_TAG_ID = 'c0c0c0c0-0070-0000-0000-000000000000';\n\nexport async function onViewportReady(event, api) {\n  // Only activate in nested instances\n  const instanceId = api.getInstanceId();\n  if (!instanceId) return;\n\n  // Auto-run tests immediately on boot\n  try {\n    window.parent.postMessage({ type: 'test-instance-ready', instanceId }, '*');\n    await runAllTests(api, instanceId);\n  } catch (err) {\n    window.parent.postMessage({ type: 'test-error', error: err.message, instanceId }, '*');\n  }\n}\n\nasync function runAllTests(api, instanceId) {\n  const vpMgr = await api.require('viewport-manager');\n  const rendering = vpMgr.getRendering();\n\n  const allItems = await api.getAll();\n  const testItems = allItems.filter(i =>\n    i.content?.tags?.includes(TEST_TAG_ID) && i.name && i.content?.code\n  );\n\n  // Hidden area for test viewports\n  const testArea = document.createElement('div');\n  testArea.style.cssText = 'position:absolute; left:-9999px; top:-9999px; width:800px; height:600px; overflow:hidden;';\n  document.body.appendChild(testArea);\n\n  let totalPassed = 0;\n  let totalFailed = 0;\n  const suites = [];\n\n  for (const testItem of testItems) {\n    let suite;\n    try {\n      const results = await runTestItem(testItem, api, testArea, rendering);\n      const passed = results.filter(r => r.passed).length;\n      const failed = results.filter(r => !r.passed).length;\n      totalPassed += passed;\n      totalFailed += failed;\n      suite = { testItemId: testItem.id, testItemName: testItem.name, passed, failed, results };\n    } catch (e) {\n      totalFailed += 1;\n      const results = [{ name: testItem.name, passed: false, error: e.message }];\n      suite = { testItemId: testItem.id, testItemName: testItem.name, passed: 0, failed: 1, results };\n    }\n    suites.push(suite);\n    window.parent.postMessage({ type: 'test-progress', suite, instanceId }, '*');\n  }\n\n  const lastRun = { timestamp: Date.now(), totalPassed, totalFailed, suites };\n  window.parent.postMessage({ type: 'test-complete', lastRun, instanceId }, '*');\n\n  testArea.remove();\n}\n\nasync function runTestItem(testItem, api, testArea, rendering) {\n  const testApi = {\n    set: async (item) => {\n      const id = await api.set(item, { silent: true });\n      return api.get(id);\n    },\n    get: async (id) => {\n      try { return await api.get(id); }\n      catch { return null; }\n    },\n    query: (filter) => api.query(filter),\n    getAll: () => api.getAll(),\n    delete: async (id) => {\n      try { await api.delete(id); } catch { /* item may not exist */ }\n    },\n    require: (name) => api.require(name),\n    typeChainIncludes: (typeId, targetId) => api.typeChainIncludes(typeId, targetId),\n    attach: (parentId, itemId) => api.attach(parentId, itemId),\n    detach: (parentId, itemId) => api.detach(parentId, itemId),\n    findContainerOf: (itemId) => api.findContainerOf(itemId),\n    events: api.events,\n\n    openViewport: async (itemId, viewId) => {\n      const viewport = document.createElement('div');\n      viewport.className = 'test-viewport';\n      viewport.style.cssText = 'width:800px; height:600px;';\n      testArea.appendChild(viewport);\n      const dom = await rendering.renderItem(itemId, viewId || null);\n      if (dom) viewport.appendChild(dom);\n      return viewport;\n    },\n\n    closeViewport: (el) => {\n      if (el && el.parentNode) el.remove();\n    }\n  };\n\n  const mod = await api.require(testItem.name);\n  if (!mod || typeof mod.run !== 'function') {\n    throw new Error(`Test item \"${testItem.name}\" does not export a run() function`);\n  }\n\n  const ITEM_TIMEOUT = 30000;\n  const results = await Promise.race([\n    mod.run(testApi),\n    new Promise((_, reject) =>\n      setTimeout(() => reject(new Error(`Test item \"${testItem.name}\" timed out after ${ITEM_TIMEOUT / 1000}s`)), ITEM_TIMEOUT)\n    )\n  ]);\n\n  if (!Array.isArray(results)) {\n    throw new Error(`Test item \"${testItem.name}\" run() must return an array of results`);\n  }\n\n  return results;\n}\n",
+    "description": [
+      ":doc",
+      [
+        ":p",
+        {
+          "s": "Runs inside nested test instances. Listens for postMessage from parent, executes test suites, and reports results back."
+        }
+      ]
+    ],
+    "_symbols": {
+      "TEST_TAG_ID": {
+        "name": "TEST_TAG_ID",
+        "line": 1,
+        "col": 6,
+        "endLine": 1,
+        "endCol": 58,
+        "kind": "variable",
+        "scope": null
+      },
+      "onViewportReady": {
+        "name": "onViewportReady",
+        "line": 3,
+        "col": 7,
+        "endLine": 15,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(event, api)"
+      },
+      "onViewportReady.instanceId": {
+        "name": "instanceId",
+        "line": 13,
+        "col": 72,
+        "endLine": 13,
+        "endCol": 82,
+        "kind": "property",
+        "scope": "onViewportReady"
+      },
+      "onViewportReady.type": {
+        "name": "type",
+        "line": 13,
+        "col": 32,
+        "endLine": 13,
+        "endCol": 50,
+        "kind": "property",
+        "scope": "onViewportReady"
+      },
+      "onViewportReady.error": {
+        "name": "error",
+        "line": 13,
+        "col": 52,
+        "endLine": 13,
+        "endCol": 70,
+        "kind": "property",
+        "scope": "onViewportReady"
+      },
+      "runAllTests": {
+        "name": "runAllTests",
+        "line": 17,
+        "col": 0,
+        "endLine": 57,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(api, instanceId)"
+      },
+      "runAllTests.vpMgr": {
+        "name": "vpMgr",
+        "line": 18,
+        "col": 8,
+        "endLine": 18,
+        "endCol": 53,
+        "kind": "variable",
+        "scope": "runAllTests"
+      },
+      "runAllTests.rendering": {
+        "name": "rendering",
+        "line": 19,
+        "col": 8,
+        "endLine": 19,
+        "endCol": 40,
+        "kind": "variable",
+        "scope": "runAllTests"
+      },
+      "runAllTests.allItems": {
+        "name": "allItems",
+        "line": 21,
+        "col": 8,
+        "endLine": 21,
+        "endCol": 37,
+        "kind": "variable",
+        "scope": "runAllTests"
+      },
+      "runAllTests.testItems": {
+        "name": "testItems",
+        "line": 22,
+        "col": 8,
+        "endLine": 24,
+        "endCol": 3,
+        "kind": "variable",
+        "scope": "runAllTests"
+      },
+      "runAllTests.testArea": {
+        "name": "testArea",
+        "line": 27,
+        "col": 8,
+        "endLine": 27,
+        "endCol": 48,
+        "kind": "variable",
+        "scope": "runAllTests"
+      },
+      "runAllTests.totalPassed": {
+        "name": "totalPassed",
+        "line": 31,
+        "col": 6,
+        "endLine": 31,
+        "endCol": 21,
+        "kind": "variable",
+        "scope": "runAllTests"
+      },
+      "runAllTests.totalFailed": {
+        "name": "totalFailed",
+        "line": 32,
+        "col": 6,
+        "endLine": 32,
+        "endCol": 21,
+        "kind": "variable",
+        "scope": "runAllTests"
+      },
+      "runAllTests.suites": {
+        "name": "suites",
+        "line": 33,
+        "col": 8,
+        "endLine": 33,
+        "endCol": 19,
+        "kind": "variable",
+        "scope": "runAllTests"
+      },
+      "runAllTests.testItem": {
+        "name": "testItem",
+        "line": 35,
+        "col": 13,
+        "endLine": 35,
+        "endCol": 21,
+        "kind": "variable",
+        "scope": "runAllTests"
+      },
+      "runAllTests.suite": {
+        "name": "suite",
+        "line": 50,
+        "col": 55,
+        "endLine": 50,
+        "endCol": 60,
+        "kind": "property",
+        "scope": "runAllTests"
+      },
+      "runAllTests.results": {
+        "name": "results",
+        "line": 47,
+        "col": 92,
+        "endLine": 47,
+        "endCol": 99,
+        "kind": "property",
+        "scope": "runAllTests"
+      },
+      "runAllTests.passed": {
+        "name": "passed",
+        "line": 47,
+        "col": 70,
+        "endLine": 47,
+        "endCol": 79,
+        "kind": "property",
+        "scope": "runAllTests"
+      },
+      "runAllTests.failed": {
+        "name": "failed",
+        "line": 47,
+        "col": 81,
+        "endLine": 47,
+        "endCol": 90,
+        "kind": "property",
+        "scope": "runAllTests"
+      },
+      "runAllTests.testItemId": {
+        "name": "testItemId",
+        "line": 47,
+        "col": 16,
+        "endLine": 47,
+        "endCol": 39,
+        "kind": "property",
+        "scope": "runAllTests"
+      },
+      "runAllTests.testItemName": {
+        "name": "testItemName",
+        "line": 47,
+        "col": 41,
+        "endLine": 47,
+        "endCol": 68,
+        "kind": "property",
+        "scope": "runAllTests"
+      },
+      "runAllTests.type": {
+        "name": "type",
+        "line": 54,
+        "col": 30,
+        "endLine": 54,
+        "endCol": 51,
+        "kind": "property",
+        "scope": "runAllTests"
+      },
+      "runAllTests.instanceId": {
+        "name": "instanceId",
+        "line": 54,
+        "col": 62,
+        "endLine": 54,
+        "endCol": 72,
+        "kind": "property",
+        "scope": "runAllTests"
+      },
+      "runAllTests.lastRun": {
+        "name": "lastRun",
+        "line": 54,
+        "col": 53,
+        "endLine": 54,
+        "endCol": 60,
+        "kind": "property",
+        "scope": "runAllTests"
+      },
+      "lastRun.timestamp": {
+        "name": "timestamp",
+        "line": 53,
+        "col": 20,
+        "endLine": 53,
+        "endCol": 41,
+        "kind": "property",
+        "scope": "lastRun"
+      },
+      "lastRun.totalPassed": {
+        "name": "totalPassed",
+        "line": 53,
+        "col": 43,
+        "endLine": 53,
+        "endCol": 54,
+        "kind": "property",
+        "scope": "lastRun"
+      },
+      "lastRun.totalFailed": {
+        "name": "totalFailed",
+        "line": 53,
+        "col": 56,
+        "endLine": 53,
+        "endCol": 67,
+        "kind": "property",
+        "scope": "lastRun"
+      },
+      "lastRun.suites": {
+        "name": "suites",
+        "line": 53,
+        "col": 69,
+        "endLine": 53,
+        "endCol": 75,
+        "kind": "property",
+        "scope": "lastRun"
+      },
+      "runTestItem": {
+        "name": "runTestItem",
+        "line": 59,
+        "col": 0,
+        "endLine": 114,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(testItem, api, testArea, rendering)"
+      },
+      "runTestItem.testApi": {
+        "name": "testApi",
+        "line": 60,
+        "col": 8,
+        "endLine": 94,
+        "endCol": 3,
+        "kind": "variable",
+        "scope": "runTestItem"
+      },
+      "testApi.set": {
+        "name": "set",
+        "line": 61,
+        "col": 4,
+        "endLine": 64,
+        "endCol": 5,
+        "kind": "property-function",
+        "scope": "testApi",
+        "signature": "(item)"
+      },
+      "testApi.set.id": {
+        "name": "id",
+        "line": 62,
+        "col": 12,
+        "endLine": 62,
+        "endCol": 54,
+        "kind": "variable",
+        "scope": "testApi.set"
+      },
+      "testApi.get": {
+        "name": "get",
+        "line": 65,
+        "col": 4,
+        "endLine": 68,
+        "endCol": 5,
+        "kind": "property-function",
+        "scope": "testApi",
+        "signature": "(id)"
+      },
+      "testApi.query": {
+        "name": "query",
+        "line": 69,
+        "col": 4,
+        "endLine": 69,
+        "endCol": 40,
+        "kind": "property-function",
+        "scope": "testApi",
+        "signature": "(filter)"
+      },
+      "testApi.getAll": {
+        "name": "getAll",
+        "line": 70,
+        "col": 4,
+        "endLine": 70,
+        "endCol": 30,
+        "kind": "property-function",
+        "scope": "testApi",
+        "signature": "()"
+      },
+      "testApi.delete": {
+        "name": "delete",
+        "line": 71,
+        "col": 4,
+        "endLine": 73,
+        "endCol": 5,
+        "kind": "property-function",
+        "scope": "testApi",
+        "signature": "(id)"
+      },
+      "testApi.require": {
+        "name": "require",
+        "line": 74,
+        "col": 4,
+        "endLine": 74,
+        "endCol": 40,
+        "kind": "property-function",
+        "scope": "testApi",
+        "signature": "(name)"
+      },
+      "testApi.typeChainIncludes": {
+        "name": "typeChainIncludes",
+        "line": 75,
+        "col": 4,
+        "endLine": 75,
+        "endCol": 84,
+        "kind": "property-function",
+        "scope": "testApi",
+        "signature": "(typeId, targetId)"
+      },
+      "testApi.attach": {
+        "name": "attach",
+        "line": 76,
+        "col": 4,
+        "endLine": 76,
+        "endCol": 62,
+        "kind": "property-function",
+        "scope": "testApi",
+        "signature": "(parentId, itemId)"
+      },
+      "testApi.detach": {
+        "name": "detach",
+        "line": 77,
+        "col": 4,
+        "endLine": 77,
+        "endCol": 62,
+        "kind": "property-function",
+        "scope": "testApi",
+        "signature": "(parentId, itemId)"
+      },
+      "testApi.findContainerOf": {
+        "name": "findContainerOf",
+        "line": 78,
+        "col": 4,
+        "endLine": 78,
+        "endCol": 60,
+        "kind": "property-function",
+        "scope": "testApi",
+        "signature": "(itemId)"
+      },
+      "testApi.events": {
+        "name": "events",
+        "line": 79,
+        "col": 4,
+        "endLine": 79,
+        "endCol": 22,
+        "kind": "property",
+        "scope": "testApi"
+      },
+      "testApi.openViewport": {
+        "name": "openViewport",
+        "line": 81,
+        "col": 4,
+        "endLine": 89,
+        "endCol": 5,
+        "kind": "property-function",
+        "scope": "testApi",
+        "signature": "(itemId, viewId)"
+      },
+      "testApi.openViewport.viewport": {
+        "name": "viewport",
+        "line": 82,
+        "col": 12,
+        "endLine": 82,
+        "endCol": 52,
+        "kind": "variable",
+        "scope": "testApi.openViewport"
+      },
+      "testApi.openViewport.dom": {
+        "name": "dom",
+        "line": 86,
+        "col": 12,
+        "endLine": 86,
+        "endCol": 68,
+        "kind": "variable",
+        "scope": "testApi.openViewport"
+      },
+      "testApi.closeViewport": {
+        "name": "closeViewport",
+        "line": 91,
+        "col": 4,
+        "endLine": 93,
+        "endCol": 5,
+        "kind": "property-function",
+        "scope": "testApi",
+        "signature": "(el)"
+      },
+      "runTestItem.mod": {
+        "name": "mod",
+        "line": 96,
+        "col": 8,
+        "endLine": 96,
+        "endCol": 46,
+        "kind": "variable",
+        "scope": "runTestItem"
+      },
+      "runTestItem.ITEM_TIMEOUT": {
+        "name": "ITEM_TIMEOUT",
+        "line": 101,
+        "col": 8,
+        "endLine": 101,
+        "endCol": 28,
+        "kind": "variable",
+        "scope": "runTestItem"
+      },
+      "runTestItem.results": {
+        "name": "results",
+        "line": 102,
+        "col": 8,
+        "endLine": 107,
+        "endCol": 4,
+        "kind": "variable",
+        "scope": "runTestItem"
+      }
+    }
+  },
+  "attachments": []
+}

@@ -1,1 +1,499 @@
-{"id": "99999999-2222-0000-0000-000000000000", "name": "hobson-instance-lib", "type": "66666666-0000-0000-0000-000000000000", "created": 1770816213574, "modified": 1774532372231, "content": {"code": "const HOBSON_INSTANCE_TYPE = '99999999-0000-0000-0000-000000000000';\n\n/**\n * Create a nested Hobson instance, populate it, open it, and return a handle.\n *\n * Item selection (pick one, checked in this order):\n *   options.items  — explicit array of items\n *   options.filter — predicate (item) => boolean applied to api.getAll()\n *   (default)      — all items from api.getAll()\n *\n * Other options:\n *   options.name    — instance item name (default: 'Hobson Instance')\n *   options.timeout — boot timeout in ms (default: 30000)\n */\nexport async function create(api, options = {}) {\n  const id = crypto.randomUUID();\n  const name = options.name || 'Hobson Instance';\n  const timeout = options.timeout || 30000;\n\n  // Resolve items to populate\n  let items;\n  if (options.items) {\n    items = options.items;\n  } else if (options.filter) {\n    const all = await api.getAll();\n    items = all.filter(options.filter);\n  } else {\n    items = await api.getAll();\n  }\n\n  // Populate IndexedDB namespace\n  await populate(id, items);\n\n  // Create the instance item and open it\n  await api.set({\n    id,\n    name,\n    type: HOBSON_INSTANCE_TYPE,\n    content: {},\n    attachments: []\n  }, { silent: true });\n\n  const parentId = api.getParentId();\n  if (parentId) {\n    await api.attach(parentId, id);\n  } else {\n    api.navigate(id);\n  }\n\n  // Build and return the handle\n  return {\n    id,\n\n    onMessage(type, handler) {\n      function listener(e) {\n        if (e.data?.type === type && e.data?.instanceId === id) {\n          handler(e.data);\n        }\n      }\n      window.addEventListener('message', listener);\n      return () => window.removeEventListener('message', listener);\n    },\n\n    waitForMessage(type, msgTimeout) {\n      const t = msgTimeout || timeout;\n      return new Promise((resolve, reject) => {\n        const timer = setTimeout(() => {\n          window.removeEventListener('message', listener);\n          reject(new Error(`Timed out waiting for ${type}`));\n        }, t);\n\n        function listener(e) {\n          if (e.data?.type === type && e.data?.instanceId === id) {\n            clearTimeout(timer);\n            window.removeEventListener('message', listener);\n            resolve(e.data);\n          }\n        }\n\n        window.addEventListener('message', listener);\n      });\n    },\n\n    async destroy() {\n      await api.delete(id);\n    }\n  };\n}\n\n/**\n * Low-level: write items into a nested instance's IndexedDB namespace.\n * Bypasses the kernel to avoid side effects.\n */\nexport async function populate(instanceId, items) {\n  const db = await new Promise((resolve, reject) => {\n    const req = indexedDB.open('hobson');\n    req.onsuccess = () => resolve(req.result);\n    req.onerror = () => reject(req.error);\n  });\n\n  const tx = db.transaction('items', 'readwrite');\n  const store = tx.objectStore('items');\n  const prefix = `${instanceId}:`;\n\n  for (const item of items) {\n    store.put({ ...item, id: prefix + item.id });\n  }\n\n  await new Promise((resolve, reject) => {\n    tx.oncomplete = resolve;\n    tx.onerror = () => reject(tx.error);\n  });\n\n  db.close();\n}\n", "description": [":doc", [":p", {"s": "Reusable library for creating and managing nested Hobson instances. Handles IndexedDB population, instance item creation, message passing, and cleanup."}], [":h2", {"s": "Exports"}], [":h3", [":code", {"s": "create(api, options?)"}]], [":p", {"s": "Creates a nested Hobson instance, populates it with items, opens it, and returns a handle."}], [":p", [":strong", {"s": "Item selection"}], {"s": " (pick one, checked in order):"}], [":ul", [":li", [":p", [":code", {"s": "options.items"}], {"s": " — explicit array of items"}]], [":li", [":p", [":code", {"s": "options.filter"}], {"s": " — predicate applied to "}, [":code", {"s": "api.getAll()"}]]], [":li", [":p", [":em", {"s": "(default)"}], {"s": " — all items from "}, [":code", {"s": "api.getAll()"}]]]], [":p", [":strong", {"s": "Other options:"}]], [":ul", [":li", [":p", [":code", {"s": "options.name"}], {"s": " — instance item name (default: "}, [":code", {"s": "\"Hobson Instance\""}], {"s": ")"}]], [":li", [":p", [":code", {"s": "options.timeout"}], {"s": " — default timeout in ms for "}, [":code", {"s": "waitForMessage"}], {"s": " (default: 30000)"}]]], [":p", [":strong", {"s": "Returns:"}], {"s": " "}, [":code", {"s": "{ id, onMessage, waitForMessage, destroy }"}]], [":ul", [":li", [":p", [":code", {"s": "onMessage(type, handler)"}], {"s": " — subscribe to messages; returns removal function"}]], [":li", [":p", [":code", {"s": "waitForMessage(type, timeout?)"}], {"s": " — promise resolving on first matching message"}]], [":li", [":p", [":code", {"s": "destroy()"}], {"s": " — deletes the instance item"}]]], [":h3", [":code", {"s": "populate(instanceId, items)"}]], [":p", {"s": "Low-level: writes items into a nested instance's IndexedDB namespace, bypassing the kernel."}]], "_symbols": {"HOBSON_INSTANCE_TYPE": {"name": "HOBSON_INSTANCE_TYPE", "line": 1, "col": 6, "endLine": 1, "endCol": 67, "kind": "variable", "scope": null}, "create": {"name": "create", "line": 15, "col": 7, "endLine": 88, "endCol": 1, "kind": "function", "scope": null, "signature": "(api, options = ...)", "description": "Create a nested Hobson instance, populate it, open it, and return a handle.\n\nItem selection (pick one, checked in this order):\n  options.items  — explicit array of items\n  options.filter — predicate (item) => boolean applied to api.getAll()\n  (default)      — all items from api.getAll()\n\nOther options:\n  options.name    — instance item name (default: 'Hobson Instance')\n  options.timeout — boot timeout in ms (default: 30000)"}, "create.id": {"name": "id", "line": 52, "col": 4, "endLine": 52, "endCol": 6, "kind": "property", "scope": "create"}, "create.name": {"name": "name", "line": 37, "col": 4, "endLine": 37, "endCol": 8, "kind": "property", "scope": "create"}, "create.timeout": {"name": "timeout", "line": 18, "col": 8, "endLine": 18, "endCol": 42, "kind": "variable", "scope": "create"}, "create.items": {"name": "items", "line": 21, "col": 6, "endLine": 21, "endCol": 11, "kind": "variable", "scope": "create"}, "create.all": {"name": "all", "line": 25, "col": 10, "endLine": 25, "endCol": 34, "kind": "variable", "scope": "create"}, "create.type": {"name": "type", "line": 38, "col": 4, "endLine": 38, "endCol": 30, "kind": "property", "scope": "create"}, "create.content": {"name": "content", "line": 39, "col": 4, "endLine": 39, "endCol": 15, "kind": "property", "scope": "create"}, "create.attachments": {"name": "attachments", "line": 40, "col": 4, "endLine": 40, "endCol": 19, "kind": "property", "scope": "create"}, "create.silent": {"name": "silent", "line": 41, "col": 7, "endLine": 41, "endCol": 19, "kind": "property", "scope": "create"}, "create.parentId": {"name": "parentId", "line": 43, "col": 8, "endLine": 43, "endCol": 36, "kind": "variable", "scope": "create"}, "create.onMessage": {"name": "onMessage", "line": 54, "col": 4, "endLine": 62, "endCol": 5, "kind": "property-function", "scope": "create", "signature": "(type, handler)"}, "create.onMessage.listener": {"name": "listener", "line": 55, "col": 6, "endLine": 59, "endCol": 7, "kind": "function", "scope": "create.onMessage", "signature": "(e)"}, "create.waitForMessage": {"name": "waitForMessage", "line": 64, "col": 4, "endLine": 82, "endCol": 5, "kind": "property-function", "scope": "create", "signature": "(type, msgTimeout)"}, "create.waitForMessage.t": {"name": "t", "line": 65, "col": 12, "endLine": 65, "endCol": 37, "kind": "variable", "scope": "create.waitForMessage"}, "create.waitForMessage.timer": {"name": "timer", "line": 67, "col": 14, "endLine": 70, "endCol": 13, "kind": "variable", "scope": "create.waitForMessage"}, "create.waitForMessage.listener": {"name": "listener", "line": 72, "col": 8, "endLine": 78, "endCol": 9, "kind": "function", "scope": "create.waitForMessage", "signature": "(e)"}, "create.destroy": {"name": "destroy", "line": 84, "col": 4, "endLine": 86, "endCol": 5, "kind": "property-function", "scope": "create", "signature": "()"}, "populate": {"name": "populate", "line": 94, "col": 7, "endLine": 115, "endCol": 1, "kind": "function", "scope": null, "signature": "(instanceId, items)", "description": "Low-level: write items into a nested instance's IndexedDB namespace.\nBypasses the kernel to avoid side effects."}, "populate.db": {"name": "db", "line": 95, "col": 8, "endLine": 99, "endCol": 4, "kind": "variable", "scope": "populate"}, "populate.tx": {"name": "tx", "line": 101, "col": 8, "endLine": 101, "endCol": 49, "kind": "variable", "scope": "populate"}, "populate.store": {"name": "store", "line": 102, "col": 8, "endLine": 102, "endCol": 39, "kind": "variable", "scope": "populate"}, "populate.prefix": {"name": "prefix", "line": 103, "col": 8, "endLine": 103, "endCol": 33, "kind": "variable", "scope": "populate"}, "populate.item": {"name": "item", "line": 105, "col": 13, "endLine": 105, "endCol": 17, "kind": "variable", "scope": "populate"}, "populate.id": {"name": "id", "line": 106, "col": 25, "endLine": 106, "endCol": 45, "kind": "property", "scope": "populate"}}}, "attachments": []}
+{
+  "id": "99999999-2222-0000-0000-000000000000",
+  "name": "hobson-instance-lib",
+  "type": "66666666-0000-0000-0000-000000000000",
+  "created": 1770816213574,
+  "modified": 1774988055290,
+  "content": {
+    "code": "const HOBSON_INSTANCE_TYPE = '99999999-0000-0000-0000-000000000000';\n\n/**\n * Create a nested Hobson instance, populate it, open it, and return a handle.\n *\n * Item selection (pick one, checked in this order):\n *   options.items  — explicit array of items\n *   options.filter — predicate (item) => boolean applied to api.getAll()\n *   (default)      — all items from api.getAll()\n *\n * Other options:\n *   options.name    — instance item name (default: 'Hobson Instance')\n *   options.timeout — boot timeout in ms (default: 30000)\n */\nexport async function create(api, options = {}) {\n  const id = crypto.randomUUID();\n  const name = options.name || 'Hobson Instance';\n  const timeout = options.timeout || 30000;\n\n  // Resolve items to populate\n  let items;\n  if (options.items) {\n    items = options.items;\n  } else if (options.filter) {\n    const all = await api.getAll();\n    items = all.filter(options.filter);\n  } else {\n    items = await api.getAll();\n  }\n\n  // Populate IndexedDB namespace\n  await populate(id, items);\n\n  // Create the instance item and open it\n  await api.set({\n    id,\n    name,\n    type: HOBSON_INSTANCE_TYPE,\n    content: {},\n    attachments: []\n  }, { silent: true });\n\n  const parentId = api.getParentId();\n  if (parentId) {\n    await api.attach(parentId, id);\n  } else {\n    api.navigate(id);\n  }\n\n  // Build and return the handle\n  return {\n    id,\n\n    onMessage(type, handler) {\n      function listener(e) {\n        if (e.data?.type === type && e.data?.instanceId === id) {\n          handler(e.data);\n        }\n      }\n      window.addEventListener('message', listener);\n      return () => window.removeEventListener('message', listener);\n    },\n\n    waitForMessage(type, msgTimeout) {\n      const t = msgTimeout || timeout;\n      return new Promise((resolve, reject) => {\n        const timer = setTimeout(() => {\n          window.removeEventListener('message', listener);\n          reject(new Error(`Timed out waiting for ${type}`));\n        }, t);\n\n        function listener(e) {\n          if (e.data?.type === type && e.data?.instanceId === id) {\n            clearTimeout(timer);\n            window.removeEventListener('message', listener);\n            resolve(e.data);\n          }\n        }\n\n        window.addEventListener('message', listener);\n      });\n    },\n\n    async destroy() {\n      await api.delete(id);\n    }\n  };\n}\n\n/**\n * Low-level: write items into a nested instance's IndexedDB namespace.\n * Bypasses the kernel to avoid side effects.\n */\nexport async function populate(instanceId, items) {\n  const db = await new Promise((resolve, reject) => {\n    const req = indexedDB.open('hobson');\n    req.onsuccess = () => resolve(req.result);\n    req.onerror = () => reject(req.error);\n  });\n\n  const tx = db.transaction('items', 'readwrite');\n  const store = tx.objectStore('items');\n  const prefix = `${instanceId}:`;\n\n  for (const item of items) {\n    store.put({ ...item, id: prefix + item.id });\n  }\n\n  await new Promise((resolve, reject) => {\n    tx.oncomplete = resolve;\n    tx.onerror = () => reject(tx.error);\n  });\n\n  db.close();\n}\n",
+    "description": [
+      ":doc",
+      [
+        ":p",
+        {
+          "s": "Reusable library for creating and managing nested Hobson instances. Handles IndexedDB population, instance item creation, message passing, and cleanup."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Exports"
+        }
+      ],
+      [
+        ":h3",
+        [
+          ":code",
+          {
+            "s": "create(api, options?)"
+          }
+        ]
+      ],
+      [
+        ":p",
+        {
+          "s": "Creates a nested Hobson instance, populates it with items, opens it, and returns a handle."
+        }
+      ],
+      [
+        ":p",
+        [
+          ":strong",
+          {
+            "s": "Item selection"
+          }
+        ],
+        {
+          "s": " (pick one, checked in order):"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":code",
+              {
+                "s": "options.items"
+              }
+            ],
+            {
+              "s": " — explicit array of items"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":code",
+              {
+                "s": "options.filter"
+              }
+            ],
+            {
+              "s": " — predicate applied to "
+            },
+            [
+              ":code",
+              {
+                "s": "api.getAll()"
+              }
+            ]
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":em",
+              {
+                "s": "(default)"
+              }
+            ],
+            {
+              "s": " — all items from "
+            },
+            [
+              ":code",
+              {
+                "s": "api.getAll()"
+              }
+            ]
+          ]
+        ]
+      ],
+      [
+        ":p",
+        [
+          ":strong",
+          {
+            "s": "Other options:"
+          }
+        ]
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":code",
+              {
+                "s": "options.name"
+              }
+            ],
+            {
+              "s": " — instance item name (default: "
+            },
+            [
+              ":code",
+              {
+                "s": "\"Hobson Instance\""
+              }
+            ],
+            {
+              "s": ")"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":code",
+              {
+                "s": "options.timeout"
+              }
+            ],
+            {
+              "s": " — default timeout in ms for "
+            },
+            [
+              ":code",
+              {
+                "s": "waitForMessage"
+              }
+            ],
+            {
+              "s": " (default: 30000)"
+            }
+          ]
+        ]
+      ],
+      [
+        ":p",
+        [
+          ":strong",
+          {
+            "s": "Returns:"
+          }
+        ],
+        {
+          "s": " "
+        },
+        [
+          ":code",
+          {
+            "s": "{ id, onMessage, waitForMessage, destroy }"
+          }
+        ]
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":code",
+              {
+                "s": "onMessage(type, handler)"
+              }
+            ],
+            {
+              "s": " — subscribe to messages; returns removal function"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":code",
+              {
+                "s": "waitForMessage(type, timeout?)"
+              }
+            ],
+            {
+              "s": " — promise resolving on first matching message"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":code",
+              {
+                "s": "destroy()"
+              }
+            ],
+            {
+              "s": " — deletes the instance item"
+            }
+          ]
+        ]
+      ],
+      [
+        ":h3",
+        [
+          ":code",
+          {
+            "s": "populate(instanceId, items)"
+          }
+        ]
+      ],
+      [
+        ":p",
+        {
+          "s": "Low-level: writes items into a nested instance's IndexedDB namespace, bypassing the kernel."
+        }
+      ]
+    ],
+    "_symbols": {
+      "HOBSON_INSTANCE_TYPE": {
+        "name": "HOBSON_INSTANCE_TYPE",
+        "line": 1,
+        "col": 6,
+        "endLine": 1,
+        "endCol": 67,
+        "kind": "variable",
+        "scope": null
+      },
+      "create": {
+        "name": "create",
+        "line": 15,
+        "col": 7,
+        "endLine": 88,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(api, options = ...)",
+        "description": "Create a nested Hobson instance, populate it, open it, and return a handle.\n\nItem selection (pick one, checked in this order):\n  options.items  — explicit array of items\n  options.filter — predicate (item) => boolean applied to api.getAll()\n  (default)      — all items from api.getAll()\n\nOther options:\n  options.name    — instance item name (default: 'Hobson Instance')\n  options.timeout — boot timeout in ms (default: 30000)"
+      },
+      "create.id": {
+        "name": "id",
+        "line": 52,
+        "col": 4,
+        "endLine": 52,
+        "endCol": 6,
+        "kind": "property",
+        "scope": "create"
+      },
+      "create.name": {
+        "name": "name",
+        "line": 37,
+        "col": 4,
+        "endLine": 37,
+        "endCol": 8,
+        "kind": "property",
+        "scope": "create"
+      },
+      "create.timeout": {
+        "name": "timeout",
+        "line": 18,
+        "col": 8,
+        "endLine": 18,
+        "endCol": 42,
+        "kind": "variable",
+        "scope": "create"
+      },
+      "create.items": {
+        "name": "items",
+        "line": 21,
+        "col": 6,
+        "endLine": 21,
+        "endCol": 11,
+        "kind": "variable",
+        "scope": "create"
+      },
+      "create.all": {
+        "name": "all",
+        "line": 25,
+        "col": 10,
+        "endLine": 25,
+        "endCol": 34,
+        "kind": "variable",
+        "scope": "create"
+      },
+      "create.type": {
+        "name": "type",
+        "line": 38,
+        "col": 4,
+        "endLine": 38,
+        "endCol": 30,
+        "kind": "property",
+        "scope": "create"
+      },
+      "create.content": {
+        "name": "content",
+        "line": 39,
+        "col": 4,
+        "endLine": 39,
+        "endCol": 15,
+        "kind": "property",
+        "scope": "create"
+      },
+      "create.attachments": {
+        "name": "attachments",
+        "line": 40,
+        "col": 4,
+        "endLine": 40,
+        "endCol": 19,
+        "kind": "property",
+        "scope": "create"
+      },
+      "create.silent": {
+        "name": "silent",
+        "line": 41,
+        "col": 7,
+        "endLine": 41,
+        "endCol": 19,
+        "kind": "property",
+        "scope": "create"
+      },
+      "create.parentId": {
+        "name": "parentId",
+        "line": 43,
+        "col": 8,
+        "endLine": 43,
+        "endCol": 36,
+        "kind": "variable",
+        "scope": "create"
+      },
+      "create.onMessage": {
+        "name": "onMessage",
+        "line": 54,
+        "col": 4,
+        "endLine": 62,
+        "endCol": 5,
+        "kind": "property-function",
+        "scope": "create",
+        "signature": "(type, handler)"
+      },
+      "create.onMessage.listener": {
+        "name": "listener",
+        "line": 55,
+        "col": 6,
+        "endLine": 59,
+        "endCol": 7,
+        "kind": "function",
+        "scope": "create.onMessage",
+        "signature": "(e)"
+      },
+      "create.waitForMessage": {
+        "name": "waitForMessage",
+        "line": 64,
+        "col": 4,
+        "endLine": 82,
+        "endCol": 5,
+        "kind": "property-function",
+        "scope": "create",
+        "signature": "(type, msgTimeout)"
+      },
+      "create.waitForMessage.t": {
+        "name": "t",
+        "line": 65,
+        "col": 12,
+        "endLine": 65,
+        "endCol": 37,
+        "kind": "variable",
+        "scope": "create.waitForMessage"
+      },
+      "create.waitForMessage.timer": {
+        "name": "timer",
+        "line": 67,
+        "col": 14,
+        "endLine": 70,
+        "endCol": 13,
+        "kind": "variable",
+        "scope": "create.waitForMessage"
+      },
+      "create.waitForMessage.listener": {
+        "name": "listener",
+        "line": 72,
+        "col": 8,
+        "endLine": 78,
+        "endCol": 9,
+        "kind": "function",
+        "scope": "create.waitForMessage",
+        "signature": "(e)"
+      },
+      "create.destroy": {
+        "name": "destroy",
+        "line": 84,
+        "col": 4,
+        "endLine": 86,
+        "endCol": 5,
+        "kind": "property-function",
+        "scope": "create",
+        "signature": "()"
+      },
+      "populate": {
+        "name": "populate",
+        "line": 94,
+        "col": 7,
+        "endLine": 115,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(instanceId, items)",
+        "description": "Low-level: write items into a nested instance's IndexedDB namespace.\nBypasses the kernel to avoid side effects."
+      },
+      "populate.db": {
+        "name": "db",
+        "line": 95,
+        "col": 8,
+        "endLine": 99,
+        "endCol": 4,
+        "kind": "variable",
+        "scope": "populate"
+      },
+      "populate.tx": {
+        "name": "tx",
+        "line": 101,
+        "col": 8,
+        "endLine": 101,
+        "endCol": 49,
+        "kind": "variable",
+        "scope": "populate"
+      },
+      "populate.store": {
+        "name": "store",
+        "line": 102,
+        "col": 8,
+        "endLine": 102,
+        "endCol": 39,
+        "kind": "variable",
+        "scope": "populate"
+      },
+      "populate.prefix": {
+        "name": "prefix",
+        "line": 103,
+        "col": 8,
+        "endLine": 103,
+        "endCol": 33,
+        "kind": "variable",
+        "scope": "populate"
+      },
+      "populate.item": {
+        "name": "item",
+        "line": 105,
+        "col": 13,
+        "endLine": 105,
+        "endCol": 17,
+        "kind": "variable",
+        "scope": "populate"
+      },
+      "populate.id": {
+        "name": "id",
+        "line": 106,
+        "col": 25,
+        "endLine": 106,
+        "endCol": 45,
+        "kind": "property",
+        "scope": "populate"
+      }
+    }
+  },
+  "attachments": []
+}

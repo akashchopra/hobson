@@ -1,1 +1,687 @@
-{"id": "c0c0c0c0-0039-0000-0000-000000000000", "name": "Proposal: Eager @ref Resolution", "type": "871ae771-b9b1-4f40-8c7f-d9038bfb69c3", "created": 1739836800000, "modified": 1773334818279, "content": {"description": [":doc", [":h1", {"s": "Proposal: Eager @ref Resolution"}], [":h2", {"s": "Problem"}], [":p", [":code", {"s": "@ref"}], {"s": " behaves inconsistently. At the REPL top level, it auto-resolves to the actual item:"}], [":code-block", {"s": ":h @871ae771-b9b1-4f40-8c7f-d9038bfb69c3\n;; => {name: \"note\", type: \"11111111-...\", ...}  (the item)"}], [":p", {"s": "But inside expressions, it's an unresolved marker object, leading to surprises:"}], [":code-block", {"s": ":h (:name @871ae771-b9b1-4f40-8c7f-d9038bfb69c3)\n;; => nil!  (the marker has no :name field)"}], [":p", {"s": "The auto-resolve only runs in "}, [":code", {"s": "hobEval"}], {"s": " on the "}, [":strong", {"s": "final result"}], {"s": " of a top-level evaluation. Sub-expressions see the raw marker "}, [":code", {"s": "{_hobType: \"item-ref\", value: \"...\"}"}], {"s": ", not the item."}], [":h2", {"s": "Current Behavior"}], [":ol", [":li", [":p", {"s": "The reader parses "}, [":code", {"s": "@foo"}], {"s": " into an "}, [":code", {"s": "item-ref"}], {"s": " AST node"}]], [":li", [":p", {"s": "The evaluator returns a marker: "}, [":code", {"s": "{_hobType: 'item-ref', value: 'foo'}"}]]], [":li", [":p", [":code", {"s": "hobEval"}], {"s": " checks if the final result is a marker and auto-resolves it via "}, [":code", {"s": "resolve-ref"}]]]], [":p", {"s": "This means "}, [":code", {"s": "@ref"}], {"s": " works at the top level but silently fails in nested positions. Users must know to write "}, [":code", {"s": "(resolve-ref @ref)"}], {"s": " or use "}, [":code", {"s": "(get-item \"id\")"}], {"s": " instead."}], [":h2", {"s": "Proposed Change"}], [":p", {"s": "Resolve "}, [":code", {"s": "@ref"}], {"s": " eagerly during evaluation. When the evaluator encounters an "}, [":code", {"s": "item-ref"}], {"s": " AST node, it calls "}, [":code", {"s": "resolve-ref"}], {"s": " immediately instead of returning a marker. The top-level auto-resolve in "}, [":code", {"s": "hobEval"}], {"s": " becomes redundant and can be removed."}], [":p", {"s": "The change is small — roughly:"}], [":code-block", {"s": "// Before (in evaluate):\nif (ast.type === 'item-ref') {\n  return { _hobType: 'item-ref', value: ast.value };\n}\n\n// After:\nif (ast.type === 'item-ref') {\n  return env.lookup('resolve-ref')({ _hobType: 'item-ref', value: ast.value });\n}"}], [":h2", {"s": "Impact Analysis"}], [":p", [":strong", {"s": "What breaks:"}], {"s": " Nothing in the current codebase."}], [":ul", [":li", [":p", {"s": "No "}, [":code", {"s": ".hob"}], {"s": " file uses "}, [":code", {"s": "@ref"}]]], [":li", [":p", [":code", {"s": "def-watch"}], {"s": " tests all use map specs ("}, [":code", {"s": "{:event \"eid\"}"}], {"s": "), never "}, [":code", {"s": "@ref"}]]], [":li", [":p", {"s": "The kernel dispatches watch handlers by naming convention, not by inspecting "}, [":code", {"s": "@ref"}], {"s": " markers"}]], [":li", [":p", [":code", {"s": "item-ref?"}], {"s": " is defined but never called anywhere"}]], [":li", [":p", [":code", {"s": "resolve-ref"}], {"s": " still works (it would just be redundant — "}, [":code", {"s": "@ref"}], {"s": " already gives you the item)"}]]], [":p", [":strong", {"s": "What improves:"}]], [":ul", [":li", [":p", [":code", {"s": "@ref"}], {"s": " works consistently everywhere: "}, [":code", {"s": "(:name @note)"}], {"s": " returns the item's name"}]], [":li", [":p", {"s": "No more confusing nil results from nested "}, [":code", {"s": "@ref"}]]], [":li", [":p", {"s": "The mental model is simple: "}, [":code", {"s": "@foo"}], {"s": " means \"get me the item named foo\""}]]], [":p", [":strong", {"s": "What we lose:"}]], [":ul", [":li", [":p", {"s": "The concept of \"item reference as data\" — a lazy pointer you can pass around without resolving. Nobody uses this today, and if needed in the future it could be reintroduced with an explicit constructor like "}, [":code", {"s": "(item-ref \"some-id\")"}], {"s": " rather than overloading "}, [":code", {"s": "@"}], {"s": "."}]], [":li", [":p", [":code", {"s": "item-ref?"}], {"s": " becomes dead code (always returns false). Can be removed or repurposed."}]]], [":p", [":strong", {"s": "Performance:"}]], [":ul", [":li", [":p", {"s": "Every "}, [":code", {"s": "@ref"}], {"s": " triggers a DB lookup, even if the result is discarded. But so does "}, [":code", {"s": "get-item"}], {"s": ", and users expect "}, [":code", {"s": "@ref"}], {"s": " to give them the item. The dependency tracker already caches item lookups within a render cycle."}]]], [":h2", {"s": "Alternatives Considered"}], [":table", [":thead", [":tr", [":th", {"s": "Approach"}], [":th", {"s": "Pros"}], [":th", {"s": "Cons"}]]], [":tbody", [":tr", [":td", [":strong", {"s": "Always lazy"}], {"s": " (remove top-level auto-resolve)"}], [":td", {"s": "Consistent, preserves ref-as-data"}], [":td", {"s": "Less convenient, "}, [":code", {"s": ":h @foo"}], {"s": " stops returning the item"}]], [":tr", [":td", [":strong", {"s": "Always eager"}], {"s": " (this proposal)"}], [":td", {"s": "Intuitive, consistent, matches user expectation"}], [":td", {"s": "Loses ref-as-data (unused), extra DB lookups"}]], [":tr", [":td", [":strong", {"s": "Keep hybrid"}], {"s": " (status quo)"}], [":td", {"s": "No code change"}], [":td", {"s": "Inconsistent, confusing, already caused confusion"}]]]]], "tags": ["c0c0c0c0-0040-0000-0000-000000000000", "c0c0c0c0-0081-0000-0000-000000000000", "c0c0c0c0-0085-0000-0000-000000000000"]}, "attachments": []}
+{
+  "id": "c0c0c0c0-0039-0000-0000-000000000000",
+  "name": "Proposal: Eager @ref Resolution",
+  "type": "871ae771-b9b1-4f40-8c7f-d9038bfb69c3",
+  "created": 1739836800000,
+  "modified": 1774988060861,
+  "content": {
+    "description": [
+      ":doc",
+      [
+        ":h1",
+        {
+          "s": "Proposal: Eager @ref Resolution"
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Problem"
+        }
+      ],
+      [
+        ":p",
+        [
+          ":code",
+          {
+            "s": "@ref"
+          }
+        ],
+        {
+          "s": " behaves inconsistently. At the REPL top level, it auto-resolves to the actual item:"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": ":h @871ae771-b9b1-4f40-8c7f-d9038bfb69c3\n;; => {name: \"note\", type: \"11111111-...\", ...}  (the item)"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "But inside expressions, it's an unresolved marker object, leading to surprises:"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": ":h (:name @871ae771-b9b1-4f40-8c7f-d9038bfb69c3)\n;; => nil!  (the marker has no :name field)"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The auto-resolve only runs in "
+        },
+        [
+          ":code",
+          {
+            "s": "hobEval"
+          }
+        ],
+        {
+          "s": " on the "
+        },
+        [
+          ":strong",
+          {
+            "s": "final result"
+          }
+        ],
+        {
+          "s": " of a top-level evaluation. Sub-expressions see the raw marker "
+        },
+        [
+          ":code",
+          {
+            "s": "{_hobType: \"item-ref\", value: \"...\"}"
+          }
+        ],
+        {
+          "s": ", not the item."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Current Behavior"
+        }
+      ],
+      [
+        ":ol",
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "The reader parses "
+            },
+            [
+              ":code",
+              {
+                "s": "@foo"
+              }
+            ],
+            {
+              "s": " into an "
+            },
+            [
+              ":code",
+              {
+                "s": "item-ref"
+              }
+            ],
+            {
+              "s": " AST node"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "The evaluator returns a marker: "
+            },
+            [
+              ":code",
+              {
+                "s": "{_hobType: 'item-ref', value: 'foo'}"
+              }
+            ]
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":code",
+              {
+                "s": "hobEval"
+              }
+            ],
+            {
+              "s": " checks if the final result is a marker and auto-resolves it via "
+            },
+            [
+              ":code",
+              {
+                "s": "resolve-ref"
+              }
+            ]
+          ]
+        ]
+      ],
+      [
+        ":p",
+        {
+          "s": "This means "
+        },
+        [
+          ":code",
+          {
+            "s": "@ref"
+          }
+        ],
+        {
+          "s": " works at the top level but silently fails in nested positions. Users must know to write "
+        },
+        [
+          ":code",
+          {
+            "s": "(resolve-ref @ref)"
+          }
+        ],
+        {
+          "s": " or use "
+        },
+        [
+          ":code",
+          {
+            "s": "(get-item \"id\")"
+          }
+        ],
+        {
+          "s": " instead."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Proposed Change"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Resolve "
+        },
+        [
+          ":code",
+          {
+            "s": "@ref"
+          }
+        ],
+        {
+          "s": " eagerly during evaluation. When the evaluator encounters an "
+        },
+        [
+          ":code",
+          {
+            "s": "item-ref"
+          }
+        ],
+        {
+          "s": " AST node, it calls "
+        },
+        [
+          ":code",
+          {
+            "s": "resolve-ref"
+          }
+        ],
+        {
+          "s": " immediately instead of returning a marker. The top-level auto-resolve in "
+        },
+        [
+          ":code",
+          {
+            "s": "hobEval"
+          }
+        ],
+        {
+          "s": " becomes redundant and can be removed."
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The change is small — roughly:"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": "// Before (in evaluate):\nif (ast.type === 'item-ref') {\n  return { _hobType: 'item-ref', value: ast.value };\n}\n\n// After:\nif (ast.type === 'item-ref') {\n  return env.lookup('resolve-ref')({ _hobType: 'item-ref', value: ast.value });\n}"
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Impact Analysis"
+        }
+      ],
+      [
+        ":p",
+        [
+          ":strong",
+          {
+            "s": "What breaks:"
+          }
+        ],
+        {
+          "s": " Nothing in the current codebase."
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "No "
+            },
+            [
+              ":code",
+              {
+                "s": ".hob"
+              }
+            ],
+            {
+              "s": " file uses "
+            },
+            [
+              ":code",
+              {
+                "s": "@ref"
+              }
+            ]
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":code",
+              {
+                "s": "def-watch"
+              }
+            ],
+            {
+              "s": " tests all use map specs ("
+            },
+            [
+              ":code",
+              {
+                "s": "{:event \"eid\"}"
+              }
+            ],
+            {
+              "s": "), never "
+            },
+            [
+              ":code",
+              {
+                "s": "@ref"
+              }
+            ]
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "The kernel dispatches watch handlers by naming convention, not by inspecting "
+            },
+            [
+              ":code",
+              {
+                "s": "@ref"
+              }
+            ],
+            {
+              "s": " markers"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":code",
+              {
+                "s": "item-ref?"
+              }
+            ],
+            {
+              "s": " is defined but never called anywhere"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":code",
+              {
+                "s": "resolve-ref"
+              }
+            ],
+            {
+              "s": " still works (it would just be redundant — "
+            },
+            [
+              ":code",
+              {
+                "s": "@ref"
+              }
+            ],
+            {
+              "s": " already gives you the item)"
+            }
+          ]
+        ]
+      ],
+      [
+        ":p",
+        [
+          ":strong",
+          {
+            "s": "What improves:"
+          }
+        ]
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":code",
+              {
+                "s": "@ref"
+              }
+            ],
+            {
+              "s": " works consistently everywhere: "
+            },
+            [
+              ":code",
+              {
+                "s": "(:name @note)"
+              }
+            ],
+            {
+              "s": " returns the item's name"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "No more confusing nil results from nested "
+            },
+            [
+              ":code",
+              {
+                "s": "@ref"
+              }
+            ]
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "The mental model is simple: "
+            },
+            [
+              ":code",
+              {
+                "s": "@foo"
+              }
+            ],
+            {
+              "s": " means \"get me the item named foo\""
+            }
+          ]
+        ]
+      ],
+      [
+        ":p",
+        [
+          ":strong",
+          {
+            "s": "What we lose:"
+          }
+        ]
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "The concept of \"item reference as data\" — a lazy pointer you can pass around without resolving. Nobody uses this today, and if needed in the future it could be reintroduced with an explicit constructor like "
+            },
+            [
+              ":code",
+              {
+                "s": "(item-ref \"some-id\")"
+              }
+            ],
+            {
+              "s": " rather than overloading "
+            },
+            [
+              ":code",
+              {
+                "s": "@"
+              }
+            ],
+            {
+              "s": "."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":code",
+              {
+                "s": "item-ref?"
+              }
+            ],
+            {
+              "s": " becomes dead code (always returns false). Can be removed or repurposed."
+            }
+          ]
+        ]
+      ],
+      [
+        ":p",
+        [
+          ":strong",
+          {
+            "s": "Performance:"
+          }
+        ]
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Every "
+            },
+            [
+              ":code",
+              {
+                "s": "@ref"
+              }
+            ],
+            {
+              "s": " triggers a DB lookup, even if the result is discarded. But so does "
+            },
+            [
+              ":code",
+              {
+                "s": "get-item"
+              }
+            ],
+            {
+              "s": ", and users expect "
+            },
+            [
+              ":code",
+              {
+                "s": "@ref"
+              }
+            ],
+            {
+              "s": " to give them the item. The dependency tracker already caches item lookups within a render cycle."
+            }
+          ]
+        ]
+      ],
+      [
+        ":h2",
+        {
+          "s": "Alternatives Considered"
+        }
+      ],
+      [
+        ":table",
+        [
+          ":thead",
+          [
+            ":tr",
+            [
+              ":th",
+              {
+                "s": "Approach"
+              }
+            ],
+            [
+              ":th",
+              {
+                "s": "Pros"
+              }
+            ],
+            [
+              ":th",
+              {
+                "s": "Cons"
+              }
+            ]
+          ]
+        ],
+        [
+          ":tbody",
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":strong",
+                {
+                  "s": "Always lazy"
+                }
+              ],
+              {
+                "s": " (remove top-level auto-resolve)"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Consistent, preserves ref-as-data"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Less convenient, "
+              },
+              [
+                ":code",
+                {
+                  "s": ":h @foo"
+                }
+              ],
+              {
+                "s": " stops returning the item"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":strong",
+                {
+                  "s": "Always eager"
+                }
+              ],
+              {
+                "s": " (this proposal)"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Intuitive, consistent, matches user expectation"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Loses ref-as-data (unused), extra DB lookups"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":strong",
+                {
+                  "s": "Keep hybrid"
+                }
+              ],
+              {
+                "s": " (status quo)"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "No code change"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Inconsistent, confusing, already caused confusion"
+              }
+            ]
+          ]
+        ]
+      ]
+    ],
+    "tags": [
+      "c0c0c0c0-0040-0000-0000-000000000000",
+      "c0c0c0c0-0081-0000-0000-000000000000",
+      "c0c0c0c0-0085-0000-0000-000000000000"
+    ]
+  },
+  "attachments": []
+}

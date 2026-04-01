@@ -1,1 +1,1494 @@
-{"id": "c0c0c0c0-0006-0000-0000-000000000000", "name": "Event System", "type": "871ae771-b9b1-4f40-8c7f-d9038bfb69c3", "created": 1738454400000, "modified": 1773334818285, "content": {"description": [":doc", [":p", {"s": "Hobson uses an event system for reactive programming. Code can subscribe to events and respond when things happen in the system."}], [":h2", {"s": "Event Types"}], [":p", {"s": "Events are organized into namespaces:"}], [":h3", {"s": "Item Events ("}, [":code", {"s": "item:*"}], {"s": ")"}], [":table", [":thead", [":tr", [":th", {"s": "Event"}], [":th", {"s": "When Fired"}], [":th", {"s": "Payload"}]]], [":tbody", [":tr", [":td", [":code", {"s": "item:created"}]], [":td", {"s": "New item saved"}], [":td", [":code", {"s": "{ item }"}]]], [":tr", [":td", [":code", {"s": "item:updated"}]], [":td", {"s": "Existing item modified"}], [":td", [":code", {"s": "{ item, previousItem }"}]]], [":tr", [":td", [":code", {"s": "item:deleted"}]], [":td", {"s": "Item removed"}], [":td", [":code", {"s": "{ itemId }"}]]]]], [":h3", {"s": "System Events"}], [":table", [":thead", [":tr", [":th", {"s": "Event"}], [":th", {"s": "When Fired"}], [":th", {"s": "Payload"}]]], [":tbody", [":tr", [":td", [":code", {"s": "kernel:boot-complete"}]], [":td", {"s": "Kernel finished booting"}], [":td", [":code", {"s": "{}"}]]], [":tr", [":td", [":code", {"s": "error-event"}]], [":td", {"s": "Unhandled error occurred"}], [":td", [":code", {"s": "{ error, context, timestamp }"}]]]]], [":h3", {"s": "Selection Events ("}, [":code", {"s": "selection:*"}], {"s": ")"}], [":table", [":thead", [":tr", [":th", {"s": "Event"}], [":th", {"s": "When Fired"}], [":th", {"s": "Payload"}]]], [":tbody", [":tr", [":td", [":code", {"s": "selection:changed"}]], [":td", {"s": "Selected item changed"}], [":td", [":code", {"s": "{ itemId, previousItemId }"}]]]]], [":h3", {"s": "Viewport Events ("}, [":code", {"s": "viewport:*"}], {"s": ")"}], [":table", [":thead", [":tr", [":th", {"s": "Event"}], [":th", {"s": "When Fired"}], [":th", {"s": "Payload"}]]], [":tbody", [":tr", [":td", [":code", {"s": "viewport:root-changed"}]], [":td", {"s": "Navigation occurred"}], [":td", [":code", {"s": "{ rootId, previousRootId }"}]]]]], [":h2", {"s": "Subscribing to Events"}], [":h3", {"s": "In Code (Runtime)"}], [":code-block", {"s": "// Subscribe using event type GUIDs\nconst unsubscribe = api.events.on(api.EVENT_IDS.ITEM_UPDATED, (event) => {\n  console.log('Item changed:', event.content.item.id);\n});\n\n// Later: unsubscribe\nunsubscribe();"}], [":p", {"s": "The "}, [":code", {"s": "api.events.on()"}], {"s": " function takes an "}, [":strong", {"s": "event type GUID"}], {"s": ", not a string name. Use "}, [":code", {"s": "api.EVENT_IDS"}], {"s": " for well-known events (ITEM_CREATED, ITEM_UPDATED, ITEM_DELETED, SYSTEM_ERROR, SYSTEM_BOOT_COMPLETE)."}], [":h3", {"s": "Declarative Watches"}], [":p", {"s": "Code items can declare event subscriptions that activate automatically:"}], [":code-block", {"s": "{\n  type: \"library-uuid\",\n  watches: [\n    { event: \"e0e00000-0001-0001-0000-000000000000\", type: \"note-type-uuid\" },\n    { event: \"e0e00000-0001-0002-0000-000000000000\", typeExtends: \"code-type-uuid\" },\n    { event: \"e0e00000-0002-0001-0000-000000000000\" }\n  ],\n  content: {\n    code: `\n      export async function onItemCreated(event, api) {\n        // Called when a note is created\n      }\n\n      export async function onItemUpdated(event, api) {\n        // Called when any code item is updated\n      }\n\n      export async function onErrorEvent(event, api) {\n        // Called on any system error\n      }\n    `\n  }\n}"}], [":p", {"s": "Note: "}, [":code", {"s": "watches"}], {"s": " is a "}, [":strong", {"s": "top-level field"}], {"s": " on the item, not inside "}, [":code", {"s": "content"}], {"s": ". The "}, [":code", {"s": "event"}], {"s": " field takes an "}, [":strong", {"s": "event type GUID"}], {"s": " (not the event name string). Handler names are derived from the event definition item's name (e.g., event named "}, [":code", {"s": "item:created"}], {"s": " → handler "}, [":code", {"s": "onItemCreated"}], {"s": ")."}], [":h3", {"s": "Watch Filters"}], [":table", [":thead", [":tr", [":th", {"s": "Filter"}], [":th", {"s": "Meaning"}]]], [":tbody", [":tr", [":td", [":code", {"s": "type"}]], [":td", {"s": "Only items of exactly this type"}]], [":tr", [":td", [":code", {"s": "typeExtends"}]], [":td", {"s": "Items whose type chain includes this type"}]], [":tr", [":td", {"s": "(none)"}], [":td", {"s": "All events of this name"}]]]], [":h3", {"s": "Handler Naming Convention"}], [":p", {"s": "The handler function name is derived from the event name:"}], [":table", [":thead", [":tr", [":th", {"s": "Event"}], [":th", {"s": "Handler"}]]], [":tbody", [":tr", [":td", [":code", {"s": "item:created"}]], [":td", [":code", {"s": "onItemCreated"}]]], [":tr", [":td", [":code", {"s": "item:updated"}]], [":td", [":code", {"s": "onItemUpdated"}]]], [":tr", [":td", [":code", {"s": "error-event"}]], [":td", [":code", {"s": "onErrorEvent"}]]], [":tr", [":td", [":code", {"s": "selection:changed"}]], [":td", [":code", {"s": "onSelectionChanged"}]]]]], [":h2", {"s": "Event Flow Example"}], [":p", {"s": "When a note is saved:"}], [":code-block", {"s": "1. api.set(noteItem) called\n2. Storage validates and writes to IndexedDB\n3. Kernel emits item:created (or item:updated)\n4. EventBus notifies all subscribers:\n   - Runtime subscriptions (api.events.on)\n   - Declarative watches matching the event\n5. Handlers execute with event data and API access"}], [":h2", {"s": "Built-in Event Handlers"}], [":table", [":thead", [":tr", [":th", {"s": "Handler"}], [":th", {"s": "Watches"}], [":th", {"s": "Purpose"}]]], [":tbody", [":tr", [":td", [":item-ref", {"s": "e7707000-0000-0000-0000-000000000002"}, {"s": "default-error-handler"}]], [":td", [":code", {"s": "error-event"}]], [":td", {"s": "Creates error items, shows toast"}]], [":tr", [":td", [":item-ref", {"s": "dafc22a5-13bf-4b42-937d-52f002c4bc70"}, {"s": "view-update-watcher"}]], [":td", [":code", {"s": "item:updated"}], {"s": " (views)"}], [":td", {"s": "Re-renders when view code changes"}]]]], [":h2", {"s": "Creating Event-Driven Extensions"}], [":ol", [":li", [":p", {"s": "Create a library item"}]], [":li", [":p", {"s": "Add "}, [":code", {"s": "content.watches"}], {"s": " array"}]], [":li", [":p", {"s": "Export handler functions matching the naming convention"}]], [":li", [":p", {"s": "The kernel auto-wires them on boot"}]]], [":p", {"s": "This is how the error handling system works—no kernel modification needed."}], [":h2", {"s": "Watch Filter Evaluation"}], [":p", {"s": "Filters are evaluated at "}, [":strong", {"s": "event-fire time"}], {"s": ", not cached at boot:"}], [":ol", [":li", [":p", {"s": "When an event fires, the kernel queries all code items with matching "}, [":code", {"s": "watches"}]]], [":li", [":p", {"s": "For each watcher, filters are evaluated against the event's item:"}], [":ul", [":li", [":p", [":code", {"s": "type"}], {"s": ": exact match "}, [":code", {"s": "event.item.type === filter.type"}]]], [":li", [":p", [":code", {"s": "typeExtends"}], {"s": ": walks the item's type chain, checks if "}, [":code", {"s": "filter.typeExtends"}], {"s": " is in the chain"}]], [":li", [":p", [":code", {"s": "id"}], {"s": ": exact match "}, [":code", {"s": "event.item.id === filter.id"}]]]]], [":li", [":p", {"s": "Multiple filter fields are AND-ed together"}]], [":li", [":p", {"s": "No filters (only "}, [":code", {"s": "event"}], {"s": ") matches all events of that type"}]]], [":p", [":strong", {"s": "Why event-fire time?"}], {"s": " Type chains can change dynamically. Caching at boot would miss new types."}], [":h2", {"s": "Design Rationale"}], [":h3", {"s": "Why Declarative Over Imperative?"}], [":p", {"s": "Imperative "}, [":code", {"s": "api.events.on()"}], {"s": " requires code to run at boot time to register listeners. Declarative watches as data:"}], [":ul", [":li", [":p", {"s": "Enable \"what watches what\" queries without executing code"}]], [":li", [":p", {"s": "Automatic lifecycle management (no manual subscribe/unsubscribe)"}]], [":li", [":p", {"s": "Fit the \"everything is data\" philosophy"}]], [":li", [":p", {"s": "Are inspectable — you can query which items watch which events"}]]], [":h3", {"s": "Why Automatic Subscriptions?"}], [":p", {"s": "When a renderer renders an item, the kernel automatically subscribes to changes in that item's attachments. This:"}], [":ul", [":li", [":p", {"s": "Eliminates boilerplate subscription management"}]], [":li", [":p", {"s": "Ensures consistency (can't forget to subscribe)"}]], [":li", [":p", {"s": "Limits notifications to direct parents only (prevents cascading re-renders)"}]]], [":h2", {"s": "See Also"}], [":ul", [":li", [":p", [":item-ref", {"s": "33333333-1111-0000-0000-000000000000"}, {"s": "kernel:core"}], {"s": " — EventBus implementation"}]], [":li", [":p", [":item-ref", {"s": "e7707000-0000-0000-0000-000000000002"}, {"s": "default-error-handler"}], {"s": " — Example event handler"}]], [":li", [":p", [":item-ref", {"s": "c0c0c0c0-0023-0000-0000-000000000000"}, {"s": "Error Handling"}], {"s": " — Three-tier error system using watches"}]], [":li", [":p", [":item-ref", {"s": "c0c0c0c0-0001-0000-0000-000000000000"}, {"s": "concept:kernel"}], {"s": " — What's kernel vs userland"}]], [":li", [":p", [":item-ref", {"s": "f1111111-0003-0000-0000-000000000000"}, {"s": "concept:repl"}], {"s": " — Testing events via "}, [":code", {"s": "api.events"}]]]], [":h2", {"s": "API Constants"}], [":p", {"s": "Event type constants are available as "}, [":code", {"s": "api.EVENT_IDS"}], {"s": ":"}], [":table", [":thead", [":tr", [":th", {"s": "Constant"}], [":th", {"s": "Event"}]]], [":tbody", [":tr", [":td", [":code", {"s": "ITEM_CREATED"}]], [":td", [":code", {"s": "item:created"}]]], [":tr", [":td", [":code", {"s": "ITEM_UPDATED"}]], [":td", [":code", {"s": "item:updated"}]]], [":tr", [":td", [":code", {"s": "ITEM_DELETED"}]], [":td", [":code", {"s": "item:deleted"}]]], [":tr", [":td", [":code", {"s": "SYSTEM_ERROR"}]], [":td", [":code", {"s": "error-event"}]]], [":tr", [":td", [":code", {"s": "SYSTEM_BOOT_COMPLETE"}]], [":td", [":code", {"s": "kernel:boot-complete"}]]]]], [":h2", {"s": "Event Type Hierarchy"}], [":p", {"s": "Event types form a type chain like items. Subscribing to a parent type receives all child events:"}], [":pre", {"s": "event-definition (base)                  e0e00000-0000-...\n├── item-event                           e0e00000-0001-...\n│   ├── item:created                     e0e00000-0001-0001-...\n│   ├── item:updated                     e0e00000-0001-0002-...\n│   └── item:deleted                     e0e00000-0001-0003-...\n└── system-event                         e0e00000-0002-...\n    ├── error-event                      e0e00000-0002-0001-...\n    └── kernel:boot-complete             e0e00000-0002-0002-..."}], [":h2", {"s": "Additional API Methods"}], [":p", [":code", {"s": "api.events.off(eventTypeId, handler)"}], {"s": " — remove a specific handler."}], [":p", [":code", {"s": "api.events.list()"}], {"s": " — returns array of event type IDs with active listeners."}], [":h2", {"s": "Custom Event Types"}], [":pre", {"s": "javascript"}, {"s": "// Create custom event type\nawait api.set({\n  id: crypto.randomUUID(),\n  name: 'my-app:data-synced',\n  type: api.EVENT_IDS.SYSTEM_EVENT,\n  content: { description: 'Fired when data sync completes' }\n});\n\n// Emit it\napi.events.emit({\n  type: customEventId,\n  content: { syncedItems: 42 }\n});"}]], "tags": ["4cae3791-df52-43a7-8152-ba9374bfe089", "c0c0c0c0-0001-0000-0000-000000000000", "c0c0c0c0-0085-0000-0000-000000000000"]}, "attachments": []}
+{
+  "id": "c0c0c0c0-0006-0000-0000-000000000000",
+  "name": "Event System",
+  "type": "871ae771-b9b1-4f40-8c7f-d9038bfb69c3",
+  "created": 1738454400000,
+  "modified": 1774988060549,
+  "content": {
+    "description": [
+      ":doc",
+      [
+        ":p",
+        {
+          "s": "Hobson uses an event system for reactive programming. Code can subscribe to events and respond when things happen in the system."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Event Types"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Events are organized into namespaces:"
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Item Events ("
+        },
+        [
+          ":code",
+          {
+            "s": "item:*"
+          }
+        ],
+        {
+          "s": ")"
+        }
+      ],
+      [
+        ":table",
+        [
+          ":thead",
+          [
+            ":tr",
+            [
+              ":th",
+              {
+                "s": "Event"
+              }
+            ],
+            [
+              ":th",
+              {
+                "s": "When Fired"
+              }
+            ],
+            [
+              ":th",
+              {
+                "s": "Payload"
+              }
+            ]
+          ]
+        ],
+        [
+          ":tbody",
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "item:created"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "New item saved"
+              }
+            ],
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "{ item }"
+                }
+              ]
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "item:updated"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Existing item modified"
+              }
+            ],
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "{ item, previousItem }"
+                }
+              ]
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "item:deleted"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Item removed"
+              }
+            ],
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "{ itemId }"
+                }
+              ]
+            ]
+          ]
+        ]
+      ],
+      [
+        ":h3",
+        {
+          "s": "System Events"
+        }
+      ],
+      [
+        ":table",
+        [
+          ":thead",
+          [
+            ":tr",
+            [
+              ":th",
+              {
+                "s": "Event"
+              }
+            ],
+            [
+              ":th",
+              {
+                "s": "When Fired"
+              }
+            ],
+            [
+              ":th",
+              {
+                "s": "Payload"
+              }
+            ]
+          ]
+        ],
+        [
+          ":tbody",
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "kernel:boot-complete"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Kernel finished booting"
+              }
+            ],
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "{}"
+                }
+              ]
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "error-event"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Unhandled error occurred"
+              }
+            ],
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "{ error, context, timestamp }"
+                }
+              ]
+            ]
+          ]
+        ]
+      ],
+      [
+        ":h3",
+        {
+          "s": "Selection Events ("
+        },
+        [
+          ":code",
+          {
+            "s": "selection:*"
+          }
+        ],
+        {
+          "s": ")"
+        }
+      ],
+      [
+        ":table",
+        [
+          ":thead",
+          [
+            ":tr",
+            [
+              ":th",
+              {
+                "s": "Event"
+              }
+            ],
+            [
+              ":th",
+              {
+                "s": "When Fired"
+              }
+            ],
+            [
+              ":th",
+              {
+                "s": "Payload"
+              }
+            ]
+          ]
+        ],
+        [
+          ":tbody",
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "selection:changed"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Selected item changed"
+              }
+            ],
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "{ itemId, previousItemId }"
+                }
+              ]
+            ]
+          ]
+        ]
+      ],
+      [
+        ":h3",
+        {
+          "s": "Viewport Events ("
+        },
+        [
+          ":code",
+          {
+            "s": "viewport:*"
+          }
+        ],
+        {
+          "s": ")"
+        }
+      ],
+      [
+        ":table",
+        [
+          ":thead",
+          [
+            ":tr",
+            [
+              ":th",
+              {
+                "s": "Event"
+              }
+            ],
+            [
+              ":th",
+              {
+                "s": "When Fired"
+              }
+            ],
+            [
+              ":th",
+              {
+                "s": "Payload"
+              }
+            ]
+          ]
+        ],
+        [
+          ":tbody",
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "viewport:root-changed"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Navigation occurred"
+              }
+            ],
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "{ rootId, previousRootId }"
+                }
+              ]
+            ]
+          ]
+        ]
+      ],
+      [
+        ":h2",
+        {
+          "s": "Subscribing to Events"
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "In Code (Runtime)"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": "// Subscribe using event type GUIDs\nconst unsubscribe = api.events.on(api.EVENT_IDS.ITEM_UPDATED, (event) => {\n  console.log('Item changed:', event.content.item.id);\n});\n\n// Later: unsubscribe\nunsubscribe();"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The "
+        },
+        [
+          ":code",
+          {
+            "s": "api.events.on()"
+          }
+        ],
+        {
+          "s": " function takes an "
+        },
+        [
+          ":strong",
+          {
+            "s": "event type GUID"
+          }
+        ],
+        {
+          "s": ", not a string name. Use "
+        },
+        [
+          ":code",
+          {
+            "s": "api.EVENT_IDS"
+          }
+        ],
+        {
+          "s": " for well-known events (ITEM_CREATED, ITEM_UPDATED, ITEM_DELETED, SYSTEM_ERROR, SYSTEM_BOOT_COMPLETE)."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Declarative Watches"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Code items can declare event subscriptions that activate automatically:"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": "{\n  type: \"library-uuid\",\n  watches: [\n    { event: \"e0e00000-0001-0001-0000-000000000000\", type: \"note-type-uuid\" },\n    { event: \"e0e00000-0001-0002-0000-000000000000\", typeExtends: \"code-type-uuid\" },\n    { event: \"e0e00000-0002-0001-0000-000000000000\" }\n  ],\n  content: {\n    code: `\n      export async function onItemCreated(event, api) {\n        // Called when a note is created\n      }\n\n      export async function onItemUpdated(event, api) {\n        // Called when any code item is updated\n      }\n\n      export async function onErrorEvent(event, api) {\n        // Called on any system error\n      }\n    `\n  }\n}"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Note: "
+        },
+        [
+          ":code",
+          {
+            "s": "watches"
+          }
+        ],
+        {
+          "s": " is a "
+        },
+        [
+          ":strong",
+          {
+            "s": "top-level field"
+          }
+        ],
+        {
+          "s": " on the item, not inside "
+        },
+        [
+          ":code",
+          {
+            "s": "content"
+          }
+        ],
+        {
+          "s": ". The "
+        },
+        [
+          ":code",
+          {
+            "s": "event"
+          }
+        ],
+        {
+          "s": " field takes an "
+        },
+        [
+          ":strong",
+          {
+            "s": "event type GUID"
+          }
+        ],
+        {
+          "s": " (not the event name string). Handler names are derived from the event definition item's name (e.g., event named "
+        },
+        [
+          ":code",
+          {
+            "s": "item:created"
+          }
+        ],
+        {
+          "s": " → handler "
+        },
+        [
+          ":code",
+          {
+            "s": "onItemCreated"
+          }
+        ],
+        {
+          "s": ")."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Watch Filters"
+        }
+      ],
+      [
+        ":table",
+        [
+          ":thead",
+          [
+            ":tr",
+            [
+              ":th",
+              {
+                "s": "Filter"
+              }
+            ],
+            [
+              ":th",
+              {
+                "s": "Meaning"
+              }
+            ]
+          ]
+        ],
+        [
+          ":tbody",
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "type"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Only items of exactly this type"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "typeExtends"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Items whose type chain includes this type"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              {
+                "s": "(none)"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "All events of this name"
+              }
+            ]
+          ]
+        ]
+      ],
+      [
+        ":h3",
+        {
+          "s": "Handler Naming Convention"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The handler function name is derived from the event name:"
+        }
+      ],
+      [
+        ":table",
+        [
+          ":thead",
+          [
+            ":tr",
+            [
+              ":th",
+              {
+                "s": "Event"
+              }
+            ],
+            [
+              ":th",
+              {
+                "s": "Handler"
+              }
+            ]
+          ]
+        ],
+        [
+          ":tbody",
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "item:created"
+                }
+              ]
+            ],
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "onItemCreated"
+                }
+              ]
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "item:updated"
+                }
+              ]
+            ],
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "onItemUpdated"
+                }
+              ]
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "error-event"
+                }
+              ]
+            ],
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "onErrorEvent"
+                }
+              ]
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "selection:changed"
+                }
+              ]
+            ],
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "onSelectionChanged"
+                }
+              ]
+            ]
+          ]
+        ]
+      ],
+      [
+        ":h2",
+        {
+          "s": "Event Flow Example"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "When a note is saved:"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": "1. api.set(noteItem) called\n2. Storage validates and writes to IndexedDB\n3. Kernel emits item:created (or item:updated)\n4. EventBus notifies all subscribers:\n   - Runtime subscriptions (api.events.on)\n   - Declarative watches matching the event\n5. Handlers execute with event data and API access"
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Built-in Event Handlers"
+        }
+      ],
+      [
+        ":table",
+        [
+          ":thead",
+          [
+            ":tr",
+            [
+              ":th",
+              {
+                "s": "Handler"
+              }
+            ],
+            [
+              ":th",
+              {
+                "s": "Watches"
+              }
+            ],
+            [
+              ":th",
+              {
+                "s": "Purpose"
+              }
+            ]
+          ]
+        ],
+        [
+          ":tbody",
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":item-ref",
+                {
+                  "s": "e7707000-0000-0000-0000-000000000002"
+                },
+                {
+                  "s": "default-error-handler"
+                }
+              ]
+            ],
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "error-event"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Creates error items, shows toast"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":item-ref",
+                {
+                  "s": "dafc22a5-13bf-4b42-937d-52f002c4bc70"
+                },
+                {
+                  "s": "view-update-watcher"
+                }
+              ]
+            ],
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "item:updated"
+                }
+              ],
+              {
+                "s": " (views)"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Re-renders when view code changes"
+              }
+            ]
+          ]
+        ]
+      ],
+      [
+        ":h2",
+        {
+          "s": "Creating Event-Driven Extensions"
+        }
+      ],
+      [
+        ":ol",
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Create a library item"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Add "
+            },
+            [
+              ":code",
+              {
+                "s": "content.watches"
+              }
+            ],
+            {
+              "s": " array"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Export handler functions matching the naming convention"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "The kernel auto-wires them on boot"
+            }
+          ]
+        ]
+      ],
+      [
+        ":p",
+        {
+          "s": "This is how the error handling system works—no kernel modification needed."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Watch Filter Evaluation"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Filters are evaluated at "
+        },
+        [
+          ":strong",
+          {
+            "s": "event-fire time"
+          }
+        ],
+        {
+          "s": ", not cached at boot:"
+        }
+      ],
+      [
+        ":ol",
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "When an event fires, the kernel queries all code items with matching "
+            },
+            [
+              ":code",
+              {
+                "s": "watches"
+              }
+            ]
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "For each watcher, filters are evaluated against the event's item:"
+            }
+          ],
+          [
+            ":ul",
+            [
+              ":li",
+              [
+                ":p",
+                [
+                  ":code",
+                  {
+                    "s": "type"
+                  }
+                ],
+                {
+                  "s": ": exact match "
+                },
+                [
+                  ":code",
+                  {
+                    "s": "event.item.type === filter.type"
+                  }
+                ]
+              ]
+            ],
+            [
+              ":li",
+              [
+                ":p",
+                [
+                  ":code",
+                  {
+                    "s": "typeExtends"
+                  }
+                ],
+                {
+                  "s": ": walks the item's type chain, checks if "
+                },
+                [
+                  ":code",
+                  {
+                    "s": "filter.typeExtends"
+                  }
+                ],
+                {
+                  "s": " is in the chain"
+                }
+              ]
+            ],
+            [
+              ":li",
+              [
+                ":p",
+                [
+                  ":code",
+                  {
+                    "s": "id"
+                  }
+                ],
+                {
+                  "s": ": exact match "
+                },
+                [
+                  ":code",
+                  {
+                    "s": "event.item.id === filter.id"
+                  }
+                ]
+              ]
+            ]
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Multiple filter fields are AND-ed together"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "No filters (only "
+            },
+            [
+              ":code",
+              {
+                "s": "event"
+              }
+            ],
+            {
+              "s": ") matches all events of that type"
+            }
+          ]
+        ]
+      ],
+      [
+        ":p",
+        [
+          ":strong",
+          {
+            "s": "Why event-fire time?"
+          }
+        ],
+        {
+          "s": " Type chains can change dynamically. Caching at boot would miss new types."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Design Rationale"
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Why Declarative Over Imperative?"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Imperative "
+        },
+        [
+          ":code",
+          {
+            "s": "api.events.on()"
+          }
+        ],
+        {
+          "s": " requires code to run at boot time to register listeners. Declarative watches as data:"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Enable \"what watches what\" queries without executing code"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Automatic lifecycle management (no manual subscribe/unsubscribe)"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Fit the \"everything is data\" philosophy"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Are inspectable — you can query which items watch which events"
+            }
+          ]
+        ]
+      ],
+      [
+        ":h3",
+        {
+          "s": "Why Automatic Subscriptions?"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "When a renderer renders an item, the kernel automatically subscribes to changes in that item's attachments. This:"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Eliminates boilerplate subscription management"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Ensures consistency (can't forget to subscribe)"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Limits notifications to direct parents only (prevents cascading re-renders)"
+            }
+          ]
+        ]
+      ],
+      [
+        ":h2",
+        {
+          "s": "See Also"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":item-ref",
+              {
+                "s": "33333333-1111-0000-0000-000000000000"
+              },
+              {
+                "s": "kernel:core"
+              }
+            ],
+            {
+              "s": " — EventBus implementation"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":item-ref",
+              {
+                "s": "e7707000-0000-0000-0000-000000000002"
+              },
+              {
+                "s": "default-error-handler"
+              }
+            ],
+            {
+              "s": " — Example event handler"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":item-ref",
+              {
+                "s": "c0c0c0c0-0023-0000-0000-000000000000"
+              },
+              {
+                "s": "Error Handling"
+              }
+            ],
+            {
+              "s": " — Three-tier error system using watches"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":item-ref",
+              {
+                "s": "c0c0c0c0-0001-0000-0000-000000000000"
+              },
+              {
+                "s": "concept:kernel"
+              }
+            ],
+            {
+              "s": " — What's kernel vs userland"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":item-ref",
+              {
+                "s": "f1111111-0003-0000-0000-000000000000"
+              },
+              {
+                "s": "concept:repl"
+              }
+            ],
+            {
+              "s": " — Testing events via "
+            },
+            [
+              ":code",
+              {
+                "s": "api.events"
+              }
+            ]
+          ]
+        ]
+      ],
+      [
+        ":h2",
+        {
+          "s": "API Constants"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Event type constants are available as "
+        },
+        [
+          ":code",
+          {
+            "s": "api.EVENT_IDS"
+          }
+        ],
+        {
+          "s": ":"
+        }
+      ],
+      [
+        ":table",
+        [
+          ":thead",
+          [
+            ":tr",
+            [
+              ":th",
+              {
+                "s": "Constant"
+              }
+            ],
+            [
+              ":th",
+              {
+                "s": "Event"
+              }
+            ]
+          ]
+        ],
+        [
+          ":tbody",
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "ITEM_CREATED"
+                }
+              ]
+            ],
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "item:created"
+                }
+              ]
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "ITEM_UPDATED"
+                }
+              ]
+            ],
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "item:updated"
+                }
+              ]
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "ITEM_DELETED"
+                }
+              ]
+            ],
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "item:deleted"
+                }
+              ]
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "SYSTEM_ERROR"
+                }
+              ]
+            ],
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "error-event"
+                }
+              ]
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "SYSTEM_BOOT_COMPLETE"
+                }
+              ]
+            ],
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "kernel:boot-complete"
+                }
+              ]
+            ]
+          ]
+        ]
+      ],
+      [
+        ":h2",
+        {
+          "s": "Event Type Hierarchy"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Event types form a type chain like items. Subscribing to a parent type receives all child events:"
+        }
+      ],
+      [
+        ":pre",
+        {
+          "s": "event-definition (base)                  e0e00000-0000-...\n├── item-event                           e0e00000-0001-...\n│   ├── item:created                     e0e00000-0001-0001-...\n│   ├── item:updated                     e0e00000-0001-0002-...\n│   └── item:deleted                     e0e00000-0001-0003-...\n└── system-event                         e0e00000-0002-...\n    ├── error-event                      e0e00000-0002-0001-...\n    └── kernel:boot-complete             e0e00000-0002-0002-..."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Additional API Methods"
+        }
+      ],
+      [
+        ":p",
+        [
+          ":code",
+          {
+            "s": "api.events.off(eventTypeId, handler)"
+          }
+        ],
+        {
+          "s": " — remove a specific handler."
+        }
+      ],
+      [
+        ":p",
+        [
+          ":code",
+          {
+            "s": "api.events.list()"
+          }
+        ],
+        {
+          "s": " — returns array of event type IDs with active listeners."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Custom Event Types"
+        }
+      ],
+      [
+        ":pre",
+        {
+          "s": "javascript"
+        },
+        {
+          "s": "// Create custom event type\nawait api.set({\n  id: crypto.randomUUID(),\n  name: 'my-app:data-synced',\n  type: api.EVENT_IDS.SYSTEM_EVENT,\n  content: { description: 'Fired when data sync completes' }\n});\n\n// Emit it\napi.events.emit({\n  type: customEventId,\n  content: { syncedItems: 42 }\n});"
+        }
+      ]
+    ],
+    "tags": [
+      "4cae3791-df52-43a7-8152-ba9374bfe089",
+      "c0c0c0c0-0001-0000-0000-000000000000",
+      "c0c0c0c0-0085-0000-0000-000000000000"
+    ]
+  },
+  "attachments": []
+}

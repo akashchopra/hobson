@@ -1,1 +1,773 @@
-{"id": "c0c0c0c0-0082-0000-0000-000000000000", "name": "Reactive Pipeline", "type": "871ae771-b9b1-4f40-8c7f-d9038bfb69c3", "created": 1740873600000, "modified": 1773243817657, "content": {"tags": ["bff75873-edb8-412e-81c9-c744e68fe29f", "c0c0c0c0-0085-0000-0000-000000000000"], "description": [":doc", [":p", {"s": "Hobson's reactive rendering pipeline re-renders views when the items they display change. The system is registry-based with optional selector filtering — no global tracking context, no atom tracking, no closure capture."}], [":h2", {"s": "Architecture"}], [":p", {"s": "The pipeline lives in "}, [":item-ref", {"s": "f1111111-0008-0000-0000-000000000000"}, {"s": "viewport-rendering"}], {"s": " and has two core pieces:"}], [":ol", [":li", [":p", [":strong", {"s": "RenderInstanceRegistry"}], {"s": " — indexes every rendered instance by "}, [":code", {"s": "itemId"}], {"s": ", "}, [":code", {"s": "viewId"}], {"s": ", and "}, [":code", {"s": "parentId"}]]], [":li", [":p", [":strong", {"s": "Event-driven scheduling"}], {"s": " — listens for "}, [":code", {"s": "item:updated"}], {"s": " / "}, [":code", {"s": "item:deleted"}], {"s": " events and schedules re-renders"}]]], [":h2", {"s": "Data Flow"}], [":code-block", {"s": "item:updated event\n  → registry.byItemId.get(changedId)\n  → Set<instanceId>\n  → selector check (if Hob view with selector)\n  → _pendingReRenders (microtask batched)\n  → _flushReRenders (serialized, async)\n  → re-render each affected item"}], [":h2", {"s": "RenderInstanceRegistry"}], [":p", {"s": "Three index maps:"}], [":table", [":thead", [":tr", [":th", {"s": "Map"}], [":th", {"s": "Key"}], [":th", {"s": "Value"}], [":th", {"s": "Purpose"}]]], [":tbody", [":tr", [":td", [":code", {"s": "byItemId"}]], [":td", {"s": "item GUID"}], [":td", {"s": "Set of instance IDs"}], [":td", {"s": "Which instances display this item?"}]], [":tr", [":td", [":code", {"s": "byViewId"}]], [":td", {"s": "view GUID"}], [":td", {"s": "Set of instance IDs"}], [":td", {"s": "Re-render all instances using a specific view"}]], [":tr", [":td", [":code", {"s": "byParentId"}]], [":td", {"s": "parent GUID"}], [":td", {"s": "Set of instance IDs"}], [":td", {"s": "Find children of a container"}]]]], [":p", {"s": "Each instance stores: "}, [":code", {"s": "domNode"}], {"s": ", "}, [":code", {"s": "itemId"}], {"s": ", "}, [":code", {"s": "viewId"}], {"s": ", "}, [":code", {"s": "parentId"}], {"s": ", "}, [":code", {"s": "decorator"}], {"s": ", "}, [":code", {"s": "openIn"}], {"s": ", "}, [":code", {"s": "ancestors"}], {"s": ", "}, [":code", {"s": "selector"}], {"s": ", "}, [":code", {"s": "timestamp"}], {"s": "."}], [":h2", {"s": "Selector-Filtered Reactivity (Hob Views)"}], [":p", {"s": "Hob views can declare which slice of an item's data they care about using "}, [":code", {"s": "get-item"}], {"s": " with a "}, [":code", {"s": ":select"}], {"s": " keyword:"}], [":code-block", {"s": "(get-item item-id :select (fn [item]\n  (select-keys (get item :content) [:name :status])))"}], [":p", {"s": "This registers a selector on the render instance. On subsequent "}, [":code", {"s": "item:updated"}], {"s": " events:"}], [":ol", [":li", [":p", {"s": "The selector function runs against the current item"}]], [":li", [":p", {"s": "The result is compared to the previous value via "}, [":code", {"s": "deepEquals"}]]], [":li", [":p", {"s": "If unchanged → "}, [":strong", {"s": "skip re-render"}], {"s": " (the key optimization)"}]], [":li", [":p", {"s": "If changed → update stored value, queue re-render"}]]], [":h3", {"s": "Selector Pins"}], [":p", {"s": "Once a selector is registered via "}, [":code", {"s": "get-item :select"}], {"s": " for an item, later bare "}, [":code", {"s": "get-item"}], {"s": " calls on the same item don't widen the selector. The selector is the intentional reactivity contract — it defines exactly what data matters."}], [":h3", {"s": "JS Views"}], [":p", {"s": "JS views have no selector support. They are registered in "}, [":code", {"s": "byItemId"}], {"s": " and always re-render when their item changes."}], [":h2", {"s": "Batching and Serialization"}], [":p", {"s": "Re-renders are "}, [":strong", {"s": "microtask batched"}], {"s": ": multiple "}, [":code", {"s": "item:updated"}], {"s": " events in the same tick accumulate instance IDs in "}, [":code", {"s": "_pendingReRenders"}], {"s": ", then a single "}, [":code", {"s": "_flushReRenders()"}], {"s": " processes them all."}], [":p", {"s": "Flushes are "}, [":strong", {"s": "serialized"}], {"s": ": if a flush is already in progress, new pending items wait. After each flush completes, a post-flush check picks up anything that arrived during the flush."}], [":h2", {"s": "Nested Rendering"}], [":p", {"s": "Views can render child items via "}, [":code", {"s": "render-item"}], {"s": ". Each child gets its own render instance with independent selector tracking. Parents don't depend on children — editing a child re-renders only that child, not the parent."}], [":h2", {"s": "History"}], [":p", {"s": "This system replaced the "}, [":code", {"s": "DependencyTracker"}], {"s": " (a stack-based tracking context that recorded item reads during view evaluation). The DependencyTracker was removed in Phase 7 simplification because:"}], [":ul", [":li", [":p", {"s": "Global "}, [":code", {"s": "_currentTrackingContext"}], {"s": " state was fragile across async boundaries"}]], [":li", [":p", {"s": "Atom tracking added complexity for minimal benefit"}]], [":li", [":p", [":code", {"s": "wrapEventHandler"}], {"s": " context nesting was error-prone"}]], [":li", [":p", {"s": "Registry-based lookups with explicit selectors are simpler and more predictable"}]]], [":p", {"s": "See "}, [":item-ref", {"s": "c0c0c0c0-0062-0000-0000-000000000000"}, {"s": "Rendering Architecture Review"}], {"s": " (archived) for the analysis that led to this design."}], [":h2", {"s": "See Also"}], [":ul", [":li", [":p", [":item-ref", {"s": "a0a0a0a0-d0c0-4000-8000-000000000004"}, {"s": "Views & Rendering"}], {"s": " — View system overview"}]], [":li", [":p", [":item-ref", {"s": "f1111111-0008-0000-0000-000000000000"}, {"s": "viewport-rendering"}], {"s": " — Implementation"}]], [":li", [":p", [":item-ref", {"s": "c0c0c0c0-0010-0000-0000-000000000000"}, {"s": "Silent Update Pattern"}], {"s": " — Two-tier save leveraging selectors"}]], [":li", [":p", [":item-ref", {"s": "c0c0c0c0-0017-0000-0000-000000000000"}, {"s": "Stable Skeleton with Surgical Updates"}], {"s": " — Efficient local-state views"}]]]]}, "attachments": []}
+{
+  "id": "c0c0c0c0-0082-0000-0000-000000000000",
+  "name": "Reactive Pipeline",
+  "type": "871ae771-b9b1-4f40-8c7f-d9038bfb69c3",
+  "created": 1740873600000,
+  "modified": 1774988061498,
+  "content": {
+    "tags": [
+      "bff75873-edb8-412e-81c9-c744e68fe29f",
+      "c0c0c0c0-0085-0000-0000-000000000000"
+    ],
+    "description": [
+      ":doc",
+      [
+        ":p",
+        {
+          "s": "Hobson's reactive rendering pipeline re-renders views when the items they display change. The system is registry-based with optional selector filtering — no global tracking context, no atom tracking, no closure capture."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Architecture"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The pipeline lives in "
+        },
+        [
+          ":item-ref",
+          {
+            "s": "f1111111-0008-0000-0000-000000000000"
+          },
+          {
+            "s": "viewport-rendering"
+          }
+        ],
+        {
+          "s": " and has two core pieces:"
+        }
+      ],
+      [
+        ":ol",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "RenderInstanceRegistry"
+              }
+            ],
+            {
+              "s": " — indexes every rendered instance by "
+            },
+            [
+              ":code",
+              {
+                "s": "itemId"
+              }
+            ],
+            {
+              "s": ", "
+            },
+            [
+              ":code",
+              {
+                "s": "viewId"
+              }
+            ],
+            {
+              "s": ", and "
+            },
+            [
+              ":code",
+              {
+                "s": "parentId"
+              }
+            ]
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Event-driven scheduling"
+              }
+            ],
+            {
+              "s": " — listens for "
+            },
+            [
+              ":code",
+              {
+                "s": "item:updated"
+              }
+            ],
+            {
+              "s": " / "
+            },
+            [
+              ":code",
+              {
+                "s": "item:deleted"
+              }
+            ],
+            {
+              "s": " events and schedules re-renders"
+            }
+          ]
+        ]
+      ],
+      [
+        ":h2",
+        {
+          "s": "Data Flow"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": "item:updated event\n  → registry.byItemId.get(changedId)\n  → Set<instanceId>\n  → selector check (if Hob view with selector)\n  → _pendingReRenders (microtask batched)\n  → _flushReRenders (serialized, async)\n  → re-render each affected item"
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "RenderInstanceRegistry"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Three index maps:"
+        }
+      ],
+      [
+        ":table",
+        [
+          ":thead",
+          [
+            ":tr",
+            [
+              ":th",
+              {
+                "s": "Map"
+              }
+            ],
+            [
+              ":th",
+              {
+                "s": "Key"
+              }
+            ],
+            [
+              ":th",
+              {
+                "s": "Value"
+              }
+            ],
+            [
+              ":th",
+              {
+                "s": "Purpose"
+              }
+            ]
+          ]
+        ],
+        [
+          ":tbody",
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "byItemId"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "item GUID"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Set of instance IDs"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Which instances display this item?"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "byViewId"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "view GUID"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Set of instance IDs"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Re-render all instances using a specific view"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "byParentId"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "parent GUID"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Set of instance IDs"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Find children of a container"
+              }
+            ]
+          ]
+        ]
+      ],
+      [
+        ":p",
+        {
+          "s": "Each instance stores: "
+        },
+        [
+          ":code",
+          {
+            "s": "domNode"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "itemId"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "viewId"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "parentId"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "decorator"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "openIn"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "ancestors"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "selector"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "timestamp"
+          }
+        ],
+        {
+          "s": "."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Selector-Filtered Reactivity (Hob Views)"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Hob views can declare which slice of an item's data they care about using "
+        },
+        [
+          ":code",
+          {
+            "s": "get-item"
+          }
+        ],
+        {
+          "s": " with a "
+        },
+        [
+          ":code",
+          {
+            "s": ":select"
+          }
+        ],
+        {
+          "s": " keyword:"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": "(get-item item-id :select (fn [item]\n  (select-keys (get item :content) [:name :status])))"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "This registers a selector on the render instance. On subsequent "
+        },
+        [
+          ":code",
+          {
+            "s": "item:updated"
+          }
+        ],
+        {
+          "s": " events:"
+        }
+      ],
+      [
+        ":ol",
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "The selector function runs against the current item"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "The result is compared to the previous value via "
+            },
+            [
+              ":code",
+              {
+                "s": "deepEquals"
+              }
+            ]
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "If unchanged → "
+            },
+            [
+              ":strong",
+              {
+                "s": "skip re-render"
+              }
+            ],
+            {
+              "s": " (the key optimization)"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "If changed → update stored value, queue re-render"
+            }
+          ]
+        ]
+      ],
+      [
+        ":h3",
+        {
+          "s": "Selector Pins"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Once a selector is registered via "
+        },
+        [
+          ":code",
+          {
+            "s": "get-item :select"
+          }
+        ],
+        {
+          "s": " for an item, later bare "
+        },
+        [
+          ":code",
+          {
+            "s": "get-item"
+          }
+        ],
+        {
+          "s": " calls on the same item don't widen the selector. The selector is the intentional reactivity contract — it defines exactly what data matters."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "JS Views"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "JS views have no selector support. They are registered in "
+        },
+        [
+          ":code",
+          {
+            "s": "byItemId"
+          }
+        ],
+        {
+          "s": " and always re-render when their item changes."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Batching and Serialization"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Re-renders are "
+        },
+        [
+          ":strong",
+          {
+            "s": "microtask batched"
+          }
+        ],
+        {
+          "s": ": multiple "
+        },
+        [
+          ":code",
+          {
+            "s": "item:updated"
+          }
+        ],
+        {
+          "s": " events in the same tick accumulate instance IDs in "
+        },
+        [
+          ":code",
+          {
+            "s": "_pendingReRenders"
+          }
+        ],
+        {
+          "s": ", then a single "
+        },
+        [
+          ":code",
+          {
+            "s": "_flushReRenders()"
+          }
+        ],
+        {
+          "s": " processes them all."
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Flushes are "
+        },
+        [
+          ":strong",
+          {
+            "s": "serialized"
+          }
+        ],
+        {
+          "s": ": if a flush is already in progress, new pending items wait. After each flush completes, a post-flush check picks up anything that arrived during the flush."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Nested Rendering"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Views can render child items via "
+        },
+        [
+          ":code",
+          {
+            "s": "render-item"
+          }
+        ],
+        {
+          "s": ". Each child gets its own render instance with independent selector tracking. Parents don't depend on children — editing a child re-renders only that child, not the parent."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "History"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "This system replaced the "
+        },
+        [
+          ":code",
+          {
+            "s": "DependencyTracker"
+          }
+        ],
+        {
+          "s": " (a stack-based tracking context that recorded item reads during view evaluation). The DependencyTracker was removed in Phase 7 simplification because:"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Global "
+            },
+            [
+              ":code",
+              {
+                "s": "_currentTrackingContext"
+              }
+            ],
+            {
+              "s": " state was fragile across async boundaries"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Atom tracking added complexity for minimal benefit"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":code",
+              {
+                "s": "wrapEventHandler"
+              }
+            ],
+            {
+              "s": " context nesting was error-prone"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Registry-based lookups with explicit selectors are simpler and more predictable"
+            }
+          ]
+        ]
+      ],
+      [
+        ":p",
+        {
+          "s": "See "
+        },
+        [
+          ":item-ref",
+          {
+            "s": "c0c0c0c0-0062-0000-0000-000000000000"
+          },
+          {
+            "s": "Rendering Architecture Review"
+          }
+        ],
+        {
+          "s": " (archived) for the analysis that led to this design."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "See Also"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":item-ref",
+              {
+                "s": "a0a0a0a0-d0c0-4000-8000-000000000004"
+              },
+              {
+                "s": "Views & Rendering"
+              }
+            ],
+            {
+              "s": " — View system overview"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":item-ref",
+              {
+                "s": "f1111111-0008-0000-0000-000000000000"
+              },
+              {
+                "s": "viewport-rendering"
+              }
+            ],
+            {
+              "s": " — Implementation"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":item-ref",
+              {
+                "s": "c0c0c0c0-0010-0000-0000-000000000000"
+              },
+              {
+                "s": "Silent Update Pattern"
+              }
+            ],
+            {
+              "s": " — Two-tier save leveraging selectors"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":item-ref",
+              {
+                "s": "c0c0c0c0-0017-0000-0000-000000000000"
+              },
+              {
+                "s": "Stable Skeleton with Surgical Updates"
+              }
+            ],
+            {
+              "s": " — Efficient local-state views"
+            }
+          ]
+        ]
+      ]
+    ]
+  },
+  "attachments": []
+}

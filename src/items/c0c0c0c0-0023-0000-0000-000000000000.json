@@ -1,1 +1,413 @@
-{"id": "c0c0c0c0-0023-0000-0000-000000000000", "name": "Error Handling", "type": "871ae771-b9b1-4f40-8c7f-d9038bfb69c3", "created": 1738454400000, "modified": 1773243817477, "content": {"description": [":doc", [":p", {"s": "Hobson uses a three-tier error handling system that keeps the kernel minimal while allowing userland code to provide rich error experiences."}], [":h2", {"s": "Three Tiers"}], [":h3", {"s": "Tier 1: Kernel Event Emission"}], [":p", {"s": "The kernel catches errors and emits a "}, [":code", {"s": "error-event"}], {"s": " event:"}], [":code-block", {"s": "async captureError(error, context = {}) {\n  this.events.emit({\n    type: EVENT_IDS.SYSTEM_ERROR,\n    content: { error, context, timestamp: Date.now() }\n  });\n}"}], [":p", {"s": "The kernel does NOT create error items, show UI, or decide how to present errors. It just announces that an error happened."}], [":h3", {"s": "Tier 2: Userland Error Handler"}], [":p", {"s": "The "}, [":code", {"s": "default-error-handler"}], {"s": " library subscribes to "}, [":code", {"s": "error-event"}], {"s": " via "}, [":item-ref", {"s": "c0c0c0c0-0006-0000-0000-000000000000"}, {"s": "declarative watches"}], {"s": ":"}], [":code-block", {"s": "// In default-error-handler item\ncontent: {\n  watches: [{ event: \"error-event\" }],\n  code: `\n    export async function onErrorEvent(event, api) {\n      // Create an error item for persistent record\n      const errorItem = {\n        id: crypto.randomUUID(),\n        type: ERROR_TYPE_ID,\n        content: {\n          message: event.content.error.message,\n          stack: event.content.error.stack,\n          context: event.content.context,\n          timestamp: event.content.timestamp\n        }\n      };\n      await api.set(errorItem);\n      // Show toast notification\n      showErrorToast(errorItem);\n    }\n  `\n}"}], [":p", {"s": "This is a regular userland library — inspectable, modifiable, replaceable."}], [":h3", {"s": "Tier 3: Fallback (Emergency REPL)"}], [":p", {"s": "If the error handler itself fails, or if errors occur before boot completes:"}], [":ol", [":li", [":p", {"s": "Kernel tries to load "}, [":code", {"s": "repl-ui"}], {"s": " directly via "}, [":code", {"s": "require()"}]]], [":li", [":p", {"s": "If available, calls "}, [":code", {"s": "replLib.showEmergency(error, context)"}]]], [":li", [":p", {"s": "If REPL is also broken → errors go to browser DevTools console"}]], [":li", [":p", {"s": "Last resort → "}, [":item-ref", {"s": "33333333-7777-0000-0000-000000000000"}, {"s": "safe mode"}]]]], [":h2", {"s": "Error Item Structure"}], [":p", {"s": "Error items persist error information for later review:"}], [":code-block", {"s": "{\n  type: \"error-type-uuid\",\n  content: {\n    message: \"Cannot read property 'name' of undefined\",\n    stack: \"at render (blob:...:42:15)\\n  at ...\",\n    context: { itemId: \"...\", viewId: \"...\" },\n    timestamp: 1706000000000\n  }\n}"}], [":h3", {"s": "Stack Trace Parsing"}], [":p", {"s": "The error view parses stack traces to identify item references. Blob URLs contain item IDs, which are extracted to create navigable frames:"}], [":code-block", {"s": "at render (blob:https://hobson.app/f1111111-0008-0000-0000-000000000000:42:15)\n→ kernel:rendering-system, line 42"}], [":p", {"s": "Clicking a frame navigates to the source item."}], [":h2", {"s": "Error Views"}], [":ul", [":li", [":p", [":strong", {"s": "Error view"}], {"s": " — displays a single error with parsed stack trace and navigable frames"}]], [":li", [":p", [":strong", {"s": "Error list view"}], {"s": " — displays recent errors in a list, useful as a dashboard widget"}]]], [":h2", {"s": "Design Rationale"}], [":h3", {"s": "Why Extensible?"}], [":p", {"s": "Users might want different error handling: logging to a file, sending to a webhook, auto-creating bug items. Making the handler a replaceable item enables all of these."}], [":h3", {"s": "Why User-Controlled?"}], [":p", {"s": "The kernel doesn't know how to present errors well. UI decisions (toast vs modal vs inline) belong in userland where they can use views, styling, and user preferences."}], [":h3", {"s": "Why Kernel Minimal?"}], [":p", {"s": "The kernel only emits events. This means:"}], [":ul", [":li", [":p", {"s": "No error UI code in the kernel to break"}]], [":li", [":p", {"s": "Error handling can be upgraded without touching the kernel"}]], [":li", [":p", {"s": "The kernel itself can never be broken by error handling bugs"}]]], [":h2", {"s": "See Also"}], [":ul", [":li", [":p", [":item-ref", {"s": "c0c0c0c0-0006-0000-0000-000000000000"}, {"s": "Event System"}], {"s": " — Declarative watches mechanism"}]], [":li", [":p", [":item-ref", {"s": "33333333-7777-0000-0000-000000000000"}, {"s": "Safe Mode"}], {"s": " — Nuclear recovery option"}]], [":li", [":p", [":item-ref", {"s": "c0c0c0c0-0001-0000-0000-000000000000"}, {"s": "Kernel"}], {"s": " — What's kernel vs userland"}]]]], "tags": ["a63eadd8-ec56-4163-acf2-207aa392069b", "c0c0c0c0-0085-0000-0000-000000000000"]}, "attachments": []}
+{
+  "id": "c0c0c0c0-0023-0000-0000-000000000000",
+  "name": "Error Handling",
+  "type": "871ae771-b9b1-4f40-8c7f-d9038bfb69c3",
+  "created": 1738454400000,
+  "modified": 1774988060690,
+  "content": {
+    "description": [
+      ":doc",
+      [
+        ":p",
+        {
+          "s": "Hobson uses a three-tier error handling system that keeps the kernel minimal while allowing userland code to provide rich error experiences."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Three Tiers"
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Tier 1: Kernel Event Emission"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The kernel catches errors and emits a "
+        },
+        [
+          ":code",
+          {
+            "s": "error-event"
+          }
+        ],
+        {
+          "s": " event:"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": "async captureError(error, context = {}) {\n  this.events.emit({\n    type: EVENT_IDS.SYSTEM_ERROR,\n    content: { error, context, timestamp: Date.now() }\n  });\n}"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The kernel does NOT create error items, show UI, or decide how to present errors. It just announces that an error happened."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Tier 2: Userland Error Handler"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The "
+        },
+        [
+          ":code",
+          {
+            "s": "default-error-handler"
+          }
+        ],
+        {
+          "s": " library subscribes to "
+        },
+        [
+          ":code",
+          {
+            "s": "error-event"
+          }
+        ],
+        {
+          "s": " via "
+        },
+        [
+          ":item-ref",
+          {
+            "s": "c0c0c0c0-0006-0000-0000-000000000000"
+          },
+          {
+            "s": "declarative watches"
+          }
+        ],
+        {
+          "s": ":"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": "// In default-error-handler item\ncontent: {\n  watches: [{ event: \"error-event\" }],\n  code: `\n    export async function onErrorEvent(event, api) {\n      // Create an error item for persistent record\n      const errorItem = {\n        id: crypto.randomUUID(),\n        type: ERROR_TYPE_ID,\n        content: {\n          message: event.content.error.message,\n          stack: event.content.error.stack,\n          context: event.content.context,\n          timestamp: event.content.timestamp\n        }\n      };\n      await api.set(errorItem);\n      // Show toast notification\n      showErrorToast(errorItem);\n    }\n  `\n}"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "This is a regular userland library — inspectable, modifiable, replaceable."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Tier 3: Fallback (Emergency REPL)"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "If the error handler itself fails, or if errors occur before boot completes:"
+        }
+      ],
+      [
+        ":ol",
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Kernel tries to load "
+            },
+            [
+              ":code",
+              {
+                "s": "repl-ui"
+              }
+            ],
+            {
+              "s": " directly via "
+            },
+            [
+              ":code",
+              {
+                "s": "require()"
+              }
+            ]
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "If available, calls "
+            },
+            [
+              ":code",
+              {
+                "s": "replLib.showEmergency(error, context)"
+              }
+            ]
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "If REPL is also broken → errors go to browser DevTools console"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Last resort → "
+            },
+            [
+              ":item-ref",
+              {
+                "s": "33333333-7777-0000-0000-000000000000"
+              },
+              {
+                "s": "safe mode"
+              }
+            ]
+          ]
+        ]
+      ],
+      [
+        ":h2",
+        {
+          "s": "Error Item Structure"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Error items persist error information for later review:"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": "{\n  type: \"error-type-uuid\",\n  content: {\n    message: \"Cannot read property 'name' of undefined\",\n    stack: \"at render (blob:...:42:15)\\n  at ...\",\n    context: { itemId: \"...\", viewId: \"...\" },\n    timestamp: 1706000000000\n  }\n}"
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Stack Trace Parsing"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The error view parses stack traces to identify item references. Blob URLs contain item IDs, which are extracted to create navigable frames:"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": "at render (blob:https://hobson.app/f1111111-0008-0000-0000-000000000000:42:15)\n→ kernel:rendering-system, line 42"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Clicking a frame navigates to the source item."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Error Views"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Error view"
+              }
+            ],
+            {
+              "s": " — displays a single error with parsed stack trace and navigable frames"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Error list view"
+              }
+            ],
+            {
+              "s": " — displays recent errors in a list, useful as a dashboard widget"
+            }
+          ]
+        ]
+      ],
+      [
+        ":h2",
+        {
+          "s": "Design Rationale"
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Why Extensible?"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Users might want different error handling: logging to a file, sending to a webhook, auto-creating bug items. Making the handler a replaceable item enables all of these."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Why User-Controlled?"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The kernel doesn't know how to present errors well. UI decisions (toast vs modal vs inline) belong in userland where they can use views, styling, and user preferences."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Why Kernel Minimal?"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The kernel only emits events. This means:"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "No error UI code in the kernel to break"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Error handling can be upgraded without touching the kernel"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "The kernel itself can never be broken by error handling bugs"
+            }
+          ]
+        ]
+      ],
+      [
+        ":h2",
+        {
+          "s": "See Also"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":item-ref",
+              {
+                "s": "c0c0c0c0-0006-0000-0000-000000000000"
+              },
+              {
+                "s": "Event System"
+              }
+            ],
+            {
+              "s": " — Declarative watches mechanism"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":item-ref",
+              {
+                "s": "33333333-7777-0000-0000-000000000000"
+              },
+              {
+                "s": "Safe Mode"
+              }
+            ],
+            {
+              "s": " — Nuclear recovery option"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":item-ref",
+              {
+                "s": "c0c0c0c0-0001-0000-0000-000000000000"
+              },
+              {
+                "s": "Kernel"
+              }
+            ],
+            {
+              "s": " — What's kernel vs userland"
+            }
+          ]
+        ]
+      ]
+    ],
+    "tags": [
+      "a63eadd8-ec56-4163-acf2-207aa392069b",
+      "c0c0c0c0-0085-0000-0000-000000000000"
+    ]
+  },
+  "attachments": []
+}

@@ -1,1 +1,2514 @@
-{"id": "c0c0c0c0-0093-0000-0000-000000000000", "name": "Transparency & Conceptual Uniformity", "type": "871ae771-b9b1-4f40-8c7f-d9038bfb69c3", "created": 1741478400000, "modified": 1773651391503, "content": {"description": [":doc", [":p", {"s": "For Hobson to succeed as a virtual OS — a place where you spend almost all of your time and write almost all of your apps — two properties must hold: the system must be "}, [":strong", {"s": "transparent"}], {"s": " (you can always understand how something works) and "}, [":strong", {"s": "conceptually uniform"}], {"s": " (there is one way of doing things, not many)."}], [":p", {"s": "This document captures the problems with the current design and the direction toward solving them."}], [":h2", {"s": "The Problem: Opaque Execution"}], [":p", {"s": "As a new user, you look at a note item and see rendered markdown. But how did that markdown become HTML on screen? Answering that question today requires knowing:"}], [":ol", [":li", [":p", {"s": "The item has a type (e.g. structured-note)"}]], [":li", [":p", {"s": "The type has associated views"}]], [":li", [":p", {"s": "View resolution picks one (preference hierarchy, type chain lookup, fallback)"}]], [":li", [":p", {"s": "That view is either a generic-view spec or a Hob view"}]], [":li", [":p", {"s": "The generic-view delegates to field views"}]], [":li", [":p", {"s": "The field view for the body uses markdown-it"}]], [":li", [":p", {"s": "markdown-it is a library item wrapping a JS library"}]]], [":p", {"s": "That is seven conceptual hops, spread across a dozen items, with no single place that lays them out linearly. You have to already understand the architecture to navigate it. This is the same friction that makes traditional codebases hard to understand — the execution path is implicit, distributed, and requires the reader to reconstruct it mentally."}], [":p", {"s": "Too much of software development is taken up with figuring out \"how does this all fit together.\" For Hobson to succeed, it needs to remove that friction, not just reproduce it at the item level."}], [":h2", {"s": "The Problem: Mini-Languages and Accidental Complexity"}], [":p", {"s": "Structured notes use "}, [":code", {"s": "{{field-name}}"}], {"s": " syntax in markdown to display field values, with "}, [":code", {"s": "{{field-name!}}"}], {"s": " proposed for editable versions. This is a mini-language bolted onto markdown. A user must now understand:"}], [":ul", [":li", [":p", {"s": "Markdown syntax"}]], [":li", [":p", {"s": "The "}, [":code", {"s": "{{field-name}}"}], {"s": " template syntax"}]], [":li", [":p", {"s": "How template expansion interacts with rendering"}]], [":li", [":p", {"s": "Which contexts support which syntax"}]]], [":p", {"s": "Each mini-language is individually reasonable, but collectively they fragment the system. The user is no longer learning one thing (Hob) — they are learning markdown + template syntax + view specs + field view configuration + Hob. Every new syntax is a concept that is "}, [":em", {"s": "not"}], {"s": " Hob, and therefore cannot be inspected, composed, or explained using the same tools."}], [":p", {"s": "The earlier proposal to replace markdown with a Hob AST was shelved because "}, [":code", {"s": "{{field-name}}"}], {"s": " achieved the immediate goal more cheaply. But the cost was conceptual: we introduced additional concepts and indirection rather than making the one language (Hob) more capable."}], [":h2", {"s": "The Ideal"}], [":p", {"s": "In an ideal world:"}], [":ul", [":li", [":p", [":strong", {"s": "Everything is Hob."}], {"s": " At first glance, field values seem to fall into three categories: rich text (note bodies, descriptions — currently markdown), atomic values (dates, numbers, enums), and structural data (spatial positions, schemas, tag sets — currently JSON). The key insight is that these collapse into one: everything is a Hob expression. Static data is the degenerate case — a literal that evaluates to itself. "}, [":code", {"s": "42"}], {"s": " as Hob evaluates to "}, [":code", {"s": "42"}], {"s": ". A map of key-value pairs evaluates to itself. There is no practical cost for the inert case, because Hob's compact JSON AST "}, [":em", {"s": "is"}], {"s": " JSON."}], [":p", {"s": "But the moment you want any value to be "}, [":em", {"s": "computed"}], {"s": ", the payoff appears. A task's due date could be "}, [":code", {"s": "(+ start-date (* 7 days))"}], {"s": ". A spatial canvas position could be "}, [":code", {"s": "(relative-to @other-item 50 0)"}], {"s": ". A type constraint could be "}, [":code", {"s": "(fn [v] (> v 0))"}], {"s": ". Today each of these would require a separate computation mechanism. If all field values are Hob, computed values are just expressions — the system already knows how to evaluate them. No new concept needed. Computed structural data is not a feature to be designed; it is a natural consequence of uniformity."}], [":p", {"s": "For rich text fields (note bodies, descriptions), the Hob AST is a structured tree of content nodes (paragraphs, headings, emphasis, field references) — a semantic description of the content, not rendering code. The view walks this AST to produce DOM, retaining control over presentation (how to render, what to show, what to abbreviate). A field reference is an AST node like "}, [":code", {"s": "[:field-ref \"field-name\"]"}], {"s": ", not "}, [":code", {"s": "{{field-name}}"}], {"s": " syntax. No mini-languages — everything is Hob."}], [":p", {"s": "This also strengthens the transparency story. If a task's due date is a computed expression, \"Explain this\" can tell you "}, [":em", {"s": "why"}], {"s": " it's March 15 — \"this is "}, [":code", {"s": "start-date + 7 days"}], {"s": ", where "}, [":code", {"s": "start-date"}], {"s": " resolved to March 8.\" The provenance trace handles static and computed values uniformly."}]], [":li", [":p", [":strong", {"s": "The structured editor hides the AST behind familiar prose UX."}], {"s": " The user never \"writes Hob\" — they write a note, and the editor maintains the AST behind the scenes, translating editing gestures (typing, selecting, formatting) into AST mutations. The AST is always available for inspection (dissolvable indirection), but the default experience is writing prose. The editor and the view are two projections of the same AST — one for editing, one for display."}]], [":li", [":p", [":strong", {"s": "The system can explain its own execution (\"Explain this\")."}], {"s": " You point at any rendered output and say \"explain this,\" and the system produces a full, linear narrative: \"You're looking at the body of item "}, [":em", {"s": "My Note"}], {"s": ". This item is type "}, [":em", {"s": "structured-note"}], {"s": ". The active view is "}, [":em", {"s": "note-view-editable"}], {"s": ", chosen because [reason]. The body field contains a Hob AST with 3 paragraphs. The view renders each paragraph by calling "}, [":code", {"s": "render-block"}], {"s": ", which produces a "}, [":code", {"s": "<p>"}], {"s": " element. The second paragraph contains a field reference to "}, [":code", {"s": "due-date"}], {"s": ", which resolved to "}, [":code", {"s": "2026-03-15"}], {"s": ".\" Not documentation about what "}, [":em", {"s": "should"}], {"s": " happen, but a trace of what "}, [":em", {"s": "did"}], {"s": " happen — the system doing the synthesis, not the user. This naturally covers "}, [":strong", {"s": "errors"}], {"s": " too: a failed computation is just another thing the trace captures. Instead of a separate error display system, a failed field shows a fallback and \"Explain this\" tells you why — \"this field couldn't be computed because "}, [":code", {"s": "start-date"}], {"s": " is not set.\" Same mechanism, applied to a failure case."}]], [":li", [":p", [":strong", {"s": "Convenience is sugar, not a separate system."}], {"s": " If you want markdown-like shorthand, it desugars to Hob (like a macro), not a parallel processing pipeline. You can see the sugar or the expansion, your choice."}]]], [":h2", {"s": "The Unified AST: Data and Computation"}], [":p", {"s": "The "}, [":code", {"s": ":doc"}], {"s": " AST is Hob. Its nodes ("}, [":code", {"s": ":p"}], {"s": ", "}, [":code", {"s": ":h1"}], {"s": ", "}, [":code", {"s": ":strong"}], {"s": ") are Hob keywords and values. There is no separate \"document language\" — the AST is Hob data that the renderer interprets."}], [":p", {"s": "The key insight from prototyping: the AST should contain "}, [":strong", {"s": "expression nodes"}], {"s": " alongside data nodes. Data nodes ("}, [":code", {"s": ":p"}], {"s": ", "}, [":code", {"s": ":h1"}], {"s": ", "}, [":code", {"s": ":strong"}], {"s": ", "}, [":code", {"s": ":code-block"}], {"s": ") are interpreted directly by the renderer. Expression nodes ("}, [":code", {"s": ":transclusion"}], {"s": ", "}, [":code", {"s": ":field-ref"}], {"s": ") are evaluated first — the evaluator processes them, and the renderer interprets the result."}], [":p", {"s": "This is not \"code inside a document.\" It is one AST, one language (Hob), with two kinds of node:"}], [":ul", [":li", [":p", [":strong", {"s": "Data nodes"}], {"s": " — the renderer knows their structure and interprets them directly. The prose editor can edit them via contenteditable."}]], [":li", [":p", [":strong", {"s": "Computation nodes"}], {"s": " — the evaluator processes them during rendering. The prose editor renders them as non-editable chips; the structural editor handles editing."}]]], [":p", {"s": "There is no hard boundary between \"doc\" and \"code\" — just a gradient of editing support. The prose editor understands data nodes. The structural editor handles everything else. Both operate on the same AST."}], [":h2", {"s": "The Active Text Specification"}], [":p", {"s": "See "}, [":item-ref", "c0c0c0c0-0095-0000-0000-000000000000"], {"s": " for the complete AST node type reference."}], [":h2", {"s": "General Direction"}], [":ol", [":li", [":p", [":strong", {"s": "Make Hob powerful and ergonomic enough"}], {"s": " that writing a note's display in Hob is not significantly harder than writing markdown. This is the prerequisite — if the code version is 10x more verbose, nobody will use it."}]], [":li", [":p", [":strong", {"s": "Make everything Hob."}], {"s": " All field values — rich text, atomic values, structural data — are Hob expressions. Static data is the degenerate case (self-evaluating literals). Rich text is a Hob AST of content nodes. Computed values are expressions the system evaluates. One representation, one evaluation model, no mini-languages. Views walk the AST to produce DOM; the structured editor presents it as familiar prose UX."}]], [":li", [":p", [":strong", {"s": "Build provenance tracing into the system."}], {"s": " Three kinds: rendering provenance (how output was produced), evaluation provenance (how values were calculated), and mutation provenance (why data changed — which handler, which event). Level 2 (decisions + resolved values) is captured by default; Level 3 (evaluation steps) is available on demand. The entry point is always visual — the user points at rendered output and the system follows the chain as deep as needed."}]], [":li", [":p", [":strong", {"s": "Make indirection dissolvable."}], {"s": " The system should be able to unfold its own execution into a linear explanation on demand. The long-term goal is \"Explain this\" — point at any rendered output and get a complete narrative of how it got there. Intermediate steps (provenance breadcrumbs, inline source attribution) are valuable but the target is the system doing the synthesis for you."}]], [":li", [":p", [":strong", {"s": "Let convenience be sugar, not a separate system."}], {"s": " Markdown-like shorthand should desugar to Hob (like a macro), not be a parallel pipeline. The user can see the sugar or the expansion."}]]], [":h2", {"s": "Deferred Concerns"}], [":p", {"s": "The following areas were considered and deliberately deferred:"}], [":ul", [":li", [":p", [":strong", {"s": "Performance."}], {"s": " Evaluating Hob expressions for every field access could be costly at scale. Defer until measured — premature optimization against a problem that may not exist."}]], [":li", [":p", [":strong", {"s": "Interop with external formats."}], {"s": " Bridging Hob ASTs with markdown, HTML, and other formats for copy-paste, import/export, and sharing. This is a boundary conversion layer — engineering work, not a design question."}]], [":li", [":p", [":strong", {"s": "Schema and validation."}], {"s": " Whether type definitions constrain field values or their evaluated results. Not currently relevant since types don't have explicit schemas; the question surfaces naturally when they do."}]]], [":h2", {"s": "Prototypes"}], [":p", {"s": "Two prototypes have been built to validate the core assumptions:"}], [":h3", {"s": "Prototype 1: Hob AST Rendering"}], [":p", [":item-ref", {"s": "d0d0d0d0-0003-0000-0000-000000000000"}, {"s": "field-view-doc"}], {"s": " — a field view that walks a "}, [":code", {"s": ":doc"}], {"s": " AST and produces DOM. Tested with "}, [":item-ref", {"s": "f2e8412d-14cf-42b1-a8c0-b574334c5c8d"}, {"s": "Another Structured Note"}], {"s": " using "}, [":item-ref", {"s": "d0d0d0d0-0004-0000-0000-000000000000"}, {"s": "note-view-doc-readonly"}], {"s": "."}], [":p", [":strong", {"s": "Validated:"}]], [":ul", [":li", [":p", {"s": "The "}, [":code", {"s": ":doc"}], {"s": " AST structure (document → blocks → inline segments) renders correctly"}]], [":li", [":p", {"s": "Paragraphs, headings, nested lists, inline formatting (bold, italic, code), item references, and field references all work"}]], [":li", [":p", {"s": "Field references resolve computed fields via "}, [":code", {"s": "api.getField"}], {"s": " — both scalar values (alpha = 120) and cross-item transclusions (beta = name from another item)"}]], [":li", [":p", {"s": "The existing generic-view → field view pipeline works unchanged — only the field view and the data representation changed"}]]], [":p", [":strong", {"s": "Gap discovered:"}], {"s": " When a "}, [":code", {"s": ":field-ref"}], {"s": " resolves to a "}, [":code", {"s": ":doc"}], {"s": " AST (e.g. transcluding another note's description), the renderer initially stringified it. Fix: detect AST values and render them recursively via "}, [":code", {"s": "renderNode"}], {"s": ". This confirmed the nesting resolution design — readonly mode must resolve fully, including nested ASTs."}], [":h3", {"s": "Prototype 2: Provenance Tracing"}], [":p", [":code", {"s": "field-view-doc"}], {"s": " stamps "}, [":code", {"s": "data-provenance-*"}], {"s": " attributes on every element it creates. The "}, [":item-ref", {"s": "eeee0000-0000-0000-0000-000000000001"}, {"s": "element-inspector-lib"}], {"s": " and "}, [":item-ref", {"s": "eeee0000-0000-0000-0000-000000000011"}, {"s": "element-inspector-view"}], {"s": " were updated to collect and display these."}], [":p", [":strong", {"s": "Level 2 provenance captured:"}]], [":ul", [":li", [":p", {"s": "AST node type ("}, [":code", {"s": ":p"}], {"s": ", "}, [":code", {"s": ":h2"}], {"s": ", "}, [":code", {"s": ":field-ref"}], {"s": ", etc.) on every element"}]], [":li", [":p", {"s": "Field path ("}, [":code", {"s": "content.description"}], {"s": ") on the doc wrapper"}]], [":li", [":p", {"s": "For "}, [":code", {"s": ":field-ref"}], {"s": ": field name, Hob expression (if computed), resolved value, and error message (if failed)"}]], [":li", [":p", {"s": "For "}, [":code", {"s": ":item-ref"}], {"s": ": referenced item ID"}]], [":li", [":p", {"s": "For "}, [":code", {"s": ":link"}], {"s": ": href"}]]], [":p", {"s": "This is displayed in the existing element inspector alongside the existing source/view attribution — the user sees both \"which code rendered this\" and \"what data produced this\" in one place."}], [":h3", {"s": "Prototype 3: Prose Editor"}], [":p", [":item-ref", {"s": "d0d0d0d0-0007-0000-0000-000000000000"}, {"s": "field-view-doc-editable"}], {"s": " — a prose editor field view that presents a "}, [":code", {"s": ":doc"}], {"s": " AST as familiar editable rich text. Used via "}, [":item-ref", {"s": "d0d0d0d0-0006-0000-0000-000000000000"}, {"s": "note-view-doc-editable"}], {"s": "."}], [":p", [":strong", {"s": "Architecture:"}], {"s": " Per-block "}, [":code", {"s": "contenteditable"}], {"s": ". Each leaf block ("}, [":code", {"s": ":p"}], {"s": ", "}, [":code", {"s": ":h1"}], {"s": "–"}, [":code", {"s": ":h6"}], {"s": ") gets its own contenteditable region. Block structure (Enter to split, Backspace to merge) is managed by the editor at the AST level. Inline text editing is native browser behavior. Formatting (bold, italic) is applied via "}, [":code", {"s": "execCommand"}], {"s": " and synced back to AST. Custom nodes ("}, [":code", {"s": ":field-ref"}], {"s": ", "}, [":code", {"s": ":item-ref"}], {"s": ", "}, [":code", {"s": ":link"}], {"s": ") render as "}, [":code", {"s": "contenteditable=\"false\""}], {"s": " islands — the cursor skips over them."}], [":p", [":strong", {"s": "Validated:"}]], [":ul", [":li", [":p", {"s": "Per-block contenteditable works for the editing model described in the design"}]], [":li", [":p", {"s": "DOM→AST sync is tractable thanks to the no-nesting constraint — one level of "}, [":code", {"s": "<strong>"}], {"s": "/"}, [":code", {"s": "<em>"}], {"s": "/"}, [":code", {"s": "<code>"}], {"s": " to walk, non-editable islands preserved via CSS classes and data attributes"}]], [":li", [":p", {"s": "Enter splits a block at cursor position (original keeps its tag, new block is "}, [":code", {"s": ":p"}], {"s": "); Backspace at block start merges with previous — both produce clean AST"}]], [":li", [":p", {"s": "Browser-native formatting (Ctrl+B/I) works when intercepted at keydown level and applied via "}, [":code", {"s": "execCommand"}], {"s": ", then synced"}]], [":li", [":p", {"s": "Adjacent text nodes are merged during sync, keeping the AST minimal"}]], [":li", [":p", {"s": "Container blocks (lists, blockquotes, code blocks) render readonly within the editor — a reasonable first boundary"}]]], [":p", [":strong", {"s": "Issues discovered and fixed:"}]], [":ul", [":li", [":p", {"s": "Browser captures Ctrl+B/I before contenteditable sees them — fix: intercept in keydown handler, preventDefault, call execCommand explicitly"}]], [":li", [":p", {"s": "Cursor invisible after trailing "}, [":code", {"s": "contenteditable=\"false\""}], {"s": " element — fix: append zero-width space ("}, [":code", {"s": "\\u200B"}], {"s": ") after trailing non-editable elements, strip during DOM→AST sync"}]], [":li", [":p", {"s": "Cursor not visible in newly created empty blocks — fix: empty blocks contain only a "}, [":code", {"s": "<br>"}], {"s": " placeholder (skip empty text nodes during render), and focus is deferred via "}, [":code", {"s": "requestAnimationFrame"}], {"s": " to let the browser paint first"}]]], [":p", [":strong", {"s": "Also validated (follow-up iterations):"}]], [":ul", [":li", [":p", {"s": "Markdown shortcuts: "}, [":code", {"s": "# "}], {"s": " through "}, [":code", {"s": "###### "}], {"s": " convert paragraphs to headings, including non-empty paragraphs. Backspace at start of heading converts back to paragraph."}]], [":li", [":p", {"s": "Inserting custom nodes at cursor: "}, [":code", {"s": "@"}], {"s": " triggers item-ref autocomplete (searches items by name), "}, [":code", {"s": "{{"}], {"s": " triggers field-ref autocomplete (shows computed fields). Popup with arrow key navigation, Enter/Tab to select, Escape to dismiss. Inserted as non-editable islands with zero-width space for cursor placement."}]]], [":p", [":strong", {"s": "Further iterations:"}]], [":ul", [":li", [":p", {"s": "Path-based block addressing: refactored from flat indices to path arrays (e.g. "}, [":code", {"s": "[2, 0, 0]"}], {"s": ") to address blocks at any nesting depth. This enabled editable content within list items and blockquotes — "}, [":code", {"s": ":p"}], {"s": " blocks inside "}, [":code", {"s": ":li"}], {"s": " and "}, [":code", {"s": ":blockquote"}], {"s": " get contenteditable with full event handling (typing, formatting, autocomplete, split/merge)."}]], [":li", [":p", {"s": "Horizontal rule: "}, [":code", {"s": ":hr"}], {"s": " node type, rendered as styled "}, [":code", {"s": "<hr>"}], {"s": " in both readonly and editable views."}]], [":li", [":p", {"s": "Transclusion insertion: "}, [":code", {"s": "@@"}], {"s": " triggers a two-step autocomplete — item picker, then field picker — and inserts a "}, [":code", {"s": "[:transclusion, itemId, fieldName]"}], {"s": " node directly in the AST. No computed field backing needed."}]], [":li", [":p", {"s": "Edit mode indicator: subtle left accent border on the editor area when in edit mode."}]]], [":p", [":strong", {"s": "Not yet prototyped:"}]], [":ul", [":li", [":p", {"s": "Structural list operations (Enter to create new "}, [":code", {"s": ":li"}], {"s": ", Tab/Shift+Tab for nesting)"}]], [":li", [":p", {"s": "Cross-block selection (selecting text spanning two paragraphs)"}]], [":li", [":p", {"s": "Inserting links (Ctrl+K for URLs)"}]], [":li", [":p", [":code", {"s": ":doc"}], {"s": " nodes in code (comments)"}]]], [":h3", {"s": "Prototype 4: Markdown Converter"}], [":p", [":item-ref", {"s": "d0d0d0d0-0008-0000-0000-000000000000"}, {"s": "markdown-to-doc-ast"}], {"s": " — a library that converts markdown description fields to "}, [":code", {"s": ":doc"}], {"s": " AST. Supports overwrite or copy mode (for side-by-side comparison)."}], [":p", [":strong", {"s": "Handles:"}], {"s": " headings, paragraphs, bold, italic, code, code blocks, lists (with continuation paragraphs), blockquotes, horizontal rules, "}, [":code", {"s": "{{field-ref}}"}], {"s": ", "}, [":code", {"s": "[text](item://id)"}], {"s": " → "}, [":code", {"s": ":item-ref"}], {"s": ", "}, [":code", {"s": "[text](url)"}], {"s": " → "}, [":code", {"s": ":link"}], {"s": "."}], [":p", [":strong", {"s": "Validated:"}], {"s": " Successfully converted complex documentation items (including this document). Surfaced the need for editable lists and horizontal rule support, both of which were then implemented."}], [":h2", {"s": "Status"}], [":p", {"s": "The core model is validated by working prototypes across rendering, provenance, editing, and migration. The design direction is:"}], [":ul", [":li", [":p", {"s": "Everything is Hob (static data is the degenerate case) — "}, [":strong", {"s": "validated"}]]], [":li", [":p", {"s": "Unified AST (data nodes + computation nodes, no doc/code boundary) — "}, [":strong", {"s": "designed, partially validated"}], {"s": " ("}, [":code", {"s": ":transclusion"}], {"s": " and "}, [":code", {"s": ":field-ref"}], {"s": " working; "}, [":code", {"s": ":doc"}], {"s": "-as-comments designed)"}]], [":li", [":p", {"s": "Views select field views that walk ASTs, preserving the existing architecture — "}, [":strong", {"s": "validated"}]]], [":li", [":p", {"s": "Provenance tracing (Level 2) works via data attributes and the element inspector — "}, [":strong", {"s": "validated"}]]], [":li", [":p", {"s": "Prose editor (per-block contenteditable, DOM↔AST sync, formatting, block operations, markdown shortcuts, "}, [":code", {"s": "@"}], {"s": "/"}, [":code", {"s": "{{"}], {"s": "/"}, [":code", {"s": "@@"}], {"s": " autocomplete) — "}, [":strong", {"s": "validated, good enough for use"}]]], [":li", [":p", {"s": "Editable text within lists and blockquotes — "}, [":strong", {"s": "validated"}]]], [":li", [":p", {"s": "Inline transclusions ("}, [":code", {"s": "@@"}], {"s": " insertion, "}, [":code", {"s": "[:transclusion]"}], {"s": " AST node) — "}, [":strong", {"s": "validated"}]]], [":li", [":p", {"s": "Cross-item reactivity for transclusions — "}, [":strong", {"s": "validated"}], {"s": " (api.get dependency tracking)"}]], [":li", [":p", {"s": "Markdown-to-AST migration — "}, [":strong", {"s": "validated"}], {"s": " (converter library working)"}]], [":li", [":p", {"s": "Structural list operations (Enter/Backspace/Delete/Tab/Shift+Tab) — "}, [":strong", {"s": "validated"}], {"s": " (all core operations working)"}]], [":li", [":p", {"s": "Link insertion via "}, [":code", {"s": "@"}], {"s": " autocomplete (URL detection) — "}, [":strong", {"s": "validated"}], {"s": "\\n- Cross-block selection — "}, [":strong", {"s": "designed, deferred"}]]], [":li", [":p", [":code", {"s": ":eval"}], {"s": " blocks, "}, [":code", {"s": ":comment"}], {"s": " nodes — "}, [":strong", {"s": "designed, not yet prototyped"}]]], [":li", [":p", {"s": "\"Explain this\" as a narrative over the provenance trace — "}, [":strong", {"s": "designed, not yet prototyped"}]]], [":li", [":p", {"s": "Literate programming ("}, [":code", {"s": ":doc"}], {"s": " as primary, "}, [":code", {"s": "content.code"}], {"s": " derived) — "}, [":strong", {"s": "conceptual, deferred"}]]], [":li", [":p", {"s": "Indirection is preserved but made dissolvable — "}, [":strong", {"s": "principle established"}]]]], [":h2", {"s": "Next Steps"}], [":p", {"s": "The branch ("}, [":code", {"s": "doc-ast-editor"}], {"s": ") is not yet merged to master. The AST structure and editor approach are validated for prose editing and transclusions. The unified AST vision ("}, [":code", {"s": ":eval"}], {"s": ", "}, [":code", {"s": ":comment"}], {"s": ", literate programming) is designed but not yet prototyped."}], [":ol", [":li", [":p", [":strong", {"s": "Continue real-world migration."}], {"s": " Convert more existing notes to "}, [":code", {"s": ":doc"}], {"s": " AST. Each conversion surfaces edge cases in the converter and editor, and builds confidence in the AST structure. Transclusions can now be added via "}, [":code", {"s": "@@"}], {"s": " during manual conversion."}]], [":li", [":p", [":strong", {"s": "`:doc` in code."}], {"s": " Teach the Hob evaluator to skip "}, [":code", {"s": ":doc"}], {"s": " nodes in code bodies. This gives Hob code commenting — currently impossible — using the existing "}, [":code", {"s": ":doc"}], {"s": " AST and prose editor infrastructure."}]], [":li", [":p", [":strong", {"s": "Hob standard library."}], {"s": " Build out piecemeal, driven by query block conversion. Core needs: querying ("}, [":code", {"s": "query"}], {"s": ", "}, [":code", {"s": "sort-by"}], {"s": "), collection operations ("}, [":code", {"s": "map"}], {"s": ", "}, [":code", {"s": "filter"}], {"s": "), binding ("}, [":code", {"s": "let"}], {"s": "), string operations. The same primitives serve query blocks, search, filters, sort, and constraints."}]], [":li", [":p", [":strong", {"s": "Structural list operations."}], {"s": " Enter to create new "}, [":code", {"s": ":li"}], {"s": ", Tab/Shift+Tab for nesting, Backspace on empty item to remove. The path-based addressing is already in place; this layers on top as block-level operations."}]], [":li", [":p", [":strong", {"s": "Provenance narrative."}], {"s": " Build \"Explain this\" — walks the provenance chain on a rendered element and produces a text explanation. Tests whether captured data attributes are sufficient."}]], [":li", [":p", [":strong", {"s": "Integration (once confident)."}], {"s": " Merge to master, update note type to use doc views, migrate existing notes via converter."}]]], [":p", {"s": "Related: "}, [":item-ref", {"s": "c0c0c0c0-0073-0000-0000-000000000000"}, {"s": "Structured Notes proposal"}], {"s": ", "}, [":item-ref", {"s": "c0c0c0c0-0058-0000-0000-000000000000"}, {"s": "Hob design direction"}], {"s": "."}]], "tags": ["bff75873-edb8-412e-81c9-c744e68fe29f", "c0c0c0c0-0085-0000-0000-000000000000"]}, "attachments": []}
+{
+  "id": "c0c0c0c0-0093-0000-0000-000000000000",
+  "name": "Transparency & Conceptual Uniformity",
+  "type": "871ae771-b9b1-4f40-8c7f-d9038bfb69c3",
+  "created": 1741478400000,
+  "modified": 1774988061596,
+  "content": {
+    "description": [
+      ":doc",
+      [
+        ":p",
+        {
+          "s": "For Hobson to succeed as a virtual OS — a place where you spend almost all of your time and write almost all of your apps — two properties must hold: the system must be "
+        },
+        [
+          ":strong",
+          {
+            "s": "transparent"
+          }
+        ],
+        {
+          "s": " (you can always understand how something works) and "
+        },
+        [
+          ":strong",
+          {
+            "s": "conceptually uniform"
+          }
+        ],
+        {
+          "s": " (there is one way of doing things, not many)."
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "This document captures the problems with the current design and the direction toward solving them."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "The Problem: Opaque Execution"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "As a new user, you look at a note item and see rendered markdown. But how did that markdown become HTML on screen? Answering that question today requires knowing:"
+        }
+      ],
+      [
+        ":ol",
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "The item has a type (e.g. structured-note)"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "The type has associated views"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "View resolution picks one (preference hierarchy, type chain lookup, fallback)"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "That view is either a generic-view spec or a Hob view"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "The generic-view delegates to field views"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "The field view for the body uses markdown-it"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "markdown-it is a library item wrapping a JS library"
+            }
+          ]
+        ]
+      ],
+      [
+        ":p",
+        {
+          "s": "That is seven conceptual hops, spread across a dozen items, with no single place that lays them out linearly. You have to already understand the architecture to navigate it. This is the same friction that makes traditional codebases hard to understand — the execution path is implicit, distributed, and requires the reader to reconstruct it mentally."
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Too much of software development is taken up with figuring out \"how does this all fit together.\" For Hobson to succeed, it needs to remove that friction, not just reproduce it at the item level."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "The Problem: Mini-Languages and Accidental Complexity"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Structured notes use "
+        },
+        [
+          ":code",
+          {
+            "s": "{{field-name}}"
+          }
+        ],
+        {
+          "s": " syntax in markdown to display field values, with "
+        },
+        [
+          ":code",
+          {
+            "s": "{{field-name!}}"
+          }
+        ],
+        {
+          "s": " proposed for editable versions. This is a mini-language bolted onto markdown. A user must now understand:"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Markdown syntax"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "The "
+            },
+            [
+              ":code",
+              {
+                "s": "{{field-name}}"
+              }
+            ],
+            {
+              "s": " template syntax"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "How template expansion interacts with rendering"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Which contexts support which syntax"
+            }
+          ]
+        ]
+      ],
+      [
+        ":p",
+        {
+          "s": "Each mini-language is individually reasonable, but collectively they fragment the system. The user is no longer learning one thing (Hob) — they are learning markdown + template syntax + view specs + field view configuration + Hob. Every new syntax is a concept that is "
+        },
+        [
+          ":em",
+          {
+            "s": "not"
+          }
+        ],
+        {
+          "s": " Hob, and therefore cannot be inspected, composed, or explained using the same tools."
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The earlier proposal to replace markdown with a Hob AST was shelved because "
+        },
+        [
+          ":code",
+          {
+            "s": "{{field-name}}"
+          }
+        ],
+        {
+          "s": " achieved the immediate goal more cheaply. But the cost was conceptual: we introduced additional concepts and indirection rather than making the one language (Hob) more capable."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "The Ideal"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "In an ideal world:"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Everything is Hob."
+              }
+            ],
+            {
+              "s": " At first glance, field values seem to fall into three categories: rich text (note bodies, descriptions — currently markdown), atomic values (dates, numbers, enums), and structural data (spatial positions, schemas, tag sets — currently JSON). The key insight is that these collapse into one: everything is a Hob expression. Static data is the degenerate case — a literal that evaluates to itself. "
+            },
+            [
+              ":code",
+              {
+                "s": "42"
+              }
+            ],
+            {
+              "s": " as Hob evaluates to "
+            },
+            [
+              ":code",
+              {
+                "s": "42"
+              }
+            ],
+            {
+              "s": ". A map of key-value pairs evaluates to itself. There is no practical cost for the inert case, because Hob's compact JSON AST "
+            },
+            [
+              ":em",
+              {
+                "s": "is"
+              }
+            ],
+            {
+              "s": " JSON."
+            }
+          ],
+          [
+            ":p",
+            {
+              "s": "But the moment you want any value to be "
+            },
+            [
+              ":em",
+              {
+                "s": "computed"
+              }
+            ],
+            {
+              "s": ", the payoff appears. A task's due date could be "
+            },
+            [
+              ":code",
+              {
+                "s": "(+ start-date (* 7 days))"
+              }
+            ],
+            {
+              "s": ". A spatial canvas position could be "
+            },
+            [
+              ":code",
+              {
+                "s": "(relative-to @other-item 50 0)"
+              }
+            ],
+            {
+              "s": ". A type constraint could be "
+            },
+            [
+              ":code",
+              {
+                "s": "(fn [v] (> v 0))"
+              }
+            ],
+            {
+              "s": ". Today each of these would require a separate computation mechanism. If all field values are Hob, computed values are just expressions — the system already knows how to evaluate them. No new concept needed. Computed structural data is not a feature to be designed; it is a natural consequence of uniformity."
+            }
+          ],
+          [
+            ":p",
+            {
+              "s": "For rich text fields (note bodies, descriptions), the Hob AST is a structured tree of content nodes (paragraphs, headings, emphasis, field references) — a semantic description of the content, not rendering code. The view walks this AST to produce DOM, retaining control over presentation (how to render, what to show, what to abbreviate). A field reference is an AST node like "
+            },
+            [
+              ":code",
+              {
+                "s": "[:field-ref \"field-name\"]"
+              }
+            ],
+            {
+              "s": ", not "
+            },
+            [
+              ":code",
+              {
+                "s": "{{field-name}}"
+              }
+            ],
+            {
+              "s": " syntax. No mini-languages — everything is Hob."
+            }
+          ],
+          [
+            ":p",
+            {
+              "s": "This also strengthens the transparency story. If a task's due date is a computed expression, \"Explain this\" can tell you "
+            },
+            [
+              ":em",
+              {
+                "s": "why"
+              }
+            ],
+            {
+              "s": " it's March 15 — \"this is "
+            },
+            [
+              ":code",
+              {
+                "s": "start-date + 7 days"
+              }
+            ],
+            {
+              "s": ", where "
+            },
+            [
+              ":code",
+              {
+                "s": "start-date"
+              }
+            ],
+            {
+              "s": " resolved to March 8.\" The provenance trace handles static and computed values uniformly."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "The structured editor hides the AST behind familiar prose UX."
+              }
+            ],
+            {
+              "s": " The user never \"writes Hob\" — they write a note, and the editor maintains the AST behind the scenes, translating editing gestures (typing, selecting, formatting) into AST mutations. The AST is always available for inspection (dissolvable indirection), but the default experience is writing prose. The editor and the view are two projections of the same AST — one for editing, one for display."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "The system can explain its own execution (\"Explain this\")."
+              }
+            ],
+            {
+              "s": " You point at any rendered output and say \"explain this,\" and the system produces a full, linear narrative: \"You're looking at the body of item "
+            },
+            [
+              ":em",
+              {
+                "s": "My Note"
+              }
+            ],
+            {
+              "s": ". This item is type "
+            },
+            [
+              ":em",
+              {
+                "s": "structured-note"
+              }
+            ],
+            {
+              "s": ". The active view is "
+            },
+            [
+              ":em",
+              {
+                "s": "note-view-editable"
+              }
+            ],
+            {
+              "s": ", chosen because [reason]. The body field contains a Hob AST with 3 paragraphs. The view renders each paragraph by calling "
+            },
+            [
+              ":code",
+              {
+                "s": "render-block"
+              }
+            ],
+            {
+              "s": ", which produces a "
+            },
+            [
+              ":code",
+              {
+                "s": "<p>"
+              }
+            ],
+            {
+              "s": " element. The second paragraph contains a field reference to "
+            },
+            [
+              ":code",
+              {
+                "s": "due-date"
+              }
+            ],
+            {
+              "s": ", which resolved to "
+            },
+            [
+              ":code",
+              {
+                "s": "2026-03-15"
+              }
+            ],
+            {
+              "s": ".\" Not documentation about what "
+            },
+            [
+              ":em",
+              {
+                "s": "should"
+              }
+            ],
+            {
+              "s": " happen, but a trace of what "
+            },
+            [
+              ":em",
+              {
+                "s": "did"
+              }
+            ],
+            {
+              "s": " happen — the system doing the synthesis, not the user. This naturally covers "
+            },
+            [
+              ":strong",
+              {
+                "s": "errors"
+              }
+            ],
+            {
+              "s": " too: a failed computation is just another thing the trace captures. Instead of a separate error display system, a failed field shows a fallback and \"Explain this\" tells you why — \"this field couldn't be computed because "
+            },
+            [
+              ":code",
+              {
+                "s": "start-date"
+              }
+            ],
+            {
+              "s": " is not set.\" Same mechanism, applied to a failure case."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Convenience is sugar, not a separate system."
+              }
+            ],
+            {
+              "s": " If you want markdown-like shorthand, it desugars to Hob (like a macro), not a parallel processing pipeline. You can see the sugar or the expansion, your choice."
+            }
+          ]
+        ]
+      ],
+      [
+        ":h2",
+        {
+          "s": "The Unified AST: Data and Computation"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The "
+        },
+        [
+          ":code",
+          {
+            "s": ":doc"
+          }
+        ],
+        {
+          "s": " AST is Hob. Its nodes ("
+        },
+        [
+          ":code",
+          {
+            "s": ":p"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": ":h1"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": ":strong"
+          }
+        ],
+        {
+          "s": ") are Hob keywords and values. There is no separate \"document language\" — the AST is Hob data that the renderer interprets."
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The key insight from prototyping: the AST should contain "
+        },
+        [
+          ":strong",
+          {
+            "s": "expression nodes"
+          }
+        ],
+        {
+          "s": " alongside data nodes. Data nodes ("
+        },
+        [
+          ":code",
+          {
+            "s": ":p"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": ":h1"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": ":strong"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": ":code-block"
+          }
+        ],
+        {
+          "s": ") are interpreted directly by the renderer. Expression nodes ("
+        },
+        [
+          ":code",
+          {
+            "s": ":transclusion"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": ":field-ref"
+          }
+        ],
+        {
+          "s": ") are evaluated first — the evaluator processes them, and the renderer interprets the result."
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "This is not \"code inside a document.\" It is one AST, one language (Hob), with two kinds of node:"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Data nodes"
+              }
+            ],
+            {
+              "s": " — the renderer knows their structure and interprets them directly. The prose editor can edit them via contenteditable."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Computation nodes"
+              }
+            ],
+            {
+              "s": " — the evaluator processes them during rendering. The prose editor renders them as non-editable chips; the structural editor handles editing."
+            }
+          ]
+        ]
+      ],
+      [
+        ":p",
+        {
+          "s": "There is no hard boundary between \"doc\" and \"code\" — just a gradient of editing support. The prose editor understands data nodes. The structural editor handles everything else. Both operate on the same AST."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "The Active Text Specification"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "See "
+        },
+        [
+          ":item-ref",
+          "c0c0c0c0-0095-0000-0000-000000000000"
+        ],
+        {
+          "s": " for the complete AST node type reference."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "General Direction"
+        }
+      ],
+      [
+        ":ol",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Make Hob powerful and ergonomic enough"
+              }
+            ],
+            {
+              "s": " that writing a note's display in Hob is not significantly harder than writing markdown. This is the prerequisite — if the code version is 10x more verbose, nobody will use it."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Make everything Hob."
+              }
+            ],
+            {
+              "s": " All field values — rich text, atomic values, structural data — are Hob expressions. Static data is the degenerate case (self-evaluating literals). Rich text is a Hob AST of content nodes. Computed values are expressions the system evaluates. One representation, one evaluation model, no mini-languages. Views walk the AST to produce DOM; the structured editor presents it as familiar prose UX."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Build provenance tracing into the system."
+              }
+            ],
+            {
+              "s": " Three kinds: rendering provenance (how output was produced), evaluation provenance (how values were calculated), and mutation provenance (why data changed — which handler, which event). Level 2 (decisions + resolved values) is captured by default; Level 3 (evaluation steps) is available on demand. The entry point is always visual — the user points at rendered output and the system follows the chain as deep as needed."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Make indirection dissolvable."
+              }
+            ],
+            {
+              "s": " The system should be able to unfold its own execution into a linear explanation on demand. The long-term goal is \"Explain this\" — point at any rendered output and get a complete narrative of how it got there. Intermediate steps (provenance breadcrumbs, inline source attribution) are valuable but the target is the system doing the synthesis for you."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Let convenience be sugar, not a separate system."
+              }
+            ],
+            {
+              "s": " Markdown-like shorthand should desugar to Hob (like a macro), not be a parallel pipeline. The user can see the sugar or the expansion."
+            }
+          ]
+        ]
+      ],
+      [
+        ":h2",
+        {
+          "s": "Deferred Concerns"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The following areas were considered and deliberately deferred:"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Performance."
+              }
+            ],
+            {
+              "s": " Evaluating Hob expressions for every field access could be costly at scale. Defer until measured — premature optimization against a problem that may not exist."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Interop with external formats."
+              }
+            ],
+            {
+              "s": " Bridging Hob ASTs with markdown, HTML, and other formats for copy-paste, import/export, and sharing. This is a boundary conversion layer — engineering work, not a design question."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Schema and validation."
+              }
+            ],
+            {
+              "s": " Whether type definitions constrain field values or their evaluated results. Not currently relevant since types don't have explicit schemas; the question surfaces naturally when they do."
+            }
+          ]
+        ]
+      ],
+      [
+        ":h2",
+        {
+          "s": "Prototypes"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Two prototypes have been built to validate the core assumptions:"
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Prototype 1: Hob AST Rendering"
+        }
+      ],
+      [
+        ":p",
+        [
+          ":item-ref",
+          {
+            "s": "d0d0d0d0-0003-0000-0000-000000000000"
+          },
+          {
+            "s": "field-view-doc"
+          }
+        ],
+        {
+          "s": " — a field view that walks a "
+        },
+        [
+          ":code",
+          {
+            "s": ":doc"
+          }
+        ],
+        {
+          "s": " AST and produces DOM. Tested with "
+        },
+        [
+          ":item-ref",
+          {
+            "s": "f2e8412d-14cf-42b1-a8c0-b574334c5c8d"
+          },
+          {
+            "s": "Another Structured Note"
+          }
+        ],
+        {
+          "s": " using "
+        },
+        [
+          ":item-ref",
+          {
+            "s": "d0d0d0d0-0004-0000-0000-000000000000"
+          },
+          {
+            "s": "note-view-doc-readonly"
+          }
+        ],
+        {
+          "s": "."
+        }
+      ],
+      [
+        ":p",
+        [
+          ":strong",
+          {
+            "s": "Validated:"
+          }
+        ]
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "The "
+            },
+            [
+              ":code",
+              {
+                "s": ":doc"
+              }
+            ],
+            {
+              "s": " AST structure (document → blocks → inline segments) renders correctly"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Paragraphs, headings, nested lists, inline formatting (bold, italic, code), item references, and field references all work"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Field references resolve computed fields via "
+            },
+            [
+              ":code",
+              {
+                "s": "api.getField"
+              }
+            ],
+            {
+              "s": " — both scalar values (alpha = 120) and cross-item transclusions (beta = name from another item)"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "The existing generic-view → field view pipeline works unchanged — only the field view and the data representation changed"
+            }
+          ]
+        ]
+      ],
+      [
+        ":p",
+        [
+          ":strong",
+          {
+            "s": "Gap discovered:"
+          }
+        ],
+        {
+          "s": " When a "
+        },
+        [
+          ":code",
+          {
+            "s": ":field-ref"
+          }
+        ],
+        {
+          "s": " resolves to a "
+        },
+        [
+          ":code",
+          {
+            "s": ":doc"
+          }
+        ],
+        {
+          "s": " AST (e.g. transcluding another note's description), the renderer initially stringified it. Fix: detect AST values and render them recursively via "
+        },
+        [
+          ":code",
+          {
+            "s": "renderNode"
+          }
+        ],
+        {
+          "s": ". This confirmed the nesting resolution design — readonly mode must resolve fully, including nested ASTs."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Prototype 2: Provenance Tracing"
+        }
+      ],
+      [
+        ":p",
+        [
+          ":code",
+          {
+            "s": "field-view-doc"
+          }
+        ],
+        {
+          "s": " stamps "
+        },
+        [
+          ":code",
+          {
+            "s": "data-provenance-*"
+          }
+        ],
+        {
+          "s": " attributes on every element it creates. The "
+        },
+        [
+          ":item-ref",
+          {
+            "s": "eeee0000-0000-0000-0000-000000000001"
+          },
+          {
+            "s": "element-inspector-lib"
+          }
+        ],
+        {
+          "s": " and "
+        },
+        [
+          ":item-ref",
+          {
+            "s": "eeee0000-0000-0000-0000-000000000011"
+          },
+          {
+            "s": "element-inspector-view"
+          }
+        ],
+        {
+          "s": " were updated to collect and display these."
+        }
+      ],
+      [
+        ":p",
+        [
+          ":strong",
+          {
+            "s": "Level 2 provenance captured:"
+          }
+        ]
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "AST node type ("
+            },
+            [
+              ":code",
+              {
+                "s": ":p"
+              }
+            ],
+            {
+              "s": ", "
+            },
+            [
+              ":code",
+              {
+                "s": ":h2"
+              }
+            ],
+            {
+              "s": ", "
+            },
+            [
+              ":code",
+              {
+                "s": ":field-ref"
+              }
+            ],
+            {
+              "s": ", etc.) on every element"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Field path ("
+            },
+            [
+              ":code",
+              {
+                "s": "content.description"
+              }
+            ],
+            {
+              "s": ") on the doc wrapper"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "For "
+            },
+            [
+              ":code",
+              {
+                "s": ":field-ref"
+              }
+            ],
+            {
+              "s": ": field name, Hob expression (if computed), resolved value, and error message (if failed)"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "For "
+            },
+            [
+              ":code",
+              {
+                "s": ":item-ref"
+              }
+            ],
+            {
+              "s": ": referenced item ID"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "For "
+            },
+            [
+              ":code",
+              {
+                "s": ":link"
+              }
+            ],
+            {
+              "s": ": href"
+            }
+          ]
+        ]
+      ],
+      [
+        ":p",
+        {
+          "s": "This is displayed in the existing element inspector alongside the existing source/view attribution — the user sees both \"which code rendered this\" and \"what data produced this\" in one place."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Prototype 3: Prose Editor"
+        }
+      ],
+      [
+        ":p",
+        [
+          ":item-ref",
+          {
+            "s": "d0d0d0d0-0007-0000-0000-000000000000"
+          },
+          {
+            "s": "field-view-doc-editable"
+          }
+        ],
+        {
+          "s": " — a prose editor field view that presents a "
+        },
+        [
+          ":code",
+          {
+            "s": ":doc"
+          }
+        ],
+        {
+          "s": " AST as familiar editable rich text. Used via "
+        },
+        [
+          ":item-ref",
+          {
+            "s": "d0d0d0d0-0006-0000-0000-000000000000"
+          },
+          {
+            "s": "note-view-doc-editable"
+          }
+        ],
+        {
+          "s": "."
+        }
+      ],
+      [
+        ":p",
+        [
+          ":strong",
+          {
+            "s": "Architecture:"
+          }
+        ],
+        {
+          "s": " Per-block "
+        },
+        [
+          ":code",
+          {
+            "s": "contenteditable"
+          }
+        ],
+        {
+          "s": ". Each leaf block ("
+        },
+        [
+          ":code",
+          {
+            "s": ":p"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": ":h1"
+          }
+        ],
+        {
+          "s": "–"
+        },
+        [
+          ":code",
+          {
+            "s": ":h6"
+          }
+        ],
+        {
+          "s": ") gets its own contenteditable region. Block structure (Enter to split, Backspace to merge) is managed by the editor at the AST level. Inline text editing is native browser behavior. Formatting (bold, italic) is applied via "
+        },
+        [
+          ":code",
+          {
+            "s": "execCommand"
+          }
+        ],
+        {
+          "s": " and synced back to AST. Custom nodes ("
+        },
+        [
+          ":code",
+          {
+            "s": ":field-ref"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": ":item-ref"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": ":link"
+          }
+        ],
+        {
+          "s": ") render as "
+        },
+        [
+          ":code",
+          {
+            "s": "contenteditable=\"false\""
+          }
+        ],
+        {
+          "s": " islands — the cursor skips over them."
+        }
+      ],
+      [
+        ":p",
+        [
+          ":strong",
+          {
+            "s": "Validated:"
+          }
+        ]
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Per-block contenteditable works for the editing model described in the design"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "DOM→AST sync is tractable thanks to the no-nesting constraint — one level of "
+            },
+            [
+              ":code",
+              {
+                "s": "<strong>"
+              }
+            ],
+            {
+              "s": "/"
+            },
+            [
+              ":code",
+              {
+                "s": "<em>"
+              }
+            ],
+            {
+              "s": "/"
+            },
+            [
+              ":code",
+              {
+                "s": "<code>"
+              }
+            ],
+            {
+              "s": " to walk, non-editable islands preserved via CSS classes and data attributes"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Enter splits a block at cursor position (original keeps its tag, new block is "
+            },
+            [
+              ":code",
+              {
+                "s": ":p"
+              }
+            ],
+            {
+              "s": "); Backspace at block start merges with previous — both produce clean AST"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Browser-native formatting (Ctrl+B/I) works when intercepted at keydown level and applied via "
+            },
+            [
+              ":code",
+              {
+                "s": "execCommand"
+              }
+            ],
+            {
+              "s": ", then synced"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Adjacent text nodes are merged during sync, keeping the AST minimal"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Container blocks (lists, blockquotes, code blocks) render readonly within the editor — a reasonable first boundary"
+            }
+          ]
+        ]
+      ],
+      [
+        ":p",
+        [
+          ":strong",
+          {
+            "s": "Issues discovered and fixed:"
+          }
+        ]
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Browser captures Ctrl+B/I before contenteditable sees them — fix: intercept in keydown handler, preventDefault, call execCommand explicitly"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Cursor invisible after trailing "
+            },
+            [
+              ":code",
+              {
+                "s": "contenteditable=\"false\""
+              }
+            ],
+            {
+              "s": " element — fix: append zero-width space ("
+            },
+            [
+              ":code",
+              {
+                "s": "\\u200B"
+              }
+            ],
+            {
+              "s": ") after trailing non-editable elements, strip during DOM→AST sync"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Cursor not visible in newly created empty blocks — fix: empty blocks contain only a "
+            },
+            [
+              ":code",
+              {
+                "s": "<br>"
+              }
+            ],
+            {
+              "s": " placeholder (skip empty text nodes during render), and focus is deferred via "
+            },
+            [
+              ":code",
+              {
+                "s": "requestAnimationFrame"
+              }
+            ],
+            {
+              "s": " to let the browser paint first"
+            }
+          ]
+        ]
+      ],
+      [
+        ":p",
+        [
+          ":strong",
+          {
+            "s": "Also validated (follow-up iterations):"
+          }
+        ]
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Markdown shortcuts: "
+            },
+            [
+              ":code",
+              {
+                "s": "# "
+              }
+            ],
+            {
+              "s": " through "
+            },
+            [
+              ":code",
+              {
+                "s": "###### "
+              }
+            ],
+            {
+              "s": " convert paragraphs to headings, including non-empty paragraphs. Backspace at start of heading converts back to paragraph."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Inserting custom nodes at cursor: "
+            },
+            [
+              ":code",
+              {
+                "s": "@"
+              }
+            ],
+            {
+              "s": " triggers item-ref autocomplete (searches items by name), "
+            },
+            [
+              ":code",
+              {
+                "s": "{{"
+              }
+            ],
+            {
+              "s": " triggers field-ref autocomplete (shows computed fields). Popup with arrow key navigation, Enter/Tab to select, Escape to dismiss. Inserted as non-editable islands with zero-width space for cursor placement."
+            }
+          ]
+        ]
+      ],
+      [
+        ":p",
+        [
+          ":strong",
+          {
+            "s": "Further iterations:"
+          }
+        ]
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Path-based block addressing: refactored from flat indices to path arrays (e.g. "
+            },
+            [
+              ":code",
+              {
+                "s": "[2, 0, 0]"
+              }
+            ],
+            {
+              "s": ") to address blocks at any nesting depth. This enabled editable content within list items and blockquotes — "
+            },
+            [
+              ":code",
+              {
+                "s": ":p"
+              }
+            ],
+            {
+              "s": " blocks inside "
+            },
+            [
+              ":code",
+              {
+                "s": ":li"
+              }
+            ],
+            {
+              "s": " and "
+            },
+            [
+              ":code",
+              {
+                "s": ":blockquote"
+              }
+            ],
+            {
+              "s": " get contenteditable with full event handling (typing, formatting, autocomplete, split/merge)."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Horizontal rule: "
+            },
+            [
+              ":code",
+              {
+                "s": ":hr"
+              }
+            ],
+            {
+              "s": " node type, rendered as styled "
+            },
+            [
+              ":code",
+              {
+                "s": "<hr>"
+              }
+            ],
+            {
+              "s": " in both readonly and editable views."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Transclusion insertion: "
+            },
+            [
+              ":code",
+              {
+                "s": "@@"
+              }
+            ],
+            {
+              "s": " triggers a two-step autocomplete — item picker, then field picker — and inserts a "
+            },
+            [
+              ":code",
+              {
+                "s": "[:transclusion, itemId, fieldName]"
+              }
+            ],
+            {
+              "s": " node directly in the AST. No computed field backing needed."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Edit mode indicator: subtle left accent border on the editor area when in edit mode."
+            }
+          ]
+        ]
+      ],
+      [
+        ":p",
+        [
+          ":strong",
+          {
+            "s": "Not yet prototyped:"
+          }
+        ]
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Structural list operations (Enter to create new "
+            },
+            [
+              ":code",
+              {
+                "s": ":li"
+              }
+            ],
+            {
+              "s": ", Tab/Shift+Tab for nesting)"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Cross-block selection (selecting text spanning two paragraphs)"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Inserting links (Ctrl+K for URLs)"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":code",
+              {
+                "s": ":doc"
+              }
+            ],
+            {
+              "s": " nodes in code (comments)"
+            }
+          ]
+        ]
+      ],
+      [
+        ":h3",
+        {
+          "s": "Prototype 4: Markdown Converter"
+        }
+      ],
+      [
+        ":p",
+        [
+          ":item-ref",
+          {
+            "s": "d0d0d0d0-0008-0000-0000-000000000000"
+          },
+          {
+            "s": "markdown-to-doc-ast"
+          }
+        ],
+        {
+          "s": " — a library that converts markdown description fields to "
+        },
+        [
+          ":code",
+          {
+            "s": ":doc"
+          }
+        ],
+        {
+          "s": " AST. Supports overwrite or copy mode (for side-by-side comparison)."
+        }
+      ],
+      [
+        ":p",
+        [
+          ":strong",
+          {
+            "s": "Handles:"
+          }
+        ],
+        {
+          "s": " headings, paragraphs, bold, italic, code, code blocks, lists (with continuation paragraphs), blockquotes, horizontal rules, "
+        },
+        [
+          ":code",
+          {
+            "s": "{{field-ref}}"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "[text](item://id)"
+          }
+        ],
+        {
+          "s": " → "
+        },
+        [
+          ":code",
+          {
+            "s": ":item-ref"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "[text](url)"
+          }
+        ],
+        {
+          "s": " → "
+        },
+        [
+          ":code",
+          {
+            "s": ":link"
+          }
+        ],
+        {
+          "s": "."
+        }
+      ],
+      [
+        ":p",
+        [
+          ":strong",
+          {
+            "s": "Validated:"
+          }
+        ],
+        {
+          "s": " Successfully converted complex documentation items (including this document). Surfaced the need for editable lists and horizontal rule support, both of which were then implemented."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Status"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The core model is validated by working prototypes across rendering, provenance, editing, and migration. The design direction is:"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Everything is Hob (static data is the degenerate case) — "
+            },
+            [
+              ":strong",
+              {
+                "s": "validated"
+              }
+            ]
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Unified AST (data nodes + computation nodes, no doc/code boundary) — "
+            },
+            [
+              ":strong",
+              {
+                "s": "designed, partially validated"
+              }
+            ],
+            {
+              "s": " ("
+            },
+            [
+              ":code",
+              {
+                "s": ":transclusion"
+              }
+            ],
+            {
+              "s": " and "
+            },
+            [
+              ":code",
+              {
+                "s": ":field-ref"
+              }
+            ],
+            {
+              "s": " working; "
+            },
+            [
+              ":code",
+              {
+                "s": ":doc"
+              }
+            ],
+            {
+              "s": "-as-comments designed)"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Views select field views that walk ASTs, preserving the existing architecture — "
+            },
+            [
+              ":strong",
+              {
+                "s": "validated"
+              }
+            ]
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Provenance tracing (Level 2) works via data attributes and the element inspector — "
+            },
+            [
+              ":strong",
+              {
+                "s": "validated"
+              }
+            ]
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Prose editor (per-block contenteditable, DOM↔AST sync, formatting, block operations, markdown shortcuts, "
+            },
+            [
+              ":code",
+              {
+                "s": "@"
+              }
+            ],
+            {
+              "s": "/"
+            },
+            [
+              ":code",
+              {
+                "s": "{{"
+              }
+            ],
+            {
+              "s": "/"
+            },
+            [
+              ":code",
+              {
+                "s": "@@"
+              }
+            ],
+            {
+              "s": " autocomplete) — "
+            },
+            [
+              ":strong",
+              {
+                "s": "validated, good enough for use"
+              }
+            ]
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Editable text within lists and blockquotes — "
+            },
+            [
+              ":strong",
+              {
+                "s": "validated"
+              }
+            ]
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Inline transclusions ("
+            },
+            [
+              ":code",
+              {
+                "s": "@@"
+              }
+            ],
+            {
+              "s": " insertion, "
+            },
+            [
+              ":code",
+              {
+                "s": "[:transclusion]"
+              }
+            ],
+            {
+              "s": " AST node) — "
+            },
+            [
+              ":strong",
+              {
+                "s": "validated"
+              }
+            ]
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Cross-item reactivity for transclusions — "
+            },
+            [
+              ":strong",
+              {
+                "s": "validated"
+              }
+            ],
+            {
+              "s": " (api.get dependency tracking)"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Markdown-to-AST migration — "
+            },
+            [
+              ":strong",
+              {
+                "s": "validated"
+              }
+            ],
+            {
+              "s": " (converter library working)"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Structural list operations (Enter/Backspace/Delete/Tab/Shift+Tab) — "
+            },
+            [
+              ":strong",
+              {
+                "s": "validated"
+              }
+            ],
+            {
+              "s": " (all core operations working)"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Link insertion via "
+            },
+            [
+              ":code",
+              {
+                "s": "@"
+              }
+            ],
+            {
+              "s": " autocomplete (URL detection) — "
+            },
+            [
+              ":strong",
+              {
+                "s": "validated"
+              }
+            ],
+            {
+              "s": "\\n- Cross-block selection — "
+            },
+            [
+              ":strong",
+              {
+                "s": "designed, deferred"
+              }
+            ]
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":code",
+              {
+                "s": ":eval"
+              }
+            ],
+            {
+              "s": " blocks, "
+            },
+            [
+              ":code",
+              {
+                "s": ":comment"
+              }
+            ],
+            {
+              "s": " nodes — "
+            },
+            [
+              ":strong",
+              {
+                "s": "designed, not yet prototyped"
+              }
+            ]
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "\"Explain this\" as a narrative over the provenance trace — "
+            },
+            [
+              ":strong",
+              {
+                "s": "designed, not yet prototyped"
+              }
+            ]
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Literate programming ("
+            },
+            [
+              ":code",
+              {
+                "s": ":doc"
+              }
+            ],
+            {
+              "s": " as primary, "
+            },
+            [
+              ":code",
+              {
+                "s": "content.code"
+              }
+            ],
+            {
+              "s": " derived) — "
+            },
+            [
+              ":strong",
+              {
+                "s": "conceptual, deferred"
+              }
+            ]
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Indirection is preserved but made dissolvable — "
+            },
+            [
+              ":strong",
+              {
+                "s": "principle established"
+              }
+            ]
+          ]
+        ]
+      ],
+      [
+        ":h2",
+        {
+          "s": "Next Steps"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The branch ("
+        },
+        [
+          ":code",
+          {
+            "s": "doc-ast-editor"
+          }
+        ],
+        {
+          "s": ") is not yet merged to master. The AST structure and editor approach are validated for prose editing and transclusions. The unified AST vision ("
+        },
+        [
+          ":code",
+          {
+            "s": ":eval"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": ":comment"
+          }
+        ],
+        {
+          "s": ", literate programming) is designed but not yet prototyped."
+        }
+      ],
+      [
+        ":ol",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Continue real-world migration."
+              }
+            ],
+            {
+              "s": " Convert more existing notes to "
+            },
+            [
+              ":code",
+              {
+                "s": ":doc"
+              }
+            ],
+            {
+              "s": " AST. Each conversion surfaces edge cases in the converter and editor, and builds confidence in the AST structure. Transclusions can now be added via "
+            },
+            [
+              ":code",
+              {
+                "s": "@@"
+              }
+            ],
+            {
+              "s": " during manual conversion."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "`:doc` in code."
+              }
+            ],
+            {
+              "s": " Teach the Hob evaluator to skip "
+            },
+            [
+              ":code",
+              {
+                "s": ":doc"
+              }
+            ],
+            {
+              "s": " nodes in code bodies. This gives Hob code commenting — currently impossible — using the existing "
+            },
+            [
+              ":code",
+              {
+                "s": ":doc"
+              }
+            ],
+            {
+              "s": " AST and prose editor infrastructure."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Hob standard library."
+              }
+            ],
+            {
+              "s": " Build out piecemeal, driven by query block conversion. Core needs: querying ("
+            },
+            [
+              ":code",
+              {
+                "s": "query"
+              }
+            ],
+            {
+              "s": ", "
+            },
+            [
+              ":code",
+              {
+                "s": "sort-by"
+              }
+            ],
+            {
+              "s": "), collection operations ("
+            },
+            [
+              ":code",
+              {
+                "s": "map"
+              }
+            ],
+            {
+              "s": ", "
+            },
+            [
+              ":code",
+              {
+                "s": "filter"
+              }
+            ],
+            {
+              "s": "), binding ("
+            },
+            [
+              ":code",
+              {
+                "s": "let"
+              }
+            ],
+            {
+              "s": "), string operations. The same primitives serve query blocks, search, filters, sort, and constraints."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Structural list operations."
+              }
+            ],
+            {
+              "s": " Enter to create new "
+            },
+            [
+              ":code",
+              {
+                "s": ":li"
+              }
+            ],
+            {
+              "s": ", Tab/Shift+Tab for nesting, Backspace on empty item to remove. The path-based addressing is already in place; this layers on top as block-level operations."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Provenance narrative."
+              }
+            ],
+            {
+              "s": " Build \"Explain this\" — walks the provenance chain on a rendered element and produces a text explanation. Tests whether captured data attributes are sufficient."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Integration (once confident)."
+              }
+            ],
+            {
+              "s": " Merge to master, update note type to use doc views, migrate existing notes via converter."
+            }
+          ]
+        ]
+      ],
+      [
+        ":p",
+        {
+          "s": "Related: "
+        },
+        [
+          ":item-ref",
+          {
+            "s": "c0c0c0c0-0073-0000-0000-000000000000"
+          },
+          {
+            "s": "Structured Notes proposal"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":item-ref",
+          {
+            "s": "c0c0c0c0-0058-0000-0000-000000000000"
+          },
+          {
+            "s": "Hob design direction"
+          }
+        ],
+        {
+          "s": "."
+        }
+      ]
+    ],
+    "tags": [
+      "bff75873-edb8-412e-81c9-c744e68fe29f",
+      "c0c0c0c0-0085-0000-0000-000000000000"
+    ]
+  },
+  "attachments": []
+}

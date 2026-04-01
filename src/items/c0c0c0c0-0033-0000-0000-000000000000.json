@@ -1,1 +1,1176 @@
-{"id": "c0c0c0c0-0033-0000-0000-000000000000", "name": "Viewport", "type": "871ae771-b9b1-4f40-8c7f-d9038bfb69c3", "created": 1770400000000, "modified": 1773243817559, "content": {"description": [":doc", [":p", {"s": "The viewport is the top-level container that frames all user interaction with Hobson. It manages which item is displayed, provides navigation chrome, coordinates context menus, selection, keyboard shortcuts, and the REPL panel."}], [":h2", {"s": "Architecture"}], [":p", {"s": "The viewport is split across several items:"}], [":table", [":thead", [":tr", [":th", {"s": "Item"}], [":th", {"s": "Role"}]]], [":tbody", [":tr", [":td", [":item-ref", {"s": "77777777-0000-0000-0000-000000000000"}, {"s": "kernel:viewport-type"}]], [":td", {"s": "Type definition"}]], [":tr", [":td", [":item-ref", {"s": "88888888-0000-0000-0000-000000000000"}, {"s": "kernel:system-viewport"}]], [":td", {"s": "Singleton instance — stores current root and REPL state"}]], [":tr", [":td", [":item-ref", {"s": "bd74da77-a459-454a-b001-48685d4b536d"}, {"s": "viewport-view"}]], [":td", {"s": "The view — renders chrome, context menus, selection highlighting"}]], [":tr", [":td", [":item-ref", {"s": "f1111111-0002-0000-0000-000000000000"}, {"s": "viewport-manager"}]], [":td", {"s": "Library — stateless navigation, URL sync, view config persistence"}]], [":tr", [":td", [":item-ref", {"s": "f1111111-0001-0000-0000-000000000000"}, {"s": "selection-manager"}]], [":td", {"s": "Library — tracks selected item and parent"}]]]], [":p", {"s": "All of these are userland items, not kernel code. The kernel only knows about the viewport type and instance GUIDs."}], [":h2", {"s": "Root Item"}], [":p", {"s": "The viewport displays one root item at a time. The URL is the authoritative source:"}], [":code-block", {"s": "hobson.html?root=item-uuid"}], [":h3", {"s": "Resolution Order"}], [":ol", [":li", [":p", [":code", {"s": "?root="}], {"s": " URL parameter (authoritative)"}]], [":li", [":p", [":code", {"s": "viewport.attachments[0].id"}], {"s": " (persisted fallback)"}]]], [":p", {"s": "When the URL root differs from the stored root, "}, [":code", {"s": "viewport-manager"}], {"s": " syncs the viewport item to match."}], [":h3", {"s": "Navigation"}], [":code-block", {"s": "api.navigate(itemId);                    // Change root, update URL\napi.navigate(itemId, { field: 'code', region: 'myFn' });  // Deep link"}], [":p", {"s": "Navigation updates "}, [":code", {"s": "history.pushState()"}], {"s": ", so browser back/forward buttons work. The "}, [":code", {"s": "viewport-manager"}], {"s": " listens for "}, [":code", {"s": "popstate"}], {"s": " events and re-navigates accordingly."}], [":h3", {"s": "Root View Config"}], [":p", {"s": "The root item's view configuration is stored in "}, [":code", {"s": "viewport.attachments[0].view"}], {"s": ":"}], [":code-block", {"s": "{\n  type: 'spatial-canvas-view-uuid',  // Current view\n  innerView: { type: 'note-view-uuid' },  // Background view (for wrapper views)\n  // ... other view-specific config\n}"}], [":p", {"s": "Accessed via "}, [":code", {"s": "api.getViewConfig()"}], {"s": " / "}, [":code", {"s": "api.updateViewConfig()"}], {"s": " in views."}], [":h2", {"s": "Chrome"}], [":p", {"s": "The "}, [":code", {"s": "viewport-view"}], {"s": " renders minimal chrome around the root item:"}], [":ul", [":li", [":p", [":strong", {"s": "Browser title"}], {"s": " — updates "}, [":code", {"s": "document.title"}], {"s": " to "}, [":code", {"s": "\"{ItemName} - Hobson\""}]]], [":li", [":p", [":strong", {"s": "Item decorator"}], {"s": " — applies "}, [":code", {"s": "data-item-id"}], {"s": " attributes and tooltips to rendered items for selection targeting and debug inspection"}]], [":li", [":p", [":strong", {"s": "Selection highlighting"}], {"s": " — "}, [":code", {"s": ".item-selected"}], {"s": " class on the selected item"}]], [":li", [":p", [":strong", {"s": "REPL panel"}], {"s": " — collapsible panel at the bottom (managed by "}, [":item-ref", {"s": "f1111111-0003-0000-0000-000000000000"}, {"s": "repl-ui"}], {"s": ")"}]], [":li", [":p", [":strong", {"s": "Context menus"}], {"s": " — see "}, [":item-ref", {"s": "c0c0c0c0-0034-0000-0000-000000000000"}, {"s": "Context Menu"}]]]], [":h2", {"s": "Selection"}], [":p", {"s": "The "}, [":item-ref", {"s": "f1111111-0001-0000-0000-000000000000"}, {"s": "selection-manager"}], {"s": " tracks which item is currently selected:"}], [":code-block", {"s": "api.viewport.select(itemId, parentId);   // Select an item\napi.viewport.getSelection();              // Get selected item ID\napi.viewport.clearSelection();            // Clear selection"}], [":p", {"s": "Selection tracks both the item and its parent (important for context-aware operations like \"which container is this child in?\"). Clicking an item selects it; pressing Escape clears selection."}], [":h3", {"s": "Selection Events"}], [":p", {"s": "The "}, [":code", {"s": "selection:changed"}], {"s": " event fires when selection changes, with payload "}, [":code", {"s": "{ current: { itemId, parentId }, previous: { itemId, parentId } }"}], {"s": "."}], [":h2", {"s": "REPL Panel"}], [":p", {"s": "The REPL panel state persists in "}, [":code", {"s": "viewport.content.replPanelState"}], {"s": ":"}], [":table", [":thead", [":tr", [":th", {"s": "Field"}], [":th", {"s": "Purpose"}]]], [":tbody", [":tr", [":td", [":code", {"s": "expanded"}]], [":td", {"s": "Whether the panel is open"}]], [":tr", [":td", [":code", {"s": "panelHeight"}]], [":td", {"s": "Panel height in pixels"}]], [":tr", [":td", [":code", {"s": "inputWidthPercent"}]], [":td", {"s": "Split ratio between input and output"}]]]], [":p", {"s": "Toggled via "}, [":strong", {"s": "Ctrl+\\"}], {"s": " key. See "}, [":item-ref", {"s": "f1111111-0003-0000-0000-000000000000"}, {"s": "REPL"}], {"s": " for usage."}], [":h2", {"s": "Keyboard Shortcuts"}], [":p", {"s": "The viewport registers global keyboard shortcuts:"}], [":table", [":thead", [":tr", [":th", {"s": "Shortcut"}], [":th", {"s": "Action"}], [":th", {"s": "Provided By"}]]], [":tbody", [":tr", [":td", {"s": "Cmd+K / Ctrl+K"}], [":td", {"s": "Open "}, [":item-ref", {"s": "f1111111-0005-0000-0000-000000000000"}, {"s": "item palette"}]], [":td", [":item-ref", {"s": "f1111111-0004-0000-0000-000000000000"}, {"s": "keyboard-shortcuts"}]]], [":tr", [":td", {"s": "Cmd+?"}], [":td", {"s": "Open "}, [":item-ref", {"s": "f1111111-0006-0000-0000-000000000000"}, {"s": "help dialog"}]], [":td", [":item-ref", {"s": "f1111111-0004-0000-0000-000000000000"}, {"s": "keyboard-shortcuts"}]]], [":tr", [":td", {"s": "Esc"}], [":td", {"s": "Clear selection / close menu"}], [":td", {"s": "viewport-view"}], [":td", {"s": "\\n"}], [":td", {"s": "Ctrl+\\\\"}], [":td", {"s": "Toggle REPL"}], [":td", [":item-ref", {"s": "f1111111-0003-0000-0000-000000000000"}, {"s": "repl-ui"}]]], [":tr", [":td", {"s": "Ctrl+Shift+S"}], [":td", [":item-ref", {"s": "33333333-7777-0000-0000-000000000000"}, {"s": "Safe mode"}], {"s": " escape hatch"}], [":td", {"s": "Bootloader (hardcoded)"}]]]], [":h2", {"s": "Viewport Events"}], [":table", [":thead", [":tr", [":th", {"s": "Event"}], [":th", {"s": "When"}], [":th", {"s": "Payload"}]]], [":tbody", [":tr", [":td", [":code", {"s": "viewport:root-changed"}]], [":td", {"s": "Navigation occurs"}], [":td", [":code", {"s": "{ rootId, previous, initial, popstate }"}]]], [":tr", [":td", [":code", {"s": "selection:changed"}]], [":td", {"s": "Selected item changes"}], [":td", [":code", {"s": "{ current, previous }"}]]]]], [":h2", {"s": "Supporting Libraries"}], [":code-block", {"s": "const ids = ['f1111111-0001-0000-0000-000000000000', 'f1111111-0002-0000-0000-000000000000', 'f1111111-0003-0000-0000-000000000000', 'f1111111-0004-0000-0000-000000000000', 'f1111111-0005-0000-0000-000000000000', 'f1111111-0006-0000-0000-000000000000', 'f1111111-0007-0000-0000-000000000000'];\nconst items = [];\nfor (const id of ids) {\n  try { items.push(await api.get(id)); } catch(e) {}\n}\nreturn '| Library | Purpose |\\n|---------|---------|\\n' + items.map(i => {\n  const desc = i.content?.description?.split('\\n')[0] || 'No description';\n  return `| [${i.name}](item://${i.id}) | ${desc} |`;\n}).join('\\n') + '\\n';"}], [":h2", {"s": "Design Rationale"}], [":h3", {"s": "Why Userland?"}], [":p", {"s": "The viewport could be kernel code, but keeping it as regular items means:"}], [":ul", [":li", [":p", {"s": "The REPL panel, item palette, and help dialog can be modified or replaced"}]], [":li", [":p", {"s": "Context menu operations are inspectable and extensible"}]], [":li", [":p", {"s": "The viewport view itself can be swapped (though this is rare)"}]], [":li", [":p", {"s": "Hot-reload works — editing viewport-view updates behavior immediately"}]]], [":h3", {"s": "Why Singleton?"}], [":p", {"s": "There is exactly one viewport per Hobson instance. It serves as the root of the render tree. Nested instances (via "}, [":code", {"s": "?instance="}], {"s": ") get their own viewport in their own storage namespace."}], [":h3", {"s": "Why URL-Authoritative?"}], [":p", {"s": "Making the URL the source of truth for the root item enables bookmarking, browser history, sharing links, and multiple entry points — all for free from the browser platform."}], [":h2", {"s": "See Also"}], [":ul", [":li", [":p", [":item-ref", {"s": "c0c0c0c0-0003-0000-0000-000000000000"}, {"s": "Navigation"}], {"s": " — URL structure, navigation methods, link behavior"}]], [":li", [":p", [":item-ref", {"s": "c0c0c0c0-0034-0000-0000-000000000000"}, {"s": "Context Menus"}], {"s": " — Right-click interaction"}]], [":li", [":p", [":item-ref", {"s": "f1111111-0003-0000-0000-000000000000"}, {"s": "REPL"}], {"s": " — The interactive console"}]], [":li", [":p", [":item-ref", {"s": "ef793c27-2d4b-4c99-b05a-2769db5bc5a9"}, {"s": "Spatial Windowing"}], {"s": " — The primary container view within the viewport"}]], [":li", [":p", [":item-ref", {"s": "c0c0c0c0-0031-0000-0000-000000000000"}, {"s": "URL Parameters"}], {"s": " — Boot-time parameters including "}, [":code", {"s": "?root"}]]]]], "tags": ["bff75873-edb8-412e-81c9-c744e68fe29f", "c0c0c0c0-0001-0000-0000-000000000000", "c0c0c0c0-0085-0000-0000-000000000000"]}, "attachments": []}
+{
+  "id": "c0c0c0c0-0033-0000-0000-000000000000",
+  "name": "Viewport",
+  "type": "871ae771-b9b1-4f40-8c7f-d9038bfb69c3",
+  "created": 1770400000000,
+  "modified": 1774988060774,
+  "content": {
+    "description": [
+      ":doc",
+      [
+        ":p",
+        {
+          "s": "The viewport is the top-level container that frames all user interaction with Hobson. It manages which item is displayed, provides navigation chrome, coordinates context menus, selection, keyboard shortcuts, and the REPL panel."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Architecture"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The viewport is split across several items:"
+        }
+      ],
+      [
+        ":table",
+        [
+          ":thead",
+          [
+            ":tr",
+            [
+              ":th",
+              {
+                "s": "Item"
+              }
+            ],
+            [
+              ":th",
+              {
+                "s": "Role"
+              }
+            ]
+          ]
+        ],
+        [
+          ":tbody",
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":item-ref",
+                {
+                  "s": "77777777-0000-0000-0000-000000000000"
+                },
+                {
+                  "s": "kernel:viewport-type"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Type definition"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":item-ref",
+                {
+                  "s": "88888888-0000-0000-0000-000000000000"
+                },
+                {
+                  "s": "kernel:system-viewport"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Singleton instance — stores current root and REPL state"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":item-ref",
+                {
+                  "s": "bd74da77-a459-454a-b001-48685d4b536d"
+                },
+                {
+                  "s": "viewport-view"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "The view — renders chrome, context menus, selection highlighting"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":item-ref",
+                {
+                  "s": "f1111111-0002-0000-0000-000000000000"
+                },
+                {
+                  "s": "viewport-manager"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Library — stateless navigation, URL sync, view config persistence"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":item-ref",
+                {
+                  "s": "f1111111-0001-0000-0000-000000000000"
+                },
+                {
+                  "s": "selection-manager"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Library — tracks selected item and parent"
+              }
+            ]
+          ]
+        ]
+      ],
+      [
+        ":p",
+        {
+          "s": "All of these are userland items, not kernel code. The kernel only knows about the viewport type and instance GUIDs."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Root Item"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The viewport displays one root item at a time. The URL is the authoritative source:"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": "hobson.html?root=item-uuid"
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Resolution Order"
+        }
+      ],
+      [
+        ":ol",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":code",
+              {
+                "s": "?root="
+              }
+            ],
+            {
+              "s": " URL parameter (authoritative)"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":code",
+              {
+                "s": "viewport.attachments[0].id"
+              }
+            ],
+            {
+              "s": " (persisted fallback)"
+            }
+          ]
+        ]
+      ],
+      [
+        ":p",
+        {
+          "s": "When the URL root differs from the stored root, "
+        },
+        [
+          ":code",
+          {
+            "s": "viewport-manager"
+          }
+        ],
+        {
+          "s": " syncs the viewport item to match."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Navigation"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": "api.navigate(itemId);                    // Change root, update URL\napi.navigate(itemId, { field: 'code', region: 'myFn' });  // Deep link"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Navigation updates "
+        },
+        [
+          ":code",
+          {
+            "s": "history.pushState()"
+          }
+        ],
+        {
+          "s": ", so browser back/forward buttons work. The "
+        },
+        [
+          ":code",
+          {
+            "s": "viewport-manager"
+          }
+        ],
+        {
+          "s": " listens for "
+        },
+        [
+          ":code",
+          {
+            "s": "popstate"
+          }
+        ],
+        {
+          "s": " events and re-navigates accordingly."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Root View Config"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The root item's view configuration is stored in "
+        },
+        [
+          ":code",
+          {
+            "s": "viewport.attachments[0].view"
+          }
+        ],
+        {
+          "s": ":"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": "{\n  type: 'spatial-canvas-view-uuid',  // Current view\n  innerView: { type: 'note-view-uuid' },  // Background view (for wrapper views)\n  // ... other view-specific config\n}"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Accessed via "
+        },
+        [
+          ":code",
+          {
+            "s": "api.getViewConfig()"
+          }
+        ],
+        {
+          "s": " / "
+        },
+        [
+          ":code",
+          {
+            "s": "api.updateViewConfig()"
+          }
+        ],
+        {
+          "s": " in views."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Chrome"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The "
+        },
+        [
+          ":code",
+          {
+            "s": "viewport-view"
+          }
+        ],
+        {
+          "s": " renders minimal chrome around the root item:"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Browser title"
+              }
+            ],
+            {
+              "s": " — updates "
+            },
+            [
+              ":code",
+              {
+                "s": "document.title"
+              }
+            ],
+            {
+              "s": " to "
+            },
+            [
+              ":code",
+              {
+                "s": "\"{ItemName} - Hobson\""
+              }
+            ]
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Item decorator"
+              }
+            ],
+            {
+              "s": " — applies "
+            },
+            [
+              ":code",
+              {
+                "s": "data-item-id"
+              }
+            ],
+            {
+              "s": " attributes and tooltips to rendered items for selection targeting and debug inspection"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Selection highlighting"
+              }
+            ],
+            {
+              "s": " — "
+            },
+            [
+              ":code",
+              {
+                "s": ".item-selected"
+              }
+            ],
+            {
+              "s": " class on the selected item"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "REPL panel"
+              }
+            ],
+            {
+              "s": " — collapsible panel at the bottom (managed by "
+            },
+            [
+              ":item-ref",
+              {
+                "s": "f1111111-0003-0000-0000-000000000000"
+              },
+              {
+                "s": "repl-ui"
+              }
+            ],
+            {
+              "s": ")"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Context menus"
+              }
+            ],
+            {
+              "s": " — see "
+            },
+            [
+              ":item-ref",
+              {
+                "s": "c0c0c0c0-0034-0000-0000-000000000000"
+              },
+              {
+                "s": "Context Menu"
+              }
+            ]
+          ]
+        ]
+      ],
+      [
+        ":h2",
+        {
+          "s": "Selection"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The "
+        },
+        [
+          ":item-ref",
+          {
+            "s": "f1111111-0001-0000-0000-000000000000"
+          },
+          {
+            "s": "selection-manager"
+          }
+        ],
+        {
+          "s": " tracks which item is currently selected:"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": "api.viewport.select(itemId, parentId);   // Select an item\napi.viewport.getSelection();              // Get selected item ID\napi.viewport.clearSelection();            // Clear selection"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Selection tracks both the item and its parent (important for context-aware operations like \"which container is this child in?\"). Clicking an item selects it; pressing Escape clears selection."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Selection Events"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The "
+        },
+        [
+          ":code",
+          {
+            "s": "selection:changed"
+          }
+        ],
+        {
+          "s": " event fires when selection changes, with payload "
+        },
+        [
+          ":code",
+          {
+            "s": "{ current: { itemId, parentId }, previous: { itemId, parentId } }"
+          }
+        ],
+        {
+          "s": "."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "REPL Panel"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The REPL panel state persists in "
+        },
+        [
+          ":code",
+          {
+            "s": "viewport.content.replPanelState"
+          }
+        ],
+        {
+          "s": ":"
+        }
+      ],
+      [
+        ":table",
+        [
+          ":thead",
+          [
+            ":tr",
+            [
+              ":th",
+              {
+                "s": "Field"
+              }
+            ],
+            [
+              ":th",
+              {
+                "s": "Purpose"
+              }
+            ]
+          ]
+        ],
+        [
+          ":tbody",
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "expanded"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Whether the panel is open"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "panelHeight"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Panel height in pixels"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "inputWidthPercent"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Split ratio between input and output"
+              }
+            ]
+          ]
+        ]
+      ],
+      [
+        ":p",
+        {
+          "s": "Toggled via "
+        },
+        [
+          ":strong",
+          {
+            "s": "Ctrl+\\"
+          }
+        ],
+        {
+          "s": " key. See "
+        },
+        [
+          ":item-ref",
+          {
+            "s": "f1111111-0003-0000-0000-000000000000"
+          },
+          {
+            "s": "REPL"
+          }
+        ],
+        {
+          "s": " for usage."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Keyboard Shortcuts"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The viewport registers global keyboard shortcuts:"
+        }
+      ],
+      [
+        ":table",
+        [
+          ":thead",
+          [
+            ":tr",
+            [
+              ":th",
+              {
+                "s": "Shortcut"
+              }
+            ],
+            [
+              ":th",
+              {
+                "s": "Action"
+              }
+            ],
+            [
+              ":th",
+              {
+                "s": "Provided By"
+              }
+            ]
+          ]
+        ],
+        [
+          ":tbody",
+          [
+            ":tr",
+            [
+              ":td",
+              {
+                "s": "Cmd+K / Ctrl+K"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Open "
+              },
+              [
+                ":item-ref",
+                {
+                  "s": "f1111111-0005-0000-0000-000000000000"
+                },
+                {
+                  "s": "item palette"
+                }
+              ]
+            ],
+            [
+              ":td",
+              [
+                ":item-ref",
+                {
+                  "s": "f1111111-0004-0000-0000-000000000000"
+                },
+                {
+                  "s": "keyboard-shortcuts"
+                }
+              ]
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              {
+                "s": "Cmd+?"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Open "
+              },
+              [
+                ":item-ref",
+                {
+                  "s": "f1111111-0006-0000-0000-000000000000"
+                },
+                {
+                  "s": "help dialog"
+                }
+              ]
+            ],
+            [
+              ":td",
+              [
+                ":item-ref",
+                {
+                  "s": "f1111111-0004-0000-0000-000000000000"
+                },
+                {
+                  "s": "keyboard-shortcuts"
+                }
+              ]
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              {
+                "s": "Esc"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Clear selection / close menu"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "viewport-view"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "\\n"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Ctrl+\\\\"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Toggle REPL"
+              }
+            ],
+            [
+              ":td",
+              [
+                ":item-ref",
+                {
+                  "s": "f1111111-0003-0000-0000-000000000000"
+                },
+                {
+                  "s": "repl-ui"
+                }
+              ]
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              {
+                "s": "Ctrl+Shift+S"
+              }
+            ],
+            [
+              ":td",
+              [
+                ":item-ref",
+                {
+                  "s": "33333333-7777-0000-0000-000000000000"
+                },
+                {
+                  "s": "Safe mode"
+                }
+              ],
+              {
+                "s": " escape hatch"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Bootloader (hardcoded)"
+              }
+            ]
+          ]
+        ]
+      ],
+      [
+        ":h2",
+        {
+          "s": "Viewport Events"
+        }
+      ],
+      [
+        ":table",
+        [
+          ":thead",
+          [
+            ":tr",
+            [
+              ":th",
+              {
+                "s": "Event"
+              }
+            ],
+            [
+              ":th",
+              {
+                "s": "When"
+              }
+            ],
+            [
+              ":th",
+              {
+                "s": "Payload"
+              }
+            ]
+          ]
+        ],
+        [
+          ":tbody",
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "viewport:root-changed"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Navigation occurs"
+              }
+            ],
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "{ rootId, previous, initial, popstate }"
+                }
+              ]
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "selection:changed"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Selected item changes"
+              }
+            ],
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "{ current, previous }"
+                }
+              ]
+            ]
+          ]
+        ]
+      ],
+      [
+        ":h2",
+        {
+          "s": "Supporting Libraries"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": "const ids = ['f1111111-0001-0000-0000-000000000000', 'f1111111-0002-0000-0000-000000000000', 'f1111111-0003-0000-0000-000000000000', 'f1111111-0004-0000-0000-000000000000', 'f1111111-0005-0000-0000-000000000000', 'f1111111-0006-0000-0000-000000000000', 'f1111111-0007-0000-0000-000000000000'];\nconst items = [];\nfor (const id of ids) {\n  try { items.push(await api.get(id)); } catch(e) {}\n}\nreturn '| Library | Purpose |\\n|---------|---------|\\n' + items.map(i => {\n  const desc = i.content?.description?.split('\\n')[0] || 'No description';\n  return `| [${i.name}](item://${i.id}) | ${desc} |`;\n}).join('\\n') + '\\n';"
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Design Rationale"
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Why Userland?"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The viewport could be kernel code, but keeping it as regular items means:"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "The REPL panel, item palette, and help dialog can be modified or replaced"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Context menu operations are inspectable and extensible"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "The viewport view itself can be swapped (though this is rare)"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Hot-reload works — editing viewport-view updates behavior immediately"
+            }
+          ]
+        ]
+      ],
+      [
+        ":h3",
+        {
+          "s": "Why Singleton?"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "There is exactly one viewport per Hobson instance. It serves as the root of the render tree. Nested instances (via "
+        },
+        [
+          ":code",
+          {
+            "s": "?instance="
+          }
+        ],
+        {
+          "s": ") get their own viewport in their own storage namespace."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Why URL-Authoritative?"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Making the URL the source of truth for the root item enables bookmarking, browser history, sharing links, and multiple entry points — all for free from the browser platform."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "See Also"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":item-ref",
+              {
+                "s": "c0c0c0c0-0003-0000-0000-000000000000"
+              },
+              {
+                "s": "Navigation"
+              }
+            ],
+            {
+              "s": " — URL structure, navigation methods, link behavior"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":item-ref",
+              {
+                "s": "c0c0c0c0-0034-0000-0000-000000000000"
+              },
+              {
+                "s": "Context Menus"
+              }
+            ],
+            {
+              "s": " — Right-click interaction"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":item-ref",
+              {
+                "s": "f1111111-0003-0000-0000-000000000000"
+              },
+              {
+                "s": "REPL"
+              }
+            ],
+            {
+              "s": " — The interactive console"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":item-ref",
+              {
+                "s": "ef793c27-2d4b-4c99-b05a-2769db5bc5a9"
+              },
+              {
+                "s": "Spatial Windowing"
+              }
+            ],
+            {
+              "s": " — The primary container view within the viewport"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":item-ref",
+              {
+                "s": "c0c0c0c0-0031-0000-0000-000000000000"
+              },
+              {
+                "s": "URL Parameters"
+              }
+            ],
+            {
+              "s": " — Boot-time parameters including "
+            },
+            [
+              ":code",
+              {
+                "s": "?root"
+              }
+            ]
+          ]
+        ]
+      ]
+    ],
+    "tags": [
+      "bff75873-edb8-412e-81c9-c744e68fe29f",
+      "c0c0c0c0-0001-0000-0000-000000000000",
+      "c0c0c0c0-0085-0000-0000-000000000000"
+    ]
+  },
+  "attachments": []
+}

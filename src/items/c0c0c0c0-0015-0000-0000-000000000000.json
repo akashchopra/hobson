@@ -1,1 +1,395 @@
-{"id": "c0c0c0c0-0015-0000-0000-000000000000", "name": "Module Cache Invalidation", "type": "871ae771-b9b1-4f40-8c7f-d9038bfb69c3", "created": 1738454400000, "modified": 1773243817472, "content": {"description": [":doc", [":p", {"s": "Hobson's module system caches evaluated code items for performance. Cache invalidation is event-driven — when an item is updated, its cache entry is deleted so the next "}, [":code", {"s": "require()"}], {"s": " re-evaluates fresh code."}], [":h2", {"s": "How Caching Works"}], [":p", {"s": "When "}, [":code", {"s": "api.require('library-name')"}], {"s": " is called:"}], [":ol", [":li", [":p", {"s": "Resolve the name to an item ID (via a name cache)"}]], [":li", [":p", {"s": "Check if a cached module exists for that ID"}]], [":li", [":p", {"s": "If cache hit → return cached module immediately (fast path: Map lookup)"}]], [":li", [":p", {"s": "If cache miss → evaluate the code, cache the result"}]]], [":p", {"s": "Cache invalidation happens separately via the event system:"}], [":code-block", {"s": "// On item:updated events, delete the stale cache entry\nonItemUpdated(event) {\n  const id = event.content.id;\n  if (this.moduleCache.has(id)) {\n    this.moduleCache.delete(id);\n  }\n}\n\n// require() trusts the cache — no timestamp comparison needed\nasync require(nameOrId) {\n  const itemId = await this.resolveId(nameOrId);\n  const cached = this.moduleCache.get(itemId);\n  if (cached) return cached.module;  // Fast path\n\n  const item = await this.kernel.storage.get(itemId);\n  const module = await this.evaluateCodeItem(item);\n  this.moduleCache.set(itemId, { module, timestamp: item.modified });\n  return module;\n}"}], [":h2", {"s": "Hot-Reload Pattern"}], [":p", {"s": "When actively developing a library, "}, [":strong", {"s": "require where you use, not at render time"}], {"s": ":"}], [":code-block", {"s": "// Captures old version at render time — won't see edits\nexport async function render(item, api) {\n  const lib = await api.require('my-lib');  // Captured once\n  button.onclick = () => lib.doThing();     // Uses stale version\n}\n\n// Gets fresh version on each invocation\nexport async function render(item, api) {\n  button.onclick = async () => {\n    const lib = await api.require('my-lib');  // Fresh each time\n    lib.doThing();\n  };\n}"}], [":p", {"s": "This is cheap — if the library hasn't changed, you get the cached module. If it has changed, you get fresh code."}], [":h2", {"s": "Module-Level State Problem"}], [":p", [":strong", {"s": "Open problem:"}], {"s": " Libraries that cache state at module scope break on hot-reload."}], [":code-block", {"s": "// PROBLEMATIC — api is null after hot-reload\nlet api = null;\nexport async function onKernelBootComplete(event, _api) {\n  api = _api;  // Set during boot\n}\nexport async function show() {\n  if (!api) return;  // Silently fails after hot-reload!\n}"}], [":p", {"s": "When a code item is modified:"}], [":ol", [":li", [":p", {"s": "Module cache detects stale timestamp"}]], [":li", [":p", {"s": "Code is re-evaluated via "}, [":code", {"s": "import()"}], {"s": " of a new blob URL"}]], [":li", [":p", {"s": "This creates a "}, [":strong", {"s": "fresh module namespace"}], {"s": " — all module-level variables reset"}]], [":li", [":p", {"s": "But "}, [":code", {"s": "onKernelBootComplete"}], {"s": " doesn't fire again (boot already happened)"}]], [":li", [":p", {"s": "Module-level state is lost"}]]], [":h3", {"s": "Workaround"}], [":p", {"s": "Don't cache API at module level. Use "}, [":code", {"s": "window.kernel"}], {"s": " directly:"}], [":code-block", {"s": "export async function show() {\n  const api = window.kernel.createAPI();\n  // ... use fresh api\n}"}], [":p", {"s": "For event listeners, use window-level references for cleanup:"}], [":code-block", {"s": "if (window._myHandler) {\n  window.removeEventListener('popstate', window._myHandler);\n}\nwindow._myHandler = handlePopstate;\nwindow.addEventListener('popstate', window._myHandler);"}], [":h2", {"s": "Name Cache"}], [":p", {"s": "The module system also maintains a name → ID cache for fast "}, [":code", {"s": "require()"}], {"s": " by name. This cache is cleared when an "}, [":code", {"s": "ITEM_UPDATED"}], {"s": " event fires for a code item, ensuring name changes take effect."}], [":h2", {"s": "Loading Promise Deduplication"}], [":p", {"s": "If the same module is required simultaneously (e.g., two views both require the same library during parallel rendering), only one evaluation occurs. A loading promise is stored and shared across concurrent callers."}], [":h2", {"s": "See Also"}], [":ul", [":li", [":p", [":item-ref", {"s": "33333333-4444-0000-0000-000000000000"}, {"s": "kernel:module-system"}], {"s": " — The implementation"}]], [":li", [":p", [":item-ref", {"s": "c0c0c0c0-0028-0000-0000-000000000000"}, {"s": "Code Execution & Sandboxing"}], {"s": " — How code items are evaluated"}]], [":li", [":p", [":item-ref", {"s": "c0c0c0c0-0002-0000-0000-000000000000"}, {"s": "Bootstrap"}], {"s": " — The initial "}, [":code", {"s": "require()"}], {"s": " function"}]]]], "tags": ["af24a7ad-38c7-4660-b8ed-d67cf2062263", "c0c0c0c0-0085-0000-0000-000000000000"]}, "attachments": []}
+{
+  "id": "c0c0c0c0-0015-0000-0000-000000000000",
+  "name": "Module Cache Invalidation",
+  "type": "871ae771-b9b1-4f40-8c7f-d9038bfb69c3",
+  "created": 1738454400000,
+  "modified": 1774988060639,
+  "content": {
+    "description": [
+      ":doc",
+      [
+        ":p",
+        {
+          "s": "Hobson's module system caches evaluated code items for performance. Cache invalidation is event-driven — when an item is updated, its cache entry is deleted so the next "
+        },
+        [
+          ":code",
+          {
+            "s": "require()"
+          }
+        ],
+        {
+          "s": " re-evaluates fresh code."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "How Caching Works"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "When "
+        },
+        [
+          ":code",
+          {
+            "s": "api.require('library-name')"
+          }
+        ],
+        {
+          "s": " is called:"
+        }
+      ],
+      [
+        ":ol",
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Resolve the name to an item ID (via a name cache)"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Check if a cached module exists for that ID"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "If cache hit → return cached module immediately (fast path: Map lookup)"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "If cache miss → evaluate the code, cache the result"
+            }
+          ]
+        ]
+      ],
+      [
+        ":p",
+        {
+          "s": "Cache invalidation happens separately via the event system:"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": "// On item:updated events, delete the stale cache entry\nonItemUpdated(event) {\n  const id = event.content.id;\n  if (this.moduleCache.has(id)) {\n    this.moduleCache.delete(id);\n  }\n}\n\n// require() trusts the cache — no timestamp comparison needed\nasync require(nameOrId) {\n  const itemId = await this.resolveId(nameOrId);\n  const cached = this.moduleCache.get(itemId);\n  if (cached) return cached.module;  // Fast path\n\n  const item = await this.kernel.storage.get(itemId);\n  const module = await this.evaluateCodeItem(item);\n  this.moduleCache.set(itemId, { module, timestamp: item.modified });\n  return module;\n}"
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Hot-Reload Pattern"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "When actively developing a library, "
+        },
+        [
+          ":strong",
+          {
+            "s": "require where you use, not at render time"
+          }
+        ],
+        {
+          "s": ":"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": "// Captures old version at render time — won't see edits\nexport async function render(item, api) {\n  const lib = await api.require('my-lib');  // Captured once\n  button.onclick = () => lib.doThing();     // Uses stale version\n}\n\n// Gets fresh version on each invocation\nexport async function render(item, api) {\n  button.onclick = async () => {\n    const lib = await api.require('my-lib');  // Fresh each time\n    lib.doThing();\n  };\n}"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "This is cheap — if the library hasn't changed, you get the cached module. If it has changed, you get fresh code."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Module-Level State Problem"
+        }
+      ],
+      [
+        ":p",
+        [
+          ":strong",
+          {
+            "s": "Open problem:"
+          }
+        ],
+        {
+          "s": " Libraries that cache state at module scope break on hot-reload."
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": "// PROBLEMATIC — api is null after hot-reload\nlet api = null;\nexport async function onKernelBootComplete(event, _api) {\n  api = _api;  // Set during boot\n}\nexport async function show() {\n  if (!api) return;  // Silently fails after hot-reload!\n}"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "When a code item is modified:"
+        }
+      ],
+      [
+        ":ol",
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Module cache detects stale timestamp"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Code is re-evaluated via "
+            },
+            [
+              ":code",
+              {
+                "s": "import()"
+              }
+            ],
+            {
+              "s": " of a new blob URL"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "This creates a "
+            },
+            [
+              ":strong",
+              {
+                "s": "fresh module namespace"
+              }
+            ],
+            {
+              "s": " — all module-level variables reset"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "But "
+            },
+            [
+              ":code",
+              {
+                "s": "onKernelBootComplete"
+              }
+            ],
+            {
+              "s": " doesn't fire again (boot already happened)"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Module-level state is lost"
+            }
+          ]
+        ]
+      ],
+      [
+        ":h3",
+        {
+          "s": "Workaround"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Don't cache API at module level. Use "
+        },
+        [
+          ":code",
+          {
+            "s": "window.kernel"
+          }
+        ],
+        {
+          "s": " directly:"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": "export async function show() {\n  const api = window.kernel.createAPI();\n  // ... use fresh api\n}"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "For event listeners, use window-level references for cleanup:"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": "if (window._myHandler) {\n  window.removeEventListener('popstate', window._myHandler);\n}\nwindow._myHandler = handlePopstate;\nwindow.addEventListener('popstate', window._myHandler);"
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Name Cache"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The module system also maintains a name → ID cache for fast "
+        },
+        [
+          ":code",
+          {
+            "s": "require()"
+          }
+        ],
+        {
+          "s": " by name. This cache is cleared when an "
+        },
+        [
+          ":code",
+          {
+            "s": "ITEM_UPDATED"
+          }
+        ],
+        {
+          "s": " event fires for a code item, ensuring name changes take effect."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Loading Promise Deduplication"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "If the same module is required simultaneously (e.g., two views both require the same library during parallel rendering), only one evaluation occurs. A loading promise is stored and shared across concurrent callers."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "See Also"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":item-ref",
+              {
+                "s": "33333333-4444-0000-0000-000000000000"
+              },
+              {
+                "s": "kernel:module-system"
+              }
+            ],
+            {
+              "s": " — The implementation"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":item-ref",
+              {
+                "s": "c0c0c0c0-0028-0000-0000-000000000000"
+              },
+              {
+                "s": "Code Execution & Sandboxing"
+              }
+            ],
+            {
+              "s": " — How code items are evaluated"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":item-ref",
+              {
+                "s": "c0c0c0c0-0002-0000-0000-000000000000"
+              },
+              {
+                "s": "Bootstrap"
+              }
+            ],
+            {
+              "s": " — The initial "
+            },
+            [
+              ":code",
+              {
+                "s": "require()"
+              }
+            ],
+            {
+              "s": " function"
+            }
+          ]
+        ]
+      ]
+    ],
+    "tags": [
+      "af24a7ad-38c7-4660-b8ed-d67cf2062263",
+      "c0c0c0c0-0085-0000-0000-000000000000"
+    ]
+  },
+  "attachments": []
+}

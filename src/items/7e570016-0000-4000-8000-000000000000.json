@@ -1,1 +1,152 @@
-{"id": "7e570016-0000-4000-8000-000000000000", "name": "hob-reactivity-tests", "type": "22222222-0000-0000-0000-000000000000", "created": 1739318400000, "modified": 1774532371350, "content": {"code": "// Hob Reactivity Tests — selector-based reactivity, cycle detection\n\nexport async function run(api) {\n  const { createSuite, assert, assertEquals } = await api.require('test-lib');\n  const { test, testAsync, getResults } = createSuite('Hob Reactivity');\n  const hob = await api.require('hob-interpreter');\n\n  // ============================================================\n  // get-item basics\n  // ============================================================\n\n  await testAsync('get-item returns an item', async () => {\n    const interp = hob.createInterpreter(api);\n    await interp.macrosReady;\n\n    const result = await interp.eval('(get-item \"00000000-0000-0000-0000-000000000000\")');\n    assert(result != null, 'Should return the item');\n    assertEquals(result.id, '00000000-0000-0000-0000-000000000000');\n  });\n\n  // ============================================================\n  // Selector registration via get-item :select\n  // ============================================================\n\n  await testAsync('get-item :select registers selectorInfo', async () => {\n    const targetId = '00000000-0000-0000-0000-000000000000';\n    // Simulate render context: set _renderItemId so get-item recognises \"own item\"\n    const testApi = Object.create(api);\n    testApi._renderItemId = targetId;\n    testApi._selectorInfo = null;\n\n    const interp = hob.createInterpreter(testApi);\n    await interp.macrosReady;\n\n    await interp.eval(`(get-item \"${targetId}\" :select (fn [item] (:name item)))`);\n    assert(testApi._selectorInfo != null, 'selectorInfo should be set');\n    assert(typeof testApi._selectorInfo.selector === 'function', 'Should have a selector function');\n    assert('lastValue' in testApi._selectorInfo, 'Should have a lastValue');\n  });\n\n  await testAsync('get-item :select pins to first call', async () => {\n    const targetId = '00000000-0000-0000-0000-000000000000';\n    const testApi = Object.create(api);\n    testApi._renderItemId = targetId;\n    testApi._selectorInfo = null;\n\n    const interp = hob.createInterpreter(testApi);\n    await interp.macrosReady;\n\n    // First call sets selectorInfo\n    await interp.eval(`(get-item \"${targetId}\" :select (fn [item] (:name item)))`);\n    const first = testApi._selectorInfo;\n    assert(first != null, 'First call should set selectorInfo');\n\n    // Second call should NOT overwrite\n    await interp.eval(`(get-item \"${targetId}\" :select (fn [item] (:type item)))`);\n    assert(testApi._selectorInfo === first, 'Second call should not overwrite first');\n  });\n\n  await testAsync('get-item without :select leaves selectorInfo null', async () => {\n    const targetId = '00000000-0000-0000-0000-000000000000';\n    const testApi = Object.create(api);\n    testApi._renderItemId = targetId;\n    testApi._selectorInfo = null;\n\n    const interp = hob.createInterpreter(testApi);\n    await interp.macrosReady;\n\n    await interp.eval(`(get-item \"${targetId}\")`);\n    assertEquals(testApi._selectorInfo, null, 'Should remain null without :select');\n  });\n\n  await testAsync('get-item :select ignores non-matching item', async () => {\n    const targetId = '00000000-0000-0000-0000-000000000000';\n    const otherId = '11111111-0000-0000-0000-000000000000';\n    const testApi = Object.create(api);\n    testApi._renderItemId = targetId;\n    testApi._selectorInfo = null;\n\n    const interp = hob.createInterpreter(testApi);\n    await interp.macrosReady;\n\n    // Request a different item with :select — should not register\n    await interp.eval(`(get-item \"${otherId}\" :select (fn [item] (:name item)))`);\n    assertEquals(testApi._selectorInfo, null, 'Should not register for non-matching item');\n  });\n\n  await testAsync('get-item :select computes lastValue', async () => {\n    const targetId = '00000000-0000-0000-0000-000000000000';\n    const testApi = Object.create(api);\n    testApi._renderItemId = targetId;\n    testApi._selectorInfo = null;\n\n    const interp = hob.createInterpreter(testApi);\n    await interp.macrosReady;\n\n    // The atom type item's name is known\n    const item = await api.get(targetId);\n    await interp.eval(`(get-item \"${targetId}\" :select (fn [item] (:name item)))`);\n    assertEquals(testApi._selectorInfo.lastValue, item.name, 'lastValue should be the selector result');\n  });\n\n  // ============================================================\n  // Cycle detection (unit-level)\n  // ============================================================\n\n  test('re-render depth tracked per instance', () => {\n    const depthMap = new Map();\n    const MAX = 3;\n    depthMap.set(1, 0);\n    depthMap.set(1, (depthMap.get(1) || 0) + 1);\n    assertEquals(depthMap.get(1), 1, 'Depth should increment');\n    depthMap.set(1, (depthMap.get(1) || 0) + 1);\n    assertEquals(depthMap.get(1), 2);\n    depthMap.set(1, (depthMap.get(1) || 0) + 1);\n    assertEquals(depthMap.get(1), 3);\n    assert(depthMap.get(1) >= MAX, 'Should hit max');\n  });\n\n  test('exceeding max depth blocks re-render', () => {\n    const MAX = 3;\n    const depthMap = new Map();\n    let blocked = false;\n    for (let i = 0; i < 4; i++) {\n      const depth = depthMap.get(1) || 0;\n      if (depth >= MAX) {\n        blocked = true;\n        break;\n      }\n      depthMap.set(1, depth + 1);\n    }\n    assert(blocked, 'Should have been blocked after 3 increments');\n  });\n\n  test('depth counter resets after flush', () => {\n    const depthMap = new Map();\n    depthMap.set(1, 3);\n    depthMap.set(2, 1);\n    depthMap.clear();\n    assertEquals(depthMap.get(1) || 0, 0, 'Depth should be 0 after clear');\n    assertEquals(depthMap.get(2) || 0, 0, 'Depth should be 0 after clear');\n  });\n\n  return getResults();\n}\n", "description": [":doc", [":p", {"s": "Reactivity test suite for the Hob language. Tests selector-based reactivity (get-item :select, selector pinning, lastValue computation) and cycle detection logic."}]], "tags": ["c0c0c0c0-0070-0000-0000-000000000000"], "_symbols": {"run": {"name": "run", "line": 3, "col": 7, "endLine": 145, "endCol": 1, "kind": "function", "scope": null, "signature": "(api)"}, "run.hob": {"name": "hob", "line": 6, "col": 8, "endLine": 6, "endCol": 50, "kind": "variable", "scope": "run"}, "run.interp": {"name": "interp", "line": 94, "col": 10, "endLine": 94, "endCol": 49, "kind": "variable", "scope": "run"}, "run.result": {"name": "result", "line": 16, "col": 10, "endLine": 16, "endCol": 89, "kind": "variable", "scope": "run"}, "run.targetId": {"name": "targetId", "line": 89, "col": 10, "endLine": 89, "endCol": 59, "kind": "variable", "scope": "run"}, "run.testApi": {"name": "testApi", "line": 90, "col": 10, "endLine": 90, "endCol": 38, "kind": "variable", "scope": "run"}, "run.first": {"name": "first", "line": 52, "col": 10, "endLine": 52, "endCol": 39, "kind": "variable", "scope": "run"}, "run.otherId": {"name": "otherId", "line": 75, "col": 10, "endLine": 75, "endCol": 58, "kind": "variable", "scope": "run"}, "run.item": {"name": "item", "line": 98, "col": 10, "endLine": 98, "endCol": 40, "kind": "variable", "scope": "run"}, "run.depthMap": {"name": "depthMap", "line": 136, "col": 10, "endLine": 136, "endCol": 30, "kind": "variable", "scope": "run"}, "run.MAX": {"name": "MAX", "line": 121, "col": 10, "endLine": 121, "endCol": 17, "kind": "variable", "scope": "run"}, "run.blocked": {"name": "blocked", "line": 123, "col": 8, "endLine": 123, "endCol": 23, "kind": "variable", "scope": "run"}, "run.i": {"name": "i", "line": 124, "col": 13, "endLine": 124, "endCol": 18, "kind": "variable", "scope": "run"}, "run.depth": {"name": "depth", "line": 125, "col": 12, "endLine": 125, "endCol": 40, "kind": "variable", "scope": "run"}}}, "attachments": []}
+{
+  "id": "7e570016-0000-4000-8000-000000000000",
+  "name": "hob-reactivity-tests",
+  "type": "22222222-0000-0000-0000-000000000000",
+  "created": 1739318400000,
+  "modified": 1774988052644,
+  "content": {
+    "code": "// Hob Reactivity Tests — selector-based reactivity, cycle detection\n\nexport async function run(api) {\n  const { createSuite, assert, assertEquals } = await api.require('test-lib');\n  const { test, testAsync, getResults } = createSuite('Hob Reactivity');\n  const hob = await api.require('hob-interpreter');\n\n  // ============================================================\n  // get-item basics\n  // ============================================================\n\n  await testAsync('get-item returns an item', async () => {\n    const interp = hob.createInterpreter(api);\n    await interp.macrosReady;\n\n    const result = await interp.eval('(get-item \"00000000-0000-0000-0000-000000000000\")');\n    assert(result != null, 'Should return the item');\n    assertEquals(result.id, '00000000-0000-0000-0000-000000000000');\n  });\n\n  // ============================================================\n  // Selector registration via get-item :select\n  // ============================================================\n\n  await testAsync('get-item :select registers selectorInfo', async () => {\n    const targetId = '00000000-0000-0000-0000-000000000000';\n    // Simulate render context: set _renderItemId so get-item recognises \"own item\"\n    const testApi = Object.create(api);\n    testApi._renderItemId = targetId;\n    testApi._selectorInfo = null;\n\n    const interp = hob.createInterpreter(testApi);\n    await interp.macrosReady;\n\n    await interp.eval(`(get-item \"${targetId}\" :select (fn [item] (:name item)))`);\n    assert(testApi._selectorInfo != null, 'selectorInfo should be set');\n    assert(typeof testApi._selectorInfo.selector === 'function', 'Should have a selector function');\n    assert('lastValue' in testApi._selectorInfo, 'Should have a lastValue');\n  });\n\n  await testAsync('get-item :select pins to first call', async () => {\n    const targetId = '00000000-0000-0000-0000-000000000000';\n    const testApi = Object.create(api);\n    testApi._renderItemId = targetId;\n    testApi._selectorInfo = null;\n\n    const interp = hob.createInterpreter(testApi);\n    await interp.macrosReady;\n\n    // First call sets selectorInfo\n    await interp.eval(`(get-item \"${targetId}\" :select (fn [item] (:name item)))`);\n    const first = testApi._selectorInfo;\n    assert(first != null, 'First call should set selectorInfo');\n\n    // Second call should NOT overwrite\n    await interp.eval(`(get-item \"${targetId}\" :select (fn [item] (:type item)))`);\n    assert(testApi._selectorInfo === first, 'Second call should not overwrite first');\n  });\n\n  await testAsync('get-item without :select leaves selectorInfo null', async () => {\n    const targetId = '00000000-0000-0000-0000-000000000000';\n    const testApi = Object.create(api);\n    testApi._renderItemId = targetId;\n    testApi._selectorInfo = null;\n\n    const interp = hob.createInterpreter(testApi);\n    await interp.macrosReady;\n\n    await interp.eval(`(get-item \"${targetId}\")`);\n    assertEquals(testApi._selectorInfo, null, 'Should remain null without :select');\n  });\n\n  await testAsync('get-item :select ignores non-matching item', async () => {\n    const targetId = '00000000-0000-0000-0000-000000000000';\n    const otherId = '11111111-0000-0000-0000-000000000000';\n    const testApi = Object.create(api);\n    testApi._renderItemId = targetId;\n    testApi._selectorInfo = null;\n\n    const interp = hob.createInterpreter(testApi);\n    await interp.macrosReady;\n\n    // Request a different item with :select — should not register\n    await interp.eval(`(get-item \"${otherId}\" :select (fn [item] (:name item)))`);\n    assertEquals(testApi._selectorInfo, null, 'Should not register for non-matching item');\n  });\n\n  await testAsync('get-item :select computes lastValue', async () => {\n    const targetId = '00000000-0000-0000-0000-000000000000';\n    const testApi = Object.create(api);\n    testApi._renderItemId = targetId;\n    testApi._selectorInfo = null;\n\n    const interp = hob.createInterpreter(testApi);\n    await interp.macrosReady;\n\n    // The atom type item's name is known\n    const item = await api.get(targetId);\n    await interp.eval(`(get-item \"${targetId}\" :select (fn [item] (:name item)))`);\n    assertEquals(testApi._selectorInfo.lastValue, item.name, 'lastValue should be the selector result');\n  });\n\n  // ============================================================\n  // Cycle detection (unit-level)\n  // ============================================================\n\n  test('re-render depth tracked per instance', () => {\n    const depthMap = new Map();\n    const MAX = 3;\n    depthMap.set(1, 0);\n    depthMap.set(1, (depthMap.get(1) || 0) + 1);\n    assertEquals(depthMap.get(1), 1, 'Depth should increment');\n    depthMap.set(1, (depthMap.get(1) || 0) + 1);\n    assertEquals(depthMap.get(1), 2);\n    depthMap.set(1, (depthMap.get(1) || 0) + 1);\n    assertEquals(depthMap.get(1), 3);\n    assert(depthMap.get(1) >= MAX, 'Should hit max');\n  });\n\n  test('exceeding max depth blocks re-render', () => {\n    const MAX = 3;\n    const depthMap = new Map();\n    let blocked = false;\n    for (let i = 0; i < 4; i++) {\n      const depth = depthMap.get(1) || 0;\n      if (depth >= MAX) {\n        blocked = true;\n        break;\n      }\n      depthMap.set(1, depth + 1);\n    }\n    assert(blocked, 'Should have been blocked after 3 increments');\n  });\n\n  test('depth counter resets after flush', () => {\n    const depthMap = new Map();\n    depthMap.set(1, 3);\n    depthMap.set(2, 1);\n    depthMap.clear();\n    assertEquals(depthMap.get(1) || 0, 0, 'Depth should be 0 after clear');\n    assertEquals(depthMap.get(2) || 0, 0, 'Depth should be 0 after clear');\n  });\n\n  return getResults();\n}\n",
+    "description": [
+      ":doc",
+      [
+        ":p",
+        {
+          "s": "Reactivity test suite for the Hob language. Tests selector-based reactivity (get-item :select, selector pinning, lastValue computation) and cycle detection logic."
+        }
+      ]
+    ],
+    "tags": [
+      "c0c0c0c0-0070-0000-0000-000000000000"
+    ],
+    "_symbols": {
+      "run": {
+        "name": "run",
+        "line": 3,
+        "col": 7,
+        "endLine": 145,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(api)"
+      },
+      "run.hob": {
+        "name": "hob",
+        "line": 6,
+        "col": 8,
+        "endLine": 6,
+        "endCol": 50,
+        "kind": "variable",
+        "scope": "run"
+      },
+      "run.interp": {
+        "name": "interp",
+        "line": 94,
+        "col": 10,
+        "endLine": 94,
+        "endCol": 49,
+        "kind": "variable",
+        "scope": "run"
+      },
+      "run.result": {
+        "name": "result",
+        "line": 16,
+        "col": 10,
+        "endLine": 16,
+        "endCol": 89,
+        "kind": "variable",
+        "scope": "run"
+      },
+      "run.targetId": {
+        "name": "targetId",
+        "line": 89,
+        "col": 10,
+        "endLine": 89,
+        "endCol": 59,
+        "kind": "variable",
+        "scope": "run"
+      },
+      "run.testApi": {
+        "name": "testApi",
+        "line": 90,
+        "col": 10,
+        "endLine": 90,
+        "endCol": 38,
+        "kind": "variable",
+        "scope": "run"
+      },
+      "run.first": {
+        "name": "first",
+        "line": 52,
+        "col": 10,
+        "endLine": 52,
+        "endCol": 39,
+        "kind": "variable",
+        "scope": "run"
+      },
+      "run.otherId": {
+        "name": "otherId",
+        "line": 75,
+        "col": 10,
+        "endLine": 75,
+        "endCol": 58,
+        "kind": "variable",
+        "scope": "run"
+      },
+      "run.item": {
+        "name": "item",
+        "line": 98,
+        "col": 10,
+        "endLine": 98,
+        "endCol": 40,
+        "kind": "variable",
+        "scope": "run"
+      },
+      "run.depthMap": {
+        "name": "depthMap",
+        "line": 136,
+        "col": 10,
+        "endLine": 136,
+        "endCol": 30,
+        "kind": "variable",
+        "scope": "run"
+      },
+      "run.MAX": {
+        "name": "MAX",
+        "line": 121,
+        "col": 10,
+        "endLine": 121,
+        "endCol": 17,
+        "kind": "variable",
+        "scope": "run"
+      },
+      "run.blocked": {
+        "name": "blocked",
+        "line": 123,
+        "col": 8,
+        "endLine": 123,
+        "endCol": 23,
+        "kind": "variable",
+        "scope": "run"
+      },
+      "run.i": {
+        "name": "i",
+        "line": 124,
+        "col": 13,
+        "endLine": 124,
+        "endCol": 18,
+        "kind": "variable",
+        "scope": "run"
+      },
+      "run.depth": {
+        "name": "depth",
+        "line": 125,
+        "col": 12,
+        "endLine": 125,
+        "endCol": 40,
+        "kind": "variable",
+        "scope": "run"
+      }
+    }
+  },
+  "attachments": []
+}

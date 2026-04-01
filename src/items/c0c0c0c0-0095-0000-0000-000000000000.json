@@ -1,1 +1,2139 @@
-{"id": "c0c0c0c0-0095-0000-0000-000000000000", "name": "Active Text Specification", "type": "871ae771-b9b1-4f40-8c7f-d9038bfb69c3", "created": 1773334195820, "modified": 1773651391502, "attachments": [], "content": {"tags": ["bff75873-edb8-412e-81c9-c744e68fe29f", "c0c0c0c0-0085-0000-0000-000000000000"], "description": [":doc", [":p", {"s": "Reference specification for the Active Text format — Rich Text + Embedded Code — used for document content in Hobson. Internally stored as a "}, [":code", {"s": ":doc"}], {"s": " AST (JSON arrays). For the design vision behind this format, see "}, [":item-ref", "c0c0c0c0-0093-0000-0000-000000000000"], {"s": "."}], [":h3", {"s": "Expression Node Types"}], [":p", [":strong", {"s": "`:transclusion`"}], {"s": " — resolves content from another item. "}, [":code", {"s": "[:transclusion, itemId, fieldName, displayText?]"}], {"s": ". The renderer calls "}, [":code", {"s": "api.getField(itemId, fieldName)"}], {"s": " and renders the result. Already implemented and validated. Replaces the earlier "}, [":code", {"s": "{{field-ref}}"}], {"s": " + computed field approach for cross-item content — the expression is embedded directly in the AST, no backing computed field needed."}], [":p", [":strong", {"s": "`:doc` in code"}], {"s": " — when a "}, [":code", {"s": ":doc"}], {"s": " node appears in a code body, the evaluator skips it. This gives Hob code comments with the full richness of prose — formatting, links, item references — using the same AST and the same editor infrastructure. No separate comment syntax or node type needed. "}, [":code", {"s": ":doc"}], {"s": " nodes in code "}, [":em", {"s": "are"}], {"s": " the documentation; the code editor renders them as prose blocks between code expressions."}], [":p", [":strong", {"s": "`:field-ref`"}], {"s": " — resolves a named computed field on the current item. Already implemented. Unlike "}, [":code", {"s": ":transclusion"}], {"s": " (which references external items), "}, [":code", {"s": ":field-ref"}], {"s": " references local computed fields."}], [":h3", {"s": "Reactivity"}], [":p", {"s": "Expression nodes that reference other items ("}, [":code", {"s": ":transclusion"}], {"s": ", or any Hob expression that calls "}, [":code", {"s": "api.get"}], {"s": ") get reactivity for free. The existing reactive system tracks "}, [":code", {"s": "api.get"}], {"s": " calls during rendering and registers them as dependencies. When a referenced item changes, the view re-renders. Validated: modifying a target item's description (even when the target is not on the canvas) correctly updates notes that transclude it."}], [":h3", {"s": "Literate Programming (Future)"}], [":p", {"s": "The logical extension: a code item's primary representation is a Hob AST with interleaved "}, [":code", {"s": ":doc"}], {"s": " nodes and executable code blocks. The system extracts executable blocks to form the \"code\" (Knuth's tangle) and renders the whole thing as a document (Knuth's weave). "}, [":code", {"s": "content.code"}], {"s": " becomes derived from the AST rather than primary. The "}, [":code", {"s": ":doc"}], {"s": " nodes that the evaluator skips are the prose in the literate program — no separate annotation system needed. This is a significant shift, deferred until the editor handles code blocks well."}], [":h3", [":code", {"s": "content.description"}], {"s": " vs "}, [":code", {"s": "content.hob"}]], [":p", {"s": "Both fields use the same Hob AST. The field name signals primary intent:"}], [":ul", [":li", [":p", [":code", {"s": "content.description"}], {"s": " — primarily prose, may embed computation ("}, [":code", {"s": ":transclusion"}], {"s": ", or any Hob expression)"}]], [":li", [":p", [":code", {"s": "content.hob"}], {"s": " — primarily code, may include "}, [":code", {"s": ":doc"}], {"s": " nodes as documentation"}]]], [":p", {"s": "The renderer and evaluator don't distinguish between them. The difference is which editor and view to default to: prose editor for "}, [":code", {"s": "description"}], {"s": ", structural/code editor for "}, [":code", {"s": "hob"}], {"s": ". Since it's the same AST, the user can switch editors freely. There is no hard boundary where a \"note with embedded queries\" becomes a \"program with embedded prose\" — it's a spectrum, and the field name hints where on that spectrum the author started."}], [":h2", {"s": "Hob Expressions as Universal Query Language"}], [":p", {"s": "Today the system uses several special-purpose representations for \"describe a computation over items\":"}], [":ul", [":li", [":p", [":strong", {"s": "Search bar"}], {"s": " — "}, [":code", {"s": "name:foo tag:project"}], {"s": " — a custom string syntax with ad-hoc parsing"}]], [":li", [":p", [":strong", {"s": "Query blocks in notes"}], {"s": " — embedded JS code calling "}, [":code", {"s": "api.query({})"}], {"s": " with JS filter objects"}]], [":li", [":p", [":strong", {"s": "Programmatic queries"}], {"s": " — the same JS objects passed to "}, [":code", {"s": "api.query()"}], {"s": " from library code"}]]], [":p", {"s": "These are all the same operation (filter items by criteria) expressed in three different ways, none of which can be inspected, composed, or reused across contexts. The search syntax is exactly the kind of mini-language the design doc argues against."}], [":h3", {"s": "Predicates as the Universal Query Mechanism"}], [":p", {"s": "In most languages, there is a tension between declarative queries (inspectable but limited) and procedural predicates (flexible but opaque). In Hob, this tension does not exist. Hob expressions are data — an AST that can be walked, displayed, and edited. A predicate function is already a declarative representation. There is no need for a separate query DSL."}], [":p", {"s": "The core query operation is simply:"}], [":code-block", {"s": "(filter predicate (get-all))"}], [":p", {"s": "Where "}, [":code", {"s": "predicate"}], {"s": " is any Hob expression that takes an item and returns truthy/falsy. Hob's "}, [":code", {"s": "and"}], {"s": ", "}, [":code", {"s": "or"}], {"s": ", "}, [":code", {"s": "not"}], {"s": " provide arbitrary logical composition:"}], [":code-block", {"s": "(filter\n  (fn [item]\n    (and (= (:type item) @kernel-module)\n         (not (tagged? item @archived))))\n  (get-all))"}], [":p", {"s": "This is simultaneously:"}], [":ul", [":li", [":p", [":strong", {"s": "Fully composable"}], {"s": " — arbitrary "}, [":code", {"s": "and"}], {"s": "/"}, [":code", {"s": "or"}], {"s": "/"}, [":code", {"s": "not"}], {"s": " nesting, any Hob expression as a clause"}]], [":li", [":p", [":strong", {"s": "Inspectable"}], {"s": " — the predicate is an AST the system can walk and display"}]], [":li", [":p", [":strong", {"s": "Editable"}], {"s": " — the search bar can construct and modify the AST directly"}]], [":li", [":p", [":strong", {"s": "Reusable"}], {"s": " — save a predicate as a value, embed it in a note, pass it to a function"}]]], [":p", {"s": "The current "}, [":code", {"s": "find-items"}], {"s": " (which takes a filter map and does exact-match) is a special case that falls out naturally — no need to design it as a separate primitive."}], [":h3", {"s": "Ergonomic Helpers"}], [":p", {"s": "Common query patterns get concise helper functions in the standard library:"}], [":ul", [":li", [":p", [":code", {"s": "tagged?"}], {"s": " — "}, [":code", {"s": "(tagged? item @project)"}], {"s": " — does item have this tag?"}]], [":li", [":p", [":code", {"s": "type?"}], {"s": " — "}, [":code", {"s": "(type? item @note)"}], {"s": " — is item this type?"}]], [":li", [":p", [":code", {"s": "type+?"}], {"s": " — "}, [":code", {"s": "(type+? item @note)"}], {"s": " — is item this type or a subtype?"}]], [":li", [":p", [":code", {"s": "name-contains?"}], {"s": " — "}, [":code", {"s": "(name-contains? item \"foo\")"}], {"s": " — substring match on name"}]], [":li", [":p", [":code", {"s": "modified-after?"}], {"s": " — "}, [":code", {"s": "(modified-after? item timestamp)"}], {"s": " — recently modified"}]]], [":p", {"s": "These compose naturally:"}], [":code-block", {"s": "(filter\n  (fn [item]\n    (and (type? item @note)\n         (or (tagged? item @project)\n             (tagged? item @idea))\n         (not (tagged? item @archived))))\n  (get-all))"}], [":h3", {"s": "Query Blocks in Notes"}], [":p", {"s": "A query block in a "}, [":code", {"s": ":doc"}], {"s": " AST is a Hob expression at block position that returns AST data. The renderer evaluates it and renders the result:"}], [":code-block", {"s": "(let [modules (sort-by :name\n                (filter (fn [m] (type? m @kernel-module))\n                  (get-all)))]\n  [:ul\n    (map (fn [m]\n      [:li [:p\n        [:item-ref (:id m) (:name m)]\n        {s: \" — \"}\n        {s: (or (first (str/split (or (get-in m [:content :description]) \"\") \"\\n\"))\n                \"No description\")}]])\n      modules)])"}], [":p", {"s": "This replaces the current JS query blocks. The expression is inspectable — the editor can display it, and \"Explain this\" can trace its evaluation."}], [":h3", {"s": "Search Bar"}], [":p", {"s": "The search bar becomes a UI that constructs and displays a Hob predicate expression. Simple searches produce simple expressions; complex searches produce composed predicates. The user can always see and edit the underlying expression — dissolvable indirection."}], [":h3", {"s": "All Use Cases Unified"}], [":p", {"s": "This pattern extends beyond querying. Anywhere the system uses a special-purpose representation for computation over items, that should be a Hob predicate or expression:"}], [":ul", [":li", [":p", [":strong", {"s": "Sort expressions"}], {"s": " — "}, [":code", {"s": "(sort-by :name items)"}], {"s": " or "}, [":code", {"s": "(sort-by (fn [i] (get-in i [:content :priority])) items)"}]]], [":li", [":p", [":strong", {"s": "Filter expressions"}], {"s": " in views — \"show items where…\" is a predicate"}]], [":li", [":p", [":strong", {"s": "Type constraints"}], {"s": " — if/when types get validation, the constraint is a Hob predicate"}]], [":li", [":p", [":strong", {"s": "Event handlers"}], {"s": " — conditions for when handlers should fire"}]]], [":p", {"s": "The standard library can be built piecemeal, driven by real use cases as they arise. Each query block converted from JS to Hob surfaces the next gap."}], [":h2", {"s": "Editing: Three Modes"}], [":p", {"s": "Editing a Hob expression uses one of three modes. The choice falls out of the data — no separate configuration needed. The representation "}, [":em", {"s": "is"}], {"s": " the configuration."}], [":h3", {"s": "1. Prose Editor"}], [":p", {"s": "For rich text "}, [":code", {"s": ":doc"}], {"s": " ASTs. Feels like writing a normal document, maintaining the AST behind familiar UX. This is the only mode that requires fundamentally different editing mechanics (flat inline sequences, block-level structure). See below for the AST structure and editing model."}], [":p", [":strong", {"s": "Boundary between prose and expressions:"}], {"s": " Within a rich text field, expression nodes (like "}, [":code", {"s": "[:field-ref \"due-date\"]"}], {"s": ") appear inline. The prose editor renders them as resolved values (like a chip showing \"March 15\"). To edit the expression behind it, the user clicks into it and gets a structural editing context — similar to how spreadsheets show the value in the cell and the formula in the formula bar."}], [":h3", {"s": "2. Structural Editor"}], [":p", {"s": "The universal editor for any Hob expression — the fallback that can edit anything. Function calls, arithmetic, tag sets ("}, [":code", {"s": "#{@tag1 @tag2}"}], {"s": "), attachment lists ("}, [":code", {"s": "[@item1 @item2]"}], {"s": "), computed values, map literals — all are tree structures that the structural editor handles naturally. This is not a regression; it is the natural editing mode for expressions."}], [":p", {"s": "The structural editor provides discovery tools (like "}, [":code", {"s": "@"}], {"s": " autocomplete for item references, or a tag hierarchy browser) that feed into the editing context. These are overlays invoked by the editor, not separate editors."}], [":h3", {"s": "3. Widgets"}], [":p", {"s": "Type-appropriate UIs for common value shapes — ergonomic shortcuts that produce the same AST mutations the structural editor would. Examples:"}], [":ul", [":li", [":p", {"s": "Date picker for date literals"}]], [":li", [":p", {"s": "Slider or number input for numbers"}]], [":li", [":p", {"s": "Color picker for colors"}]], [":li", [":p", {"s": "Spatial drag for position maps ("}, [":code", {"s": "{:x 100 :y 200}"}], {"s": ")"}]], [":li", [":p", {"s": "Text field for simple strings"}]]], [":p", {"s": "Widgets and the structural editor are not separate categories — a widget is a convenient front-end for editing a specific kind of literal. If the user converts a literal to a computed expression, the structural editor takes over automatically."}], [":h3", {"s": "Editing is Single-Item"}], [":p", {"s": "All editing operates on a single item's fields. Cross-item effects (e.g. dragging an item between containers modifies both containers' attachment lists) are handled by the reactive system — the editor mutates one item, and the system propagates the effects. No editor needs to coordinate multi-item mutations."}], [":h3", {"s": "The Rich Text AST"}], [":p", {"s": "A rich text field (note body, description) is a Hob AST with three levels of structure:"}], [":p", [":strong", {"s": "Document"}], {"s": " ("}, [":code", {"s": ":doc"}], {"s": ") — the root, contains blocks."}], [":p", [":strong", {"s": "Blocks"}], {"s": " — two kinds:"}], [":ul", [":li", [":p", [":em", {"s": "Leaf blocks"}], {"s": " ("}, [":code", {"s": ":p"}], {"s": ", "}, [":code", {"s": ":h1"}], {"s": "..."}, [":code", {"s": ":h6"}], {"s": ", "}, [":code", {"s": ":code-block"}], {"s": ") — contain a flat list of inline segments"}]], [":li", [":p", [":em", {"s": "Container blocks"}], {"s": " ("}, [":code", {"s": ":ul"}], {"s": ", "}, [":code", {"s": ":ol"}], {"s": ", "}, [":code", {"s": ":blockquote"}], {"s": ") — contain other blocks. "}, [":code", {"s": ":li"}], {"s": " is a block container within lists, itself containing blocks (typically "}, [":code", {"s": ":p"}], {"s": ")"}]]], [":p", [":strong", {"s": "Inline segments"}], {"s": " — only appear inside leaf blocks, as a flat list (no nesting):"}], [":ul", [":li", [":p", {"s": "Text strings ("}, [":code", {"s": "\"plain text\""}], {"s": ")"}]], [":li", [":p", {"s": "Inline nodes ("}, [":code", {"s": ":strong"}], {"s": ", "}, [":code", {"s": ":em"}], {"s": ", "}, [":code", {"s": ":link"}], {"s": ", "}, [":code", {"s": ":code"}], {"s": ", "}, [":code", {"s": ":field-ref"}], {"s": ", "}, [":code", {"s": ":item-ref"}], {"s": ", "}, [":code", {"s": ":transclusion"}], {"s": ") — contain only text strings, never other inline nodes"}]]], [":p", {"s": "Example:"}], [":code-block", {"s": "[:doc\n  [:h2 \"Meeting Notes\"]\n  [:p \"Discussed \" [:strong \"transparency\"] \" and decided to\"]\n  [:ul\n    [:li [:p \"Make everything Hob\"]]\n    [:li [:p \"Due: \" [:field-ref \"due-date\"]]]]\n  [:p \"See also: \" [:transclusion \"item-id\" \"description\"]]]"}], [":h3", {"s": "Prose Editor Model"}], [":p", {"s": "The prose editor operates at two levels corresponding to the AST structure:"}], [":p", [":strong", {"s": "Block-level operations"}], {"s": " are structural — adding, removing, reordering, and converting blocks (paragraph to heading, wrapping in a list, etc.). These are AST tree operations, handled the same way the structural editor handles any tree."}], [":p", [":strong", {"s": "Inline editing"}], {"s": " within a leaf block manages a flat sequence of text runs and inline nodes. The key operations:"}], [":ul", [":li", [":p", {"s": "Typing → insert characters into the current text run"}]], [":li", [":p", {"s": "Enter → split the current block (creating a new "}, [":code", {"s": ":p"}], {"s": " or "}, [":code", {"s": ":li"}], {"s": ")"}]], [":li", [":p", {"s": "Backspace at block start → merge with previous block"}]], [":li", [":p", {"s": "Formatting (bold, italic) → wrap/unwrap selection in an inline node"}]], [":li", [":p", {"s": "Delete across a text/inline-node boundary → merge text runs, possibly removing the inline node"}]], [":li", [":p", {"s": "Insert field ref or item ref → insert an inline node between text runs (triggered by "}, [":code", {"s": "/"}], {"s": " command, "}, [":code", {"s": "@"}], {"s": " mention, or similar)"}]]], [":p", {"s": "Because inline content is a flat list (not a recursive tree), the inline editing problem is tractable — it is sequence manipulation, not tree manipulation."}], [":h2", {"s": "Rendering Pipeline: Views, Field Views, and Sub-Renderers"}], [":p", {"s": "The rendering chain preserves the existing architecture's strengths while accommodating Hob ASTs:"}], [":ol", [":li", [":p", [":strong", {"s": "View"}], {"s": " (selected via view resolution) uses ui_hints to select a "}, [":strong", {"s": "field view"}], {"s": " for each field"}]], [":li", [":p", [":strong", {"s": "Field view"}], {"s": " receives the Hob AST and walks it, producing DOM"}]], [":li", [":p", {"s": "When the field view encounters specialized nodes (like "}, [":code", {"s": "[:field-ref]"}], {"s": "), it delegates to a "}, [":strong", {"s": "sub-renderer"}], {"s": " that handles resolution and rendering"}]]], [":p", {"s": "Multiple field views can exist for the same AST type, offering different rendering strategies:"}], [":ul", [":li", [":p", [":code", {"s": "field-view-doc-full"}], {"s": " — renders the complete "}, [":code", {"s": ":doc"}], {"s": " AST"}]], [":li", [":p", [":code", {"s": "field-view-doc-summary"}], {"s": " — renders only the first paragraph or heading"}]], [":li", [":p", [":code", {"s": "field-view-doc-editable"}], {"s": " — renders with the prose editor attached"}]]], [":p", {"s": "The view controls presentation by choosing the field view (via ui_hints), and the field view controls rendering by walking the AST. This means a mobile view can select "}, [":code", {"s": "field-view-doc-summary"}], {"s": " while a desktop view selects "}, [":code", {"s": "field-view-doc-full"}], {"s": " — same item, same AST, different presentation."}], [":p", [":strong", {"s": "Nesting resolution:"}], {"s": " A "}, [":code", {"s": "[:field-ref]"}], {"s": " resolves to another field value, which under \"everything is Hob\" could itself be a "}, [":code", {"s": ":doc"}], {"s": " AST containing more "}, [":code", {"s": "[:field-ref]"}], {"s": " nodes. The rule is:"}], [":ul", [":li", [":p", [":strong", {"s": "Readonly mode:"}], {"s": " resolve fully — the user wants to see the final result"}]], [":li", [":p", [":strong", {"s": "Editable mode:"}], {"s": " stop at the first expression boundary — that's what the user is editing"}]]], [":p", {"s": "Cycle detection (already present in the computed field system) prevents infinite resolution."}], [":h2", {"s": "Provenance: Three Levels of Explanation"}], [":p", {"s": "The provenance system captures what happened during rendering and evaluation. It operates at three levels of detail:"}], [":p", [":strong", {"s": "Level 1: Decision trace."}], {"s": " Which view was chosen and why. Which field view was selected. Which sub-renderer handled a given node. This is the \"stack trace\" equivalent — it tells you the path through the system's decision points, but not what the data looked like along the way. Answers "}, [":em", {"s": "\"what code ran?\""}]], [":p", [":strong", {"s": "Level 2: Decision trace + resolved values."}], {"s": " Everything in Level 1, plus the actual values at each step. The field contained "}, [":em", {"s": "this"}], {"s": " AST. The field-ref resolved to "}, [":em", {"s": "this"}], {"s": " value. The computed expression evaluated to "}, [":em", {"s": "this"}], {"s": " result with "}, [":em", {"s": "these"}], {"s": " bindings. Answers "}, [":em", {"s": "\"what code ran and what did it produce?\""}]], [":p", [":strong", {"s": "Level 3: Decision trace + resolved values + evaluation steps."}], {"s": " Everything in Level 2, plus intermediate steps of expression evaluation. The sub-expression "}, [":code", {"s": "(* 7 days)"}], {"s": " evaluated to "}, [":code", {"s": "604800000"}], {"s": ", then "}, [":code", {"s": "(+ start-date 604800000)"}], {"s": " evaluated to "}, [":code", {"s": "1741478400000"}], {"s": ". This is a full debugger-level trace. Answers "}, [":em", {"s": "\"how did it arrive at each value?\""}]], [":p", [":strong", {"s": "The design: Level 2 by default, Level 3 on demand."}], {"s": " Level 2 is the sweet spot for \"Explain this\" — enough to understand the full chain without overwhelming detail. Level 1 is too sparse (you'd still need to mentally reconstruct what the data looked like). Level 3 is too granular for most purposes, but should be available when you want to drill into a specific value's derivation. This is dissolvable indirection applied to the provenance system itself."}], [":p", {"s": "Level 2 is also relatively cheap to capture — it records decisions the system is already making (view resolution, field view selection, expression evaluation results). Level 3 requires instrumenting the Hob evaluator to record intermediate steps, which is more invasive but only needs to activate when requested."}], [":p", {"s": "The provenance trace covers three kinds of information that compose into a single narrative:"}], [":ul", [":li", [":p", [":strong", {"s": "Rendering provenance"}], {"s": " — view resolution, field view selection, sub-renderer dispatch, DOM production. Explains "}, [":em", {"s": "how this output was produced"}], {"s": "."}]], [":li", [":p", [":strong", {"s": "Evaluation provenance"}], {"s": " — expression evaluation, field resolution, computed value derivation, binding lookups. Explains "}, [":em", {"s": "how this value was calculated"}], {"s": "."}]], [":li", [":p", [":strong", {"s": "Mutation provenance"}], {"s": " — which event handler modified which field, in response to which event, with which inputs. Explains "}, [":em", {"s": "why this data changed"}], {"s": "."}]]], [":p", {"s": "Rendering and evaluation provenance are captured as the system renders (the current frame). Mutation provenance is recorded as handlers execute (the history). \"Explain this\" can follow the chain across all three: you point at a rendered value (rendering provenance), ask why it has that value (evaluation provenance), and if it was set by a handler, trace back to the triggering event (mutation provenance)."}], [":p", {"s": "For example: \"This 'Related Items' field shows items A, B, C. The value "}, [":code", {"s": "[@A @B @C]"}], {"s": " was rendered by "}, [":code", {"s": "field-view-list-full"}], {"s": ". It was last set by "}, [":code", {"s": "related-items-lib"}], {"s": ", which ran in response to "}, [":code", {"s": "item:updated"}], {"s": " on item Y (you added tag "}, [":code", {"s": "#project-alpha"}], {"s": "). Item C appeared because it shares that tag.\""}], [":h3", {"s": "Entry Point"}], [":p", {"s": "The entry point for all provenance is always visual — the user points at something on screen. Data always surfaces somewhere visually, so the rendered output is the route into both rendering "}, [":em", {"s": "and"}], {"s": " mutation provenance. The same \"Explain this\" gesture works for both \"how is this displayed?\" and \"why does this have this value?\" — the system follows the chain as deep as needed."}], [":h2", {"s": "The Underlying Tension: Indirection vs. Opacity"}], [":p", {"s": "Indirection itself is not the enemy. Layers of abstraction (types -> views -> view specs -> field views -> libraries) are individually reasonable and often valuable — they enable reuse, separation of concerns, and flexibility."}], [":p", {"s": "The problem is "}, [":strong", {"s": "opaque"}], {"s": " indirection: indirection that cannot be dissolved on demand. When you need to understand how something works, you should be able to unfold every layer of indirection into a single linear explanation. The system should be able to say \"this note is rendered by "}, [":em", {"s": "this"}], {"s": " view, which calls "}, [":em", {"s": "this"}], {"s": " field view for the body, which evaluates "}, [":em", {"s": "this"}], {"s": " Hob expression, which produces "}, [":em", {"s": "this"}], {"s": " DOM.\""}], [":p", {"s": "The goal is not to eliminate indirection, but to make it "}, [":strong", {"s": "dissolvable"}], {"s": " — present when you want the abstraction, transparent when you want to understand the machinery."}]]}}
+{
+  "id": "c0c0c0c0-0095-0000-0000-000000000000",
+  "name": "Active Text Specification",
+  "type": "871ae771-b9b1-4f40-8c7f-d9038bfb69c3",
+  "created": 1773334195820,
+  "modified": 1774988061622,
+  "attachments": [],
+  "content": {
+    "tags": [
+      "bff75873-edb8-412e-81c9-c744e68fe29f",
+      "c0c0c0c0-0085-0000-0000-000000000000"
+    ],
+    "description": [
+      ":doc",
+      [
+        ":p",
+        {
+          "s": "Reference specification for the Active Text format — Rich Text + Embedded Code — used for document content in Hobson. Internally stored as a "
+        },
+        [
+          ":code",
+          {
+            "s": ":doc"
+          }
+        ],
+        {
+          "s": " AST (JSON arrays). For the design vision behind this format, see "
+        },
+        [
+          ":item-ref",
+          "c0c0c0c0-0093-0000-0000-000000000000"
+        ],
+        {
+          "s": "."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Expression Node Types"
+        }
+      ],
+      [
+        ":p",
+        [
+          ":strong",
+          {
+            "s": "`:transclusion`"
+          }
+        ],
+        {
+          "s": " — resolves content from another item. "
+        },
+        [
+          ":code",
+          {
+            "s": "[:transclusion, itemId, fieldName, displayText?]"
+          }
+        ],
+        {
+          "s": ". The renderer calls "
+        },
+        [
+          ":code",
+          {
+            "s": "api.getField(itemId, fieldName)"
+          }
+        ],
+        {
+          "s": " and renders the result. Already implemented and validated. Replaces the earlier "
+        },
+        [
+          ":code",
+          {
+            "s": "{{field-ref}}"
+          }
+        ],
+        {
+          "s": " + computed field approach for cross-item content — the expression is embedded directly in the AST, no backing computed field needed."
+        }
+      ],
+      [
+        ":p",
+        [
+          ":strong",
+          {
+            "s": "`:doc` in code"
+          }
+        ],
+        {
+          "s": " — when a "
+        },
+        [
+          ":code",
+          {
+            "s": ":doc"
+          }
+        ],
+        {
+          "s": " node appears in a code body, the evaluator skips it. This gives Hob code comments with the full richness of prose — formatting, links, item references — using the same AST and the same editor infrastructure. No separate comment syntax or node type needed. "
+        },
+        [
+          ":code",
+          {
+            "s": ":doc"
+          }
+        ],
+        {
+          "s": " nodes in code "
+        },
+        [
+          ":em",
+          {
+            "s": "are"
+          }
+        ],
+        {
+          "s": " the documentation; the code editor renders them as prose blocks between code expressions."
+        }
+      ],
+      [
+        ":p",
+        [
+          ":strong",
+          {
+            "s": "`:field-ref`"
+          }
+        ],
+        {
+          "s": " — resolves a named computed field on the current item. Already implemented. Unlike "
+        },
+        [
+          ":code",
+          {
+            "s": ":transclusion"
+          }
+        ],
+        {
+          "s": " (which references external items), "
+        },
+        [
+          ":code",
+          {
+            "s": ":field-ref"
+          }
+        ],
+        {
+          "s": " references local computed fields."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Reactivity"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Expression nodes that reference other items ("
+        },
+        [
+          ":code",
+          {
+            "s": ":transclusion"
+          }
+        ],
+        {
+          "s": ", or any Hob expression that calls "
+        },
+        [
+          ":code",
+          {
+            "s": "api.get"
+          }
+        ],
+        {
+          "s": ") get reactivity for free. The existing reactive system tracks "
+        },
+        [
+          ":code",
+          {
+            "s": "api.get"
+          }
+        ],
+        {
+          "s": " calls during rendering and registers them as dependencies. When a referenced item changes, the view re-renders. Validated: modifying a target item's description (even when the target is not on the canvas) correctly updates notes that transclude it."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Literate Programming (Future)"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The logical extension: a code item's primary representation is a Hob AST with interleaved "
+        },
+        [
+          ":code",
+          {
+            "s": ":doc"
+          }
+        ],
+        {
+          "s": " nodes and executable code blocks. The system extracts executable blocks to form the \"code\" (Knuth's tangle) and renders the whole thing as a document (Knuth's weave). "
+        },
+        [
+          ":code",
+          {
+            "s": "content.code"
+          }
+        ],
+        {
+          "s": " becomes derived from the AST rather than primary. The "
+        },
+        [
+          ":code",
+          {
+            "s": ":doc"
+          }
+        ],
+        {
+          "s": " nodes that the evaluator skips are the prose in the literate program — no separate annotation system needed. This is a significant shift, deferred until the editor handles code blocks well."
+        }
+      ],
+      [
+        ":h3",
+        [
+          ":code",
+          {
+            "s": "content.description"
+          }
+        ],
+        {
+          "s": " vs "
+        },
+        [
+          ":code",
+          {
+            "s": "content.hob"
+          }
+        ]
+      ],
+      [
+        ":p",
+        {
+          "s": "Both fields use the same Hob AST. The field name signals primary intent:"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":code",
+              {
+                "s": "content.description"
+              }
+            ],
+            {
+              "s": " — primarily prose, may embed computation ("
+            },
+            [
+              ":code",
+              {
+                "s": ":transclusion"
+              }
+            ],
+            {
+              "s": ", or any Hob expression)"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":code",
+              {
+                "s": "content.hob"
+              }
+            ],
+            {
+              "s": " — primarily code, may include "
+            },
+            [
+              ":code",
+              {
+                "s": ":doc"
+              }
+            ],
+            {
+              "s": " nodes as documentation"
+            }
+          ]
+        ]
+      ],
+      [
+        ":p",
+        {
+          "s": "The renderer and evaluator don't distinguish between them. The difference is which editor and view to default to: prose editor for "
+        },
+        [
+          ":code",
+          {
+            "s": "description"
+          }
+        ],
+        {
+          "s": ", structural/code editor for "
+        },
+        [
+          ":code",
+          {
+            "s": "hob"
+          }
+        ],
+        {
+          "s": ". Since it's the same AST, the user can switch editors freely. There is no hard boundary where a \"note with embedded queries\" becomes a \"program with embedded prose\" — it's a spectrum, and the field name hints where on that spectrum the author started."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Hob Expressions as Universal Query Language"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Today the system uses several special-purpose representations for \"describe a computation over items\":"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Search bar"
+              }
+            ],
+            {
+              "s": " — "
+            },
+            [
+              ":code",
+              {
+                "s": "name:foo tag:project"
+              }
+            ],
+            {
+              "s": " — a custom string syntax with ad-hoc parsing"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Query blocks in notes"
+              }
+            ],
+            {
+              "s": " — embedded JS code calling "
+            },
+            [
+              ":code",
+              {
+                "s": "api.query({})"
+              }
+            ],
+            {
+              "s": " with JS filter objects"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Programmatic queries"
+              }
+            ],
+            {
+              "s": " — the same JS objects passed to "
+            },
+            [
+              ":code",
+              {
+                "s": "api.query()"
+              }
+            ],
+            {
+              "s": " from library code"
+            }
+          ]
+        ]
+      ],
+      [
+        ":p",
+        {
+          "s": "These are all the same operation (filter items by criteria) expressed in three different ways, none of which can be inspected, composed, or reused across contexts. The search syntax is exactly the kind of mini-language the design doc argues against."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Predicates as the Universal Query Mechanism"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "In most languages, there is a tension between declarative queries (inspectable but limited) and procedural predicates (flexible but opaque). In Hob, this tension does not exist. Hob expressions are data — an AST that can be walked, displayed, and edited. A predicate function is already a declarative representation. There is no need for a separate query DSL."
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The core query operation is simply:"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": "(filter predicate (get-all))"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Where "
+        },
+        [
+          ":code",
+          {
+            "s": "predicate"
+          }
+        ],
+        {
+          "s": " is any Hob expression that takes an item and returns truthy/falsy. Hob's "
+        },
+        [
+          ":code",
+          {
+            "s": "and"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "or"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "not"
+          }
+        ],
+        {
+          "s": " provide arbitrary logical composition:"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": "(filter\n  (fn [item]\n    (and (= (:type item) @kernel-module)\n         (not (tagged? item @archived))))\n  (get-all))"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "This is simultaneously:"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Fully composable"
+              }
+            ],
+            {
+              "s": " — arbitrary "
+            },
+            [
+              ":code",
+              {
+                "s": "and"
+              }
+            ],
+            {
+              "s": "/"
+            },
+            [
+              ":code",
+              {
+                "s": "or"
+              }
+            ],
+            {
+              "s": "/"
+            },
+            [
+              ":code",
+              {
+                "s": "not"
+              }
+            ],
+            {
+              "s": " nesting, any Hob expression as a clause"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Inspectable"
+              }
+            ],
+            {
+              "s": " — the predicate is an AST the system can walk and display"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Editable"
+              }
+            ],
+            {
+              "s": " — the search bar can construct and modify the AST directly"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Reusable"
+              }
+            ],
+            {
+              "s": " — save a predicate as a value, embed it in a note, pass it to a function"
+            }
+          ]
+        ]
+      ],
+      [
+        ":p",
+        {
+          "s": "The current "
+        },
+        [
+          ":code",
+          {
+            "s": "find-items"
+          }
+        ],
+        {
+          "s": " (which takes a filter map and does exact-match) is a special case that falls out naturally — no need to design it as a separate primitive."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Ergonomic Helpers"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Common query patterns get concise helper functions in the standard library:"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":code",
+              {
+                "s": "tagged?"
+              }
+            ],
+            {
+              "s": " — "
+            },
+            [
+              ":code",
+              {
+                "s": "(tagged? item @project)"
+              }
+            ],
+            {
+              "s": " — does item have this tag?"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":code",
+              {
+                "s": "type?"
+              }
+            ],
+            {
+              "s": " — "
+            },
+            [
+              ":code",
+              {
+                "s": "(type? item @note)"
+              }
+            ],
+            {
+              "s": " — is item this type?"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":code",
+              {
+                "s": "type+?"
+              }
+            ],
+            {
+              "s": " — "
+            },
+            [
+              ":code",
+              {
+                "s": "(type+? item @note)"
+              }
+            ],
+            {
+              "s": " — is item this type or a subtype?"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":code",
+              {
+                "s": "name-contains?"
+              }
+            ],
+            {
+              "s": " — "
+            },
+            [
+              ":code",
+              {
+                "s": "(name-contains? item \"foo\")"
+              }
+            ],
+            {
+              "s": " — substring match on name"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":code",
+              {
+                "s": "modified-after?"
+              }
+            ],
+            {
+              "s": " — "
+            },
+            [
+              ":code",
+              {
+                "s": "(modified-after? item timestamp)"
+              }
+            ],
+            {
+              "s": " — recently modified"
+            }
+          ]
+        ]
+      ],
+      [
+        ":p",
+        {
+          "s": "These compose naturally:"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": "(filter\n  (fn [item]\n    (and (type? item @note)\n         (or (tagged? item @project)\n             (tagged? item @idea))\n         (not (tagged? item @archived))))\n  (get-all))"
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Query Blocks in Notes"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "A query block in a "
+        },
+        [
+          ":code",
+          {
+            "s": ":doc"
+          }
+        ],
+        {
+          "s": " AST is a Hob expression at block position that returns AST data. The renderer evaluates it and renders the result:"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": "(let [modules (sort-by :name\n                (filter (fn [m] (type? m @kernel-module))\n                  (get-all)))]\n  [:ul\n    (map (fn [m]\n      [:li [:p\n        [:item-ref (:id m) (:name m)]\n        {s: \" — \"}\n        {s: (or (first (str/split (or (get-in m [:content :description]) \"\") \"\\n\"))\n                \"No description\")}]])\n      modules)])"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "This replaces the current JS query blocks. The expression is inspectable — the editor can display it, and \"Explain this\" can trace its evaluation."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Search Bar"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The search bar becomes a UI that constructs and displays a Hob predicate expression. Simple searches produce simple expressions; complex searches produce composed predicates. The user can always see and edit the underlying expression — dissolvable indirection."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "All Use Cases Unified"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "This pattern extends beyond querying. Anywhere the system uses a special-purpose representation for computation over items, that should be a Hob predicate or expression:"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Sort expressions"
+              }
+            ],
+            {
+              "s": " — "
+            },
+            [
+              ":code",
+              {
+                "s": "(sort-by :name items)"
+              }
+            ],
+            {
+              "s": " or "
+            },
+            [
+              ":code",
+              {
+                "s": "(sort-by (fn [i] (get-in i [:content :priority])) items)"
+              }
+            ]
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Filter expressions"
+              }
+            ],
+            {
+              "s": " in views — \"show items where…\" is a predicate"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Type constraints"
+              }
+            ],
+            {
+              "s": " — if/when types get validation, the constraint is a Hob predicate"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Event handlers"
+              }
+            ],
+            {
+              "s": " — conditions for when handlers should fire"
+            }
+          ]
+        ]
+      ],
+      [
+        ":p",
+        {
+          "s": "The standard library can be built piecemeal, driven by real use cases as they arise. Each query block converted from JS to Hob surfaces the next gap."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Editing: Three Modes"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Editing a Hob expression uses one of three modes. The choice falls out of the data — no separate configuration needed. The representation "
+        },
+        [
+          ":em",
+          {
+            "s": "is"
+          }
+        ],
+        {
+          "s": " the configuration."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "1. Prose Editor"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "For rich text "
+        },
+        [
+          ":code",
+          {
+            "s": ":doc"
+          }
+        ],
+        {
+          "s": " ASTs. Feels like writing a normal document, maintaining the AST behind familiar UX. This is the only mode that requires fundamentally different editing mechanics (flat inline sequences, block-level structure). See below for the AST structure and editing model."
+        }
+      ],
+      [
+        ":p",
+        [
+          ":strong",
+          {
+            "s": "Boundary between prose and expressions:"
+          }
+        ],
+        {
+          "s": " Within a rich text field, expression nodes (like "
+        },
+        [
+          ":code",
+          {
+            "s": "[:field-ref \"due-date\"]"
+          }
+        ],
+        {
+          "s": ") appear inline. The prose editor renders them as resolved values (like a chip showing \"March 15\"). To edit the expression behind it, the user clicks into it and gets a structural editing context — similar to how spreadsheets show the value in the cell and the formula in the formula bar."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "2. Structural Editor"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The universal editor for any Hob expression — the fallback that can edit anything. Function calls, arithmetic, tag sets ("
+        },
+        [
+          ":code",
+          {
+            "s": "#{@tag1 @tag2}"
+          }
+        ],
+        {
+          "s": "), attachment lists ("
+        },
+        [
+          ":code",
+          {
+            "s": "[@item1 @item2]"
+          }
+        ],
+        {
+          "s": "), computed values, map literals — all are tree structures that the structural editor handles naturally. This is not a regression; it is the natural editing mode for expressions."
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The structural editor provides discovery tools (like "
+        },
+        [
+          ":code",
+          {
+            "s": "@"
+          }
+        ],
+        {
+          "s": " autocomplete for item references, or a tag hierarchy browser) that feed into the editing context. These are overlays invoked by the editor, not separate editors."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "3. Widgets"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Type-appropriate UIs for common value shapes — ergonomic shortcuts that produce the same AST mutations the structural editor would. Examples:"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Date picker for date literals"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Slider or number input for numbers"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Color picker for colors"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Spatial drag for position maps ("
+            },
+            [
+              ":code",
+              {
+                "s": "{:x 100 :y 200}"
+              }
+            ],
+            {
+              "s": ")"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Text field for simple strings"
+            }
+          ]
+        ]
+      ],
+      [
+        ":p",
+        {
+          "s": "Widgets and the structural editor are not separate categories — a widget is a convenient front-end for editing a specific kind of literal. If the user converts a literal to a computed expression, the structural editor takes over automatically."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Editing is Single-Item"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "All editing operates on a single item's fields. Cross-item effects (e.g. dragging an item between containers modifies both containers' attachment lists) are handled by the reactive system — the editor mutates one item, and the system propagates the effects. No editor needs to coordinate multi-item mutations."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "The Rich Text AST"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "A rich text field (note body, description) is a Hob AST with three levels of structure:"
+        }
+      ],
+      [
+        ":p",
+        [
+          ":strong",
+          {
+            "s": "Document"
+          }
+        ],
+        {
+          "s": " ("
+        },
+        [
+          ":code",
+          {
+            "s": ":doc"
+          }
+        ],
+        {
+          "s": ") — the root, contains blocks."
+        }
+      ],
+      [
+        ":p",
+        [
+          ":strong",
+          {
+            "s": "Blocks"
+          }
+        ],
+        {
+          "s": " — two kinds:"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":em",
+              {
+                "s": "Leaf blocks"
+              }
+            ],
+            {
+              "s": " ("
+            },
+            [
+              ":code",
+              {
+                "s": ":p"
+              }
+            ],
+            {
+              "s": ", "
+            },
+            [
+              ":code",
+              {
+                "s": ":h1"
+              }
+            ],
+            {
+              "s": "..."
+            },
+            [
+              ":code",
+              {
+                "s": ":h6"
+              }
+            ],
+            {
+              "s": ", "
+            },
+            [
+              ":code",
+              {
+                "s": ":code-block"
+              }
+            ],
+            {
+              "s": ") — contain a flat list of inline segments"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":em",
+              {
+                "s": "Container blocks"
+              }
+            ],
+            {
+              "s": " ("
+            },
+            [
+              ":code",
+              {
+                "s": ":ul"
+              }
+            ],
+            {
+              "s": ", "
+            },
+            [
+              ":code",
+              {
+                "s": ":ol"
+              }
+            ],
+            {
+              "s": ", "
+            },
+            [
+              ":code",
+              {
+                "s": ":blockquote"
+              }
+            ],
+            {
+              "s": ") — contain other blocks. "
+            },
+            [
+              ":code",
+              {
+                "s": ":li"
+              }
+            ],
+            {
+              "s": " is a block container within lists, itself containing blocks (typically "
+            },
+            [
+              ":code",
+              {
+                "s": ":p"
+              }
+            ],
+            {
+              "s": ")"
+            }
+          ]
+        ]
+      ],
+      [
+        ":p",
+        [
+          ":strong",
+          {
+            "s": "Inline segments"
+          }
+        ],
+        {
+          "s": " — only appear inside leaf blocks, as a flat list (no nesting):"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Text strings ("
+            },
+            [
+              ":code",
+              {
+                "s": "\"plain text\""
+              }
+            ],
+            {
+              "s": ")"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Inline nodes ("
+            },
+            [
+              ":code",
+              {
+                "s": ":strong"
+              }
+            ],
+            {
+              "s": ", "
+            },
+            [
+              ":code",
+              {
+                "s": ":em"
+              }
+            ],
+            {
+              "s": ", "
+            },
+            [
+              ":code",
+              {
+                "s": ":link"
+              }
+            ],
+            {
+              "s": ", "
+            },
+            [
+              ":code",
+              {
+                "s": ":code"
+              }
+            ],
+            {
+              "s": ", "
+            },
+            [
+              ":code",
+              {
+                "s": ":field-ref"
+              }
+            ],
+            {
+              "s": ", "
+            },
+            [
+              ":code",
+              {
+                "s": ":item-ref"
+              }
+            ],
+            {
+              "s": ", "
+            },
+            [
+              ":code",
+              {
+                "s": ":transclusion"
+              }
+            ],
+            {
+              "s": ") — contain only text strings, never other inline nodes"
+            }
+          ]
+        ]
+      ],
+      [
+        ":p",
+        {
+          "s": "Example:"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": "[:doc\n  [:h2 \"Meeting Notes\"]\n  [:p \"Discussed \" [:strong \"transparency\"] \" and decided to\"]\n  [:ul\n    [:li [:p \"Make everything Hob\"]]\n    [:li [:p \"Due: \" [:field-ref \"due-date\"]]]]\n  [:p \"See also: \" [:transclusion \"item-id\" \"description\"]]]"
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Prose Editor Model"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The prose editor operates at two levels corresponding to the AST structure:"
+        }
+      ],
+      [
+        ":p",
+        [
+          ":strong",
+          {
+            "s": "Block-level operations"
+          }
+        ],
+        {
+          "s": " are structural — adding, removing, reordering, and converting blocks (paragraph to heading, wrapping in a list, etc.). These are AST tree operations, handled the same way the structural editor handles any tree."
+        }
+      ],
+      [
+        ":p",
+        [
+          ":strong",
+          {
+            "s": "Inline editing"
+          }
+        ],
+        {
+          "s": " within a leaf block manages a flat sequence of text runs and inline nodes. The key operations:"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Typing → insert characters into the current text run"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Enter → split the current block (creating a new "
+            },
+            [
+              ":code",
+              {
+                "s": ":p"
+              }
+            ],
+            {
+              "s": " or "
+            },
+            [
+              ":code",
+              {
+                "s": ":li"
+              }
+            ],
+            {
+              "s": ")"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Backspace at block start → merge with previous block"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Formatting (bold, italic) → wrap/unwrap selection in an inline node"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Delete across a text/inline-node boundary → merge text runs, possibly removing the inline node"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Insert field ref or item ref → insert an inline node between text runs (triggered by "
+            },
+            [
+              ":code",
+              {
+                "s": "/"
+              }
+            ],
+            {
+              "s": " command, "
+            },
+            [
+              ":code",
+              {
+                "s": "@"
+              }
+            ],
+            {
+              "s": " mention, or similar)"
+            }
+          ]
+        ]
+      ],
+      [
+        ":p",
+        {
+          "s": "Because inline content is a flat list (not a recursive tree), the inline editing problem is tractable — it is sequence manipulation, not tree manipulation."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Rendering Pipeline: Views, Field Views, and Sub-Renderers"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The rendering chain preserves the existing architecture's strengths while accommodating Hob ASTs:"
+        }
+      ],
+      [
+        ":ol",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "View"
+              }
+            ],
+            {
+              "s": " (selected via view resolution) uses ui_hints to select a "
+            },
+            [
+              ":strong",
+              {
+                "s": "field view"
+              }
+            ],
+            {
+              "s": " for each field"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Field view"
+              }
+            ],
+            {
+              "s": " receives the Hob AST and walks it, producing DOM"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "When the field view encounters specialized nodes (like "
+            },
+            [
+              ":code",
+              {
+                "s": "[:field-ref]"
+              }
+            ],
+            {
+              "s": "), it delegates to a "
+            },
+            [
+              ":strong",
+              {
+                "s": "sub-renderer"
+              }
+            ],
+            {
+              "s": " that handles resolution and rendering"
+            }
+          ]
+        ]
+      ],
+      [
+        ":p",
+        {
+          "s": "Multiple field views can exist for the same AST type, offering different rendering strategies:"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":code",
+              {
+                "s": "field-view-doc-full"
+              }
+            ],
+            {
+              "s": " — renders the complete "
+            },
+            [
+              ":code",
+              {
+                "s": ":doc"
+              }
+            ],
+            {
+              "s": " AST"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":code",
+              {
+                "s": "field-view-doc-summary"
+              }
+            ],
+            {
+              "s": " — renders only the first paragraph or heading"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":code",
+              {
+                "s": "field-view-doc-editable"
+              }
+            ],
+            {
+              "s": " — renders with the prose editor attached"
+            }
+          ]
+        ]
+      ],
+      [
+        ":p",
+        {
+          "s": "The view controls presentation by choosing the field view (via ui_hints), and the field view controls rendering by walking the AST. This means a mobile view can select "
+        },
+        [
+          ":code",
+          {
+            "s": "field-view-doc-summary"
+          }
+        ],
+        {
+          "s": " while a desktop view selects "
+        },
+        [
+          ":code",
+          {
+            "s": "field-view-doc-full"
+          }
+        ],
+        {
+          "s": " — same item, same AST, different presentation."
+        }
+      ],
+      [
+        ":p",
+        [
+          ":strong",
+          {
+            "s": "Nesting resolution:"
+          }
+        ],
+        {
+          "s": " A "
+        },
+        [
+          ":code",
+          {
+            "s": "[:field-ref]"
+          }
+        ],
+        {
+          "s": " resolves to another field value, which under \"everything is Hob\" could itself be a "
+        },
+        [
+          ":code",
+          {
+            "s": ":doc"
+          }
+        ],
+        {
+          "s": " AST containing more "
+        },
+        [
+          ":code",
+          {
+            "s": "[:field-ref]"
+          }
+        ],
+        {
+          "s": " nodes. The rule is:"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Readonly mode:"
+              }
+            ],
+            {
+              "s": " resolve fully — the user wants to see the final result"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Editable mode:"
+              }
+            ],
+            {
+              "s": " stop at the first expression boundary — that's what the user is editing"
+            }
+          ]
+        ]
+      ],
+      [
+        ":p",
+        {
+          "s": "Cycle detection (already present in the computed field system) prevents infinite resolution."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Provenance: Three Levels of Explanation"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The provenance system captures what happened during rendering and evaluation. It operates at three levels of detail:"
+        }
+      ],
+      [
+        ":p",
+        [
+          ":strong",
+          {
+            "s": "Level 1: Decision trace."
+          }
+        ],
+        {
+          "s": " Which view was chosen and why. Which field view was selected. Which sub-renderer handled a given node. This is the \"stack trace\" equivalent — it tells you the path through the system's decision points, but not what the data looked like along the way. Answers "
+        },
+        [
+          ":em",
+          {
+            "s": "\"what code ran?\""
+          }
+        ]
+      ],
+      [
+        ":p",
+        [
+          ":strong",
+          {
+            "s": "Level 2: Decision trace + resolved values."
+          }
+        ],
+        {
+          "s": " Everything in Level 1, plus the actual values at each step. The field contained "
+        },
+        [
+          ":em",
+          {
+            "s": "this"
+          }
+        ],
+        {
+          "s": " AST. The field-ref resolved to "
+        },
+        [
+          ":em",
+          {
+            "s": "this"
+          }
+        ],
+        {
+          "s": " value. The computed expression evaluated to "
+        },
+        [
+          ":em",
+          {
+            "s": "this"
+          }
+        ],
+        {
+          "s": " result with "
+        },
+        [
+          ":em",
+          {
+            "s": "these"
+          }
+        ],
+        {
+          "s": " bindings. Answers "
+        },
+        [
+          ":em",
+          {
+            "s": "\"what code ran and what did it produce?\""
+          }
+        ]
+      ],
+      [
+        ":p",
+        [
+          ":strong",
+          {
+            "s": "Level 3: Decision trace + resolved values + evaluation steps."
+          }
+        ],
+        {
+          "s": " Everything in Level 2, plus intermediate steps of expression evaluation. The sub-expression "
+        },
+        [
+          ":code",
+          {
+            "s": "(* 7 days)"
+          }
+        ],
+        {
+          "s": " evaluated to "
+        },
+        [
+          ":code",
+          {
+            "s": "604800000"
+          }
+        ],
+        {
+          "s": ", then "
+        },
+        [
+          ":code",
+          {
+            "s": "(+ start-date 604800000)"
+          }
+        ],
+        {
+          "s": " evaluated to "
+        },
+        [
+          ":code",
+          {
+            "s": "1741478400000"
+          }
+        ],
+        {
+          "s": ". This is a full debugger-level trace. Answers "
+        },
+        [
+          ":em",
+          {
+            "s": "\"how did it arrive at each value?\""
+          }
+        ]
+      ],
+      [
+        ":p",
+        [
+          ":strong",
+          {
+            "s": "The design: Level 2 by default, Level 3 on demand."
+          }
+        ],
+        {
+          "s": " Level 2 is the sweet spot for \"Explain this\" — enough to understand the full chain without overwhelming detail. Level 1 is too sparse (you'd still need to mentally reconstruct what the data looked like). Level 3 is too granular for most purposes, but should be available when you want to drill into a specific value's derivation. This is dissolvable indirection applied to the provenance system itself."
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Level 2 is also relatively cheap to capture — it records decisions the system is already making (view resolution, field view selection, expression evaluation results). Level 3 requires instrumenting the Hob evaluator to record intermediate steps, which is more invasive but only needs to activate when requested."
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The provenance trace covers three kinds of information that compose into a single narrative:"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Rendering provenance"
+              }
+            ],
+            {
+              "s": " — view resolution, field view selection, sub-renderer dispatch, DOM production. Explains "
+            },
+            [
+              ":em",
+              {
+                "s": "how this output was produced"
+              }
+            ],
+            {
+              "s": "."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Evaluation provenance"
+              }
+            ],
+            {
+              "s": " — expression evaluation, field resolution, computed value derivation, binding lookups. Explains "
+            },
+            [
+              ":em",
+              {
+                "s": "how this value was calculated"
+              }
+            ],
+            {
+              "s": "."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Mutation provenance"
+              }
+            ],
+            {
+              "s": " — which event handler modified which field, in response to which event, with which inputs. Explains "
+            },
+            [
+              ":em",
+              {
+                "s": "why this data changed"
+              }
+            ],
+            {
+              "s": "."
+            }
+          ]
+        ]
+      ],
+      [
+        ":p",
+        {
+          "s": "Rendering and evaluation provenance are captured as the system renders (the current frame). Mutation provenance is recorded as handlers execute (the history). \"Explain this\" can follow the chain across all three: you point at a rendered value (rendering provenance), ask why it has that value (evaluation provenance), and if it was set by a handler, trace back to the triggering event (mutation provenance)."
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "For example: \"This 'Related Items' field shows items A, B, C. The value "
+        },
+        [
+          ":code",
+          {
+            "s": "[@A @B @C]"
+          }
+        ],
+        {
+          "s": " was rendered by "
+        },
+        [
+          ":code",
+          {
+            "s": "field-view-list-full"
+          }
+        ],
+        {
+          "s": ". It was last set by "
+        },
+        [
+          ":code",
+          {
+            "s": "related-items-lib"
+          }
+        ],
+        {
+          "s": ", which ran in response to "
+        },
+        [
+          ":code",
+          {
+            "s": "item:updated"
+          }
+        ],
+        {
+          "s": " on item Y (you added tag "
+        },
+        [
+          ":code",
+          {
+            "s": "#project-alpha"
+          }
+        ],
+        {
+          "s": "). Item C appeared because it shares that tag.\""
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Entry Point"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The entry point for all provenance is always visual — the user points at something on screen. Data always surfaces somewhere visually, so the rendered output is the route into both rendering "
+        },
+        [
+          ":em",
+          {
+            "s": "and"
+          }
+        ],
+        {
+          "s": " mutation provenance. The same \"Explain this\" gesture works for both \"how is this displayed?\" and \"why does this have this value?\" — the system follows the chain as deep as needed."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "The Underlying Tension: Indirection vs. Opacity"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Indirection itself is not the enemy. Layers of abstraction (types -> views -> view specs -> field views -> libraries) are individually reasonable and often valuable — they enable reuse, separation of concerns, and flexibility."
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The problem is "
+        },
+        [
+          ":strong",
+          {
+            "s": "opaque"
+          }
+        ],
+        {
+          "s": " indirection: indirection that cannot be dissolved on demand. When you need to understand how something works, you should be able to unfold every layer of indirection into a single linear explanation. The system should be able to say \"this note is rendered by "
+        },
+        [
+          ":em",
+          {
+            "s": "this"
+          }
+        ],
+        {
+          "s": " view, which calls "
+        },
+        [
+          ":em",
+          {
+            "s": "this"
+          }
+        ],
+        {
+          "s": " field view for the body, which evaluates "
+        },
+        [
+          ":em",
+          {
+            "s": "this"
+          }
+        ],
+        {
+          "s": " Hob expression, which produces "
+        },
+        [
+          ":em",
+          {
+            "s": "this"
+          }
+        ],
+        {
+          "s": " DOM.\""
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The goal is not to eliminate indirection, but to make it "
+        },
+        [
+          ":strong",
+          {
+            "s": "dissolvable"
+          }
+        ],
+        {
+          "s": " — present when you want the abstraction, transparent when you want to understand the machinery."
+        }
+      ]
+    ]
+  }
+}

@@ -1,1 +1,590 @@
-{"id": "7e570003-0000-4000-8000-000000000000", "name": "test-suite-view", "type": "aaaaaaaa-0000-0000-0000-000000000000", "created": 1739059200000, "modified": 1774532370545, "content": {"code": "const TEST_TAG_ID = 'c0c0c0c0-0070-0000-0000-000000000000';\nconst INSTANCE_BOOT_TIMEOUT = 30000;\nconst TEST_RUN_TIMEOUT = 120000;\n\nexport async function render(item, api) {\n  const instanceLib = await api.require('hobson-instance-lib');\n\n  const container = api.createElement('div');\n  container.style.cssText = 'display:flex; flex-direction:column; height:100%; font-family:var(--font-sans, system-ui, sans-serif); font-size: 0.875rem;';\n\n  // Header\n  const header = api.createElement('div');\n  header.style.cssText = 'display:flex; align-items:center; justify-content:space-between; padding:12px 16px; border-bottom:1px solid var(--border-color, #e5e7eb);';\n\n  const title = api.createElement('h2');\n  title.textContent = 'Test Suite';\n  title.style.cssText = 'margin:0; font-size: 1.125rem; font-weight:600;';\n  header.appendChild(title);\n\n  const runAllBtn = api.createElement('button');\n  runAllBtn.textContent = 'Run All';\n  runAllBtn.style.cssText = 'padding:6px 16px; background:#22c55e; color:#fff; border:none; border-radius:6px; cursor:pointer; font-size: 0.875rem; font-weight:500;';\n  runAllBtn.onmouseenter = () => runAllBtn.style.background = '#16a34a';\n  runAllBtn.onmouseleave = () => runAllBtn.style.background = '#22c55e';\n  header.appendChild(runAllBtn);\n  container.appendChild(header);\n\n  // Summary bar\n  const summaryBar = api.createElement('div');\n  summaryBar.style.cssText = 'padding:8px 16px; font-size: 0.8125rem; color:var(--text-secondary, #6b7280); border-bottom:1px solid var(--border-color, #e5e7eb);';\n  summaryBar.textContent = 'Discovering tests...';\n  container.appendChild(summaryBar);\n\n  // Results area\n  const resultsArea = api.createElement('div');\n  resultsArea.style.cssText = 'flex:1; overflow-y:auto; padding:8px 0;';\n  container.appendChild(resultsArea);\n\n  // Discover test items (in parent, for building the UI rows)\n  const allItems = await api.getAll();\n  const testItems = allItems.filter(i =>\n    i.content?.tags?.includes(TEST_TAG_ID) && i.name && i.content?.code\n  );\n  summaryBar.textContent = `${testItems.length} test${testItems.length === 1 ? '' : 's'} found`;\n\n  // Build test item rows\n  const rows = [];\n  for (const testItem of testItems) {\n    const row = createTestRow(testItem, api);\n    rows.push(row);\n    resultsArea.appendChild(row.el);\n  }\n\n  // Helper to update summary bar from totals\n  function updateSummary(totalPassed, totalFailed, timestamp) {\n    const total = totalPassed + totalFailed;\n    const ago = timestamp ? ' \\u00b7 ' + formatTimeAgo(timestamp) : '';\n    if (totalFailed === 0) {\n      summaryBar.textContent = `All ${total} passed${ago}`;\n      summaryBar.style.color = '#22c55e';\n    } else {\n      summaryBar.textContent = `${totalPassed}/${total} passed, ${totalFailed} failed${ago}`;\n      summaryBar.style.color = '#ef4444';\n    }\n  }\n\n  // Restore last run results if available\n  const lastRun = item.content?.lastRun;\n  if (lastRun && lastRun.suites) {\n    const byId = new Map(lastRun.suites.map(s => [s.testItemId, s]));\n    for (const row of rows) {\n      const saved = byId.get(row.testItem.id);\n      if (saved) {\n        row.setResults(saved.results, saved.passed, saved.failed);\n      }\n    }\n    updateSummary(lastRun.totalPassed, lastRun.totalFailed, lastRun.timestamp);\n  }\n\n  // Run all handler — creates a nested instance, runs tests there\n  let instance = null;\n  runAllBtn.addEventListener('click', async () => {\n    runAllBtn.disabled = true;\n    runAllBtn.style.opacity = '0.6';\n    runAllBtn.style.cursor = 'default';\n\n    for (const row of rows) row.reset();\n    summaryBar.style.color = 'var(--text-secondary, #6b7280)';\n\n    try {\n      summaryBar.textContent = 'Booting test instance...';\n      instance = await instanceLib.create(api, { name: 'Test Run' });\n\n      await instance.waitForMessage('test-instance-ready', INSTANCE_BOOT_TIMEOUT);\n      summaryBar.textContent = 'Running tests...';\n      for (const row of rows) row.setStatus('running');\n\n      const suiteMap = new Map(rows.map(r => [r.testItem.id, r]));\n\n      const removeProgress = instance.onMessage('test-progress', msg => {\n        const row = suiteMap.get(msg.suite?.testItemId);\n        if (row) {\n          row.setResults(msg.suite.results, msg.suite.passed, msg.suite.failed);\n        }\n      });\n\n      const resultLastRun = await new Promise((resolve, reject) => {\n        const timer = setTimeout(() => {\n          removeComplete();\n          removeError();\n          reject(new Error('Test run timed out'));\n        }, TEST_RUN_TIMEOUT);\n\n        const removeComplete = instance.onMessage('test-complete', msg => {\n          clearTimeout(timer);\n          removeComplete();\n          removeError();\n          resolve(msg.lastRun);\n        });\n\n        const removeError = instance.onMessage('test-error', msg => {\n          clearTimeout(timer);\n          removeComplete();\n          removeError();\n          reject(new Error(msg.error));\n        });\n      });\n\n      removeProgress();\n\n      // Update summary and persist\n      updateSummary(resultLastRun.totalPassed, resultLastRun.totalFailed, resultLastRun.timestamp);\n      const updated = await api.get(item.id);\n      updated.content = updated.content || {};\n      updated.content.lastRun = resultLastRun;\n      await api.set(updated, { silent: true });\n\n    } catch (err) {\n      summaryBar.textContent = `Error: ${err.message}`;\n      summaryBar.style.color = '#ef4444';\n    }\n\n    // Show clean up button (instance stays alive for inspection)\n    runAllBtn.style.display = 'none';\n    const cleanupBtn = api.createElement('button');\n    cleanupBtn.textContent = 'Clean Up Instance';\n    cleanupBtn.style.cssText = 'padding:6px 16px; background:#6b7280; color:#fff; border:none; border-radius:6px; cursor:pointer; font-size: 0.875rem; font-weight:500;';\n    cleanupBtn.onmouseenter = () => cleanupBtn.style.background = '#4b5563';\n    cleanupBtn.onmouseleave = () => cleanupBtn.style.background = '#6b7280';\n    cleanupBtn.addEventListener('click', async () => {\n      cleanupBtn.disabled = true;\n      cleanupBtn.textContent = 'Cleaning up...';\n      try { if (instance) await instance.destroy(); } catch {}\n      instance = null;\n      cleanupBtn.remove();\n      runAllBtn.style.display = '';\n      runAllBtn.disabled = false;\n      runAllBtn.style.opacity = '1';\n      runAllBtn.style.cursor = 'pointer';\n    });\n    header.appendChild(cleanupBtn);\n  });\n\n  return container;\n}\n\nfunction createTestRow(testItem, api) {\n  const el = api.createElement('div');\n  el.style.cssText = 'padding:6px 16px;';\n\n  const headerRow = api.createElement('div');\n  headerRow.style.cssText = 'display:flex; align-items:center; gap:8px; cursor:default;';\n\n  const indicator = api.createElement('span');\n  indicator.style.cssText = 'width:20px; text-align:center; flex-shrink:0;';\n  indicator.textContent = '\\u25CB'; // circle\n  indicator.style.color = '#9ca3af';\n\n  const nameSpan = api.createElement('span');\n  nameSpan.textContent = testItem.name || testItem.id;\n  nameSpan.style.cssText = 'font-weight:500;';\n\n  const countSpan = api.createElement('span');\n  countSpan.style.cssText = 'margin-left:auto; font-size: 0.75rem; color:var(--text-secondary, #6b7280);';\n\n  headerRow.appendChild(indicator);\n  headerRow.appendChild(nameSpan);\n  headerRow.appendChild(countSpan);\n  el.appendChild(headerRow);\n\n  const detailsContainer = api.createElement('div');\n  detailsContainer.style.cssText = 'margin-left:28px; margin-top:4px;';\n  el.appendChild(detailsContainer);\n\n  return {\n    el,\n    testItem,\n    reset() {\n      indicator.textContent = '\\u25CB';\n      indicator.style.color = '#9ca3af';\n      countSpan.textContent = '';\n      detailsContainer.innerHTML = '';\n    },\n    setStatus(status) {\n      if (status === 'running') {\n        indicator.textContent = '\\u25CF';\n        indicator.style.color = '#f59e0b';\n        countSpan.textContent = 'running...';\n        countSpan.style.color = '#f59e0b';\n      }\n    },\n    setResults(results, passed, failed) {\n      const total = passed + failed;\n      if (failed === 0) {\n        indicator.textContent = '\\u2713';\n        indicator.style.color = '#22c55e';\n        countSpan.textContent = `${passed}/${total} passed`;\n        countSpan.style.color = '#22c55e';\n      } else {\n        indicator.textContent = '\\u2717';\n        indicator.style.color = '#ef4444';\n        countSpan.textContent = `${passed}/${total} passed`;\n        countSpan.style.color = '#ef4444';\n      }\n\n      // Show every individual test result\n      detailsContainer.innerHTML = '';\n\n      // Auto-expand if there are failures, collapse if all passed\n      let expanded = failed > 0;\n\n      const toggle = api.createElement('div');\n      toggle.style.cssText = 'font-size: 0.6875rem; color:var(--text-secondary, #6b7280); cursor:pointer; user-select:none; padding:2px 0;';\n      const updateToggle = () => {\n        toggle.textContent = expanded ? '\\u25BE hide details' : '\\u25B8 show details';\n      };\n      updateToggle();\n      toggle.addEventListener('click', () => {\n        expanded = !expanded;\n        updateToggle();\n        listEl.style.display = expanded ? 'block' : 'none';\n      });\n      detailsContainer.appendChild(toggle);\n\n      const listEl = api.createElement('div');\n      listEl.style.display = expanded ? 'block' : 'none';\n\n      for (const r of results) {\n        const line = api.createElement('div');\n        line.style.cssText = 'padding:2px 0; font-size: 0.75rem;';\n\n        const icon = r.passed ? '\\u2713 ' : '\\u2717 ';\n        const color = r.passed ? '#22c55e' : '#ef4444';\n\n        const nameEl = api.createElement('a');\n        nameEl.style.cssText = `color:${color}; cursor:pointer; text-decoration:none; border-bottom:1px solid transparent;`;\n        nameEl.onmouseenter = () => nameEl.style.borderBottomColor = color;\n        nameEl.onmouseleave = () => nameEl.style.borderBottomColor = 'transparent';\n        nameEl.textContent = icon + r.name;\n        nameEl.title = r.symbol ? `${testItem.name} \\u2192 ${r.symbol}` : testItem.name;\n\n        nameEl.onclick = (e) => {\n          e.preventDefault();\n          const params = { field: 'code' };\n          if (r.symbol) params.symbol = r.symbol;\n          api.openItem(e, { id: testItem.id, view: { navigateTo: params } });\n        };\n\n        line.appendChild(nameEl);\n\n        if (!r.passed && r.error) {\n          const errMsg = api.createElement('div');\n          errMsg.style.cssText = 'color:#9ca3af; padding-left:16px; font-family:var(--font-mono, monospace); font-size: 0.6875rem; white-space:pre-wrap; word-break:break-all;';\n          errMsg.textContent = r.error;\n          line.appendChild(errMsg);\n        }\n\n        listEl.appendChild(line);\n      }\n\n      detailsContainer.appendChild(listEl);\n    }\n  };\n}\n\nfunction formatTimeAgo(timestamp) {\n  const seconds = Math.floor((Date.now() - timestamp) / 1000);\n  if (seconds < 60) return 'just now';\n  const minutes = Math.floor(seconds / 60);\n  if (minutes < 60) return `${minutes}m ago`;\n  const hours = Math.floor(minutes / 60);\n  if (hours < 24) return `${hours}h ago`;\n  const days = Math.floor(hours / 24);\n  return `${days}d ago`;\n}\n", "for_type": "7e570002-0000-4000-8000-000000000000", "displayName": "Test Suite", "description": [":doc", [":p", {"s": "Discovers items tagged with the test tag, runs their exported run() function, and displays pass/fail results."}]], "_symbols": {"TEST_TAG_ID": {"name": "TEST_TAG_ID", "line": 1, "col": 6, "endLine": 1, "endCol": 58, "kind": "variable", "scope": null}, "INSTANCE_BOOT_TIMEOUT": {"name": "INSTANCE_BOOT_TIMEOUT", "line": 2, "col": 6, "endLine": 2, "endCol": 35, "kind": "variable", "scope": null}, "TEST_RUN_TIMEOUT": {"name": "TEST_RUN_TIMEOUT", "line": 3, "col": 6, "endLine": 3, "endCol": 31, "kind": "variable", "scope": null}, "render": {"name": "render", "line": 5, "col": 7, "endLine": 165, "endCol": 1, "kind": "function", "scope": null, "signature": "(item, api)"}, "render.instanceLib": {"name": "instanceLib", "line": 6, "col": 8, "endLine": 6, "endCol": 62, "kind": "variable", "scope": "render"}, "render.container": {"name": "container", "line": 8, "col": 8, "endLine": 8, "endCol": 44, "kind": "variable", "scope": "render"}, "render.header": {"name": "header", "line": 12, "col": 8, "endLine": 12, "endCol": 41, "kind": "variable", "scope": "render"}, "render.title": {"name": "title", "line": 15, "col": 8, "endLine": 15, "endCol": 39, "kind": "variable", "scope": "render"}, "render.runAllBtn": {"name": "runAllBtn", "line": 20, "col": 8, "endLine": 20, "endCol": 47, "kind": "variable", "scope": "render"}, "render.summaryBar": {"name": "summaryBar", "line": 29, "col": 8, "endLine": 29, "endCol": 45, "kind": "variable", "scope": "render"}, "render.resultsArea": {"name": "resultsArea", "line": 35, "col": 8, "endLine": 35, "endCol": 46, "kind": "variable", "scope": "render"}, "render.allItems": {"name": "allItems", "line": 40, "col": 8, "endLine": 40, "endCol": 37, "kind": "variable", "scope": "render"}, "render.testItems": {"name": "testItems", "line": 41, "col": 8, "endLine": 43, "endCol": 3, "kind": "variable", "scope": "render"}, "render.rows": {"name": "rows", "line": 47, "col": 8, "endLine": 47, "endCol": 17, "kind": "variable", "scope": "render"}, "render.testItem": {"name": "testItem", "line": 48, "col": 13, "endLine": 48, "endCol": 21, "kind": "variable", "scope": "render"}, "render.row": {"name": "row", "line": 96, "col": 17, "endLine": 96, "endCol": 20, "kind": "variable", "scope": "render"}, "render.updateSummary": {"name": "updateSummary", "line": 55, "col": 2, "endLine": 65, "endCol": 3, "kind": "function", "scope": "render", "signature": "(totalPassed, totalFailed, timestamp)"}, "updateSummary.total": {"name": "total", "line": 56, "col": 10, "endLine": 56, "endCol": 43, "kind": "variable", "scope": "updateSummary"}, "updateSummary.ago": {"name": "ago", "line": 57, "col": 10, "endLine": 57, "endCol": 70, "kind": "variable", "scope": "updateSummary"}, "render.lastRun": {"name": "lastRun", "line": 68, "col": 8, "endLine": 68, "endCol": 39, "kind": "variable", "scope": "render"}, "render.byId": {"name": "byId", "line": 70, "col": 10, "endLine": 70, "endCol": 68, "kind": "variable", "scope": "render"}, "render.saved": {"name": "saved", "line": 72, "col": 12, "endLine": 72, "endCol": 45, "kind": "variable", "scope": "render"}, "render.instance": {"name": "instance", "line": 81, "col": 6, "endLine": 81, "endCol": 21, "kind": "variable", "scope": "render"}, "render.name": {"name": "name", "line": 92, "col": 49, "endLine": 92, "endCol": 65, "kind": "property", "scope": "render"}, "render.suiteMap": {"name": "suiteMap", "line": 98, "col": 12, "endLine": 98, "endCol": 65, "kind": "variable", "scope": "render"}, "render.removeProgress": {"name": "removeProgress", "line": 100, "col": 12, "endLine": 105, "endCol": 8, "kind": "variable", "scope": "render"}, "render.resultLastRun": {"name": "resultLastRun", "line": 107, "col": 12, "endLine": 127, "endCol": 8, "kind": "variable", "scope": "render"}, "render.updated": {"name": "updated", "line": 133, "col": 12, "endLine": 133, "endCol": 44, "kind": "variable", "scope": "render"}, "render.silent": {"name": "silent", "line": 136, "col": 31, "endLine": 136, "endCol": 43, "kind": "property", "scope": "render"}, "render.cleanupBtn": {"name": "cleanupBtn", "line": 145, "col": 10, "endLine": 145, "endCol": 50, "kind": "variable", "scope": "render"}, "createTestRow": {"name": "createTestRow", "line": 167, "col": 0, "endLine": 284, "endCol": 1, "kind": "function", "scope": null, "signature": "(testItem, api)"}, "createTestRow.el": {"name": "el", "line": 196, "col": 4, "endLine": 196, "endCol": 6, "kind": "property", "scope": "createTestRow"}, "createTestRow.headerRow": {"name": "headerRow", "line": 171, "col": 8, "endLine": 171, "endCol": 44, "kind": "variable", "scope": "createTestRow"}, "createTestRow.indicator": {"name": "indicator", "line": 174, "col": 8, "endLine": 174, "endCol": 45, "kind": "variable", "scope": "createTestRow"}, "createTestRow.nameSpan": {"name": "nameSpan", "line": 179, "col": 8, "endLine": 179, "endCol": 44, "kind": "variable", "scope": "createTestRow"}, "createTestRow.countSpan": {"name": "countSpan", "line": 183, "col": 8, "endLine": 183, "endCol": 45, "kind": "variable", "scope": "createTestRow"}, "createTestRow.detailsContainer": {"name": "detailsContainer", "line": 191, "col": 8, "endLine": 191, "endCol": 51, "kind": "variable", "scope": "createTestRow"}, "createTestRow.testItem": {"name": "testItem", "line": 197, "col": 4, "endLine": 197, "endCol": 12, "kind": "property", "scope": "createTestRow"}, "createTestRow.reset": {"name": "reset", "line": 198, "col": 4, "endLine": 203, "endCol": 5, "kind": "property-function", "scope": "createTestRow", "signature": "()"}, "createTestRow.setStatus": {"name": "setStatus", "line": 204, "col": 4, "endLine": 211, "endCol": 5, "kind": "property-function", "scope": "createTestRow", "signature": "(status)"}, "createTestRow.setResults": {"name": "setResults", "line": 212, "col": 4, "endLine": 282, "endCol": 5, "kind": "property-function", "scope": "createTestRow", "signature": "(results, passed, failed)"}, "createTestRow.setResults.total": {"name": "total", "line": 213, "col": 12, "endLine": 213, "endCol": 35, "kind": "variable", "scope": "createTestRow.setResults"}, "createTestRow.setResults.expanded": {"name": "expanded", "line": 230, "col": 10, "endLine": 230, "endCol": 31, "kind": "variable", "scope": "createTestRow.setResults"}, "createTestRow.setResults.toggle": {"name": "toggle", "line": 232, "col": 12, "endLine": 232, "endCol": 45, "kind": "variable", "scope": "createTestRow.setResults"}, "createTestRow.setResults.updateToggle": {"name": "updateToggle", "line": 234, "col": 12, "endLine": 236, "endCol": 7, "kind": "function", "scope": "createTestRow.setResults", "signature": "()"}, "createTestRow.setResults.listEl": {"name": "listEl", "line": 245, "col": 12, "endLine": 245, "endCol": 45, "kind": "variable", "scope": "createTestRow.setResults"}, "createTestRow.setResults.r": {"name": "r", "line": 248, "col": 17, "endLine": 248, "endCol": 18, "kind": "variable", "scope": "createTestRow.setResults"}, "createTestRow.setResults.line": {"name": "line", "line": 249, "col": 14, "endLine": 249, "endCol": 45, "kind": "variable", "scope": "createTestRow.setResults"}, "createTestRow.setResults.icon": {"name": "icon", "line": 252, "col": 14, "endLine": 252, "endCol": 53, "kind": "variable", "scope": "createTestRow.setResults"}, "createTestRow.setResults.color": {"name": "color", "line": 253, "col": 14, "endLine": 253, "endCol": 54, "kind": "variable", "scope": "createTestRow.setResults"}, "createTestRow.setResults.nameEl": {"name": "nameEl", "line": 255, "col": 14, "endLine": 255, "endCol": 45, "kind": "variable", "scope": "createTestRow.setResults"}, "createTestRow.setResults.params": {"name": "params", "line": 264, "col": 16, "endLine": 264, "endCol": 42, "kind": "variable", "scope": "createTestRow.setResults"}, "params.field": {"name": "field", "line": 264, "col": 27, "endLine": 264, "endCol": 40, "kind": "property", "scope": "params"}, "createTestRow.setResults.id": {"name": "id", "line": 266, "col": 28, "endLine": 266, "endCol": 43, "kind": "property", "scope": "createTestRow.setResults"}, "createTestRow.setResults.view": {"name": "view", "line": 266, "col": 45, "endLine": 266, "endCol": 73, "kind": "property", "scope": "createTestRow.setResults"}, "createTestRow.setResults.view.navigateTo": {"name": "navigateTo", "line": 266, "col": 53, "endLine": 266, "endCol": 71, "kind": "property", "scope": "createTestRow.setResults.view"}, "createTestRow.setResults.errMsg": {"name": "errMsg", "line": 272, "col": 16, "endLine": 272, "endCol": 49, "kind": "variable", "scope": "createTestRow.setResults"}, "formatTimeAgo": {"name": "formatTimeAgo", "line": 286, "col": 0, "endLine": 295, "endCol": 1, "kind": "function", "scope": null, "signature": "(timestamp)"}, "formatTimeAgo.seconds": {"name": "seconds", "line": 287, "col": 8, "endLine": 287, "endCol": 61, "kind": "variable", "scope": "formatTimeAgo"}, "formatTimeAgo.minutes": {"name": "minutes", "line": 289, "col": 8, "endLine": 289, "endCol": 42, "kind": "variable", "scope": "formatTimeAgo"}, "formatTimeAgo.hours": {"name": "hours", "line": 291, "col": 8, "endLine": 291, "endCol": 40, "kind": "variable", "scope": "formatTimeAgo"}, "formatTimeAgo.days": {"name": "days", "line": 293, "col": 8, "endLine": 293, "endCol": 37, "kind": "variable", "scope": "formatTimeAgo"}}}, "attachments": []}
+{
+  "id": "7e570003-0000-4000-8000-000000000000",
+  "name": "test-suite-view",
+  "type": "aaaaaaaa-0000-0000-0000-000000000000",
+  "created": 1739059200000,
+  "modified": 1774988049651,
+  "content": {
+    "code": "const TEST_TAG_ID = 'c0c0c0c0-0070-0000-0000-000000000000';\nconst INSTANCE_BOOT_TIMEOUT = 30000;\nconst TEST_RUN_TIMEOUT = 120000;\n\nexport async function render(item, api) {\n  const instanceLib = await api.require('hobson-instance-lib');\n\n  const container = api.createElement('div');\n  container.style.cssText = 'display:flex; flex-direction:column; height:100%; font-family:var(--font-sans, system-ui, sans-serif); font-size: 0.875rem;';\n\n  // Header\n  const header = api.createElement('div');\n  header.style.cssText = 'display:flex; align-items:center; justify-content:space-between; padding:12px 16px; border-bottom:1px solid var(--border-color, #e5e7eb);';\n\n  const title = api.createElement('h2');\n  title.textContent = 'Test Suite';\n  title.style.cssText = 'margin:0; font-size: 1.125rem; font-weight:600;';\n  header.appendChild(title);\n\n  const runAllBtn = api.createElement('button');\n  runAllBtn.textContent = 'Run All';\n  runAllBtn.style.cssText = 'padding:6px 16px; background:#22c55e; color:#fff; border:none; border-radius:6px; cursor:pointer; font-size: 0.875rem; font-weight:500;';\n  runAllBtn.onmouseenter = () => runAllBtn.style.background = '#16a34a';\n  runAllBtn.onmouseleave = () => runAllBtn.style.background = '#22c55e';\n  header.appendChild(runAllBtn);\n  container.appendChild(header);\n\n  // Summary bar\n  const summaryBar = api.createElement('div');\n  summaryBar.style.cssText = 'padding:8px 16px; font-size: 0.8125rem; color:var(--text-secondary, #6b7280); border-bottom:1px solid var(--border-color, #e5e7eb);';\n  summaryBar.textContent = 'Discovering tests...';\n  container.appendChild(summaryBar);\n\n  // Results area\n  const resultsArea = api.createElement('div');\n  resultsArea.style.cssText = 'flex:1; overflow-y:auto; padding:8px 0;';\n  container.appendChild(resultsArea);\n\n  // Discover test items (in parent, for building the UI rows)\n  const allItems = await api.getAll();\n  const testItems = allItems.filter(i =>\n    i.content?.tags?.includes(TEST_TAG_ID) && i.name && i.content?.code\n  );\n  summaryBar.textContent = `${testItems.length} test${testItems.length === 1 ? '' : 's'} found`;\n\n  // Build test item rows\n  const rows = [];\n  for (const testItem of testItems) {\n    const row = createTestRow(testItem, api);\n    rows.push(row);\n    resultsArea.appendChild(row.el);\n  }\n\n  // Helper to update summary bar from totals\n  function updateSummary(totalPassed, totalFailed, timestamp) {\n    const total = totalPassed + totalFailed;\n    const ago = timestamp ? ' \\u00b7 ' + formatTimeAgo(timestamp) : '';\n    if (totalFailed === 0) {\n      summaryBar.textContent = `All ${total} passed${ago}`;\n      summaryBar.style.color = '#22c55e';\n    } else {\n      summaryBar.textContent = `${totalPassed}/${total} passed, ${totalFailed} failed${ago}`;\n      summaryBar.style.color = '#ef4444';\n    }\n  }\n\n  // Restore last run results if available\n  const lastRun = item.content?.lastRun;\n  if (lastRun && lastRun.suites) {\n    const byId = new Map(lastRun.suites.map(s => [s.testItemId, s]));\n    for (const row of rows) {\n      const saved = byId.get(row.testItem.id);\n      if (saved) {\n        row.setResults(saved.results, saved.passed, saved.failed);\n      }\n    }\n    updateSummary(lastRun.totalPassed, lastRun.totalFailed, lastRun.timestamp);\n  }\n\n  // Run all handler — creates a nested instance, runs tests there\n  let instance = null;\n  runAllBtn.addEventListener('click', async () => {\n    runAllBtn.disabled = true;\n    runAllBtn.style.opacity = '0.6';\n    runAllBtn.style.cursor = 'default';\n\n    for (const row of rows) row.reset();\n    summaryBar.style.color = 'var(--text-secondary, #6b7280)';\n\n    try {\n      summaryBar.textContent = 'Booting test instance...';\n      instance = await instanceLib.create(api, { name: 'Test Run' });\n\n      await instance.waitForMessage('test-instance-ready', INSTANCE_BOOT_TIMEOUT);\n      summaryBar.textContent = 'Running tests...';\n      for (const row of rows) row.setStatus('running');\n\n      const suiteMap = new Map(rows.map(r => [r.testItem.id, r]));\n\n      const removeProgress = instance.onMessage('test-progress', msg => {\n        const row = suiteMap.get(msg.suite?.testItemId);\n        if (row) {\n          row.setResults(msg.suite.results, msg.suite.passed, msg.suite.failed);\n        }\n      });\n\n      const resultLastRun = await new Promise((resolve, reject) => {\n        const timer = setTimeout(() => {\n          removeComplete();\n          removeError();\n          reject(new Error('Test run timed out'));\n        }, TEST_RUN_TIMEOUT);\n\n        const removeComplete = instance.onMessage('test-complete', msg => {\n          clearTimeout(timer);\n          removeComplete();\n          removeError();\n          resolve(msg.lastRun);\n        });\n\n        const removeError = instance.onMessage('test-error', msg => {\n          clearTimeout(timer);\n          removeComplete();\n          removeError();\n          reject(new Error(msg.error));\n        });\n      });\n\n      removeProgress();\n\n      // Update summary and persist\n      updateSummary(resultLastRun.totalPassed, resultLastRun.totalFailed, resultLastRun.timestamp);\n      const updated = await api.get(item.id);\n      updated.content = updated.content || {};\n      updated.content.lastRun = resultLastRun;\n      await api.set(updated, { silent: true });\n\n    } catch (err) {\n      summaryBar.textContent = `Error: ${err.message}`;\n      summaryBar.style.color = '#ef4444';\n    }\n\n    // Show clean up button (instance stays alive for inspection)\n    runAllBtn.style.display = 'none';\n    const cleanupBtn = api.createElement('button');\n    cleanupBtn.textContent = 'Clean Up Instance';\n    cleanupBtn.style.cssText = 'padding:6px 16px; background:#6b7280; color:#fff; border:none; border-radius:6px; cursor:pointer; font-size: 0.875rem; font-weight:500;';\n    cleanupBtn.onmouseenter = () => cleanupBtn.style.background = '#4b5563';\n    cleanupBtn.onmouseleave = () => cleanupBtn.style.background = '#6b7280';\n    cleanupBtn.addEventListener('click', async () => {\n      cleanupBtn.disabled = true;\n      cleanupBtn.textContent = 'Cleaning up...';\n      try { if (instance) await instance.destroy(); } catch {}\n      instance = null;\n      cleanupBtn.remove();\n      runAllBtn.style.display = '';\n      runAllBtn.disabled = false;\n      runAllBtn.style.opacity = '1';\n      runAllBtn.style.cursor = 'pointer';\n    });\n    header.appendChild(cleanupBtn);\n  });\n\n  return container;\n}\n\nfunction createTestRow(testItem, api) {\n  const el = api.createElement('div');\n  el.style.cssText = 'padding:6px 16px;';\n\n  const headerRow = api.createElement('div');\n  headerRow.style.cssText = 'display:flex; align-items:center; gap:8px; cursor:default;';\n\n  const indicator = api.createElement('span');\n  indicator.style.cssText = 'width:20px; text-align:center; flex-shrink:0;';\n  indicator.textContent = '\\u25CB'; // circle\n  indicator.style.color = '#9ca3af';\n\n  const nameSpan = api.createElement('span');\n  nameSpan.textContent = testItem.name || testItem.id;\n  nameSpan.style.cssText = 'font-weight:500;';\n\n  const countSpan = api.createElement('span');\n  countSpan.style.cssText = 'margin-left:auto; font-size: 0.75rem; color:var(--text-secondary, #6b7280);';\n\n  headerRow.appendChild(indicator);\n  headerRow.appendChild(nameSpan);\n  headerRow.appendChild(countSpan);\n  el.appendChild(headerRow);\n\n  const detailsContainer = api.createElement('div');\n  detailsContainer.style.cssText = 'margin-left:28px; margin-top:4px;';\n  el.appendChild(detailsContainer);\n\n  return {\n    el,\n    testItem,\n    reset() {\n      indicator.textContent = '\\u25CB';\n      indicator.style.color = '#9ca3af';\n      countSpan.textContent = '';\n      detailsContainer.innerHTML = '';\n    },\n    setStatus(status) {\n      if (status === 'running') {\n        indicator.textContent = '\\u25CF';\n        indicator.style.color = '#f59e0b';\n        countSpan.textContent = 'running...';\n        countSpan.style.color = '#f59e0b';\n      }\n    },\n    setResults(results, passed, failed) {\n      const total = passed + failed;\n      if (failed === 0) {\n        indicator.textContent = '\\u2713';\n        indicator.style.color = '#22c55e';\n        countSpan.textContent = `${passed}/${total} passed`;\n        countSpan.style.color = '#22c55e';\n      } else {\n        indicator.textContent = '\\u2717';\n        indicator.style.color = '#ef4444';\n        countSpan.textContent = `${passed}/${total} passed`;\n        countSpan.style.color = '#ef4444';\n      }\n\n      // Show every individual test result\n      detailsContainer.innerHTML = '';\n\n      // Auto-expand if there are failures, collapse if all passed\n      let expanded = failed > 0;\n\n      const toggle = api.createElement('div');\n      toggle.style.cssText = 'font-size: 0.6875rem; color:var(--text-secondary, #6b7280); cursor:pointer; user-select:none; padding:2px 0;';\n      const updateToggle = () => {\n        toggle.textContent = expanded ? '\\u25BE hide details' : '\\u25B8 show details';\n      };\n      updateToggle();\n      toggle.addEventListener('click', () => {\n        expanded = !expanded;\n        updateToggle();\n        listEl.style.display = expanded ? 'block' : 'none';\n      });\n      detailsContainer.appendChild(toggle);\n\n      const listEl = api.createElement('div');\n      listEl.style.display = expanded ? 'block' : 'none';\n\n      for (const r of results) {\n        const line = api.createElement('div');\n        line.style.cssText = 'padding:2px 0; font-size: 0.75rem;';\n\n        const icon = r.passed ? '\\u2713 ' : '\\u2717 ';\n        const color = r.passed ? '#22c55e' : '#ef4444';\n\n        const nameEl = api.createElement('a');\n        nameEl.style.cssText = `color:${color}; cursor:pointer; text-decoration:none; border-bottom:1px solid transparent;`;\n        nameEl.onmouseenter = () => nameEl.style.borderBottomColor = color;\n        nameEl.onmouseleave = () => nameEl.style.borderBottomColor = 'transparent';\n        nameEl.textContent = icon + r.name;\n        nameEl.title = r.symbol ? `${testItem.name} \\u2192 ${r.symbol}` : testItem.name;\n\n        nameEl.onclick = (e) => {\n          e.preventDefault();\n          const params = { field: 'code' };\n          if (r.symbol) params.symbol = r.symbol;\n          api.openItem(e, { id: testItem.id, view: { navigateTo: params } });\n        };\n\n        line.appendChild(nameEl);\n\n        if (!r.passed && r.error) {\n          const errMsg = api.createElement('div');\n          errMsg.style.cssText = 'color:#9ca3af; padding-left:16px; font-family:var(--font-mono, monospace); font-size: 0.6875rem; white-space:pre-wrap; word-break:break-all;';\n          errMsg.textContent = r.error;\n          line.appendChild(errMsg);\n        }\n\n        listEl.appendChild(line);\n      }\n\n      detailsContainer.appendChild(listEl);\n    }\n  };\n}\n\nfunction formatTimeAgo(timestamp) {\n  const seconds = Math.floor((Date.now() - timestamp) / 1000);\n  if (seconds < 60) return 'just now';\n  const minutes = Math.floor(seconds / 60);\n  if (minutes < 60) return `${minutes}m ago`;\n  const hours = Math.floor(minutes / 60);\n  if (hours < 24) return `${hours}h ago`;\n  const days = Math.floor(hours / 24);\n  return `${days}d ago`;\n}\n",
+    "for_type": "7e570002-0000-4000-8000-000000000000",
+    "displayName": "Test Suite",
+    "description": [
+      ":doc",
+      [
+        ":p",
+        {
+          "s": "Discovers items tagged with the test tag, runs their exported run() function, and displays pass/fail results."
+        }
+      ]
+    ],
+    "_symbols": {
+      "TEST_TAG_ID": {
+        "name": "TEST_TAG_ID",
+        "line": 1,
+        "col": 6,
+        "endLine": 1,
+        "endCol": 58,
+        "kind": "variable",
+        "scope": null
+      },
+      "INSTANCE_BOOT_TIMEOUT": {
+        "name": "INSTANCE_BOOT_TIMEOUT",
+        "line": 2,
+        "col": 6,
+        "endLine": 2,
+        "endCol": 35,
+        "kind": "variable",
+        "scope": null
+      },
+      "TEST_RUN_TIMEOUT": {
+        "name": "TEST_RUN_TIMEOUT",
+        "line": 3,
+        "col": 6,
+        "endLine": 3,
+        "endCol": 31,
+        "kind": "variable",
+        "scope": null
+      },
+      "render": {
+        "name": "render",
+        "line": 5,
+        "col": 7,
+        "endLine": 165,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(item, api)"
+      },
+      "render.instanceLib": {
+        "name": "instanceLib",
+        "line": 6,
+        "col": 8,
+        "endLine": 6,
+        "endCol": 62,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.container": {
+        "name": "container",
+        "line": 8,
+        "col": 8,
+        "endLine": 8,
+        "endCol": 44,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.header": {
+        "name": "header",
+        "line": 12,
+        "col": 8,
+        "endLine": 12,
+        "endCol": 41,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.title": {
+        "name": "title",
+        "line": 15,
+        "col": 8,
+        "endLine": 15,
+        "endCol": 39,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.runAllBtn": {
+        "name": "runAllBtn",
+        "line": 20,
+        "col": 8,
+        "endLine": 20,
+        "endCol": 47,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.summaryBar": {
+        "name": "summaryBar",
+        "line": 29,
+        "col": 8,
+        "endLine": 29,
+        "endCol": 45,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.resultsArea": {
+        "name": "resultsArea",
+        "line": 35,
+        "col": 8,
+        "endLine": 35,
+        "endCol": 46,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.allItems": {
+        "name": "allItems",
+        "line": 40,
+        "col": 8,
+        "endLine": 40,
+        "endCol": 37,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.testItems": {
+        "name": "testItems",
+        "line": 41,
+        "col": 8,
+        "endLine": 43,
+        "endCol": 3,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.rows": {
+        "name": "rows",
+        "line": 47,
+        "col": 8,
+        "endLine": 47,
+        "endCol": 17,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.testItem": {
+        "name": "testItem",
+        "line": 48,
+        "col": 13,
+        "endLine": 48,
+        "endCol": 21,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.row": {
+        "name": "row",
+        "line": 96,
+        "col": 17,
+        "endLine": 96,
+        "endCol": 20,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.updateSummary": {
+        "name": "updateSummary",
+        "line": 55,
+        "col": 2,
+        "endLine": 65,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "render",
+        "signature": "(totalPassed, totalFailed, timestamp)"
+      },
+      "updateSummary.total": {
+        "name": "total",
+        "line": 56,
+        "col": 10,
+        "endLine": 56,
+        "endCol": 43,
+        "kind": "variable",
+        "scope": "updateSummary"
+      },
+      "updateSummary.ago": {
+        "name": "ago",
+        "line": 57,
+        "col": 10,
+        "endLine": 57,
+        "endCol": 70,
+        "kind": "variable",
+        "scope": "updateSummary"
+      },
+      "render.lastRun": {
+        "name": "lastRun",
+        "line": 68,
+        "col": 8,
+        "endLine": 68,
+        "endCol": 39,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.byId": {
+        "name": "byId",
+        "line": 70,
+        "col": 10,
+        "endLine": 70,
+        "endCol": 68,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.saved": {
+        "name": "saved",
+        "line": 72,
+        "col": 12,
+        "endLine": 72,
+        "endCol": 45,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.instance": {
+        "name": "instance",
+        "line": 81,
+        "col": 6,
+        "endLine": 81,
+        "endCol": 21,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.name": {
+        "name": "name",
+        "line": 92,
+        "col": 49,
+        "endLine": 92,
+        "endCol": 65,
+        "kind": "property",
+        "scope": "render"
+      },
+      "render.suiteMap": {
+        "name": "suiteMap",
+        "line": 98,
+        "col": 12,
+        "endLine": 98,
+        "endCol": 65,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.removeProgress": {
+        "name": "removeProgress",
+        "line": 100,
+        "col": 12,
+        "endLine": 105,
+        "endCol": 8,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.resultLastRun": {
+        "name": "resultLastRun",
+        "line": 107,
+        "col": 12,
+        "endLine": 127,
+        "endCol": 8,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.updated": {
+        "name": "updated",
+        "line": 133,
+        "col": 12,
+        "endLine": 133,
+        "endCol": 44,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.silent": {
+        "name": "silent",
+        "line": 136,
+        "col": 31,
+        "endLine": 136,
+        "endCol": 43,
+        "kind": "property",
+        "scope": "render"
+      },
+      "render.cleanupBtn": {
+        "name": "cleanupBtn",
+        "line": 145,
+        "col": 10,
+        "endLine": 145,
+        "endCol": 50,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "createTestRow": {
+        "name": "createTestRow",
+        "line": 167,
+        "col": 0,
+        "endLine": 284,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(testItem, api)"
+      },
+      "createTestRow.el": {
+        "name": "el",
+        "line": 196,
+        "col": 4,
+        "endLine": 196,
+        "endCol": 6,
+        "kind": "property",
+        "scope": "createTestRow"
+      },
+      "createTestRow.headerRow": {
+        "name": "headerRow",
+        "line": 171,
+        "col": 8,
+        "endLine": 171,
+        "endCol": 44,
+        "kind": "variable",
+        "scope": "createTestRow"
+      },
+      "createTestRow.indicator": {
+        "name": "indicator",
+        "line": 174,
+        "col": 8,
+        "endLine": 174,
+        "endCol": 45,
+        "kind": "variable",
+        "scope": "createTestRow"
+      },
+      "createTestRow.nameSpan": {
+        "name": "nameSpan",
+        "line": 179,
+        "col": 8,
+        "endLine": 179,
+        "endCol": 44,
+        "kind": "variable",
+        "scope": "createTestRow"
+      },
+      "createTestRow.countSpan": {
+        "name": "countSpan",
+        "line": 183,
+        "col": 8,
+        "endLine": 183,
+        "endCol": 45,
+        "kind": "variable",
+        "scope": "createTestRow"
+      },
+      "createTestRow.detailsContainer": {
+        "name": "detailsContainer",
+        "line": 191,
+        "col": 8,
+        "endLine": 191,
+        "endCol": 51,
+        "kind": "variable",
+        "scope": "createTestRow"
+      },
+      "createTestRow.testItem": {
+        "name": "testItem",
+        "line": 197,
+        "col": 4,
+        "endLine": 197,
+        "endCol": 12,
+        "kind": "property",
+        "scope": "createTestRow"
+      },
+      "createTestRow.reset": {
+        "name": "reset",
+        "line": 198,
+        "col": 4,
+        "endLine": 203,
+        "endCol": 5,
+        "kind": "property-function",
+        "scope": "createTestRow",
+        "signature": "()"
+      },
+      "createTestRow.setStatus": {
+        "name": "setStatus",
+        "line": 204,
+        "col": 4,
+        "endLine": 211,
+        "endCol": 5,
+        "kind": "property-function",
+        "scope": "createTestRow",
+        "signature": "(status)"
+      },
+      "createTestRow.setResults": {
+        "name": "setResults",
+        "line": 212,
+        "col": 4,
+        "endLine": 282,
+        "endCol": 5,
+        "kind": "property-function",
+        "scope": "createTestRow",
+        "signature": "(results, passed, failed)"
+      },
+      "createTestRow.setResults.total": {
+        "name": "total",
+        "line": 213,
+        "col": 12,
+        "endLine": 213,
+        "endCol": 35,
+        "kind": "variable",
+        "scope": "createTestRow.setResults"
+      },
+      "createTestRow.setResults.expanded": {
+        "name": "expanded",
+        "line": 230,
+        "col": 10,
+        "endLine": 230,
+        "endCol": 31,
+        "kind": "variable",
+        "scope": "createTestRow.setResults"
+      },
+      "createTestRow.setResults.toggle": {
+        "name": "toggle",
+        "line": 232,
+        "col": 12,
+        "endLine": 232,
+        "endCol": 45,
+        "kind": "variable",
+        "scope": "createTestRow.setResults"
+      },
+      "createTestRow.setResults.updateToggle": {
+        "name": "updateToggle",
+        "line": 234,
+        "col": 12,
+        "endLine": 236,
+        "endCol": 7,
+        "kind": "function",
+        "scope": "createTestRow.setResults",
+        "signature": "()"
+      },
+      "createTestRow.setResults.listEl": {
+        "name": "listEl",
+        "line": 245,
+        "col": 12,
+        "endLine": 245,
+        "endCol": 45,
+        "kind": "variable",
+        "scope": "createTestRow.setResults"
+      },
+      "createTestRow.setResults.r": {
+        "name": "r",
+        "line": 248,
+        "col": 17,
+        "endLine": 248,
+        "endCol": 18,
+        "kind": "variable",
+        "scope": "createTestRow.setResults"
+      },
+      "createTestRow.setResults.line": {
+        "name": "line",
+        "line": 249,
+        "col": 14,
+        "endLine": 249,
+        "endCol": 45,
+        "kind": "variable",
+        "scope": "createTestRow.setResults"
+      },
+      "createTestRow.setResults.icon": {
+        "name": "icon",
+        "line": 252,
+        "col": 14,
+        "endLine": 252,
+        "endCol": 53,
+        "kind": "variable",
+        "scope": "createTestRow.setResults"
+      },
+      "createTestRow.setResults.color": {
+        "name": "color",
+        "line": 253,
+        "col": 14,
+        "endLine": 253,
+        "endCol": 54,
+        "kind": "variable",
+        "scope": "createTestRow.setResults"
+      },
+      "createTestRow.setResults.nameEl": {
+        "name": "nameEl",
+        "line": 255,
+        "col": 14,
+        "endLine": 255,
+        "endCol": 45,
+        "kind": "variable",
+        "scope": "createTestRow.setResults"
+      },
+      "createTestRow.setResults.params": {
+        "name": "params",
+        "line": 264,
+        "col": 16,
+        "endLine": 264,
+        "endCol": 42,
+        "kind": "variable",
+        "scope": "createTestRow.setResults"
+      },
+      "params.field": {
+        "name": "field",
+        "line": 264,
+        "col": 27,
+        "endLine": 264,
+        "endCol": 40,
+        "kind": "property",
+        "scope": "params"
+      },
+      "createTestRow.setResults.id": {
+        "name": "id",
+        "line": 266,
+        "col": 28,
+        "endLine": 266,
+        "endCol": 43,
+        "kind": "property",
+        "scope": "createTestRow.setResults"
+      },
+      "createTestRow.setResults.view": {
+        "name": "view",
+        "line": 266,
+        "col": 45,
+        "endLine": 266,
+        "endCol": 73,
+        "kind": "property",
+        "scope": "createTestRow.setResults"
+      },
+      "createTestRow.setResults.view.navigateTo": {
+        "name": "navigateTo",
+        "line": 266,
+        "col": 53,
+        "endLine": 266,
+        "endCol": 71,
+        "kind": "property",
+        "scope": "createTestRow.setResults.view"
+      },
+      "createTestRow.setResults.errMsg": {
+        "name": "errMsg",
+        "line": 272,
+        "col": 16,
+        "endLine": 272,
+        "endCol": 49,
+        "kind": "variable",
+        "scope": "createTestRow.setResults"
+      },
+      "formatTimeAgo": {
+        "name": "formatTimeAgo",
+        "line": 286,
+        "col": 0,
+        "endLine": 295,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(timestamp)"
+      },
+      "formatTimeAgo.seconds": {
+        "name": "seconds",
+        "line": 287,
+        "col": 8,
+        "endLine": 287,
+        "endCol": 61,
+        "kind": "variable",
+        "scope": "formatTimeAgo"
+      },
+      "formatTimeAgo.minutes": {
+        "name": "minutes",
+        "line": 289,
+        "col": 8,
+        "endLine": 289,
+        "endCol": 42,
+        "kind": "variable",
+        "scope": "formatTimeAgo"
+      },
+      "formatTimeAgo.hours": {
+        "name": "hours",
+        "line": 291,
+        "col": 8,
+        "endLine": 291,
+        "endCol": 40,
+        "kind": "variable",
+        "scope": "formatTimeAgo"
+      },
+      "formatTimeAgo.days": {
+        "name": "days",
+        "line": 293,
+        "col": 8,
+        "endLine": 293,
+        "endCol": 37,
+        "kind": "variable",
+        "scope": "formatTimeAgo"
+      }
+    }
+  },
+  "attachments": []
+}

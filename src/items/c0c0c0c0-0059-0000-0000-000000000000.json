@@ -1,1 +1,3729 @@
-{"id": "c0c0c0c0-0059-0000-0000-000000000000", "name": "Hob Structural Editor", "type": "871ae771-b9b1-4f40-8c7f-d9038bfb69c3", "created": 1771324800000, "modified": 1773590534474, "content": {"description": [":doc", [":h1", {"s": "Hob Structural Editor"}], [":p", {"s": "A structural editor for Hob where the user manipulates AST nodes rather than characters. The editor understands Hob's structure at all times — unbalanced parentheses, malformed expressions, and syntax errors are impossible by construction."}], [":p", {"s": "The editor is implemented as a "}, [":item-ref", {"s": "50fe7334-da51-4d3a-85a0-1b6074cc8324"}, {"s": "field view"}], {"s": " for "}, [":code", {"s": "content.hob"}], {"s": ". It works directly on the "}, [":item-ref", {"s": "c0c0c0c0-0051-0000-0000-000000000000"}, {"s": "Compact JSON AST"}], {"s": " stored in "}, [":code", {"s": "content.hob"}], {"s": " — no parsing step on load, no serialization on save."}], [":hr"], [":h2", {"s": "Design Principles"}], [":ul", [":li", [":p", [":strong", {"s": "Structure is always valid."}], {"s": " Every edit produces a well-formed AST. There is no parse-error state."}]], [":li", [":p", [":strong", {"s": "Keyboard-first, fluid input."}], {"s": " An experienced user can build expressions nearly as fast as typing text. The structural constraints help rather than hinder."}]], [":li", [":p", [":strong", {"s": "Self-revealing."}], {"s": " When the user creates a hole, the editor shows what's valid in that position — available symbols, item references, special forms. The system presents choices."}]], [":li", [":p", [":strong", {"s": "Text-like visual presentation."}], {"s": " The AST is rendered to look like properly formatted s-expressions with syntax colouring."}]], [":li", [":p", [":strong", {"s": "Direct AST editing."}], {"s": " Load and save operate on compact JSON AST ("}, [":code", {"s": "content.hob"}], {"s": "). No parsing or serialization step."}]]], [":hr"], [":hr"], [":h2", {"s": "Selection Model"}], [":p", {"s": "Selection replaces the text cursor. Exactly one AST node is selected at all times. The selected node is highlighted with a visible border or background colour."}], [":h3", {"s": "What Can Be Selected"}], [":p", {"s": "Any node in the AST: a leaf ("}, [":code", {"s": "42"}], {"s": ", "}, [":code", {"s": "defn"}], {"s": ", "}, [":code", {"s": ":title"}], {"s": ", "}, [":code", {"s": "@my-note"}], {"s": "), a container and all its contents ("}, [":code", {"s": "(str \"hello\" name)"}], {"s": "), or a hole."}], [":h3", {"s": "Visual Indicators"}], [":ul", [":li", [":p", [":strong", {"s": "Selected node"}], {"s": ": subtle background highlight and border."}]], [":li", [":p", [":strong", {"s": "Parent chain"}], {"s": ": faint highlight on ancestor containers, so you can see where in the nesting you are."}]], [":li", [":p", [":strong", {"s": "Matching delimiter"}], {"s": ": when a container is selected, both its opening and closing delimiters are emphasised."}]]], [":hr"], [":hr"], [":h2", {"s": "Navigation"}], [":p", {"s": "All navigation is by keyboard. The model is tree traversal."}], [":h3", {"s": "Primary Navigation"}], [":table", [":thead", [":tr", [":th", {"s": "Key"}], [":th", {"s": "Action"}], [":th", {"s": "Description"}]]], [":tbody", [":tr", [":td", [":code", {"s": "←"}]], [":td", {"s": "Previous sibling"}], [":td", {"s": "Move to the preceding sibling in the same container. At first child, no-op."}]], [":tr", [":td", [":code", {"s": "→"}]], [":td", {"s": "Next sibling"}], [":td", {"s": "Move to the following sibling in the same container. At last child, no-op."}]], [":tr", [":td", [":code", {"s": "↑"}]], [":td", {"s": "Parent"}], [":td", {"s": "Select the containing node. At root, no-op."}]], [":tr", [":td", [":code", {"s": "↓"}]], [":td", {"s": "First child"}], [":td", {"s": "If selected node is a container, select its first child. On leaves, no-op."}]]]], [":h3", {"s": "Extended Navigation"}], [":table", [":thead", [":tr", [":th", {"s": "Key"}], [":th", {"s": "Action"}], [":th", {"s": "Description"}]]], [":tbody", [":tr", [":td", [":code", {"s": "Home"}]], [":td", {"s": "First sibling"}], [":td", {"s": "Jump to first child of the current parent."}]], [":tr", [":td", [":code", {"s": "End"}]], [":td", {"s": "Last sibling"}], [":td", {"s": "Jump to last child of the current parent."}]], [":tr", [":td", [":code", {"s": "Ctrl+↑"}]], [":td", {"s": "Top-level form"}], [":td", {"s": "Jump to the nearest ancestor that's a direct child of root."}]], [":tr", [":td", [":code", {"s": "Ctrl+←"}]], [":td", {"s": "Previous top-level form"}], [":td", {"s": "Move between top-level definitions."}]], [":tr", [":td", [":code", {"s": "Ctrl+→"}]], [":td", {"s": "Next top-level form"}], [":td", {"s": "Move between top-level definitions."}]], [":tr", [":td", [":code", {"s": "Tab"}]], [":td", {"s": "Next hole"}], [":td", {"s": "Jump to the next hole in document order. If no holes, no-op."}]], [":tr", [":td", [":code", {"s": "Shift+Tab"}]], [":td", {"s": "Previous hole"}], [":td", {"s": "Jump to the previous hole."}]]]], [":h3", {"s": "Selection Expansion"}], [":table", [":thead", [":tr", [":th", {"s": "Key"}], [":th", {"s": "Action"}], [":th", {"s": "Description"}]]], [":tbody", [":tr", [":td", [":code", {"s": "Shift+↑"}]], [":td", {"s": "Expand selection"}], [":td", {"s": "Select the parent (same as "}, [":code", {"s": "↑"}], {"s": " but conceptually \"select more\"). Can be repeated to grow."}]], [":tr", [":td", [":code", {"s": "Shift+↓"}]], [":td", {"s": "Contract selection"}], [":td", {"s": "If the current selection was expanded, contract back to the previously selected child."}]], [":tr", [":td", [":code", {"s": "Escape"}]], [":td", {"s": "Deselect / close"}], [":td", {"s": "If in a hole's input mode, cancel input. Otherwise select the parent."}]]]], [":p", {"s": "The expansion history is a stack. Each "}, [":code", {"s": "Shift+↑"}], {"s": " pushes the current selection; "}, [":code", {"s": "Shift+↓"}], {"s": " pops back."}], [":hr"], [":hr"], [":h2", {"s": "Input: The Hole System"}], [":p", {"s": "When the user needs to enter a new value, a "}, [":strong", {"s": "hole"}], {"s": " appears. A hole is a visually distinct placeholder (e.g., a highlighted empty box or a dimmed "}, [":code", {"s": "·"}], {"s": " character) that accepts keyboard input."}], [":h3", {"s": "Entering a Hole"}], [":p", {"s": "A hole is created by:"}], [":ul", [":li", [":p", {"s": "Pressing "}, [":code", {"s": "Enter"}], {"s": " after a selected node (inserts a sibling hole after it)"}]], [":li", [":p", {"s": "Pressing "}, [":code", {"s": "Shift+Enter"}], {"s": " before a selected node (inserts a sibling hole before it)"}]], [":li", [":p", {"s": "Creating a new container ("}, [":code", {"s": "("}], {"s": ", "}, [":code", {"s": "["}], {"s": ", "}, [":code", {"s": "{"}], {"s": ") — the container is created with a hole as its first child"}]], [":li", [":p", {"s": "Pressing "}, [":code", {"s": "Enter"}], {"s": " when a container is selected (appends a child hole at the end)"}]], [":li", [":p", {"s": "Pressing "}, [":code", {"s": "r"}], {"s": " to replace the selected node (the node is replaced with a hole pre-filled with its text)"}]]], [":p", {"s": "When a hole is active, the editor is in "}, [":strong", {"s": "input mode"}], {"s": ". Keystrokes go to the hole, not to navigation."}], [":h3", {"s": "Input Mode Behaviour"}], [":p", {"s": "When typing into a hole:"}], [":table", [":thead", [":tr", [":th", {"s": "Input"}], [":th", {"s": "Effect"}]]], [":tbody", [":tr", [":td", {"s": "Alphanumeric / "}, [":code", {"s": "-"}], {"s": " / "}, [":code", {"s": "_"}], {"s": " / "}, [":code", {"s": "?"}], {"s": " / "}, [":code", {"s": "!"}], {"s": " / "}, [":code", {"s": "+"}], {"s": " / "}, [":code", {"s": "*"}], {"s": " / "}, [":code", {"s": "="}], {"s": " / "}, [":code", {"s": "<"}], {"s": " / "}, [":code", {"s": ">"}], {"s": " / "}, [":code", {"s": "/"}], {"s": " / "}, [":code", {"s": "."}]], [":td", {"s": "Appends to the token buffer. Autocomplete menu filters in real time."}]], [":tr", [":td", [":code", {"s": "Space"}]], [":td", [":strong", {"s": "Commits"}], {"s": " the current token as a node. Creates a new sibling hole after it."}]], [":tr", [":td", [":code", {"s": "Enter"}]], [":td", [":strong", {"s": "Commits"}], {"s": " the current token. Does "}, [":em", {"s": "not"}], {"s": " create a sibling hole. Exits input mode."}]], [":tr", [":td", [":code", {"s": "Escape"}]], [":td", {"s": "Cancels input. If the hole was newly created, it is removed. If replacing, the original node is restored."}]], [":tr", [":td", [":code", {"s": "("}]], [":td", {"s": "If buffer is empty: creates a list with a hole inside. If buffer has content: commits the buffer first, then creates a list sibling."}]], [":tr", [":td", [":code", {"s": "["}]], [":td", {"s": "Same as "}, [":code", {"s": "("}], {"s": " but creates a vector."}]], [":tr", [":td", [":code", {"s": "{"}]], [":td", {"s": "Same as "}, [":code", {"s": "("}], {"s": " but creates a map."}]], [":tr", [":td", [":code", {"s": ")"}], {"s": " / "}, [":code", {"s": "]"}], {"s": " / "}, [":code", {"s": "}"}]], [":td", {"s": "Commits the current token (if any). Exits input mode. Selects the parent container. If the delimiter doesn't match the parent container type, it is ignored (prevents structural errors)."}]], [":tr", [":td", [":code", {"s": "\""}]], [":td", {"s": "Enters "}, [":strong", {"s": "string input mode"}], {"s": " (see below)."}]], [":tr", [":td", [":code", {"s": "@"}]], [":td", {"s": "Enters "}, [":strong", {"s": "item reference mode"}], {"s": " (see below)."}]], [":tr", [":td", [":code", {"s": ":"}]], [":td", {"s": "If at start of token: switches to keyword mode (characters until Space form a keyword). If mid-token: treated as regular character."}]], [":tr", [":td", [":code", {"s": "Backspace"}]], [":td", {"s": "Deletes last character from buffer. If buffer is empty, removes the hole."}]]]], [":h3", {"s": "Token Resolution"}], [":p", {"s": "When a token is committed (by Space, Enter, or a structural character), the editor determines what kind of node it is:"}], [":table", [":thead", [":tr", [":th", {"s": "Token"}], [":th", {"s": "Resolves to"}]]], [":tbody", [":tr", [":td", {"s": "Matches a number pattern ("}, [":code", {"s": "42"}], {"s": ", "}, [":code", {"s": "3.14"}], {"s": ", "}, [":code", {"s": "-7"}], {"s": ")"}], [":td", {"s": "Number node"}]], [":tr", [":td", [":code", {"s": "true"}], {"s": " / "}, [":code", {"s": "false"}]], [":td", {"s": "Boolean node"}]], [":tr", [":td", [":code", {"s": "nil"}]], [":td", {"s": "Nil node"}]], [":tr", [":td", {"s": "Starts with "}, [":code", {"s": ":"}], {"s": " ("}, [":code", {"s": ":title"}], {"s": ", "}, [":code", {"s": ":on-click"}], {"s": ")"}], [":td", {"s": "Keyword node"}]], [":tr", [":td", {"s": "Anything else ("}, [":code", {"s": "defn"}], {"s": ", "}, [":code", {"s": "my-var"}], {"s": ", "}, [":code", {"s": "+"}], {"s": ")"}], [":td", {"s": "Symbol node"}]]]], [":h3", {"s": "String Input Mode"}], [":p", {"s": "Triggered by typing "}, [":code", {"s": "\""}], {"s": " in a hole (or when the buffer is empty)."}], [":p", {"s": "In string mode, all characters are literal — Space doesn't commit, parentheses don't create structure. The editor shows a text input field (or a distinct visual region) where the user types freely. Standard escapes work ("}, [":code", {"s": "\\n"}], {"s": ", "}, [":code", {"s": "\\t"}], {"s": ", "}, [":code", {"s": "\\\\"}], {"s": ", "}, [":code", {"s": "\\\""}], {"s": ")."}], [":p", {"s": "Pressing "}, [":code", {"s": "\""}], {"s": " again (unescaped) ends string mode and commits the string node."}], [":p", {"s": "For multi-line strings, "}, [":code", {"s": "Shift+Enter"}], {"s": " inserts a newline within the string."}], [":p", {"s": "Pressing "}, [":code", {"s": "Escape"}], {"s": " cancels and removes the string."}], [":h3", {"s": "Item Reference Mode"}], [":p", {"s": "Triggered by typing "}, [":code", {"s": "@"}], {"s": " in a hole."}], [":p", {"s": "The editor shows a searchable dropdown of all items in the system. The user types to filter by name or ID. The list shows the item name, type, and a preview."}], [":table", [":thead", [":tr", [":th", {"s": "Key"}], [":th", {"s": "Effect"}]]], [":tbody", [":tr", [":td", {"s": "Typing"}], [":td", {"s": "Filters the item list"}]], [":tr", [":td", [":code", {"s": "↑"}], {"s": " / "}, [":code", {"s": "↓"}]], [":td", {"s": "Navigate the dropdown list"}]], [":tr", [":td", [":code", {"s": "Enter"}]], [":td", {"s": "Select the highlighted item, insert an item-ref node"}]], [":tr", [":td", [":code", {"s": "Escape"}]], [":td", {"s": "Cancel, return to normal hole input"}]], [":tr", [":td", [":code", {"s": "Space"}]], [":td", {"s": "Select the highlighted item AND create a sibling hole (fluid continuation)"}]]]], [":p", {"s": "Item references are displayed in the AST as a chip showing the item's name, not the raw UUID. The chip is visually distinct (e.g., a coloured pill with the item's type icon). Clicking the chip navigates to that item."}], [":hr"], [":hr"], [":h2", {"s": "Autocomplete / Command Palette"}], [":p", {"s": "When typing in a hole, an autocomplete dropdown appears showing contextually valid options, filtered by what's been typed so far."}], [":h3", {"s": "Sources of Suggestions"}], [":p", {"s": "Listed in priority order:"}], [":ol", [":li", [":p", [":strong", {"s": "Local bindings"}], {"s": " — variables in scope from "}, [":code", {"s": "let"}], {"s": ", "}, [":code", {"s": "fn"}], {"s": " params, "}, [":code", {"s": "loop"}], {"s": " bindings. Determined by walking up the AST from the hole's position."}]], [":li", [":p", [":strong", {"s": "Special forms"}], {"s": " — "}, [":code", {"s": "def"}], {"s": ", "}, [":code", {"s": "fn"}], {"s": ", "}, [":code", {"s": "let"}], {"s": ", "}, [":code", {"s": "if"}], {"s": ", "}, [":code", {"s": "do"}], {"s": ", "}, [":code", {"s": "when"}], {"s": ", "}, [":code", {"s": "cond"}], {"s": ", "}, [":code", {"s": "loop"}], {"s": ", "}, [":code", {"s": "recur"}], {"s": ", "}, [":code", {"s": "try"}], {"s": ", "}, [":code", {"s": "catch"}], {"s": ", "}, [":code", {"s": "defn"}], {"s": ", "}, [":code", {"s": "defmacro"}], {"s": ", "}, [":code", {"s": "def-view"}], {"s": ", "}, [":code", {"s": "def-watch"}], {"s": ", "}, [":code", {"s": "->"}], {"s": ", "}, [":code", {"s": "->>"}], {"s": ", "}, [":code", {"s": "for"}], {"s": ", "}, [":code", {"s": "require"}], {"s": "."}]], [":li", [":p", [":strong", {"s": "Standard library functions"}], {"s": " — "}, [":code", {"s": "map"}], {"s": ", "}, [":code", {"s": "filter"}], {"s": ", "}, [":code", {"s": "reduce"}], {"s": ", "}, [":code", {"s": "str"}], {"s": ", "}, [":code", {"s": "get"}], {"s": ", "}, [":code", {"s": "assoc"}], {"s": ", "}, [":code", {"s": "conj"}], {"s": ", "}, [":code", {"s": "count"}], {"s": ", etc."}]], [":li", [":p", [":strong", {"s": "Imported bindings"}], {"s": " — names brought in via "}, [":code", {"s": "require"}], {"s": " at the top of the module."}]], [":li", [":p", [":strong", {"s": "Item references"}], {"s": " — when the user types "}, [":code", {"s": "@"}], {"s": ", switch to item search. But even without "}, [":code", {"s": "@"}], {"s": ", if the typed text matches an item name, it could appear as a suggestion with an "}, [":code", {"s": "@"}], {"s": " prefix."}]]], [":h3", {"s": "Context-Aware Hints"}], [":p", {"s": "In certain positions, the editor can show richer guidance:"}], [":ul", [":li", [":p", [":strong", {"s": "First element of a list"}], {"s": ": likely a function call. Show functions and special forms prominently."}]], [":li", [":p", [":strong", {"s": "Inside `let` bindings at even positions"}], {"s": ": likely a binding name. Show hint \"name\"."}]], [":li", [":p", [":strong", {"s": "Inside `let` bindings at odd positions"}], {"s": ": likely a value expression."}]], [":li", [":p", [":strong", {"s": "Inside `{}`"}], {"s": ": alternating key/value. Show keywords prominently for keys."}]], [":li", [":p", [":strong", {"s": "After `def` or `defn`"}], {"s": ": expecting a name. Show hint \"name\" and suppress function suggestions."}]]], [":p", {"s": "This context awareness can be built incrementally."}], [":hr"], [":hr"], [":h2", {"s": "Mutation Operations"}], [":p", {"s": "Beyond hole-based input, the editor supports structural operations on existing nodes."}], [":h3", {"s": "Basic Mutations"}], [":table", [":thead", [":tr", [":th", {"s": "Key"}], [":th", {"s": "Action"}], [":th", {"s": "Description"}]]], [":tbody", [":tr", [":td", [":code", {"s": "Backspace"}], {"s": " / "}, [":code", {"s": "Delete"}]], [":td", {"s": "Delete"}], [":td", {"s": "Remove the selected node. Siblings close the gap. If the node is a container, all children are deleted too."}]], [":tr", [":td", [":code", {"s": "r"}]], [":td", {"s": "Replace"}], [":td", {"s": "Replace the selected node with a hole, pre-filled with the node's text representation."}]], [":tr", [":td", [":code", {"s": "Enter"}]], [":td", {"s": "Insert after"}], [":td", {"s": "Insert a hole after the selected node (as a sibling)."}]], [":tr", [":td", [":code", {"s": "Shift+Enter"}]], [":td", {"s": "Insert before"}], [":td", {"s": "Insert a hole before the selected node (as a sibling)."}]]]], [":h3", {"s": "Structural Mutations"}], [":table", [":thead", [":tr", [":th", {"s": "Key"}], [":th", {"s": "Action"}], [":th", {"s": "Description"}]]], [":tbody", [":tr", [":td", [":code", {"s": "w ("}]], [":td", {"s": "Wrap in list"}], [":td", {"s": "Surround the selected node with "}, [":code", {"s": "()"}], {"s": ". The node becomes the first child. A hole is added after it."}]], [":tr", [":td", [":code", {"s": "w ["}]], [":td", {"s": "Wrap in vector"}], [":td", {"s": "Surround the selected node with "}, [":code", {"s": "[]"}], {"s": "."}]], [":tr", [":td", [":code", {"s": "w {"}]], [":td", {"s": "Wrap in map"}], [":td", {"s": "Surround the selected node with "}, [":code", {"s": "{}"}], {"s": ". A hole is added for the value."}]], [":tr", [":td", [":code", {"s": "u"}]], [":td", {"s": "Unwrap / splice"}], [":td", {"s": "Remove the selected container, promoting its children into the parent. Only works on container nodes."}]], [":tr", [":td", [":code", {"s": "Alt+←"}]], [":td", {"s": "Move left"}], [":td", {"s": "Swap the selected node with its previous sibling."}]], [":tr", [":td", [":code", {"s": "Alt+→"}]], [":td", {"s": "Move right"}], [":td", {"s": "Swap the selected node with its next sibling."}]], [":tr", [":td", [":code", {"s": "s"}]], [":td", {"s": "Slurp right"}], [":td", {"s": "The selected container absorbs the next sibling. `(a \\"}], [":td", {"s": "b) c"}, [":code", {"s": " → "}], {"s": "(a b c)"}, [":code", {"s": " where "}], {"s": "\\"}], [":td", {"s": "` marks selection."}]], [":tr", [":td", [":code", {"s": "S"}]], [":td", {"s": "Barf right"}], [":td", {"s": "The selected container ejects its last child as a sibling after it. "}, [":code", {"s": "(a b c)"}], {"s": " → "}, [":code", {"s": "(a b) c"}], {"s": "."}]]]], [":p", {"s": "The wrap key "}, [":code", {"s": "w"}], {"s": " acts as a prefix: pressing "}, [":code", {"s": "w"}], {"s": " puts the editor in \"wrap mode\" where the next character determines the container type. If no valid character follows within 300ms, wrap mode is cancelled."}], [":h3", {"s": "Copy / Paste"}], [":table", [":thead", [":tr", [":th", {"s": "Key"}], [":th", {"s": "Action"}], [":th", {"s": "Description"}]]], [":tbody", [":tr", [":td", [":code", {"s": "Ctrl+C"}]], [":td", {"s": "Copy"}], [":td", {"s": "Copy the selected subtree to the clipboard (internal AST format + plain text as s-expression)."}]], [":tr", [":td", [":code", {"s": "Ctrl+X"}]], [":td", {"s": "Cut"}], [":td", {"s": "Copy and delete."}]], [":tr", [":td", [":code", {"s": "Ctrl+V"}]], [":td", {"s": "Paste"}], [":td", {"s": "Insert the clipboard content as a sibling after the selection. If clipboard contains text (from outside), parse it as Hob and insert the resulting AST."}]], [":tr", [":td", [":code", {"s": "Ctrl+D"}]], [":td", {"s": "Duplicate"}], [":td", {"s": "Insert a deep copy of the selected node as a sibling after it."}]]]], [":h3", {"s": "Undo / Redo"}], [":table", [":thead", [":tr", [":th", {"s": "Key"}], [":th", {"s": "Action"}]]], [":tbody", [":tr", [":td", [":code", {"s": "Ctrl+Z"}]], [":td", {"s": "Undo last mutation"}]], [":tr", [":td", [":code", {"s": "Ctrl+Shift+Z"}]], [":td", {"s": "Redo"}]]]], [":p", {"s": "Each mutation pushes a snapshot (or a reversible delta) onto the undo stack. The undo stack is in-memory, lost on save/reload. Limit ~100 operations."}], [":hr"], [":hr"], [":h2", {"s": "Visual Rendering"}], [":p", {"s": "The AST is rendered to look like properly formatted Hob source code, with structural awareness expressed through colour and subtle visual cues."}], [":h3", {"s": "Layout"}], [":p", {"s": "Nodes are laid out using standard Lisp pretty-printing rules:"}], [":ul", [":li", [":p", [":strong", {"s": "Short forms"}], {"s": " stay on one line: "}, [":code", {"s": "(+ a b)"}], {"s": ", "}, [":code", {"s": "[:div \"hello\"]"}], {"s": ", "}, [":code", {"s": "{:name \"Alice\"}"}]]], [":li", [":p", [":strong", {"s": "Long forms"}], {"s": " break after the first element, with children indented:"}], [":p", {"s": "``"}, [":code", {"s": " (defn greet [name]   (str \"Hello, \" name)) "}], {"s": "``"}]], [":li", [":p", [":strong", {"s": "Threshold"}], {"s": ": forms wider than ~60 characters break to multi-line."}]], [":li", [":p", [":strong", {"s": "Special indentation"}], {"s": " for known forms:"}], [":ul", [":li", [":p", [":code", {"s": "defn"}], {"s": ", "}, [":code", {"s": "def-view"}], {"s": ", "}, [":code", {"s": "def-watch"}], {"s": ": name and params on first line, body indented 2 spaces."}]], [":li", [":p", [":code", {"s": "let"}], {"s": ", "}, [":code", {"s": "loop"}], {"s": ": binding vector on first line, body indented 2 spaces."}]], [":li", [":p", [":code", {"s": "if"}], {"s": ": condition on first line, then/else each on their own line, indented 2 spaces."}]], [":li", [":p", [":code", {"s": "cond"}], {"s": ": each pair on its own line, indented 2 spaces."}]], [":li", [":p", {"s": "Hiccup vectors: tag and attrs on first line, children indented."}]]]]], [":h3", {"s": "Syntax Colouring"}], [":table", [":thead", [":tr", [":th", {"s": "Node type"}], [":th", {"s": "Colour"}]]], [":tbody", [":tr", [":td", {"s": "Special form"}], [":td", {"s": "Bold, distinct colour (e.g., purple)"}]], [":tr", [":td", {"s": "Symbol"}], [":td", {"s": "Default text colour"}]], [":tr", [":td", {"s": "Keyword"}], [":td", {"s": "Distinct colour (e.g., teal)"}]], [":tr", [":td", {"s": "String"}], [":td", {"s": "String colour (e.g., green)"}]], [":tr", [":td", {"s": "Number"}], [":td", {"s": "Number colour (e.g., blue)"}]], [":tr", [":td", {"s": "Boolean / nil"}], [":td", {"s": "Keyword-like colour"}]], [":tr", [":td", {"s": "Item reference"}], [":td", {"s": "Chip/pill with background colour"}]], [":tr", [":td", {"s": "Delimiter"}], [":td", {"s": "Muted colour, matching pair highlighted on container select"}]], [":tr", [":td", {"s": "Hole"}], [":td", {"s": "Highlighted empty region with dashed border"}]]]], [":h3", {"s": "Item Reference Display"}], [":p", {"s": "Item references are shown as chips with the item's name (or truncated ID if unnamed) and a small type icon. Hovering shows a tooltip with the item's type and ID. Clicking navigates to that item. In the serialised output, it becomes "}, [":code", {"s": "@guid"}], {"s": "."}], [":hr"], [":hr"], [":h2", {"s": "Comments"}], [":p", {"s": "Press "}, [":code", {"s": ";"}], {"s": " on any selected node to insert a comment after it. Comments are rich text — they support the same formatting as "}, [":item-ref", {"s": "d0d0d0d0-0007-0000-0000-000000000000"}, {"s": "the doc editor"}], {"s": " (paragraphs, headings, code blocks, lists, etc.)."}], [":p", {"s": "A comment appears as a doc node inline in the AST, visually distinct from code. When selected, it opens the rich text editor for editing. Comments are stored as part of the AST and are saved with the code."}], [":h3", {"s": "Editing Comments"}], [":table", [":thead", [":tr", [":th", {"s": "Key"}], [":th", {"s": "Action"}]]], [":tbody", [":tr", [":td", [":code", {"s": ";"}]], [":td", {"s": "Insert a new comment after the selected node. Opens the rich text editor."}]], [":tr", [":td", [":code", {"s": "Enter"}]], [":td", {"s": "When a comment is selected, open it for editing."}]], [":tr", [":td", [":code", {"s": "Backspace"}]], [":td", {"s": "Delete the selected comment."}]]]], [":hr"], [":hr"], [":h2", {"s": "Editor Chrome"}], [":h3", {"s": "Status Bar"}], [":p", {"s": "A narrow bar at the bottom showing:"}], [":ul", [":li", [":p", [":strong", {"s": "Breadcrumb path"}], {"s": ": the type of each ancestor from root to selection. E.g., "}, [":code", {"s": "root > defn > let > list"}], {"s": ". Clickable to select ancestors directly."}]], [":li", [":p", [":strong", {"s": "Node info"}], {"s": ": the selected node's type and value."}]], [":li", [":p", [":strong", {"s": "Mode indicator"}], {"s": ": \"NAV\" for navigation mode, \"INPUT\" when in a hole, \"WRAP...\" when in wrap mode, \"STRING\" during string input."}]]], [":h3", {"s": "Toolbar"}], [":p", {"s": "A minimal toolbar (or right-click context menu) with structural operations for discoverability. Each button shows its keyboard shortcut."}], [":h3", {"s": "Key Bindings Reference"}], [":p", {"s": "A toggleable overlay (triggered by "}, [":code", {"s": "?"}], {"s": ") showing all available keyboard shortcuts in the current context."}], [":hr"], [":p", {"s": ""}]], "tags": ["bff75873-edb8-412e-81c9-c744e68fe29f", "a63eadd8-ec56-4163-acf2-207aa392069b", "c0c0c0c0-0085-0000-0000-000000000000"]}, "attachments": []}
+{
+  "id": "c0c0c0c0-0059-0000-0000-000000000000",
+  "name": "Hob Structural Editor",
+  "type": "871ae771-b9b1-4f40-8c7f-d9038bfb69c3",
+  "created": 1771324800000,
+  "modified": 1774988061122,
+  "content": {
+    "description": [
+      ":doc",
+      [
+        ":h1",
+        {
+          "s": "Hob Structural Editor"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "A structural editor for Hob where the user manipulates AST nodes rather than characters. The editor understands Hob's structure at all times — unbalanced parentheses, malformed expressions, and syntax errors are impossible by construction."
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The editor is implemented as a "
+        },
+        [
+          ":item-ref",
+          {
+            "s": "50fe7334-da51-4d3a-85a0-1b6074cc8324"
+          },
+          {
+            "s": "field view"
+          }
+        ],
+        {
+          "s": " for "
+        },
+        [
+          ":code",
+          {
+            "s": "content.hob"
+          }
+        ],
+        {
+          "s": ". It works directly on the "
+        },
+        [
+          ":item-ref",
+          {
+            "s": "c0c0c0c0-0051-0000-0000-000000000000"
+          },
+          {
+            "s": "Compact JSON AST"
+          }
+        ],
+        {
+          "s": " stored in "
+        },
+        [
+          ":code",
+          {
+            "s": "content.hob"
+          }
+        ],
+        {
+          "s": " — no parsing step on load, no serialization on save."
+        }
+      ],
+      [
+        ":hr"
+      ],
+      [
+        ":h2",
+        {
+          "s": "Design Principles"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Structure is always valid."
+              }
+            ],
+            {
+              "s": " Every edit produces a well-formed AST. There is no parse-error state."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Keyboard-first, fluid input."
+              }
+            ],
+            {
+              "s": " An experienced user can build expressions nearly as fast as typing text. The structural constraints help rather than hinder."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Self-revealing."
+              }
+            ],
+            {
+              "s": " When the user creates a hole, the editor shows what's valid in that position — available symbols, item references, special forms. The system presents choices."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Text-like visual presentation."
+              }
+            ],
+            {
+              "s": " The AST is rendered to look like properly formatted s-expressions with syntax colouring."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Direct AST editing."
+              }
+            ],
+            {
+              "s": " Load and save operate on compact JSON AST ("
+            },
+            [
+              ":code",
+              {
+                "s": "content.hob"
+              }
+            ],
+            {
+              "s": "). No parsing or serialization step."
+            }
+          ]
+        ]
+      ],
+      [
+        ":hr"
+      ],
+      [
+        ":hr"
+      ],
+      [
+        ":h2",
+        {
+          "s": "Selection Model"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Selection replaces the text cursor. Exactly one AST node is selected at all times. The selected node is highlighted with a visible border or background colour."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "What Can Be Selected"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Any node in the AST: a leaf ("
+        },
+        [
+          ":code",
+          {
+            "s": "42"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "defn"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": ":title"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "@my-note"
+          }
+        ],
+        {
+          "s": "), a container and all its contents ("
+        },
+        [
+          ":code",
+          {
+            "s": "(str \"hello\" name)"
+          }
+        ],
+        {
+          "s": "), or a hole."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Visual Indicators"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Selected node"
+              }
+            ],
+            {
+              "s": ": subtle background highlight and border."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Parent chain"
+              }
+            ],
+            {
+              "s": ": faint highlight on ancestor containers, so you can see where in the nesting you are."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Matching delimiter"
+              }
+            ],
+            {
+              "s": ": when a container is selected, both its opening and closing delimiters are emphasised."
+            }
+          ]
+        ]
+      ],
+      [
+        ":hr"
+      ],
+      [
+        ":hr"
+      ],
+      [
+        ":h2",
+        {
+          "s": "Navigation"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "All navigation is by keyboard. The model is tree traversal."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Primary Navigation"
+        }
+      ],
+      [
+        ":table",
+        [
+          ":thead",
+          [
+            ":tr",
+            [
+              ":th",
+              {
+                "s": "Key"
+              }
+            ],
+            [
+              ":th",
+              {
+                "s": "Action"
+              }
+            ],
+            [
+              ":th",
+              {
+                "s": "Description"
+              }
+            ]
+          ]
+        ],
+        [
+          ":tbody",
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "←"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Previous sibling"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Move to the preceding sibling in the same container. At first child, no-op."
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "→"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Next sibling"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Move to the following sibling in the same container. At last child, no-op."
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "↑"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Parent"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Select the containing node. At root, no-op."
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "↓"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "First child"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "If selected node is a container, select its first child. On leaves, no-op."
+              }
+            ]
+          ]
+        ]
+      ],
+      [
+        ":h3",
+        {
+          "s": "Extended Navigation"
+        }
+      ],
+      [
+        ":table",
+        [
+          ":thead",
+          [
+            ":tr",
+            [
+              ":th",
+              {
+                "s": "Key"
+              }
+            ],
+            [
+              ":th",
+              {
+                "s": "Action"
+              }
+            ],
+            [
+              ":th",
+              {
+                "s": "Description"
+              }
+            ]
+          ]
+        ],
+        [
+          ":tbody",
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "Home"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "First sibling"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Jump to first child of the current parent."
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "End"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Last sibling"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Jump to last child of the current parent."
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "Ctrl+↑"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Top-level form"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Jump to the nearest ancestor that's a direct child of root."
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "Ctrl+←"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Previous top-level form"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Move between top-level definitions."
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "Ctrl+→"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Next top-level form"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Move between top-level definitions."
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "Tab"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Next hole"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Jump to the next hole in document order. If no holes, no-op."
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "Shift+Tab"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Previous hole"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Jump to the previous hole."
+              }
+            ]
+          ]
+        ]
+      ],
+      [
+        ":h3",
+        {
+          "s": "Selection Expansion"
+        }
+      ],
+      [
+        ":table",
+        [
+          ":thead",
+          [
+            ":tr",
+            [
+              ":th",
+              {
+                "s": "Key"
+              }
+            ],
+            [
+              ":th",
+              {
+                "s": "Action"
+              }
+            ],
+            [
+              ":th",
+              {
+                "s": "Description"
+              }
+            ]
+          ]
+        ],
+        [
+          ":tbody",
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "Shift+↑"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Expand selection"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Select the parent (same as "
+              },
+              [
+                ":code",
+                {
+                  "s": "↑"
+                }
+              ],
+              {
+                "s": " but conceptually \"select more\"). Can be repeated to grow."
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "Shift+↓"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Contract selection"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "If the current selection was expanded, contract back to the previously selected child."
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "Escape"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Deselect / close"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "If in a hole's input mode, cancel input. Otherwise select the parent."
+              }
+            ]
+          ]
+        ]
+      ],
+      [
+        ":p",
+        {
+          "s": "The expansion history is a stack. Each "
+        },
+        [
+          ":code",
+          {
+            "s": "Shift+↑"
+          }
+        ],
+        {
+          "s": " pushes the current selection; "
+        },
+        [
+          ":code",
+          {
+            "s": "Shift+↓"
+          }
+        ],
+        {
+          "s": " pops back."
+        }
+      ],
+      [
+        ":hr"
+      ],
+      [
+        ":hr"
+      ],
+      [
+        ":h2",
+        {
+          "s": "Input: The Hole System"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "When the user needs to enter a new value, a "
+        },
+        [
+          ":strong",
+          {
+            "s": "hole"
+          }
+        ],
+        {
+          "s": " appears. A hole is a visually distinct placeholder (e.g., a highlighted empty box or a dimmed "
+        },
+        [
+          ":code",
+          {
+            "s": "·"
+          }
+        ],
+        {
+          "s": " character) that accepts keyboard input."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Entering a Hole"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "A hole is created by:"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Pressing "
+            },
+            [
+              ":code",
+              {
+                "s": "Enter"
+              }
+            ],
+            {
+              "s": " after a selected node (inserts a sibling hole after it)"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Pressing "
+            },
+            [
+              ":code",
+              {
+                "s": "Shift+Enter"
+              }
+            ],
+            {
+              "s": " before a selected node (inserts a sibling hole before it)"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Creating a new container ("
+            },
+            [
+              ":code",
+              {
+                "s": "("
+              }
+            ],
+            {
+              "s": ", "
+            },
+            [
+              ":code",
+              {
+                "s": "["
+              }
+            ],
+            {
+              "s": ", "
+            },
+            [
+              ":code",
+              {
+                "s": "{"
+              }
+            ],
+            {
+              "s": ") — the container is created with a hole as its first child"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Pressing "
+            },
+            [
+              ":code",
+              {
+                "s": "Enter"
+              }
+            ],
+            {
+              "s": " when a container is selected (appends a child hole at the end)"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Pressing "
+            },
+            [
+              ":code",
+              {
+                "s": "r"
+              }
+            ],
+            {
+              "s": " to replace the selected node (the node is replaced with a hole pre-filled with its text)"
+            }
+          ]
+        ]
+      ],
+      [
+        ":p",
+        {
+          "s": "When a hole is active, the editor is in "
+        },
+        [
+          ":strong",
+          {
+            "s": "input mode"
+          }
+        ],
+        {
+          "s": ". Keystrokes go to the hole, not to navigation."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Input Mode Behaviour"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "When typing into a hole:"
+        }
+      ],
+      [
+        ":table",
+        [
+          ":thead",
+          [
+            ":tr",
+            [
+              ":th",
+              {
+                "s": "Input"
+              }
+            ],
+            [
+              ":th",
+              {
+                "s": "Effect"
+              }
+            ]
+          ]
+        ],
+        [
+          ":tbody",
+          [
+            ":tr",
+            [
+              ":td",
+              {
+                "s": "Alphanumeric / "
+              },
+              [
+                ":code",
+                {
+                  "s": "-"
+                }
+              ],
+              {
+                "s": " / "
+              },
+              [
+                ":code",
+                {
+                  "s": "_"
+                }
+              ],
+              {
+                "s": " / "
+              },
+              [
+                ":code",
+                {
+                  "s": "?"
+                }
+              ],
+              {
+                "s": " / "
+              },
+              [
+                ":code",
+                {
+                  "s": "!"
+                }
+              ],
+              {
+                "s": " / "
+              },
+              [
+                ":code",
+                {
+                  "s": "+"
+                }
+              ],
+              {
+                "s": " / "
+              },
+              [
+                ":code",
+                {
+                  "s": "*"
+                }
+              ],
+              {
+                "s": " / "
+              },
+              [
+                ":code",
+                {
+                  "s": "="
+                }
+              ],
+              {
+                "s": " / "
+              },
+              [
+                ":code",
+                {
+                  "s": "<"
+                }
+              ],
+              {
+                "s": " / "
+              },
+              [
+                ":code",
+                {
+                  "s": ">"
+                }
+              ],
+              {
+                "s": " / "
+              },
+              [
+                ":code",
+                {
+                  "s": "/"
+                }
+              ],
+              {
+                "s": " / "
+              },
+              [
+                ":code",
+                {
+                  "s": "."
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Appends to the token buffer. Autocomplete menu filters in real time."
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "Space"
+                }
+              ]
+            ],
+            [
+              ":td",
+              [
+                ":strong",
+                {
+                  "s": "Commits"
+                }
+              ],
+              {
+                "s": " the current token as a node. Creates a new sibling hole after it."
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "Enter"
+                }
+              ]
+            ],
+            [
+              ":td",
+              [
+                ":strong",
+                {
+                  "s": "Commits"
+                }
+              ],
+              {
+                "s": " the current token. Does "
+              },
+              [
+                ":em",
+                {
+                  "s": "not"
+                }
+              ],
+              {
+                "s": " create a sibling hole. Exits input mode."
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "Escape"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Cancels input. If the hole was newly created, it is removed. If replacing, the original node is restored."
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "("
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "If buffer is empty: creates a list with a hole inside. If buffer has content: commits the buffer first, then creates a list sibling."
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "["
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Same as "
+              },
+              [
+                ":code",
+                {
+                  "s": "("
+                }
+              ],
+              {
+                "s": " but creates a vector."
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "{"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Same as "
+              },
+              [
+                ":code",
+                {
+                  "s": "("
+                }
+              ],
+              {
+                "s": " but creates a map."
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": ")"
+                }
+              ],
+              {
+                "s": " / "
+              },
+              [
+                ":code",
+                {
+                  "s": "]"
+                }
+              ],
+              {
+                "s": " / "
+              },
+              [
+                ":code",
+                {
+                  "s": "}"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Commits the current token (if any). Exits input mode. Selects the parent container. If the delimiter doesn't match the parent container type, it is ignored (prevents structural errors)."
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "\""
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Enters "
+              },
+              [
+                ":strong",
+                {
+                  "s": "string input mode"
+                }
+              ],
+              {
+                "s": " (see below)."
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "@"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Enters "
+              },
+              [
+                ":strong",
+                {
+                  "s": "item reference mode"
+                }
+              ],
+              {
+                "s": " (see below)."
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": ":"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "If at start of token: switches to keyword mode (characters until Space form a keyword). If mid-token: treated as regular character."
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "Backspace"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Deletes last character from buffer. If buffer is empty, removes the hole."
+              }
+            ]
+          ]
+        ]
+      ],
+      [
+        ":h3",
+        {
+          "s": "Token Resolution"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "When a token is committed (by Space, Enter, or a structural character), the editor determines what kind of node it is:"
+        }
+      ],
+      [
+        ":table",
+        [
+          ":thead",
+          [
+            ":tr",
+            [
+              ":th",
+              {
+                "s": "Token"
+              }
+            ],
+            [
+              ":th",
+              {
+                "s": "Resolves to"
+              }
+            ]
+          ]
+        ],
+        [
+          ":tbody",
+          [
+            ":tr",
+            [
+              ":td",
+              {
+                "s": "Matches a number pattern ("
+              },
+              [
+                ":code",
+                {
+                  "s": "42"
+                }
+              ],
+              {
+                "s": ", "
+              },
+              [
+                ":code",
+                {
+                  "s": "3.14"
+                }
+              ],
+              {
+                "s": ", "
+              },
+              [
+                ":code",
+                {
+                  "s": "-7"
+                }
+              ],
+              {
+                "s": ")"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Number node"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "true"
+                }
+              ],
+              {
+                "s": " / "
+              },
+              [
+                ":code",
+                {
+                  "s": "false"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Boolean node"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "nil"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Nil node"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              {
+                "s": "Starts with "
+              },
+              [
+                ":code",
+                {
+                  "s": ":"
+                }
+              ],
+              {
+                "s": " ("
+              },
+              [
+                ":code",
+                {
+                  "s": ":title"
+                }
+              ],
+              {
+                "s": ", "
+              },
+              [
+                ":code",
+                {
+                  "s": ":on-click"
+                }
+              ],
+              {
+                "s": ")"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Keyword node"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              {
+                "s": "Anything else ("
+              },
+              [
+                ":code",
+                {
+                  "s": "defn"
+                }
+              ],
+              {
+                "s": ", "
+              },
+              [
+                ":code",
+                {
+                  "s": "my-var"
+                }
+              ],
+              {
+                "s": ", "
+              },
+              [
+                ":code",
+                {
+                  "s": "+"
+                }
+              ],
+              {
+                "s": ")"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Symbol node"
+              }
+            ]
+          ]
+        ]
+      ],
+      [
+        ":h3",
+        {
+          "s": "String Input Mode"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Triggered by typing "
+        },
+        [
+          ":code",
+          {
+            "s": "\""
+          }
+        ],
+        {
+          "s": " in a hole (or when the buffer is empty)."
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "In string mode, all characters are literal — Space doesn't commit, parentheses don't create structure. The editor shows a text input field (or a distinct visual region) where the user types freely. Standard escapes work ("
+        },
+        [
+          ":code",
+          {
+            "s": "\\n"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "\\t"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "\\\\"
+          }
+        ],
+        {
+          "s": ", "
+        },
+        [
+          ":code",
+          {
+            "s": "\\\""
+          }
+        ],
+        {
+          "s": ")."
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Pressing "
+        },
+        [
+          ":code",
+          {
+            "s": "\""
+          }
+        ],
+        {
+          "s": " again (unescaped) ends string mode and commits the string node."
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "For multi-line strings, "
+        },
+        [
+          ":code",
+          {
+            "s": "Shift+Enter"
+          }
+        ],
+        {
+          "s": " inserts a newline within the string."
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Pressing "
+        },
+        [
+          ":code",
+          {
+            "s": "Escape"
+          }
+        ],
+        {
+          "s": " cancels and removes the string."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Item Reference Mode"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Triggered by typing "
+        },
+        [
+          ":code",
+          {
+            "s": "@"
+          }
+        ],
+        {
+          "s": " in a hole."
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The editor shows a searchable dropdown of all items in the system. The user types to filter by name or ID. The list shows the item name, type, and a preview."
+        }
+      ],
+      [
+        ":table",
+        [
+          ":thead",
+          [
+            ":tr",
+            [
+              ":th",
+              {
+                "s": "Key"
+              }
+            ],
+            [
+              ":th",
+              {
+                "s": "Effect"
+              }
+            ]
+          ]
+        ],
+        [
+          ":tbody",
+          [
+            ":tr",
+            [
+              ":td",
+              {
+                "s": "Typing"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Filters the item list"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "↑"
+                }
+              ],
+              {
+                "s": " / "
+              },
+              [
+                ":code",
+                {
+                  "s": "↓"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Navigate the dropdown list"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "Enter"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Select the highlighted item, insert an item-ref node"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "Escape"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Cancel, return to normal hole input"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "Space"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Select the highlighted item AND create a sibling hole (fluid continuation)"
+              }
+            ]
+          ]
+        ]
+      ],
+      [
+        ":p",
+        {
+          "s": "Item references are displayed in the AST as a chip showing the item's name, not the raw UUID. The chip is visually distinct (e.g., a coloured pill with the item's type icon). Clicking the chip navigates to that item."
+        }
+      ],
+      [
+        ":hr"
+      ],
+      [
+        ":hr"
+      ],
+      [
+        ":h2",
+        {
+          "s": "Autocomplete / Command Palette"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "When typing in a hole, an autocomplete dropdown appears showing contextually valid options, filtered by what's been typed so far."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Sources of Suggestions"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Listed in priority order:"
+        }
+      ],
+      [
+        ":ol",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Local bindings"
+              }
+            ],
+            {
+              "s": " — variables in scope from "
+            },
+            [
+              ":code",
+              {
+                "s": "let"
+              }
+            ],
+            {
+              "s": ", "
+            },
+            [
+              ":code",
+              {
+                "s": "fn"
+              }
+            ],
+            {
+              "s": " params, "
+            },
+            [
+              ":code",
+              {
+                "s": "loop"
+              }
+            ],
+            {
+              "s": " bindings. Determined by walking up the AST from the hole's position."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Special forms"
+              }
+            ],
+            {
+              "s": " — "
+            },
+            [
+              ":code",
+              {
+                "s": "def"
+              }
+            ],
+            {
+              "s": ", "
+            },
+            [
+              ":code",
+              {
+                "s": "fn"
+              }
+            ],
+            {
+              "s": ", "
+            },
+            [
+              ":code",
+              {
+                "s": "let"
+              }
+            ],
+            {
+              "s": ", "
+            },
+            [
+              ":code",
+              {
+                "s": "if"
+              }
+            ],
+            {
+              "s": ", "
+            },
+            [
+              ":code",
+              {
+                "s": "do"
+              }
+            ],
+            {
+              "s": ", "
+            },
+            [
+              ":code",
+              {
+                "s": "when"
+              }
+            ],
+            {
+              "s": ", "
+            },
+            [
+              ":code",
+              {
+                "s": "cond"
+              }
+            ],
+            {
+              "s": ", "
+            },
+            [
+              ":code",
+              {
+                "s": "loop"
+              }
+            ],
+            {
+              "s": ", "
+            },
+            [
+              ":code",
+              {
+                "s": "recur"
+              }
+            ],
+            {
+              "s": ", "
+            },
+            [
+              ":code",
+              {
+                "s": "try"
+              }
+            ],
+            {
+              "s": ", "
+            },
+            [
+              ":code",
+              {
+                "s": "catch"
+              }
+            ],
+            {
+              "s": ", "
+            },
+            [
+              ":code",
+              {
+                "s": "defn"
+              }
+            ],
+            {
+              "s": ", "
+            },
+            [
+              ":code",
+              {
+                "s": "defmacro"
+              }
+            ],
+            {
+              "s": ", "
+            },
+            [
+              ":code",
+              {
+                "s": "def-view"
+              }
+            ],
+            {
+              "s": ", "
+            },
+            [
+              ":code",
+              {
+                "s": "def-watch"
+              }
+            ],
+            {
+              "s": ", "
+            },
+            [
+              ":code",
+              {
+                "s": "->"
+              }
+            ],
+            {
+              "s": ", "
+            },
+            [
+              ":code",
+              {
+                "s": "->>"
+              }
+            ],
+            {
+              "s": ", "
+            },
+            [
+              ":code",
+              {
+                "s": "for"
+              }
+            ],
+            {
+              "s": ", "
+            },
+            [
+              ":code",
+              {
+                "s": "require"
+              }
+            ],
+            {
+              "s": "."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Standard library functions"
+              }
+            ],
+            {
+              "s": " — "
+            },
+            [
+              ":code",
+              {
+                "s": "map"
+              }
+            ],
+            {
+              "s": ", "
+            },
+            [
+              ":code",
+              {
+                "s": "filter"
+              }
+            ],
+            {
+              "s": ", "
+            },
+            [
+              ":code",
+              {
+                "s": "reduce"
+              }
+            ],
+            {
+              "s": ", "
+            },
+            [
+              ":code",
+              {
+                "s": "str"
+              }
+            ],
+            {
+              "s": ", "
+            },
+            [
+              ":code",
+              {
+                "s": "get"
+              }
+            ],
+            {
+              "s": ", "
+            },
+            [
+              ":code",
+              {
+                "s": "assoc"
+              }
+            ],
+            {
+              "s": ", "
+            },
+            [
+              ":code",
+              {
+                "s": "conj"
+              }
+            ],
+            {
+              "s": ", "
+            },
+            [
+              ":code",
+              {
+                "s": "count"
+              }
+            ],
+            {
+              "s": ", etc."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Imported bindings"
+              }
+            ],
+            {
+              "s": " — names brought in via "
+            },
+            [
+              ":code",
+              {
+                "s": "require"
+              }
+            ],
+            {
+              "s": " at the top of the module."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Item references"
+              }
+            ],
+            {
+              "s": " — when the user types "
+            },
+            [
+              ":code",
+              {
+                "s": "@"
+              }
+            ],
+            {
+              "s": ", switch to item search. But even without "
+            },
+            [
+              ":code",
+              {
+                "s": "@"
+              }
+            ],
+            {
+              "s": ", if the typed text matches an item name, it could appear as a suggestion with an "
+            },
+            [
+              ":code",
+              {
+                "s": "@"
+              }
+            ],
+            {
+              "s": " prefix."
+            }
+          ]
+        ]
+      ],
+      [
+        ":h3",
+        {
+          "s": "Context-Aware Hints"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "In certain positions, the editor can show richer guidance:"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "First element of a list"
+              }
+            ],
+            {
+              "s": ": likely a function call. Show functions and special forms prominently."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Inside `let` bindings at even positions"
+              }
+            ],
+            {
+              "s": ": likely a binding name. Show hint \"name\"."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Inside `let` bindings at odd positions"
+              }
+            ],
+            {
+              "s": ": likely a value expression."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Inside `{}`"
+              }
+            ],
+            {
+              "s": ": alternating key/value. Show keywords prominently for keys."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "After `def` or `defn`"
+              }
+            ],
+            {
+              "s": ": expecting a name. Show hint \"name\" and suppress function suggestions."
+            }
+          ]
+        ]
+      ],
+      [
+        ":p",
+        {
+          "s": "This context awareness can be built incrementally."
+        }
+      ],
+      [
+        ":hr"
+      ],
+      [
+        ":hr"
+      ],
+      [
+        ":h2",
+        {
+          "s": "Mutation Operations"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Beyond hole-based input, the editor supports structural operations on existing nodes."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Basic Mutations"
+        }
+      ],
+      [
+        ":table",
+        [
+          ":thead",
+          [
+            ":tr",
+            [
+              ":th",
+              {
+                "s": "Key"
+              }
+            ],
+            [
+              ":th",
+              {
+                "s": "Action"
+              }
+            ],
+            [
+              ":th",
+              {
+                "s": "Description"
+              }
+            ]
+          ]
+        ],
+        [
+          ":tbody",
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "Backspace"
+                }
+              ],
+              {
+                "s": " / "
+              },
+              [
+                ":code",
+                {
+                  "s": "Delete"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Delete"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Remove the selected node. Siblings close the gap. If the node is a container, all children are deleted too."
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "r"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Replace"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Replace the selected node with a hole, pre-filled with the node's text representation."
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "Enter"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Insert after"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Insert a hole after the selected node (as a sibling)."
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "Shift+Enter"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Insert before"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Insert a hole before the selected node (as a sibling)."
+              }
+            ]
+          ]
+        ]
+      ],
+      [
+        ":h3",
+        {
+          "s": "Structural Mutations"
+        }
+      ],
+      [
+        ":table",
+        [
+          ":thead",
+          [
+            ":tr",
+            [
+              ":th",
+              {
+                "s": "Key"
+              }
+            ],
+            [
+              ":th",
+              {
+                "s": "Action"
+              }
+            ],
+            [
+              ":th",
+              {
+                "s": "Description"
+              }
+            ]
+          ]
+        ],
+        [
+          ":tbody",
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "w ("
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Wrap in list"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Surround the selected node with "
+              },
+              [
+                ":code",
+                {
+                  "s": "()"
+                }
+              ],
+              {
+                "s": ". The node becomes the first child. A hole is added after it."
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "w ["
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Wrap in vector"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Surround the selected node with "
+              },
+              [
+                ":code",
+                {
+                  "s": "[]"
+                }
+              ],
+              {
+                "s": "."
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "w {"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Wrap in map"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Surround the selected node with "
+              },
+              [
+                ":code",
+                {
+                  "s": "{}"
+                }
+              ],
+              {
+                "s": ". A hole is added for the value."
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "u"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Unwrap / splice"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Remove the selected container, promoting its children into the parent. Only works on container nodes."
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "Alt+←"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Move left"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Swap the selected node with its previous sibling."
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "Alt+→"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Move right"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Swap the selected node with its next sibling."
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "s"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Slurp right"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "The selected container absorbs the next sibling. `(a \\"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "b) c"
+              },
+              [
+                ":code",
+                {
+                  "s": " → "
+                }
+              ],
+              {
+                "s": "(a b c)"
+              },
+              [
+                ":code",
+                {
+                  "s": " where "
+                }
+              ],
+              {
+                "s": "\\"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "` marks selection."
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "S"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Barf right"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "The selected container ejects its last child as a sibling after it. "
+              },
+              [
+                ":code",
+                {
+                  "s": "(a b c)"
+                }
+              ],
+              {
+                "s": " → "
+              },
+              [
+                ":code",
+                {
+                  "s": "(a b) c"
+                }
+              ],
+              {
+                "s": "."
+              }
+            ]
+          ]
+        ]
+      ],
+      [
+        ":p",
+        {
+          "s": "The wrap key "
+        },
+        [
+          ":code",
+          {
+            "s": "w"
+          }
+        ],
+        {
+          "s": " acts as a prefix: pressing "
+        },
+        [
+          ":code",
+          {
+            "s": "w"
+          }
+        ],
+        {
+          "s": " puts the editor in \"wrap mode\" where the next character determines the container type. If no valid character follows within 300ms, wrap mode is cancelled."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Copy / Paste"
+        }
+      ],
+      [
+        ":table",
+        [
+          ":thead",
+          [
+            ":tr",
+            [
+              ":th",
+              {
+                "s": "Key"
+              }
+            ],
+            [
+              ":th",
+              {
+                "s": "Action"
+              }
+            ],
+            [
+              ":th",
+              {
+                "s": "Description"
+              }
+            ]
+          ]
+        ],
+        [
+          ":tbody",
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "Ctrl+C"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Copy"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Copy the selected subtree to the clipboard (internal AST format + plain text as s-expression)."
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "Ctrl+X"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Cut"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Copy and delete."
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "Ctrl+V"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Paste"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Insert the clipboard content as a sibling after the selection. If clipboard contains text (from outside), parse it as Hob and insert the resulting AST."
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "Ctrl+D"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Duplicate"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Insert a deep copy of the selected node as a sibling after it."
+              }
+            ]
+          ]
+        ]
+      ],
+      [
+        ":h3",
+        {
+          "s": "Undo / Redo"
+        }
+      ],
+      [
+        ":table",
+        [
+          ":thead",
+          [
+            ":tr",
+            [
+              ":th",
+              {
+                "s": "Key"
+              }
+            ],
+            [
+              ":th",
+              {
+                "s": "Action"
+              }
+            ]
+          ]
+        ],
+        [
+          ":tbody",
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "Ctrl+Z"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Undo last mutation"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "Ctrl+Shift+Z"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Redo"
+              }
+            ]
+          ]
+        ]
+      ],
+      [
+        ":p",
+        {
+          "s": "Each mutation pushes a snapshot (or a reversible delta) onto the undo stack. The undo stack is in-memory, lost on save/reload. Limit ~100 operations."
+        }
+      ],
+      [
+        ":hr"
+      ],
+      [
+        ":hr"
+      ],
+      [
+        ":h2",
+        {
+          "s": "Visual Rendering"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The AST is rendered to look like properly formatted Hob source code, with structural awareness expressed through colour and subtle visual cues."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Layout"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Nodes are laid out using standard Lisp pretty-printing rules:"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Short forms"
+              }
+            ],
+            {
+              "s": " stay on one line: "
+            },
+            [
+              ":code",
+              {
+                "s": "(+ a b)"
+              }
+            ],
+            {
+              "s": ", "
+            },
+            [
+              ":code",
+              {
+                "s": "[:div \"hello\"]"
+              }
+            ],
+            {
+              "s": ", "
+            },
+            [
+              ":code",
+              {
+                "s": "{:name \"Alice\"}"
+              }
+            ]
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Long forms"
+              }
+            ],
+            {
+              "s": " break after the first element, with children indented:"
+            }
+          ],
+          [
+            ":p",
+            {
+              "s": "``"
+            },
+            [
+              ":code",
+              {
+                "s": " (defn greet [name]   (str \"Hello, \" name)) "
+              }
+            ],
+            {
+              "s": "``"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Threshold"
+              }
+            ],
+            {
+              "s": ": forms wider than ~60 characters break to multi-line."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Special indentation"
+              }
+            ],
+            {
+              "s": " for known forms:"
+            }
+          ],
+          [
+            ":ul",
+            [
+              ":li",
+              [
+                ":p",
+                [
+                  ":code",
+                  {
+                    "s": "defn"
+                  }
+                ],
+                {
+                  "s": ", "
+                },
+                [
+                  ":code",
+                  {
+                    "s": "def-view"
+                  }
+                ],
+                {
+                  "s": ", "
+                },
+                [
+                  ":code",
+                  {
+                    "s": "def-watch"
+                  }
+                ],
+                {
+                  "s": ": name and params on first line, body indented 2 spaces."
+                }
+              ]
+            ],
+            [
+              ":li",
+              [
+                ":p",
+                [
+                  ":code",
+                  {
+                    "s": "let"
+                  }
+                ],
+                {
+                  "s": ", "
+                },
+                [
+                  ":code",
+                  {
+                    "s": "loop"
+                  }
+                ],
+                {
+                  "s": ": binding vector on first line, body indented 2 spaces."
+                }
+              ]
+            ],
+            [
+              ":li",
+              [
+                ":p",
+                [
+                  ":code",
+                  {
+                    "s": "if"
+                  }
+                ],
+                {
+                  "s": ": condition on first line, then/else each on their own line, indented 2 spaces."
+                }
+              ]
+            ],
+            [
+              ":li",
+              [
+                ":p",
+                [
+                  ":code",
+                  {
+                    "s": "cond"
+                  }
+                ],
+                {
+                  "s": ": each pair on its own line, indented 2 spaces."
+                }
+              ]
+            ],
+            [
+              ":li",
+              [
+                ":p",
+                {
+                  "s": "Hiccup vectors: tag and attrs on first line, children indented."
+                }
+              ]
+            ]
+          ]
+        ]
+      ],
+      [
+        ":h3",
+        {
+          "s": "Syntax Colouring"
+        }
+      ],
+      [
+        ":table",
+        [
+          ":thead",
+          [
+            ":tr",
+            [
+              ":th",
+              {
+                "s": "Node type"
+              }
+            ],
+            [
+              ":th",
+              {
+                "s": "Colour"
+              }
+            ]
+          ]
+        ],
+        [
+          ":tbody",
+          [
+            ":tr",
+            [
+              ":td",
+              {
+                "s": "Special form"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Bold, distinct colour (e.g., purple)"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              {
+                "s": "Symbol"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Default text colour"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              {
+                "s": "Keyword"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Distinct colour (e.g., teal)"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              {
+                "s": "String"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "String colour (e.g., green)"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              {
+                "s": "Number"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Number colour (e.g., blue)"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              {
+                "s": "Boolean / nil"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Keyword-like colour"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              {
+                "s": "Item reference"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Chip/pill with background colour"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              {
+                "s": "Delimiter"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Muted colour, matching pair highlighted on container select"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              {
+                "s": "Hole"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Highlighted empty region with dashed border"
+              }
+            ]
+          ]
+        ]
+      ],
+      [
+        ":h3",
+        {
+          "s": "Item Reference Display"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Item references are shown as chips with the item's name (or truncated ID if unnamed) and a small type icon. Hovering shows a tooltip with the item's type and ID. Clicking navigates to that item. In the serialised output, it becomes "
+        },
+        [
+          ":code",
+          {
+            "s": "@guid"
+          }
+        ],
+        {
+          "s": "."
+        }
+      ],
+      [
+        ":hr"
+      ],
+      [
+        ":hr"
+      ],
+      [
+        ":h2",
+        {
+          "s": "Comments"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Press "
+        },
+        [
+          ":code",
+          {
+            "s": ";"
+          }
+        ],
+        {
+          "s": " on any selected node to insert a comment after it. Comments are rich text — they support the same formatting as "
+        },
+        [
+          ":item-ref",
+          {
+            "s": "d0d0d0d0-0007-0000-0000-000000000000"
+          },
+          {
+            "s": "the doc editor"
+          }
+        ],
+        {
+          "s": " (paragraphs, headings, code blocks, lists, etc.)."
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "A comment appears as a doc node inline in the AST, visually distinct from code. When selected, it opens the rich text editor for editing. Comments are stored as part of the AST and are saved with the code."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Editing Comments"
+        }
+      ],
+      [
+        ":table",
+        [
+          ":thead",
+          [
+            ":tr",
+            [
+              ":th",
+              {
+                "s": "Key"
+              }
+            ],
+            [
+              ":th",
+              {
+                "s": "Action"
+              }
+            ]
+          ]
+        ],
+        [
+          ":tbody",
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": ";"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Insert a new comment after the selected node. Opens the rich text editor."
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "Enter"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "When a comment is selected, open it for editing."
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "Backspace"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Delete the selected comment."
+              }
+            ]
+          ]
+        ]
+      ],
+      [
+        ":hr"
+      ],
+      [
+        ":hr"
+      ],
+      [
+        ":h2",
+        {
+          "s": "Editor Chrome"
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Status Bar"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "A narrow bar at the bottom showing:"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Breadcrumb path"
+              }
+            ],
+            {
+              "s": ": the type of each ancestor from root to selection. E.g., "
+            },
+            [
+              ":code",
+              {
+                "s": "root > defn > let > list"
+              }
+            ],
+            {
+              "s": ". Clickable to select ancestors directly."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Node info"
+              }
+            ],
+            {
+              "s": ": the selected node's type and value."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Mode indicator"
+              }
+            ],
+            {
+              "s": ": \"NAV\" for navigation mode, \"INPUT\" when in a hole, \"WRAP...\" when in wrap mode, \"STRING\" during string input."
+            }
+          ]
+        ]
+      ],
+      [
+        ":h3",
+        {
+          "s": "Toolbar"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "A minimal toolbar (or right-click context menu) with structural operations for discoverability. Each button shows its keyboard shortcut."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "Key Bindings Reference"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "A toggleable overlay (triggered by "
+        },
+        [
+          ":code",
+          {
+            "s": "?"
+          }
+        ],
+        {
+          "s": ") showing all available keyboard shortcuts in the current context."
+        }
+      ],
+      [
+        ":hr"
+      ],
+      [
+        ":p",
+        {
+          "s": ""
+        }
+      ]
+    ],
+    "tags": [
+      "bff75873-edb8-412e-81c9-c744e68fe29f",
+      "a63eadd8-ec56-4163-acf2-207aa392069b",
+      "c0c0c0c0-0085-0000-0000-000000000000"
+    ]
+  },
+  "attachments": []
+}

@@ -1,1 +1,514 @@
-{"id": "b429b19d-ef0d-4f4f-b2a2-b9e6f80451f2", "name": "generic-view", "type": "66666666-0000-0000-0000-000000000000", "created": 1769279958577, "modified": 1774649639332, "content": {"description": [":doc", [":p", {"s": "Interprets view-spec items and constructs appropriate UI by loading field views."}]], "code": "// Item: generic-view\n// ID: b429b19d-ef0d-4f4f-b2a2-b9e6f80451f2\n// Type: 66666666-0000-0000-0000-000000000000\n\n// Generic view library - interprets view-spec items\n// Supports both sync and async field views\n// See [Views & Rendering](item://a0a0a0a0-d0c0-4000-8000-000000000004#generic-view)\n\n// Helper: Parse navigation params from URL (for root context)\n// Supports: ?field=code&region=X&lines=10-20\nfunction getNavigateToFromURL() {\n  const params = new URLSearchParams(window.location.search);\n  const field = params.get('field');\n  const symbol = params.get('symbol');\n  if (!field && !symbol) return null;\n  return {\n    field: field || null,\n    region: params.get('region') || null,\n    lines: params.get('lines') || null,  // \"5\" or \"10-20\"\n    symbol: symbol || null\n  };\n}\n\nfunction getNestedValue(obj, path) {\n  return path.split('.').reduce((curr, key) => curr?.[key], obj);\n}\n\nfunction setNestedValue(obj, path, value) {\n  const keys = path.split('.');\n  const lastKey = keys.pop();\n  const target = keys.reduce((curr, key) => {\n    if (!curr[key]) curr[key] = {};\n    return curr[key];\n  }, obj);\n  target[lastKey] = value;\n}\n\n// [BEGIN:returnToDefaultView]\n// Helper to return to default view for an item\nasync function returnToDefaultView(itemId, api) {\n  // Try restorePreviousView first\n  const restored = await api.restorePreviousView(itemId);\n  if (restored) return;\n\n  // Fallback: clear view override and re-render\n  // Check if item is the viewport root (not just if it has a data parent)\n  const isViewportRoot = api.viewport.getRoot() === itemId;\n  if (isViewportRoot) {\n    // It's the viewport root - clear root view override\n    await api.viewport.setRootView(null);\n    // Root view change needs full re-render\n    await api.navigate(api.viewport.getRoot());\n  } else {\n    // It's a child - use rendering parent from context, fall back to data hierarchy\n    const renderingParentId = api.getParentId ? api.getParentId() : null;\n    const parent = renderingParentId\n      ? await api.get(renderingParentId)\n      : await api.findContainerOf(itemId);\n    if (parent) {\n      await api.setAttachmentView(parent.id, itemId, null);\n    }\n    // Re-render just this item (preserves sibling scroll positions)\n    await api.rerenderItem(itemId);\n  }\n}\n// [END:returnToDefaultView]\n\n// [BEGIN:render]\nexport async function render(item, api) {\n  // Fetch the view item that's using this library to get the spec\n  const viewId = api.getViewId();\n  const viewSpec = viewId ? await api.get(viewId) : null;\n\n  // Outer container - full height flex column\n  const container = api.createElement('div', { className: 'generic-view' });\n  container.style.cssText = 'display: flex; flex-direction: column; min-height: 100%;';\n\n  // Content area (scrolling delegated to parent .window-content for scroll preservation)\n  const scrollArea = api.createElement('div', { className: 'generic-view-content' });\n  scrollArea.style.cssText = 'padding: 16px; display: flex; flex-direction: column; gap: 16px;';\n\n  // Clone item for editing\n  let editedItem = JSON.parse(JSON.stringify(item));\n\n  // Track if any field is editable\n  let hasEditableFields = false;\n\n  // Get ui_hints from view spec\n  const uiHints = viewSpec?.content?.ui_hints || {};\n\n  // Get navigation params for scroll-to-line/region support\n  // Try context first (sibling navigation), then URL params (root navigation)\n  const navigateTo = (api.getNavigateTo ? api.getNavigateTo() : null) || getNavigateToFromURL();\n  // Render each field according to ui_hints\n  for (const [path, hint] of Object.entries(uiHints)) {\n    if (hint.hidden) continue;\n\n    // Get current value from item\n    const value = getNestedValue(item, path);\n\n    // Skip optional fields that aren't present on this item\n    if (hint.showIfPresent && !value) continue;\n\n    // Load field view\n    // Default to markdown for description field, json for everything else\n    const defaultFieldView = path === 'content.description' ? 'markdown' : 'json';\n    const fieldViewName = 'field-view-' + (hint.field_view || defaultFieldView);\n    let fieldView;\n\n    try {\n      fieldView = await api.require(fieldViewName);\n    } catch (e) {\n      console.warn('Field view not found: ' + fieldViewName + ', using field-view-json');\n      try {\n        fieldView = await api.require('field-view-json');\n      } catch (e2) {\n        // Ultimate fallback - create inline\n        fieldView = {\n          render: (val, opts, api) => {\n            const span = api.createElement('span');\n            span.textContent = JSON.stringify(val);\n            return span;\n          }\n        };\n      }\n    }\n\n    // Determine if this field is editable\n    const isEditable = hint.mode === 'editable';\n    if (isEditable) hasEditableFields = true;\n\n    // Create onChange handler if editable\n    // When a field view writes to a parent path (e.g. 'content'), preserve values\n    // at child paths (e.g. 'content.description') that other field views may have edited.\n    const childPaths = isEditable\n      ? Object.keys(uiHints).filter(p => p !== path && p.startsWith(path + '.'))\n      : [];\n    const onChange = isEditable\n      ? (newValue) => {\n          if (childPaths.length > 0 && typeof newValue === 'object' && newValue !== null) {\n            for (const childPath of childPaths) {\n              const relativePath = childPath.substring(path.length + 1);\n              const childValue = getNestedValue(editedItem, childPath);\n              if (childValue !== undefined) {\n                setNestedValue(newValue, relativePath, childValue);\n              }\n            }\n          }\n          setNestedValue(editedItem, path, newValue);\n        }\n      : null;\n\n    // Check if this field is the navigation target for scroll-to-line/region\n    // navigateTo.field is just 'code' but path might be 'content.code', so compare last segment\n    const fieldName = path.split('.').pop();\n    // Navigation target: explicit field match, OR symbol without field defaults to code/hob\n    const isNavigationTarget = navigateTo && (\n      navigateTo.field === fieldName ||\n      (navigateTo.symbol && !navigateTo.field && (fieldName === 'code' || fieldName === 'hob'))\n    );\n    // Render field - AWAIT in case it's async!\n    let fieldElement;\n    try {\n      fieldElement = await fieldView.render(value, {\n        mode: hint.mode || 'readonly',\n        onChange,\n        placeholder: hint.placeholder,\n        // Pass scroll params if this is the navigation target\n        scrollToRegion: isNavigationTarget ? navigateTo.region : null,\n        scrollToLines: isNavigationTarget ? navigateTo.lines : null,  // \"5\" or \"10-20\"\n        scrollToSymbol: isNavigationTarget ? navigateTo.symbol : null,\n        ...hint,\n        // Suppress inner label when collapsible (summary provides it)\n        label: hint.collapsible ? null : hint.label,\n        // Pass item context so field views can resolve cross-field references\n        item,\n        // Allow field views to read the current edited value (not stale closure)\n        getCurrentValue: isEditable ? () => getNestedValue(editedItem, path) : undefined,\n      }, api);\n    } catch (renderError) {\n      console.error('Error rendering field:', path, 'with view:', fieldViewName, renderError);\n      fieldElement = api.createElement('div');\n      fieldElement.style.cssText = 'color: var(--color-danger); font-size: 0.75rem;';\n      fieldElement.textContent = 'Error: ' + renderError.message;\n    }\n\n    // Key each field by path+mode so morphdom replaces (not patches) when mode changes.\n    // Without this, morphdom patches the old field DOM in place, keeping stale event\n    // handlers whose closures captured the old mode's state (e.g. onChange = null).\n    const fieldKey = `field-${path}-${hint.mode || 'readonly'}`;\n\n    // Skip empty field views (e.g. field-summary with no fields)\n    if (fieldElement.style.display === 'none') continue;\n\n    // Wrap in collapsible <details> if requested\n    if (hint.collapsible) {\n      const details = api.createElement('details');\n      details.setAttribute('data-sort-key', fieldKey);\n      const shouldOpen = hint.startCollapsed === 'ifEmpty' ? !!value : !hint.startCollapsed;\n      if (shouldOpen) details.setAttribute('open', '');\n      const summary = api.createElement('summary');\n      summary.textContent = hint.label || fieldName;\n      summary.style.cssText = 'cursor: pointer; font-size: 0.8125rem; font-weight: 500; color: var(--color-text-secondary); user-select: none; padding: 2px 0;';\n      details.appendChild(summary);\n      details.appendChild(fieldElement);\n      scrollArea.appendChild(details);\n    } else {\n      fieldElement.setAttribute('data-sort-key', fieldKey);\n      scrollArea.appendChild(fieldElement);\n    }\n\n    // Add divider after field if requested\n    if (hint.dividerAfter) {\n      const divider = api.createElement('hr');\n      divider.style.cssText = 'border: none; border-top: 2px solid var(--color-border); margin: 8px 0; flex-shrink: 0;';\n      scrollArea.appendChild(divider);\n    }\n  }\n\n  container.appendChild(scrollArea);\n\n  // Add save/cancel buttons if any field is editable (sticky at bottom)\n  if (hasEditableFields) {\n    const actions = api.createElement('div', { className: 'view-actions' });\n    actions.style.cssText = 'display: flex; gap: 10px; justify-content: flex-end; padding: 16px; border-top: 1px solid var(--color-border-light); background: var(--color-bg-surface-alt); position: sticky; bottom: 0;';\n\n    const cancelBtn = api.createElement('button', {\n      style: 'padding: 8px 16px; cursor: pointer;'\n    });\n    cancelBtn.textContent = 'Cancel';\n    cancelBtn.onclick = async () => {\n      await returnToDefaultView(item.id, api);\n    };\n    actions.appendChild(cancelBtn);\n\n    const saveBtn = api.createElement('button', {\n      style: 'padding: 8px 16px; cursor: pointer; background: var(--color-text-secondary); color: white; border: none; border-radius: var(--border-radius);'\n    });\n    saveBtn.textContent = 'Save';\n    saveBtn.onclick = async () => {\n      try {\n        await api.set(editedItem);\n        await api.rerenderItem(editedItem.id);\n      } catch (e) {\n        const modalLib = await api.require('modal-lib');\n        await modalLib.alert({ message: 'Save failed: ' + e.message, title: 'Error', api });\n      }\n    };\n    actions.appendChild(saveBtn);\n\n    const saveAndViewBtn = api.createElement('button', {\n      style: 'padding: 8px 16px; cursor: pointer; background: var(--color-primary); color: white; border: none; border-radius: var(--border-radius);'\n    });\n    saveAndViewBtn.textContent = 'Save & View';\n    saveAndViewBtn.onclick = async () => {\n      try {\n        await api.set(editedItem);\n        await returnToDefaultView(item.id, api);\n      } catch (e) {\n        const modalLib = await api.require('modal-lib');\n        await modalLib.alert({ message: 'Save failed: ' + e.message, title: 'Error', api });\n      }\n    };\n    actions.appendChild(saveAndViewBtn);\n\n    container.appendChild(actions);\n  }\n\n  return container;\n}\n// [END:render]\n\nexport { getNestedValue, setNestedValue };\n", "_symbols": {"getNavigateToFromURL": {"name": "getNavigateToFromURL", "line": 11, "col": 0, "endLine": 22, "endCol": 1, "kind": "function", "scope": null, "signature": "()"}, "getNavigateToFromURL.params": {"name": "params", "line": 12, "col": 8, "endLine": 12, "endCol": 60, "kind": "variable", "scope": "getNavigateToFromURL"}, "getNavigateToFromURL.field": {"name": "field", "line": 17, "col": 4, "endLine": 17, "endCol": 24, "kind": "property", "scope": "getNavigateToFromURL"}, "getNavigateToFromURL.symbol": {"name": "symbol", "line": 20, "col": 4, "endLine": 20, "endCol": 26, "kind": "property", "scope": "getNavigateToFromURL"}, "getNavigateToFromURL.region": {"name": "region", "line": 18, "col": 4, "endLine": 18, "endCol": 40, "kind": "property", "scope": "getNavigateToFromURL"}, "getNavigateToFromURL.lines": {"name": "lines", "line": 19, "col": 4, "endLine": 19, "endCol": 38, "kind": "property", "scope": "getNavigateToFromURL"}, "getNestedValue": {"name": "getNestedValue", "line": 24, "col": 0, "endLine": 26, "endCol": 1, "kind": "function", "scope": null, "signature": "(obj, path)"}, "setNestedValue": {"name": "setNestedValue", "line": 28, "col": 0, "endLine": 36, "endCol": 1, "kind": "function", "scope": null, "signature": "(obj, path, value)"}, "setNestedValue.keys": {"name": "keys", "line": 29, "col": 8, "endLine": 29, "endCol": 30, "kind": "variable", "scope": "setNestedValue"}, "setNestedValue.lastKey": {"name": "lastKey", "line": 30, "col": 8, "endLine": 30, "endCol": 28, "kind": "variable", "scope": "setNestedValue"}, "setNestedValue.target": {"name": "target", "line": 31, "col": 8, "endLine": 34, "endCol": 9, "kind": "variable", "scope": "setNestedValue"}, "returnToDefaultView": {"name": "returnToDefaultView", "line": 40, "col": 0, "endLine": 65, "endCol": 1, "kind": "function", "scope": null, "signature": "(itemId, api)"}, "returnToDefaultView.restored": {"name": "restored", "line": 42, "col": 8, "endLine": 42, "endCol": 56, "kind": "variable", "scope": "returnToDefaultView"}, "returnToDefaultView.isViewportRoot": {"name": "isViewportRoot", "line": 47, "col": 8, "endLine": 47, "endCol": 58, "kind": "variable", "scope": "returnToDefaultView"}, "returnToDefaultView.renderingParentId": {"name": "renderingParentId", "line": 55, "col": 10, "endLine": 55, "endCol": 72, "kind": "variable", "scope": "returnToDefaultView"}, "returnToDefaultView.parent": {"name": "parent", "line": 56, "col": 10, "endLine": 58, "endCol": 41, "kind": "variable", "scope": "returnToDefaultView"}, "render": {"name": "render", "line": 69, "col": 7, "endLine": 268, "endCol": 1, "kind": "function", "scope": null, "signature": "(item, api)"}, "render.viewId": {"name": "viewId", "line": 71, "col": 8, "endLine": 71, "endCol": 32, "kind": "variable", "scope": "render"}, "render.viewSpec": {"name": "viewSpec", "line": 72, "col": 8, "endLine": 72, "endCol": 56, "kind": "variable", "scope": "render"}, "render.container": {"name": "container", "line": 75, "col": 8, "endLine": 75, "endCol": 75, "kind": "variable", "scope": "render"}, "render.scrollArea": {"name": "scrollArea", "line": 79, "col": 8, "endLine": 79, "endCol": 84, "kind": "variable", "scope": "render"}, "render.editedItem": {"name": "editedItem", "line": 83, "col": 6, "endLine": 83, "endCol": 51, "kind": "variable", "scope": "render"}, "render.hasEditableFields": {"name": "hasEditableFields", "line": 86, "col": 6, "endLine": 86, "endCol": 31, "kind": "variable", "scope": "render"}, "render.uiHints": {"name": "uiHints", "line": 89, "col": 8, "endLine": 89, "endCol": 51, "kind": "variable", "scope": "render"}, "render.navigateTo": {"name": "navigateTo", "line": 93, "col": 8, "endLine": 93, "endCol": 95, "kind": "variable", "scope": "render"}, "render.value": {"name": "value", "line": 99, "col": 10, "endLine": 99, "endCol": 44, "kind": "variable", "scope": "render"}, "render.defaultFieldView": {"name": "defaultFieldView", "line": 106, "col": 10, "endLine": 106, "endCol": 81, "kind": "variable", "scope": "render"}, "render.fieldViewName": {"name": "fieldViewName", "line": 107, "col": 10, "endLine": 107, "endCol": 79, "kind": "variable", "scope": "render"}, "render.fieldView": {"name": "fieldView", "line": 108, "col": 8, "endLine": 108, "endCol": 17, "kind": "variable", "scope": "render"}, "render.render": {"name": "render", "line": 119, "col": 10, "endLine": 123, "endCol": 11, "kind": "property-function", "scope": "render", "signature": "(val, opts, api)"}, "render.render.span": {"name": "span", "line": 120, "col": 18, "endLine": 120, "endCol": 50, "kind": "variable", "scope": "render.render"}, "render.isEditable": {"name": "isEditable", "line": 129, "col": 10, "endLine": 129, "endCol": 47, "kind": "variable", "scope": "render"}, "render.childPaths": {"name": "childPaths", "line": 135, "col": 10, "endLine": 137, "endCol": 10, "kind": "variable", "scope": "render"}, "render.onChange": {"name": "onChange", "line": 166, "col": 8, "endLine": 166, "endCol": 16, "kind": "property", "scope": "render"}, "render.fieldName": {"name": "fieldName", "line": 155, "col": 10, "endLine": 155, "endCol": 43, "kind": "variable", "scope": "render"}, "render.isNavigationTarget": {"name": "isNavigationTarget", "line": 157, "col": 10, "endLine": 160, "endCol": 5, "kind": "variable", "scope": "render"}, "render.fieldElement": {"name": "fieldElement", "line": 162, "col": 8, "endLine": 162, "endCol": 20, "kind": "variable", "scope": "render"}, "render.mode": {"name": "mode", "line": 165, "col": 8, "endLine": 165, "endCol": 37, "kind": "property", "scope": "render"}, "render.placeholder": {"name": "placeholder", "line": 167, "col": 8, "endLine": 167, "endCol": 37, "kind": "property", "scope": "render"}, "render.scrollToRegion": {"name": "scrollToRegion", "line": 169, "col": 8, "endLine": 169, "endCol": 69, "kind": "property", "scope": "render"}, "render.scrollToLines": {"name": "scrollToLines", "line": 170, "col": 8, "endLine": 170, "endCol": 67, "kind": "property", "scope": "render"}, "render.scrollToSymbol": {"name": "scrollToSymbol", "line": 171, "col": 8, "endLine": 171, "endCol": 69, "kind": "property", "scope": "render"}, "render.label": {"name": "label", "line": 174, "col": 8, "endLine": 174, "endCol": 51, "kind": "property", "scope": "render"}, "render.item": {"name": "item", "line": 176, "col": 8, "endLine": 176, "endCol": 12, "kind": "property", "scope": "render"}, "render.getCurrentValue": {"name": "getCurrentValue", "line": 178, "col": 8, "endLine": 178, "endCol": 88, "kind": "property", "scope": "render"}, "render.fieldKey": {"name": "fieldKey", "line": 190, "col": 10, "endLine": 190, "endCol": 63, "kind": "variable", "scope": "render"}, "render.details": {"name": "details", "line": 197, "col": 12, "endLine": 197, "endCol": 50, "kind": "variable", "scope": "render"}, "render.shouldOpen": {"name": "shouldOpen", "line": 199, "col": 12, "endLine": 199, "endCol": 91, "kind": "variable", "scope": "render"}, "render.summary": {"name": "summary", "line": 201, "col": 12, "endLine": 201, "endCol": 50, "kind": "variable", "scope": "render"}, "render.divider": {"name": "divider", "line": 214, "col": 12, "endLine": 214, "endCol": 45, "kind": "variable", "scope": "render"}, "render.actions": {"name": "actions", "line": 224, "col": 10, "endLine": 224, "endCol": 75, "kind": "variable", "scope": "render"}, "render.cancelBtn": {"name": "cancelBtn", "line": 227, "col": 10, "endLine": 229, "endCol": 6, "kind": "variable", "scope": "render"}, "render.saveBtn": {"name": "saveBtn", "line": 236, "col": 10, "endLine": 238, "endCol": 6, "kind": "variable", "scope": "render"}, "render.saveAndViewBtn": {"name": "saveAndViewBtn", "line": 250, "col": 10, "endLine": 252, "endCol": 6, "kind": "variable", "scope": "render"}}}, "attachments": []}
+{
+  "id": "b429b19d-ef0d-4f4f-b2a2-b9e6f80451f2",
+  "name": "generic-view",
+  "type": "66666666-0000-0000-0000-000000000000",
+  "created": 1769279958577,
+  "modified": 1774988059318,
+  "content": {
+    "description": [
+      ":doc",
+      [
+        ":p",
+        {
+          "s": "Interprets view-spec items and constructs appropriate UI by loading field views."
+        }
+      ]
+    ],
+    "code": "// Item: generic-view\n// ID: b429b19d-ef0d-4f4f-b2a2-b9e6f80451f2\n// Type: 66666666-0000-0000-0000-000000000000\n\n// Generic view library - interprets view-spec items\n// Supports both sync and async field views\n// See [Views & Rendering](item://a0a0a0a0-d0c0-4000-8000-000000000004#generic-view)\n\n// Helper: Parse navigation params from URL (for root context)\n// Supports: ?field=code&region=X&lines=10-20\nfunction getNavigateToFromURL() {\n  const params = new URLSearchParams(window.location.search);\n  const field = params.get('field');\n  const symbol = params.get('symbol');\n  if (!field && !symbol) return null;\n  return {\n    field: field || null,\n    region: params.get('region') || null,\n    lines: params.get('lines') || null,  // \"5\" or \"10-20\"\n    symbol: symbol || null\n  };\n}\n\nfunction getNestedValue(obj, path) {\n  return path.split('.').reduce((curr, key) => curr?.[key], obj);\n}\n\nfunction setNestedValue(obj, path, value) {\n  const keys = path.split('.');\n  const lastKey = keys.pop();\n  const target = keys.reduce((curr, key) => {\n    if (!curr[key]) curr[key] = {};\n    return curr[key];\n  }, obj);\n  target[lastKey] = value;\n}\n\n// [BEGIN:returnToDefaultView]\n// Helper to return to default view for an item\nasync function returnToDefaultView(itemId, api) {\n  // Try restorePreviousView first\n  const restored = await api.restorePreviousView(itemId);\n  if (restored) return;\n\n  // Fallback: clear view override and re-render\n  // Check if item is the viewport root (not just if it has a data parent)\n  const isViewportRoot = api.viewport.getRoot() === itemId;\n  if (isViewportRoot) {\n    // It's the viewport root - clear root view override\n    await api.viewport.setRootView(null);\n    // Root view change needs full re-render\n    await api.navigate(api.viewport.getRoot());\n  } else {\n    // It's a child - use rendering parent from context, fall back to data hierarchy\n    const renderingParentId = api.getParentId ? api.getParentId() : null;\n    const parent = renderingParentId\n      ? await api.get(renderingParentId)\n      : await api.findContainerOf(itemId);\n    if (parent) {\n      await api.setAttachmentView(parent.id, itemId, null);\n    }\n    // Re-render just this item (preserves sibling scroll positions)\n    await api.rerenderItem(itemId);\n  }\n}\n// [END:returnToDefaultView]\n\n// [BEGIN:render]\nexport async function render(item, api) {\n  // Fetch the view item that's using this library to get the spec\n  const viewId = api.getViewId();\n  const viewSpec = viewId ? await api.get(viewId) : null;\n\n  // Outer container - full height flex column\n  const container = api.createElement('div', { className: 'generic-view' });\n  container.style.cssText = 'display: flex; flex-direction: column; min-height: 100%;';\n\n  // Content area (scrolling delegated to parent .window-content for scroll preservation)\n  const scrollArea = api.createElement('div', { className: 'generic-view-content' });\n  scrollArea.style.cssText = 'padding: 16px; display: flex; flex-direction: column; gap: 16px;';\n\n  // Clone item for editing\n  let editedItem = JSON.parse(JSON.stringify(item));\n\n  // Track if any field is editable\n  let hasEditableFields = false;\n\n  // Get ui_hints from view spec\n  const uiHints = viewSpec?.content?.ui_hints || {};\n\n  // Get navigation params for scroll-to-line/region support\n  // Try context first (sibling navigation), then URL params (root navigation)\n  const navigateTo = (api.getNavigateTo ? api.getNavigateTo() : null) || getNavigateToFromURL();\n  // Render each field according to ui_hints\n  for (const [path, hint] of Object.entries(uiHints)) {\n    if (hint.hidden) continue;\n\n    // Get current value from item\n    const value = getNestedValue(item, path);\n\n    // Skip optional fields that aren't present on this item\n    if (hint.showIfPresent && !value) continue;\n\n    // Load field view\n    // Default to markdown for description field, json for everything else\n    const defaultFieldView = path === 'content.description' ? 'markdown' : 'json';\n    const fieldViewName = 'field-view-' + (hint.field_view || defaultFieldView);\n    let fieldView;\n\n    try {\n      fieldView = await api.require(fieldViewName);\n    } catch (e) {\n      console.warn('Field view not found: ' + fieldViewName + ', using field-view-json');\n      try {\n        fieldView = await api.require('field-view-json');\n      } catch (e2) {\n        // Ultimate fallback - create inline\n        fieldView = {\n          render: (val, opts, api) => {\n            const span = api.createElement('span');\n            span.textContent = JSON.stringify(val);\n            return span;\n          }\n        };\n      }\n    }\n\n    // Determine if this field is editable\n    const isEditable = hint.mode === 'editable';\n    if (isEditable) hasEditableFields = true;\n\n    // Create onChange handler if editable\n    // When a field view writes to a parent path (e.g. 'content'), preserve values\n    // at child paths (e.g. 'content.description') that other field views may have edited.\n    const childPaths = isEditable\n      ? Object.keys(uiHints).filter(p => p !== path && p.startsWith(path + '.'))\n      : [];\n    const onChange = isEditable\n      ? (newValue) => {\n          if (childPaths.length > 0 && typeof newValue === 'object' && newValue !== null) {\n            for (const childPath of childPaths) {\n              const relativePath = childPath.substring(path.length + 1);\n              const childValue = getNestedValue(editedItem, childPath);\n              if (childValue !== undefined) {\n                setNestedValue(newValue, relativePath, childValue);\n              }\n            }\n          }\n          setNestedValue(editedItem, path, newValue);\n        }\n      : null;\n\n    // Check if this field is the navigation target for scroll-to-line/region\n    // navigateTo.field is just 'code' but path might be 'content.code', so compare last segment\n    const fieldName = path.split('.').pop();\n    // Navigation target: explicit field match, OR symbol without field defaults to code/hob\n    const isNavigationTarget = navigateTo && (\n      navigateTo.field === fieldName ||\n      (navigateTo.symbol && !navigateTo.field && (fieldName === 'code' || fieldName === 'hob'))\n    );\n    // Render field - AWAIT in case it's async!\n    let fieldElement;\n    try {\n      fieldElement = await fieldView.render(value, {\n        mode: hint.mode || 'readonly',\n        onChange,\n        placeholder: hint.placeholder,\n        // Pass scroll params if this is the navigation target\n        scrollToRegion: isNavigationTarget ? navigateTo.region : null,\n        scrollToLines: isNavigationTarget ? navigateTo.lines : null,  // \"5\" or \"10-20\"\n        scrollToSymbol: isNavigationTarget ? navigateTo.symbol : null,\n        ...hint,\n        // Suppress inner label when collapsible (summary provides it)\n        label: hint.collapsible ? null : hint.label,\n        // Pass item context so field views can resolve cross-field references\n        item,\n        // Allow field views to read the current edited value (not stale closure)\n        getCurrentValue: isEditable ? () => getNestedValue(editedItem, path) : undefined,\n      }, api);\n    } catch (renderError) {\n      console.error('Error rendering field:', path, 'with view:', fieldViewName, renderError);\n      fieldElement = api.createElement('div');\n      fieldElement.style.cssText = 'color: var(--color-danger); font-size: 0.75rem;';\n      fieldElement.textContent = 'Error: ' + renderError.message;\n    }\n\n    // Key each field by path+mode so morphdom replaces (not patches) when mode changes.\n    // Without this, morphdom patches the old field DOM in place, keeping stale event\n    // handlers whose closures captured the old mode's state (e.g. onChange = null).\n    const fieldKey = `field-${path}-${hint.mode || 'readonly'}`;\n\n    // Skip empty field views (e.g. field-summary with no fields)\n    if (fieldElement.style.display === 'none') continue;\n\n    // Wrap in collapsible <details> if requested\n    if (hint.collapsible) {\n      const details = api.createElement('details');\n      details.setAttribute('data-sort-key', fieldKey);\n      const shouldOpen = hint.startCollapsed === 'ifEmpty' ? !!value : !hint.startCollapsed;\n      if (shouldOpen) details.setAttribute('open', '');\n      const summary = api.createElement('summary');\n      summary.textContent = hint.label || fieldName;\n      summary.style.cssText = 'cursor: pointer; font-size: 0.8125rem; font-weight: 500; color: var(--color-text-secondary); user-select: none; padding: 2px 0;';\n      details.appendChild(summary);\n      details.appendChild(fieldElement);\n      scrollArea.appendChild(details);\n    } else {\n      fieldElement.setAttribute('data-sort-key', fieldKey);\n      scrollArea.appendChild(fieldElement);\n    }\n\n    // Add divider after field if requested\n    if (hint.dividerAfter) {\n      const divider = api.createElement('hr');\n      divider.style.cssText = 'border: none; border-top: 2px solid var(--color-border); margin: 8px 0; flex-shrink: 0;';\n      scrollArea.appendChild(divider);\n    }\n  }\n\n  container.appendChild(scrollArea);\n\n  // Add save/cancel buttons if any field is editable (sticky at bottom)\n  if (hasEditableFields) {\n    const actions = api.createElement('div', { className: 'view-actions' });\n    actions.style.cssText = 'display: flex; gap: 10px; justify-content: flex-end; padding: 16px; border-top: 1px solid var(--color-border-light); background: var(--color-bg-surface-alt); position: sticky; bottom: 0;';\n\n    const cancelBtn = api.createElement('button', {\n      style: 'padding: 8px 16px; cursor: pointer;'\n    });\n    cancelBtn.textContent = 'Cancel';\n    cancelBtn.onclick = async () => {\n      await returnToDefaultView(item.id, api);\n    };\n    actions.appendChild(cancelBtn);\n\n    const saveBtn = api.createElement('button', {\n      style: 'padding: 8px 16px; cursor: pointer; background: var(--color-text-secondary); color: white; border: none; border-radius: var(--border-radius);'\n    });\n    saveBtn.textContent = 'Save';\n    saveBtn.onclick = async () => {\n      try {\n        await api.set(editedItem);\n        await api.rerenderItem(editedItem.id);\n      } catch (e) {\n        alert('Save failed: ' + e.message);\n      }\n    };\n    actions.appendChild(saveBtn);\n\n    const saveAndViewBtn = api.createElement('button', {\n      style: 'padding: 8px 16px; cursor: pointer; background: var(--color-primary); color: white; border: none; border-radius: var(--border-radius);'\n    });\n    saveAndViewBtn.textContent = 'Save & View';\n    saveAndViewBtn.onclick = async () => {\n      try {\n        await api.set(editedItem);\n        await returnToDefaultView(item.id, api);\n      } catch (e) {\n        alert('Save failed: ' + e.message);\n      }\n    };\n    actions.appendChild(saveAndViewBtn);\n\n    container.appendChild(actions);\n  }\n\n  return container;\n}\n// [END:render]\n\nexport { getNestedValue, setNestedValue };\n",
+    "_symbols": {
+      "getNavigateToFromURL": {
+        "name": "getNavigateToFromURL",
+        "line": 11,
+        "col": 0,
+        "endLine": 22,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "()"
+      },
+      "getNavigateToFromURL.params": {
+        "name": "params",
+        "line": 12,
+        "col": 8,
+        "endLine": 12,
+        "endCol": 60,
+        "kind": "variable",
+        "scope": "getNavigateToFromURL"
+      },
+      "getNavigateToFromURL.field": {
+        "name": "field",
+        "line": 17,
+        "col": 4,
+        "endLine": 17,
+        "endCol": 24,
+        "kind": "property",
+        "scope": "getNavigateToFromURL"
+      },
+      "getNavigateToFromURL.symbol": {
+        "name": "symbol",
+        "line": 20,
+        "col": 4,
+        "endLine": 20,
+        "endCol": 26,
+        "kind": "property",
+        "scope": "getNavigateToFromURL"
+      },
+      "getNavigateToFromURL.region": {
+        "name": "region",
+        "line": 18,
+        "col": 4,
+        "endLine": 18,
+        "endCol": 40,
+        "kind": "property",
+        "scope": "getNavigateToFromURL"
+      },
+      "getNavigateToFromURL.lines": {
+        "name": "lines",
+        "line": 19,
+        "col": 4,
+        "endLine": 19,
+        "endCol": 38,
+        "kind": "property",
+        "scope": "getNavigateToFromURL"
+      },
+      "getNestedValue": {
+        "name": "getNestedValue",
+        "line": 24,
+        "col": 0,
+        "endLine": 26,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(obj, path)"
+      },
+      "setNestedValue": {
+        "name": "setNestedValue",
+        "line": 28,
+        "col": 0,
+        "endLine": 36,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(obj, path, value)"
+      },
+      "setNestedValue.keys": {
+        "name": "keys",
+        "line": 29,
+        "col": 8,
+        "endLine": 29,
+        "endCol": 30,
+        "kind": "variable",
+        "scope": "setNestedValue"
+      },
+      "setNestedValue.lastKey": {
+        "name": "lastKey",
+        "line": 30,
+        "col": 8,
+        "endLine": 30,
+        "endCol": 28,
+        "kind": "variable",
+        "scope": "setNestedValue"
+      },
+      "setNestedValue.target": {
+        "name": "target",
+        "line": 31,
+        "col": 8,
+        "endLine": 34,
+        "endCol": 9,
+        "kind": "variable",
+        "scope": "setNestedValue"
+      },
+      "returnToDefaultView": {
+        "name": "returnToDefaultView",
+        "line": 40,
+        "col": 0,
+        "endLine": 65,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(itemId, api)"
+      },
+      "returnToDefaultView.restored": {
+        "name": "restored",
+        "line": 42,
+        "col": 8,
+        "endLine": 42,
+        "endCol": 56,
+        "kind": "variable",
+        "scope": "returnToDefaultView"
+      },
+      "returnToDefaultView.isViewportRoot": {
+        "name": "isViewportRoot",
+        "line": 47,
+        "col": 8,
+        "endLine": 47,
+        "endCol": 58,
+        "kind": "variable",
+        "scope": "returnToDefaultView"
+      },
+      "returnToDefaultView.renderingParentId": {
+        "name": "renderingParentId",
+        "line": 55,
+        "col": 10,
+        "endLine": 55,
+        "endCol": 72,
+        "kind": "variable",
+        "scope": "returnToDefaultView"
+      },
+      "returnToDefaultView.parent": {
+        "name": "parent",
+        "line": 56,
+        "col": 10,
+        "endLine": 58,
+        "endCol": 41,
+        "kind": "variable",
+        "scope": "returnToDefaultView"
+      },
+      "render": {
+        "name": "render",
+        "line": 69,
+        "col": 7,
+        "endLine": 268,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(item, api)"
+      },
+      "render.viewId": {
+        "name": "viewId",
+        "line": 71,
+        "col": 8,
+        "endLine": 71,
+        "endCol": 32,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.viewSpec": {
+        "name": "viewSpec",
+        "line": 72,
+        "col": 8,
+        "endLine": 72,
+        "endCol": 56,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.container": {
+        "name": "container",
+        "line": 75,
+        "col": 8,
+        "endLine": 75,
+        "endCol": 75,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.scrollArea": {
+        "name": "scrollArea",
+        "line": 79,
+        "col": 8,
+        "endLine": 79,
+        "endCol": 84,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.editedItem": {
+        "name": "editedItem",
+        "line": 83,
+        "col": 6,
+        "endLine": 83,
+        "endCol": 51,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.hasEditableFields": {
+        "name": "hasEditableFields",
+        "line": 86,
+        "col": 6,
+        "endLine": 86,
+        "endCol": 31,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.uiHints": {
+        "name": "uiHints",
+        "line": 89,
+        "col": 8,
+        "endLine": 89,
+        "endCol": 51,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.navigateTo": {
+        "name": "navigateTo",
+        "line": 93,
+        "col": 8,
+        "endLine": 93,
+        "endCol": 95,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.value": {
+        "name": "value",
+        "line": 99,
+        "col": 10,
+        "endLine": 99,
+        "endCol": 44,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.defaultFieldView": {
+        "name": "defaultFieldView",
+        "line": 106,
+        "col": 10,
+        "endLine": 106,
+        "endCol": 81,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.fieldViewName": {
+        "name": "fieldViewName",
+        "line": 107,
+        "col": 10,
+        "endLine": 107,
+        "endCol": 79,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.fieldView": {
+        "name": "fieldView",
+        "line": 108,
+        "col": 8,
+        "endLine": 108,
+        "endCol": 17,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.render": {
+        "name": "render",
+        "line": 119,
+        "col": 10,
+        "endLine": 123,
+        "endCol": 11,
+        "kind": "property-function",
+        "scope": "render",
+        "signature": "(val, opts, api)"
+      },
+      "render.render.span": {
+        "name": "span",
+        "line": 120,
+        "col": 18,
+        "endLine": 120,
+        "endCol": 50,
+        "kind": "variable",
+        "scope": "render.render"
+      },
+      "render.isEditable": {
+        "name": "isEditable",
+        "line": 129,
+        "col": 10,
+        "endLine": 129,
+        "endCol": 47,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.childPaths": {
+        "name": "childPaths",
+        "line": 135,
+        "col": 10,
+        "endLine": 137,
+        "endCol": 10,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.onChange": {
+        "name": "onChange",
+        "line": 166,
+        "col": 8,
+        "endLine": 166,
+        "endCol": 16,
+        "kind": "property",
+        "scope": "render"
+      },
+      "render.fieldName": {
+        "name": "fieldName",
+        "line": 155,
+        "col": 10,
+        "endLine": 155,
+        "endCol": 43,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.isNavigationTarget": {
+        "name": "isNavigationTarget",
+        "line": 157,
+        "col": 10,
+        "endLine": 160,
+        "endCol": 5,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.fieldElement": {
+        "name": "fieldElement",
+        "line": 162,
+        "col": 8,
+        "endLine": 162,
+        "endCol": 20,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.mode": {
+        "name": "mode",
+        "line": 165,
+        "col": 8,
+        "endLine": 165,
+        "endCol": 37,
+        "kind": "property",
+        "scope": "render"
+      },
+      "render.placeholder": {
+        "name": "placeholder",
+        "line": 167,
+        "col": 8,
+        "endLine": 167,
+        "endCol": 37,
+        "kind": "property",
+        "scope": "render"
+      },
+      "render.scrollToRegion": {
+        "name": "scrollToRegion",
+        "line": 169,
+        "col": 8,
+        "endLine": 169,
+        "endCol": 69,
+        "kind": "property",
+        "scope": "render"
+      },
+      "render.scrollToLines": {
+        "name": "scrollToLines",
+        "line": 170,
+        "col": 8,
+        "endLine": 170,
+        "endCol": 67,
+        "kind": "property",
+        "scope": "render"
+      },
+      "render.scrollToSymbol": {
+        "name": "scrollToSymbol",
+        "line": 171,
+        "col": 8,
+        "endLine": 171,
+        "endCol": 69,
+        "kind": "property",
+        "scope": "render"
+      },
+      "render.label": {
+        "name": "label",
+        "line": 174,
+        "col": 8,
+        "endLine": 174,
+        "endCol": 51,
+        "kind": "property",
+        "scope": "render"
+      },
+      "render.item": {
+        "name": "item",
+        "line": 176,
+        "col": 8,
+        "endLine": 176,
+        "endCol": 12,
+        "kind": "property",
+        "scope": "render"
+      },
+      "render.getCurrentValue": {
+        "name": "getCurrentValue",
+        "line": 178,
+        "col": 8,
+        "endLine": 178,
+        "endCol": 88,
+        "kind": "property",
+        "scope": "render"
+      },
+      "render.fieldKey": {
+        "name": "fieldKey",
+        "line": 190,
+        "col": 10,
+        "endLine": 190,
+        "endCol": 63,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.details": {
+        "name": "details",
+        "line": 197,
+        "col": 12,
+        "endLine": 197,
+        "endCol": 50,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.shouldOpen": {
+        "name": "shouldOpen",
+        "line": 199,
+        "col": 12,
+        "endLine": 199,
+        "endCol": 91,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.summary": {
+        "name": "summary",
+        "line": 201,
+        "col": 12,
+        "endLine": 201,
+        "endCol": 50,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.divider": {
+        "name": "divider",
+        "line": 214,
+        "col": 12,
+        "endLine": 214,
+        "endCol": 45,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.actions": {
+        "name": "actions",
+        "line": 224,
+        "col": 10,
+        "endLine": 224,
+        "endCol": 75,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.cancelBtn": {
+        "name": "cancelBtn",
+        "line": 227,
+        "col": 10,
+        "endLine": 229,
+        "endCol": 6,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.saveBtn": {
+        "name": "saveBtn",
+        "line": 236,
+        "col": 10,
+        "endLine": 238,
+        "endCol": 6,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.saveAndViewBtn": {
+        "name": "saveAndViewBtn",
+        "line": 250,
+        "col": 10,
+        "endLine": 252,
+        "endCol": 6,
+        "kind": "variable",
+        "scope": "render"
+      }
+    }
+  },
+  "attachments": []
+}

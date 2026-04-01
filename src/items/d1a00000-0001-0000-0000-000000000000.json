@@ -1,1 +1,776 @@
-{"id": "d1a00000-0001-0000-0000-000000000000", "name": "diagram-lib", "type": "66666666-0000-0000-0000-000000000000", "created": 1741219200000, "modified": 1773838783588, "content": {"description": [":doc", [":p", {"s": "Library for auto-generating SVG diagrams from item metadata. Returns DOM nodes for use with functional transclusion."}], [":h2", {"s": "Usage"}], [":p", {"s": "Embed in any document:"}], [":p", [":code", {"s": "(transclusion-chrome (call-export @d1a00000-0001-0000-0000-000000000000 \"eventFlow\" api) :source @d1a00000-0001-0000-0000-000000000000 :symbol \"eventFlow\")"}]], [":h2", {"s": "Exports"}], [":ul", [":li", [":p", [":code", {"s": "eventFlow(api, params)"}], {"s": " — Declarative event flow diagram showing all "}, [":code", {"s": "content.watches"}], {"s": " wiring. Events on the left, subscriber items on the right, curved paths with filter annotations. Click any box to navigate to that item."}]]], [":h2", {"s": "See Also"}], [":ul", [":li", [":p", [":item-ref", {"s": "c0c0c0c0-005a-0000-0000-000000000000"}, {"s": "Auto-Generated Diagrams"}], {"s": " — Idea item with full design notes"}]], [":li", [":p", [":item-ref", {"s": "c0c0c0c0-0006-0000-0000-000000000000"}, {"s": "Event System"}], {"s": " — Declarative watches"}]], [":li", [":p", [":item-ref", {"s": "c0c0c0c0-0035-0000-0000-000000000000"}, {"s": "Transclusion"}], {"s": " — Functional transclusion ("}, [":code", {"s": "?call="}], {"s": ")"}]]]], "code": "// diagram-lib — Auto-generated SVG diagrams from item metadata\n// See: item://c0c0c0c0-005a-0000-0000-000000000000\n\n// [BEGIN:eventFlow]\n/** Render declarative event flow as an interactive SVG diagram.\n * Usage in markdown: ![](item://diagram-lib?call=eventFlow)\n * @param {Object} api - Hobson API\n * @param {Object} params - URL query params (unused)\n * @returns {Element} SVG element\n */\nexport async function eventFlow(api, params) {\n  const allItems = await api.getAll();\n\n  // Name lookup for resolving GUIDs to human names\n  const nameOf = new Map();\n  for (const it of allItems) nameOf.set(it.id, it.name || '');\n\n  // Collect declarative watches → edges\n  const edges = [];\n  const eventSet = new Set();\n  const subs = new Map(); // subscriber id → name\n\n  for (const it of allItems) {\n    const watches = it.watches || it.content?.watches;\n    if (!watches?.length) continue;\n    for (const w of watches) {\n      if (!w.event) continue;\n      eventSet.add(w.event);\n      subs.set(it.id, it.name || it.id.slice(0, 12));\n      const filters = [];\n      if (w.type) filters.push('type=' + shortName(nameOf, w.type));\n      if (w.typeExtends) filters.push('ext=' + shortName(nameOf, w.typeExtends));\n      if (w.id) filters.push('id=' + shortName(nameOf, w.id));\n      // Derive handler name: \"item:deleted\" → \"onItemDeleted\"\n      const handlerName = eventToHandlerName(nameOf.get(w.event) || '');\n      edges.push({ event: w.event, sub: it.id, filters, handlerName });\n    }\n  }\n\n  if (!edges.length) return textEl('No declarative watches found.');\n\n  // Sort events by GUID (encodes category-then-specificity)\n  const events = [...eventSet].sort();\n\n  // Sort subscribers: group by primary event, then alphabetically\n  const primary = new Map();       // sub id → primary event id\n  const primaryHandler = new Map(); // sub id → primary handler name\n  for (const e of edges) {\n    if (!primary.has(e.sub)) {\n      primary.set(e.sub, e.event);\n      primaryHandler.set(e.sub, e.handlerName);\n    }\n  }\n  const subList = [...subs.keys()].sort((a, b) => {\n    const d = events.indexOf(primary.get(a)) - events.indexOf(primary.get(b));\n    return d || (subs.get(a) || '').localeCompare(subs.get(b) || '');\n  });\n\n  // --- Layout ---\n  const P = 24;       // padding\n  const BH = 28;      // box height\n  const BR = 5;       // border radius\n  const VG = 8;       // vertical gap\n  const EW = 210;     // event box width\n  const SW = 210;     // subscriber box width\n  const MID = 200;    // gap between columns (for curves + filter labels)\n  const HEADER = 20;  // space for column labels\n  const RX = P + EW + MID;  // right column x\n  const W = RX + SW + P;    // total width\n\n  const nE = events.length;\n  const nS = subList.length;\n  const span = Math.max(nE, nS) * (BH + VG) - VG;\n  const eStep = nE > 1 ? (span - BH) / (nE - 1) : 0;\n  const sStep = nS > 1 ? (span - BH) / (nS - 1) : 0;\n  const topY = P + HEADER;\n  const ey = i => topY + i * eStep;\n  const sy = i => topY + i * sStep;\n  const H = topY + span + P;\n\n  const evtY = new Map();\n  events.forEach((id, i) => evtY.set(id, ey(i)));\n  const subY = new Map();\n  subList.forEach((id, i) => subY.set(id, sy(i)));\n\n  // --- Colors: solid boxes with white text (works on any background) ---\n  const cat = id => {\n    if (id.startsWith('e0e00000-0001')) return { bg: '#3b82f6', ln: '#60a5fa' }; // item events – blue\n    if (id.startsWith('e0e00000-0002')) return { bg: '#d97706', ln: '#fbbf24' }; // system events – amber\n    if (id.startsWith('e0e00000-0003')) return { bg: '#059669', ln: '#34d399' }; // viewport events – green\n    return { bg: '#6b7280', ln: '#9ca3af' };\n  };\n\n  // --- Build SVG ---\n  const o = [];\n  o.push(`<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 ${W} ${H}\" style=\"font-family:system-ui,sans-serif;font-size:11px;max-width:100%\">`);\n  o.push(`<style>g[data-id]:hover rect{filter:brightness(1.3)}g[data-id]{cursor:pointer}path[data-sub]{cursor:pointer}path[data-sub]:hover+path{opacity:0.9;stroke-width:2.5}</style>`);\n\n  // Column labels\n  o.push(`<text x=\"${P + EW / 2}\" y=\"${P + 10}\" text-anchor=\"middle\" fill=\"#64748b\" font-size=\"10\" font-weight=\"600\" letter-spacing=\"0.05em\">EVENTS</text>`);\n  o.push(`<text x=\"${RX + SW / 2}\" y=\"${P + 10}\" text-anchor=\"middle\" fill=\"#64748b\" font-size=\"10\" font-weight=\"600\" letter-spacing=\"0.05em\">WATCHERS</text>`);\n\n  // Edges (drawn first so boxes render on top)\n  // Each edge is clickable: opens the subscriber scrolled to its handler\n  for (const e of edges) {\n    const y1 = evtY.get(e.event) + BH / 2;\n    const y2 = subY.get(e.sub) + BH / 2;\n    const x1 = P + EW;\n    const x2 = RX;\n    const c = cat(e.event);\n    // Invisible wider hit area for the path\n    o.push(`<path data-sub=\"${e.sub}\" data-handler=\"${e.handlerName}\" d=\"M${x1} ${y1} C${x1 + MID * 0.4} ${y1} ${x2 - MID * 0.4} ${y2} ${x2} ${y2}\" fill=\"none\" stroke=\"transparent\" stroke-width=\"12\" style=\"cursor:pointer\"/>`);\n    // Visible path\n    o.push(`<path d=\"M${x1} ${y1} C${x1 + MID * 0.4} ${y1} ${x2 - MID * 0.4} ${y2} ${x2} ${y2}\" fill=\"none\" stroke=\"${c.ln}\" stroke-width=\"1.5\" opacity=\"0.4\" pointer-events=\"none\"/>`);\n\n    // Filter annotation along the curve\n    if (e.filters.length) {\n      const mx = (x1 + x2) / 2;\n      const my = (y1 + y2) / 2;\n      o.push(`<text x=\"${mx}\" y=\"${my - 4}\" text-anchor=\"middle\" font-size=\"9\" fill=\"#94a3b8\" pointer-events=\"none\">${esc(e.filters.join(', '))}</text>`);\n    }\n  }\n\n  // Event boxes (left column)\n  events.forEach(id => {\n    const y = evtY.get(id);\n    const c = cat(id);\n    const name = nameOf.get(id) || id.slice(0, 12);\n    o.push(`<g data-id=\"${id}\">`);\n    o.push(`<rect x=\"${P}\" y=\"${y}\" width=\"${EW}\" height=\"${BH}\" rx=\"${BR}\" fill=\"${c.bg}\"/>`);\n    o.push(`<text x=\"${P + EW / 2}\" y=\"${y + BH / 2 + 4}\" text-anchor=\"middle\" fill=\"#fff\" font-weight=\"600\">${esc(name)}</text>`);\n    o.push(`</g>`);\n  });\n\n  // Subscriber boxes (right column)\n  subList.forEach(id => {\n    const y = subY.get(id);\n    const handler = primaryHandler.get(id) || '';\n    o.push(`<g data-id=\"${id}\" data-handler=\"${handler}\">`);\n    o.push(`<rect x=\"${RX}\" y=\"${y}\" width=\"${SW}\" height=\"${BH}\" rx=\"${BR}\" fill=\"#475569\"/>`);\n    o.push(`<text x=\"${RX + SW / 2}\" y=\"${y + BH / 2 + 4}\" text-anchor=\"middle\" fill=\"#fff\">${esc(subs.get(id))}</text>`);\n    o.push(`</g>`);\n  });\n\n  o.push('</svg>');\n\n  // Parse to DOM and add interactivity\n  const div = document.createElement('div');\n  div.innerHTML = o.join('\\n');\n  const svgEl = div.firstElementChild;\n\n  // Click boxes: open item scrolled to handler symbol\n  for (const g of svgEl.querySelectorAll('g[data-id]')) {\n    g.addEventListener('click', (e) => {\n      const handler = g.dataset.handler;\n      if (handler) {\n        api.openItem(e, { id: g.dataset.id, view: { navigateTo: { symbol: handler } } });\n      } else {\n        api.openItem(e, g.dataset.id);\n      }\n    });\n  }\n\n  // Click edges: open subscriber scrolled to that specific handler\n  for (const path of svgEl.querySelectorAll('path[data-sub]')) {\n    path.addEventListener('click', (e) => {\n      const handler = path.dataset.handler;\n      if (handler) {\n        api.openItem(e, { id: path.dataset.sub, view: { navigateTo: { symbol: handler } } });\n      } else {\n        api.openItem(e, path.dataset.sub);\n      }\n    });\n  }\n\n  return svgEl;\n}\n// [END:eventFlow]\n\n// \"item:deleted\" → \"onItemDeleted\", \"kernel:boot-complete\" → \"onKernelBootComplete\"\nfunction eventToHandlerName(eventName) {\n  if (!eventName) return '';\n  const parts = eventName.split(/[:-]/);\n  return 'on' + parts.map(p => p.charAt(0).toUpperCase() + p.slice(1).toLowerCase()).join('');\n}\n\nfunction shortName(nameOf, id) {\n  return nameOf.get(id) || id.slice(0, 8);\n}\n\nfunction textEl(msg) {\n  const p = document.createElement('p');\n  p.textContent = msg;\n  p.style.color = '#94a3b8';\n  return p;\n}\n\nfunction esc(s) {\n  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\n}\n", "_symbols": {"eventFlow": {"name": "eventFlow", "line": 11, "col": 7, "endLine": 177, "endCol": 1, "kind": "function", "scope": null, "signature": "(api, params)", "description": "Render declarative event flow as an interactive SVG diagram.\nUsage in markdown: ![](item://diagram-lib?call=eventFlow)", "params": [{"name": "api", "type": "Object", "description": "Hobson API"}, {"name": "params", "type": "Object", "description": "URL query params (unused)"}], "returns": {"type": "Element", "description": "SVG element"}}, "eventFlow.allItems": {"name": "allItems", "line": 12, "col": 8, "endLine": 12, "endCol": 37, "kind": "variable", "scope": "eventFlow"}, "eventFlow.nameOf": {"name": "nameOf", "line": 15, "col": 8, "endLine": 15, "endCol": 26, "kind": "variable", "scope": "eventFlow"}, "eventFlow.it": {"name": "it", "line": 23, "col": 13, "endLine": 23, "endCol": 15, "kind": "variable", "scope": "eventFlow"}, "eventFlow.edges": {"name": "edges", "line": 19, "col": 8, "endLine": 19, "endCol": 18, "kind": "variable", "scope": "eventFlow"}, "eventFlow.eventSet": {"name": "eventSet", "line": 20, "col": 8, "endLine": 20, "endCol": 28, "kind": "variable", "scope": "eventFlow"}, "eventFlow.subs": {"name": "subs", "line": 21, "col": 8, "endLine": 21, "endCol": 24, "kind": "variable", "scope": "eventFlow"}, "eventFlow.watches": {"name": "watches", "line": 24, "col": 10, "endLine": 24, "endCol": 53, "kind": "variable", "scope": "eventFlow"}, "eventFlow.w": {"name": "w", "line": 26, "col": 15, "endLine": 26, "endCol": 16, "kind": "variable", "scope": "eventFlow"}, "eventFlow.filters": {"name": "filters", "line": 36, "col": 47, "endLine": 36, "endCol": 54, "kind": "property", "scope": "eventFlow"}, "eventFlow.handlerName": {"name": "handlerName", "line": 36, "col": 56, "endLine": 36, "endCol": 67, "kind": "property", "scope": "eventFlow"}, "eventFlow.event": {"name": "event", "line": 36, "col": 19, "endLine": 36, "endCol": 33, "kind": "property", "scope": "eventFlow"}, "eventFlow.sub": {"name": "sub", "line": 36, "col": 35, "endLine": 36, "endCol": 45, "kind": "property", "scope": "eventFlow"}, "eventFlow.events": {"name": "events", "line": 43, "col": 8, "endLine": 43, "endCol": 37, "kind": "variable", "scope": "eventFlow"}, "eventFlow.primary": {"name": "primary", "line": 46, "col": 8, "endLine": 46, "endCol": 27, "kind": "variable", "scope": "eventFlow"}, "eventFlow.primaryHandler": {"name": "primaryHandler", "line": 47, "col": 8, "endLine": 47, "endCol": 34, "kind": "variable", "scope": "eventFlow"}, "eventFlow.e": {"name": "e", "line": 105, "col": 13, "endLine": 105, "endCol": 14, "kind": "variable", "scope": "eventFlow"}, "eventFlow.subList": {"name": "subList", "line": 54, "col": 8, "endLine": 57, "endCol": 4, "kind": "variable", "scope": "eventFlow"}, "eventFlow.P": {"name": "P", "line": 60, "col": 8, "endLine": 60, "endCol": 14, "kind": "variable", "scope": "eventFlow"}, "eventFlow.BH": {"name": "BH", "line": 61, "col": 8, "endLine": 61, "endCol": 15, "kind": "variable", "scope": "eventFlow"}, "eventFlow.BR": {"name": "BR", "line": 62, "col": 8, "endLine": 62, "endCol": 14, "kind": "variable", "scope": "eventFlow"}, "eventFlow.VG": {"name": "VG", "line": 63, "col": 8, "endLine": 63, "endCol": 14, "kind": "variable", "scope": "eventFlow"}, "eventFlow.EW": {"name": "EW", "line": 64, "col": 8, "endLine": 64, "endCol": 16, "kind": "variable", "scope": "eventFlow"}, "eventFlow.SW": {"name": "SW", "line": 65, "col": 8, "endLine": 65, "endCol": 16, "kind": "variable", "scope": "eventFlow"}, "eventFlow.MID": {"name": "MID", "line": 66, "col": 8, "endLine": 66, "endCol": 17, "kind": "variable", "scope": "eventFlow"}, "eventFlow.HEADER": {"name": "HEADER", "line": 67, "col": 8, "endLine": 67, "endCol": 19, "kind": "variable", "scope": "eventFlow"}, "eventFlow.RX": {"name": "RX", "line": 68, "col": 8, "endLine": 68, "endCol": 25, "kind": "variable", "scope": "eventFlow"}, "eventFlow.W": {"name": "W", "line": 69, "col": 8, "endLine": 69, "endCol": 23, "kind": "variable", "scope": "eventFlow"}, "eventFlow.nE": {"name": "nE", "line": 71, "col": 8, "endLine": 71, "endCol": 26, "kind": "variable", "scope": "eventFlow"}, "eventFlow.nS": {"name": "nS", "line": 72, "col": 8, "endLine": 72, "endCol": 27, "kind": "variable", "scope": "eventFlow"}, "eventFlow.span": {"name": "span", "line": 73, "col": 8, "endLine": 73, "endCol": 48, "kind": "variable", "scope": "eventFlow"}, "eventFlow.eStep": {"name": "eStep", "line": 74, "col": 8, "endLine": 74, "endCol": 51, "kind": "variable", "scope": "eventFlow"}, "eventFlow.sStep": {"name": "sStep", "line": 75, "col": 8, "endLine": 75, "endCol": 51, "kind": "variable", "scope": "eventFlow"}, "eventFlow.topY": {"name": "topY", "line": 76, "col": 8, "endLine": 76, "endCol": 25, "kind": "variable", "scope": "eventFlow"}, "eventFlow.ey": {"name": "ey", "line": 77, "col": 8, "endLine": 77, "endCol": 34, "kind": "function", "scope": "eventFlow", "signature": "(i)"}, "eventFlow.sy": {"name": "sy", "line": 78, "col": 8, "endLine": 78, "endCol": 34, "kind": "function", "scope": "eventFlow", "signature": "(i)"}, "eventFlow.H": {"name": "H", "line": 79, "col": 8, "endLine": 79, "endCol": 27, "kind": "variable", "scope": "eventFlow"}, "eventFlow.evtY": {"name": "evtY", "line": 81, "col": 8, "endLine": 81, "endCol": 24, "kind": "variable", "scope": "eventFlow"}, "eventFlow.subY": {"name": "subY", "line": 83, "col": 8, "endLine": 83, "endCol": 24, "kind": "variable", "scope": "eventFlow"}, "eventFlow.cat": {"name": "cat", "line": 87, "col": 8, "endLine": 92, "endCol": 3, "kind": "function", "scope": "eventFlow", "signature": "(id)"}, "cat.bg": {"name": "bg", "line": 91, "col": 13, "endLine": 91, "endCol": 26, "kind": "property", "scope": "cat"}, "cat.ln": {"name": "ln", "line": 91, "col": 28, "endLine": 91, "endCol": 41, "kind": "property", "scope": "cat"}, "eventFlow.o": {"name": "o", "line": 95, "col": 8, "endLine": 95, "endCol": 14, "kind": "variable", "scope": "eventFlow"}, "eventFlow.y1": {"name": "y1", "line": 106, "col": 10, "endLine": 106, "endCol": 41, "kind": "variable", "scope": "eventFlow"}, "eventFlow.y2": {"name": "y2", "line": 107, "col": 10, "endLine": 107, "endCol": 39, "kind": "variable", "scope": "eventFlow"}, "eventFlow.x1": {"name": "x1", "line": 108, "col": 10, "endLine": 108, "endCol": 21, "kind": "variable", "scope": "eventFlow"}, "eventFlow.x2": {"name": "x2", "line": 109, "col": 10, "endLine": 109, "endCol": 17, "kind": "variable", "scope": "eventFlow"}, "eventFlow.c": {"name": "c", "line": 127, "col": 10, "endLine": 127, "endCol": 21, "kind": "variable", "scope": "eventFlow"}, "eventFlow.mx": {"name": "mx", "line": 118, "col": 12, "endLine": 118, "endCol": 30, "kind": "variable", "scope": "eventFlow"}, "eventFlow.my": {"name": "my", "line": 119, "col": 12, "endLine": 119, "endCol": 30, "kind": "variable", "scope": "eventFlow"}, "eventFlow.y": {"name": "y", "line": 137, "col": 10, "endLine": 137, "endCol": 26, "kind": "variable", "scope": "eventFlow"}, "eventFlow.name": {"name": "name", "line": 128, "col": 10, "endLine": 128, "endCol": 50, "kind": "variable", "scope": "eventFlow"}, "eventFlow.handler": {"name": "handler", "line": 167, "col": 12, "endLine": 167, "endCol": 42, "kind": "variable", "scope": "eventFlow"}, "eventFlow.div": {"name": "div", "line": 148, "col": 8, "endLine": 148, "endCol": 43, "kind": "variable", "scope": "eventFlow"}, "eventFlow.svgEl": {"name": "svgEl", "line": 150, "col": 8, "endLine": 150, "endCol": 37, "kind": "variable", "scope": "eventFlow"}, "eventFlow.g": {"name": "g", "line": 153, "col": 13, "endLine": 153, "endCol": 14, "kind": "variable", "scope": "eventFlow"}, "eventFlow.id": {"name": "id", "line": 169, "col": 26, "endLine": 169, "endCol": 46, "kind": "property", "scope": "eventFlow"}, "eventFlow.view": {"name": "view", "line": 169, "col": 48, "endLine": 169, "endCol": 89, "kind": "property", "scope": "eventFlow"}, "eventFlow.view.navigateTo": {"name": "navigateTo", "line": 169, "col": 56, "endLine": 169, "endCol": 87, "kind": "property", "scope": "eventFlow.view"}, "eventFlow.view.navigateTo.symbol": {"name": "symbol", "line": 169, "col": 70, "endLine": 169, "endCol": 85, "kind": "property", "scope": "eventFlow.view.navigateTo"}, "eventFlow.path": {"name": "path", "line": 165, "col": 13, "endLine": 165, "endCol": 17, "kind": "variable", "scope": "eventFlow"}, "eventToHandlerName": {"name": "eventToHandlerName", "line": 181, "col": 0, "endLine": 185, "endCol": 1, "kind": "function", "scope": null, "signature": "(eventName)"}, "eventToHandlerName.parts": {"name": "parts", "line": 183, "col": 8, "endLine": 183, "endCol": 39, "kind": "variable", "scope": "eventToHandlerName"}, "shortName": {"name": "shortName", "line": 187, "col": 0, "endLine": 189, "endCol": 1, "kind": "function", "scope": null, "signature": "(nameOf, id)"}, "textEl": {"name": "textEl", "line": 191, "col": 0, "endLine": 196, "endCol": 1, "kind": "function", "scope": null, "signature": "(msg)"}, "textEl.p": {"name": "p", "line": 192, "col": 8, "endLine": 192, "endCol": 39, "kind": "variable", "scope": "textEl"}, "esc": {"name": "esc", "line": 198, "col": 0, "endLine": 200, "endCol": 1, "kind": "function", "scope": null, "signature": "(s)"}}}, "attachments": []}
+{
+  "id": "d1a00000-0001-0000-0000-000000000000",
+  "name": "diagram-lib",
+  "type": "66666666-0000-0000-0000-000000000000",
+  "created": 1741219200000,
+  "modified": 1773838783588,
+  "content": {
+    "description": [
+      ":doc",
+      [
+        ":p",
+        {
+          "s": "Library for auto-generating SVG diagrams from item metadata. Returns DOM nodes for use with functional transclusion."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Usage"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Embed in any document:"
+        }
+      ],
+      [
+        ":p",
+        [
+          ":code",
+          {
+            "s": "(transclusion-chrome (call-export @d1a00000-0001-0000-0000-000000000000 \"eventFlow\" api) :source @d1a00000-0001-0000-0000-000000000000 :symbol \"eventFlow\")"
+          }
+        ]
+      ],
+      [
+        ":h2",
+        {
+          "s": "Exports"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":code",
+              {
+                "s": "eventFlow(api, params)"
+              }
+            ],
+            {
+              "s": " — Declarative event flow diagram showing all "
+            },
+            [
+              ":code",
+              {
+                "s": "content.watches"
+              }
+            ],
+            {
+              "s": " wiring. Events on the left, subscriber items on the right, curved paths with filter annotations. Click any box to navigate to that item."
+            }
+          ]
+        ]
+      ],
+      [
+        ":h2",
+        {
+          "s": "See Also"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":item-ref",
+              {
+                "s": "c0c0c0c0-005a-0000-0000-000000000000"
+              },
+              {
+                "s": "Auto-Generated Diagrams"
+              }
+            ],
+            {
+              "s": " — Idea item with full design notes"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":item-ref",
+              {
+                "s": "c0c0c0c0-0006-0000-0000-000000000000"
+              },
+              {
+                "s": "Event System"
+              }
+            ],
+            {
+              "s": " — Declarative watches"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":item-ref",
+              {
+                "s": "c0c0c0c0-0035-0000-0000-000000000000"
+              },
+              {
+                "s": "Transclusion"
+              }
+            ],
+            {
+              "s": " — Functional transclusion ("
+            },
+            [
+              ":code",
+              {
+                "s": "?call="
+              }
+            ],
+            {
+              "s": ")"
+            }
+          ]
+        ]
+      ]
+    ],
+    "code": "// diagram-lib — Auto-generated SVG diagrams from item metadata\n// See: item://c0c0c0c0-005a-0000-0000-000000000000\n\n// [BEGIN:eventFlow]\n/** Render declarative event flow as an interactive SVG diagram.\n * Usage in markdown: ![](item://diagram-lib?call=eventFlow)\n * @param {Object} api - Hobson API\n * @param {Object} params - URL query params (unused)\n * @returns {Element} SVG element\n */\nexport async function eventFlow(api, params) {\n  const allItems = await api.getAll();\n\n  // Name lookup for resolving GUIDs to human names\n  const nameOf = new Map();\n  for (const it of allItems) nameOf.set(it.id, it.name || '');\n\n  // Collect declarative watches → edges\n  const edges = [];\n  const eventSet = new Set();\n  const subs = new Map(); // subscriber id → name\n\n  for (const it of allItems) {\n    const watches = it.watches || it.content?.watches;\n    if (!watches?.length) continue;\n    for (const w of watches) {\n      if (!w.event) continue;\n      eventSet.add(w.event);\n      subs.set(it.id, it.name || it.id.slice(0, 12));\n      const filters = [];\n      if (w.type) filters.push('type=' + shortName(nameOf, w.type));\n      if (w.typeExtends) filters.push('ext=' + shortName(nameOf, w.typeExtends));\n      if (w.id) filters.push('id=' + shortName(nameOf, w.id));\n      // Derive handler name: \"item:deleted\" → \"onItemDeleted\"\n      const handlerName = eventToHandlerName(nameOf.get(w.event) || '');\n      edges.push({ event: w.event, sub: it.id, filters, handlerName });\n    }\n  }\n\n  if (!edges.length) return textEl('No declarative watches found.');\n\n  // Sort events by GUID (encodes category-then-specificity)\n  const events = [...eventSet].sort();\n\n  // Sort subscribers: group by primary event, then alphabetically\n  const primary = new Map();       // sub id → primary event id\n  const primaryHandler = new Map(); // sub id → primary handler name\n  for (const e of edges) {\n    if (!primary.has(e.sub)) {\n      primary.set(e.sub, e.event);\n      primaryHandler.set(e.sub, e.handlerName);\n    }\n  }\n  const subList = [...subs.keys()].sort((a, b) => {\n    const d = events.indexOf(primary.get(a)) - events.indexOf(primary.get(b));\n    return d || (subs.get(a) || '').localeCompare(subs.get(b) || '');\n  });\n\n  // --- Layout ---\n  const P = 24;       // padding\n  const BH = 28;      // box height\n  const BR = 5;       // border radius\n  const VG = 8;       // vertical gap\n  const EW = 210;     // event box width\n  const SW = 210;     // subscriber box width\n  const MID = 200;    // gap between columns (for curves + filter labels)\n  const HEADER = 20;  // space for column labels\n  const RX = P + EW + MID;  // right column x\n  const W = RX + SW + P;    // total width\n\n  const nE = events.length;\n  const nS = subList.length;\n  const span = Math.max(nE, nS) * (BH + VG) - VG;\n  const eStep = nE > 1 ? (span - BH) / (nE - 1) : 0;\n  const sStep = nS > 1 ? (span - BH) / (nS - 1) : 0;\n  const topY = P + HEADER;\n  const ey = i => topY + i * eStep;\n  const sy = i => topY + i * sStep;\n  const H = topY + span + P;\n\n  const evtY = new Map();\n  events.forEach((id, i) => evtY.set(id, ey(i)));\n  const subY = new Map();\n  subList.forEach((id, i) => subY.set(id, sy(i)));\n\n  // --- Colors: solid boxes with white text (works on any background) ---\n  const cat = id => {\n    if (id.startsWith('e0e00000-0001')) return { bg: '#3b82f6', ln: '#60a5fa' }; // item events – blue\n    if (id.startsWith('e0e00000-0002')) return { bg: '#d97706', ln: '#fbbf24' }; // system events – amber\n    if (id.startsWith('e0e00000-0003')) return { bg: '#059669', ln: '#34d399' }; // viewport events – green\n    return { bg: '#6b7280', ln: '#9ca3af' };\n  };\n\n  // --- Build SVG ---\n  const o = [];\n  o.push(`<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 ${W} ${H}\" style=\"font-family:system-ui,sans-serif;font-size:11px;max-width:100%\">`);\n  o.push(`<style>g[data-id]:hover rect{filter:brightness(1.3)}g[data-id]{cursor:pointer}path[data-sub]{cursor:pointer}path[data-sub]:hover+path{opacity:0.9;stroke-width:2.5}</style>`);\n\n  // Column labels\n  o.push(`<text x=\"${P + EW / 2}\" y=\"${P + 10}\" text-anchor=\"middle\" fill=\"#64748b\" font-size=\"10\" font-weight=\"600\" letter-spacing=\"0.05em\">EVENTS</text>`);\n  o.push(`<text x=\"${RX + SW / 2}\" y=\"${P + 10}\" text-anchor=\"middle\" fill=\"#64748b\" font-size=\"10\" font-weight=\"600\" letter-spacing=\"0.05em\">WATCHERS</text>`);\n\n  // Edges (drawn first so boxes render on top)\n  // Each edge is clickable: opens the subscriber scrolled to its handler\n  for (const e of edges) {\n    const y1 = evtY.get(e.event) + BH / 2;\n    const y2 = subY.get(e.sub) + BH / 2;\n    const x1 = P + EW;\n    const x2 = RX;\n    const c = cat(e.event);\n    // Invisible wider hit area for the path\n    o.push(`<path data-sub=\"${e.sub}\" data-handler=\"${e.handlerName}\" d=\"M${x1} ${y1} C${x1 + MID * 0.4} ${y1} ${x2 - MID * 0.4} ${y2} ${x2} ${y2}\" fill=\"none\" stroke=\"transparent\" stroke-width=\"12\" style=\"cursor:pointer\"/>`);\n    // Visible path\n    o.push(`<path d=\"M${x1} ${y1} C${x1 + MID * 0.4} ${y1} ${x2 - MID * 0.4} ${y2} ${x2} ${y2}\" fill=\"none\" stroke=\"${c.ln}\" stroke-width=\"1.5\" opacity=\"0.4\" pointer-events=\"none\"/>`);\n\n    // Filter annotation along the curve\n    if (e.filters.length) {\n      const mx = (x1 + x2) / 2;\n      const my = (y1 + y2) / 2;\n      o.push(`<text x=\"${mx}\" y=\"${my - 4}\" text-anchor=\"middle\" font-size=\"9\" fill=\"#94a3b8\" pointer-events=\"none\">${esc(e.filters.join(', '))}</text>`);\n    }\n  }\n\n  // Event boxes (left column)\n  events.forEach(id => {\n    const y = evtY.get(id);\n    const c = cat(id);\n    const name = nameOf.get(id) || id.slice(0, 12);\n    o.push(`<g data-id=\"${id}\">`);\n    o.push(`<rect x=\"${P}\" y=\"${y}\" width=\"${EW}\" height=\"${BH}\" rx=\"${BR}\" fill=\"${c.bg}\"/>`);\n    o.push(`<text x=\"${P + EW / 2}\" y=\"${y + BH / 2 + 4}\" text-anchor=\"middle\" fill=\"#fff\" font-weight=\"600\">${esc(name)}</text>`);\n    o.push(`</g>`);\n  });\n\n  // Subscriber boxes (right column)\n  subList.forEach(id => {\n    const y = subY.get(id);\n    const handler = primaryHandler.get(id) || '';\n    o.push(`<g data-id=\"${id}\" data-handler=\"${handler}\">`);\n    o.push(`<rect x=\"${RX}\" y=\"${y}\" width=\"${SW}\" height=\"${BH}\" rx=\"${BR}\" fill=\"#475569\"/>`);\n    o.push(`<text x=\"${RX + SW / 2}\" y=\"${y + BH / 2 + 4}\" text-anchor=\"middle\" fill=\"#fff\">${esc(subs.get(id))}</text>`);\n    o.push(`</g>`);\n  });\n\n  o.push('</svg>');\n\n  // Parse to DOM and add interactivity\n  const div = document.createElement('div');\n  div.innerHTML = o.join('\\n');\n  const svgEl = div.firstElementChild;\n\n  // Click boxes: open item scrolled to handler symbol\n  for (const g of svgEl.querySelectorAll('g[data-id]')) {\n    g.addEventListener('click', (e) => {\n      const handler = g.dataset.handler;\n      if (handler) {\n        api.openItem(e, { id: g.dataset.id, view: { navigateTo: { symbol: handler } } });\n      } else {\n        api.openItem(e, g.dataset.id);\n      }\n    });\n  }\n\n  // Click edges: open subscriber scrolled to that specific handler\n  for (const path of svgEl.querySelectorAll('path[data-sub]')) {\n    path.addEventListener('click', (e) => {\n      const handler = path.dataset.handler;\n      if (handler) {\n        api.openItem(e, { id: path.dataset.sub, view: { navigateTo: { symbol: handler } } });\n      } else {\n        api.openItem(e, path.dataset.sub);\n      }\n    });\n  }\n\n  return svgEl;\n}\n// [END:eventFlow]\n\n// \"item:deleted\" → \"onItemDeleted\", \"kernel:boot-complete\" → \"onKernelBootComplete\"\nfunction eventToHandlerName(eventName) {\n  if (!eventName) return '';\n  const parts = eventName.split(/[:-]/);\n  return 'on' + parts.map(p => p.charAt(0).toUpperCase() + p.slice(1).toLowerCase()).join('');\n}\n\nfunction shortName(nameOf, id) {\n  return nameOf.get(id) || id.slice(0, 8);\n}\n\nfunction textEl(msg) {\n  const p = document.createElement('p');\n  p.textContent = msg;\n  p.style.color = '#94a3b8';\n  return p;\n}\n\nfunction esc(s) {\n  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\n}\n",
+    "_symbols": {
+      "eventFlow": {
+        "name": "eventFlow",
+        "line": 11,
+        "col": 7,
+        "endLine": 177,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(api, params)",
+        "description": "Render declarative event flow as an interactive SVG diagram.\nUsage in markdown: ![](item://diagram-lib?call=eventFlow)",
+        "params": [
+          {
+            "name": "api",
+            "type": "Object",
+            "description": "Hobson API"
+          },
+          {
+            "name": "params",
+            "type": "Object",
+            "description": "URL query params (unused)"
+          }
+        ],
+        "returns": {
+          "type": "Element",
+          "description": "SVG element"
+        }
+      },
+      "eventFlow.allItems": {
+        "name": "allItems",
+        "line": 12,
+        "col": 8,
+        "endLine": 12,
+        "endCol": 37,
+        "kind": "variable",
+        "scope": "eventFlow"
+      },
+      "eventFlow.nameOf": {
+        "name": "nameOf",
+        "line": 15,
+        "col": 8,
+        "endLine": 15,
+        "endCol": 26,
+        "kind": "variable",
+        "scope": "eventFlow"
+      },
+      "eventFlow.it": {
+        "name": "it",
+        "line": 23,
+        "col": 13,
+        "endLine": 23,
+        "endCol": 15,
+        "kind": "variable",
+        "scope": "eventFlow"
+      },
+      "eventFlow.edges": {
+        "name": "edges",
+        "line": 19,
+        "col": 8,
+        "endLine": 19,
+        "endCol": 18,
+        "kind": "variable",
+        "scope": "eventFlow"
+      },
+      "eventFlow.eventSet": {
+        "name": "eventSet",
+        "line": 20,
+        "col": 8,
+        "endLine": 20,
+        "endCol": 28,
+        "kind": "variable",
+        "scope": "eventFlow"
+      },
+      "eventFlow.subs": {
+        "name": "subs",
+        "line": 21,
+        "col": 8,
+        "endLine": 21,
+        "endCol": 24,
+        "kind": "variable",
+        "scope": "eventFlow"
+      },
+      "eventFlow.watches": {
+        "name": "watches",
+        "line": 24,
+        "col": 10,
+        "endLine": 24,
+        "endCol": 53,
+        "kind": "variable",
+        "scope": "eventFlow"
+      },
+      "eventFlow.w": {
+        "name": "w",
+        "line": 26,
+        "col": 15,
+        "endLine": 26,
+        "endCol": 16,
+        "kind": "variable",
+        "scope": "eventFlow"
+      },
+      "eventFlow.filters": {
+        "name": "filters",
+        "line": 36,
+        "col": 47,
+        "endLine": 36,
+        "endCol": 54,
+        "kind": "property",
+        "scope": "eventFlow"
+      },
+      "eventFlow.handlerName": {
+        "name": "handlerName",
+        "line": 36,
+        "col": 56,
+        "endLine": 36,
+        "endCol": 67,
+        "kind": "property",
+        "scope": "eventFlow"
+      },
+      "eventFlow.event": {
+        "name": "event",
+        "line": 36,
+        "col": 19,
+        "endLine": 36,
+        "endCol": 33,
+        "kind": "property",
+        "scope": "eventFlow"
+      },
+      "eventFlow.sub": {
+        "name": "sub",
+        "line": 36,
+        "col": 35,
+        "endLine": 36,
+        "endCol": 45,
+        "kind": "property",
+        "scope": "eventFlow"
+      },
+      "eventFlow.events": {
+        "name": "events",
+        "line": 43,
+        "col": 8,
+        "endLine": 43,
+        "endCol": 37,
+        "kind": "variable",
+        "scope": "eventFlow"
+      },
+      "eventFlow.primary": {
+        "name": "primary",
+        "line": 46,
+        "col": 8,
+        "endLine": 46,
+        "endCol": 27,
+        "kind": "variable",
+        "scope": "eventFlow"
+      },
+      "eventFlow.primaryHandler": {
+        "name": "primaryHandler",
+        "line": 47,
+        "col": 8,
+        "endLine": 47,
+        "endCol": 34,
+        "kind": "variable",
+        "scope": "eventFlow"
+      },
+      "eventFlow.e": {
+        "name": "e",
+        "line": 105,
+        "col": 13,
+        "endLine": 105,
+        "endCol": 14,
+        "kind": "variable",
+        "scope": "eventFlow"
+      },
+      "eventFlow.subList": {
+        "name": "subList",
+        "line": 54,
+        "col": 8,
+        "endLine": 57,
+        "endCol": 4,
+        "kind": "variable",
+        "scope": "eventFlow"
+      },
+      "eventFlow.P": {
+        "name": "P",
+        "line": 60,
+        "col": 8,
+        "endLine": 60,
+        "endCol": 14,
+        "kind": "variable",
+        "scope": "eventFlow"
+      },
+      "eventFlow.BH": {
+        "name": "BH",
+        "line": 61,
+        "col": 8,
+        "endLine": 61,
+        "endCol": 15,
+        "kind": "variable",
+        "scope": "eventFlow"
+      },
+      "eventFlow.BR": {
+        "name": "BR",
+        "line": 62,
+        "col": 8,
+        "endLine": 62,
+        "endCol": 14,
+        "kind": "variable",
+        "scope": "eventFlow"
+      },
+      "eventFlow.VG": {
+        "name": "VG",
+        "line": 63,
+        "col": 8,
+        "endLine": 63,
+        "endCol": 14,
+        "kind": "variable",
+        "scope": "eventFlow"
+      },
+      "eventFlow.EW": {
+        "name": "EW",
+        "line": 64,
+        "col": 8,
+        "endLine": 64,
+        "endCol": 16,
+        "kind": "variable",
+        "scope": "eventFlow"
+      },
+      "eventFlow.SW": {
+        "name": "SW",
+        "line": 65,
+        "col": 8,
+        "endLine": 65,
+        "endCol": 16,
+        "kind": "variable",
+        "scope": "eventFlow"
+      },
+      "eventFlow.MID": {
+        "name": "MID",
+        "line": 66,
+        "col": 8,
+        "endLine": 66,
+        "endCol": 17,
+        "kind": "variable",
+        "scope": "eventFlow"
+      },
+      "eventFlow.HEADER": {
+        "name": "HEADER",
+        "line": 67,
+        "col": 8,
+        "endLine": 67,
+        "endCol": 19,
+        "kind": "variable",
+        "scope": "eventFlow"
+      },
+      "eventFlow.RX": {
+        "name": "RX",
+        "line": 68,
+        "col": 8,
+        "endLine": 68,
+        "endCol": 25,
+        "kind": "variable",
+        "scope": "eventFlow"
+      },
+      "eventFlow.W": {
+        "name": "W",
+        "line": 69,
+        "col": 8,
+        "endLine": 69,
+        "endCol": 23,
+        "kind": "variable",
+        "scope": "eventFlow"
+      },
+      "eventFlow.nE": {
+        "name": "nE",
+        "line": 71,
+        "col": 8,
+        "endLine": 71,
+        "endCol": 26,
+        "kind": "variable",
+        "scope": "eventFlow"
+      },
+      "eventFlow.nS": {
+        "name": "nS",
+        "line": 72,
+        "col": 8,
+        "endLine": 72,
+        "endCol": 27,
+        "kind": "variable",
+        "scope": "eventFlow"
+      },
+      "eventFlow.span": {
+        "name": "span",
+        "line": 73,
+        "col": 8,
+        "endLine": 73,
+        "endCol": 48,
+        "kind": "variable",
+        "scope": "eventFlow"
+      },
+      "eventFlow.eStep": {
+        "name": "eStep",
+        "line": 74,
+        "col": 8,
+        "endLine": 74,
+        "endCol": 51,
+        "kind": "variable",
+        "scope": "eventFlow"
+      },
+      "eventFlow.sStep": {
+        "name": "sStep",
+        "line": 75,
+        "col": 8,
+        "endLine": 75,
+        "endCol": 51,
+        "kind": "variable",
+        "scope": "eventFlow"
+      },
+      "eventFlow.topY": {
+        "name": "topY",
+        "line": 76,
+        "col": 8,
+        "endLine": 76,
+        "endCol": 25,
+        "kind": "variable",
+        "scope": "eventFlow"
+      },
+      "eventFlow.ey": {
+        "name": "ey",
+        "line": 77,
+        "col": 8,
+        "endLine": 77,
+        "endCol": 34,
+        "kind": "function",
+        "scope": "eventFlow",
+        "signature": "(i)"
+      },
+      "eventFlow.sy": {
+        "name": "sy",
+        "line": 78,
+        "col": 8,
+        "endLine": 78,
+        "endCol": 34,
+        "kind": "function",
+        "scope": "eventFlow",
+        "signature": "(i)"
+      },
+      "eventFlow.H": {
+        "name": "H",
+        "line": 79,
+        "col": 8,
+        "endLine": 79,
+        "endCol": 27,
+        "kind": "variable",
+        "scope": "eventFlow"
+      },
+      "eventFlow.evtY": {
+        "name": "evtY",
+        "line": 81,
+        "col": 8,
+        "endLine": 81,
+        "endCol": 24,
+        "kind": "variable",
+        "scope": "eventFlow"
+      },
+      "eventFlow.subY": {
+        "name": "subY",
+        "line": 83,
+        "col": 8,
+        "endLine": 83,
+        "endCol": 24,
+        "kind": "variable",
+        "scope": "eventFlow"
+      },
+      "eventFlow.cat": {
+        "name": "cat",
+        "line": 87,
+        "col": 8,
+        "endLine": 92,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "eventFlow",
+        "signature": "(id)"
+      },
+      "cat.bg": {
+        "name": "bg",
+        "line": 91,
+        "col": 13,
+        "endLine": 91,
+        "endCol": 26,
+        "kind": "property",
+        "scope": "cat"
+      },
+      "cat.ln": {
+        "name": "ln",
+        "line": 91,
+        "col": 28,
+        "endLine": 91,
+        "endCol": 41,
+        "kind": "property",
+        "scope": "cat"
+      },
+      "eventFlow.o": {
+        "name": "o",
+        "line": 95,
+        "col": 8,
+        "endLine": 95,
+        "endCol": 14,
+        "kind": "variable",
+        "scope": "eventFlow"
+      },
+      "eventFlow.y1": {
+        "name": "y1",
+        "line": 106,
+        "col": 10,
+        "endLine": 106,
+        "endCol": 41,
+        "kind": "variable",
+        "scope": "eventFlow"
+      },
+      "eventFlow.y2": {
+        "name": "y2",
+        "line": 107,
+        "col": 10,
+        "endLine": 107,
+        "endCol": 39,
+        "kind": "variable",
+        "scope": "eventFlow"
+      },
+      "eventFlow.x1": {
+        "name": "x1",
+        "line": 108,
+        "col": 10,
+        "endLine": 108,
+        "endCol": 21,
+        "kind": "variable",
+        "scope": "eventFlow"
+      },
+      "eventFlow.x2": {
+        "name": "x2",
+        "line": 109,
+        "col": 10,
+        "endLine": 109,
+        "endCol": 17,
+        "kind": "variable",
+        "scope": "eventFlow"
+      },
+      "eventFlow.c": {
+        "name": "c",
+        "line": 127,
+        "col": 10,
+        "endLine": 127,
+        "endCol": 21,
+        "kind": "variable",
+        "scope": "eventFlow"
+      },
+      "eventFlow.mx": {
+        "name": "mx",
+        "line": 118,
+        "col": 12,
+        "endLine": 118,
+        "endCol": 30,
+        "kind": "variable",
+        "scope": "eventFlow"
+      },
+      "eventFlow.my": {
+        "name": "my",
+        "line": 119,
+        "col": 12,
+        "endLine": 119,
+        "endCol": 30,
+        "kind": "variable",
+        "scope": "eventFlow"
+      },
+      "eventFlow.y": {
+        "name": "y",
+        "line": 137,
+        "col": 10,
+        "endLine": 137,
+        "endCol": 26,
+        "kind": "variable",
+        "scope": "eventFlow"
+      },
+      "eventFlow.name": {
+        "name": "name",
+        "line": 128,
+        "col": 10,
+        "endLine": 128,
+        "endCol": 50,
+        "kind": "variable",
+        "scope": "eventFlow"
+      },
+      "eventFlow.handler": {
+        "name": "handler",
+        "line": 167,
+        "col": 12,
+        "endLine": 167,
+        "endCol": 42,
+        "kind": "variable",
+        "scope": "eventFlow"
+      },
+      "eventFlow.div": {
+        "name": "div",
+        "line": 148,
+        "col": 8,
+        "endLine": 148,
+        "endCol": 43,
+        "kind": "variable",
+        "scope": "eventFlow"
+      },
+      "eventFlow.svgEl": {
+        "name": "svgEl",
+        "line": 150,
+        "col": 8,
+        "endLine": 150,
+        "endCol": 37,
+        "kind": "variable",
+        "scope": "eventFlow"
+      },
+      "eventFlow.g": {
+        "name": "g",
+        "line": 153,
+        "col": 13,
+        "endLine": 153,
+        "endCol": 14,
+        "kind": "variable",
+        "scope": "eventFlow"
+      },
+      "eventFlow.id": {
+        "name": "id",
+        "line": 169,
+        "col": 26,
+        "endLine": 169,
+        "endCol": 46,
+        "kind": "property",
+        "scope": "eventFlow"
+      },
+      "eventFlow.view": {
+        "name": "view",
+        "line": 169,
+        "col": 48,
+        "endLine": 169,
+        "endCol": 89,
+        "kind": "property",
+        "scope": "eventFlow"
+      },
+      "eventFlow.view.navigateTo": {
+        "name": "navigateTo",
+        "line": 169,
+        "col": 56,
+        "endLine": 169,
+        "endCol": 87,
+        "kind": "property",
+        "scope": "eventFlow.view"
+      },
+      "eventFlow.view.navigateTo.symbol": {
+        "name": "symbol",
+        "line": 169,
+        "col": 70,
+        "endLine": 169,
+        "endCol": 85,
+        "kind": "property",
+        "scope": "eventFlow.view.navigateTo"
+      },
+      "eventFlow.path": {
+        "name": "path",
+        "line": 165,
+        "col": 13,
+        "endLine": 165,
+        "endCol": 17,
+        "kind": "variable",
+        "scope": "eventFlow"
+      },
+      "eventToHandlerName": {
+        "name": "eventToHandlerName",
+        "line": 181,
+        "col": 0,
+        "endLine": 185,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(eventName)"
+      },
+      "eventToHandlerName.parts": {
+        "name": "parts",
+        "line": 183,
+        "col": 8,
+        "endLine": 183,
+        "endCol": 39,
+        "kind": "variable",
+        "scope": "eventToHandlerName"
+      },
+      "shortName": {
+        "name": "shortName",
+        "line": 187,
+        "col": 0,
+        "endLine": 189,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(nameOf, id)"
+      },
+      "textEl": {
+        "name": "textEl",
+        "line": 191,
+        "col": 0,
+        "endLine": 196,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(msg)"
+      },
+      "textEl.p": {
+        "name": "p",
+        "line": 192,
+        "col": 8,
+        "endLine": 192,
+        "endCol": 39,
+        "kind": "variable",
+        "scope": "textEl"
+      },
+      "esc": {
+        "name": "esc",
+        "line": 198,
+        "col": 0,
+        "endLine": 200,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(s)"
+      }
+    }
+  },
+  "attachments": []
+}

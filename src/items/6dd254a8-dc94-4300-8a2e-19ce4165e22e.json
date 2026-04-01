@@ -1,1 +1,460 @@
-{"id": "6dd254a8-dc94-4300-8a2e-19ce4165e22e", "name": "window-minimize-lib", "type": "66666666-0000-0000-0000-000000000000", "content": {"description": [":doc", [":p", {"s": "Inventory bar and restore logic for spatial-canvas-view. Shows all attachments as compact chips in a 24px bar at the bottom of the canvas, with state indicators and click-to-focus/restore/minimize."}], [":h2", {"s": "API"}], [":code-block", {"s": "const minLib = await api.require('window-minimize-lib');\n\n// Render inventory bar with all children\nminLib.renderInventoryBar(allChildren, container, api, {\n  nameMap,       // plain JS object: childId -> display name\n  isAnchoredFn,  // from anchor-lib.isAnchored\n  frontChildId,  // ID of topmost floating/maximized child\n  onRestore,     // callback for minimized chips\n  onFocus,       // callback for open (non-front) chips\n  onMinimize     // callback for front chip (second click)\n});\n\n// Calculate which child is at the front\nminLib.calculateFrontChild(allChildren, baseZ, isAnchoredFn);\n\n// Calculate z-index normalization when restoring\nminLib.calculateRestore(childId, allChildren, isAnchoredFn);"}], [":h2", {"s": "State Indicators"}], [":ul", [":li", [":p", {"s": "● open (floating)"}]], [":li", [":p", {"s": "○ minimized"}]], [":li", [":p", {"s": "■ maximized"}]], [":li", [":p", {"s": "◆ docked/pinned"}]]], [":p", {"s": "Front child is highlighted with primary color."}]], "code": "// Item: window-minimize-lib\n// ID: 6dd254a8-dc94-4300-8a2e-19ce4165e22e\n// Type: 66666666-0000-0000-0000-000000000000\n//\n// Inventory bar and restore logic for spatial-canvas-view.\n// Shows all attachments as compact chips with state indicators.\n\nconst BAR_HEIGHT = 24;\nconst CHIP_MAX_WIDTH = 140;\nconst CHIP_GAP = 2;\nconst SCROLL_STEP = 120;\n\nfunction classifyState(child, isAnchoredFn) {\n  const v = child.view || {};\n  if (v.minimized) return 'minimized';\n  if (v.maximized) return 'maximized';\n  if (isAnchoredFn(v.anchor)) return 'anchored';\n  return 'open';\n}\n\nconst ARROW_STYLE = `\n  flex-shrink: 0;\n  width: 20px; height: 20px;\n  padding: 0; border: none;\n  background: transparent;\n  border-radius: var(--border-radius);\n  cursor: pointer;\n  font-size: 0.675rem;\n  color: var(--color-text-tertiary);\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  opacity: 0.3;\n`;\n\nfunction createInventoryBar(container, api) {\n  const wrapper = api.createElement('div', {\n    'data-inventory-bar': 'true',\n    style: `\n      position: absolute;\n      bottom: 0; left: 0; right: 0;\n      height: ${BAR_HEIGHT}px;\n      display: flex;\n      align-items: center;\n      gap: 2px;\n      padding: 0 2px;\n      background: var(--color-bg-chrome);\n      border-top: 1px solid var(--color-border-light);\n      z-index: 1;\n      pointer-events: auto;\n    `\n  }, []);\n\n  const leftBtn = api.createElement('button', {\n    'data-scroll-left': 'true',\n    style: ARROW_STYLE,\n    title: 'Scroll left'\n  }, ['\\u25C0']);\n\n  const track = api.createElement('div', {\n    'data-inventory-track': 'true',\n    style: `\n      flex: 1; min-width: 0;\n      display: flex;\n      align-items: center;\n      gap: ${CHIP_GAP}px;\n      overflow-x: auto;\n      scrollbar-width: none;\n      white-space: nowrap;\n      scroll-behavior: smooth;\n    `\n  }, []);\n\n  const rightBtn = api.createElement('button', {\n    'data-scroll-right': 'true',\n    style: ARROW_STYLE,\n    title: 'Scroll right'\n  }, ['\\u25B6']);\n\n  leftBtn.addEventListener('click', () => { track.scrollLeft -= SCROLL_STEP; });\n  rightBtn.addEventListener('click', () => { track.scrollLeft += SCROLL_STEP; });\n\n  function updateArrows() {\n    const canScrollLeft = track.scrollLeft > 1;\n    const canScrollRight = track.scrollLeft < track.scrollWidth - track.clientWidth - 1;\n    leftBtn.style.opacity = canScrollLeft ? '1' : '0.3';\n    leftBtn.style.cursor = canScrollLeft ? 'pointer' : 'default';\n    rightBtn.style.opacity = canScrollRight ? '1' : '0.3';\n    rightBtn.style.cursor = canScrollRight ? 'pointer' : 'default';\n  }\n\n  track.addEventListener('scroll', updateArrows);\n  // Fire updateArrows when track gets layout (initial mount) or resizes\n  new ResizeObserver(updateArrows).observe(track);\n\n  wrapper.appendChild(leftBtn);\n  wrapper.appendChild(track);\n  wrapper.appendChild(rightBtn);\n  container.appendChild(wrapper);\n\n  return { track };\n}\n\n// Render inventory bar showing all children with state indicators\nexport function renderInventoryBar(allChildren, container, api, options) {\n  const { isAnchoredFn, frontChildId, onRestore, onFocus, onMinimize } = options;\n\n  const existing = container.querySelector('[data-inventory-bar]');\n  if (existing) existing.remove();\n\n  if (!allChildren || allChildren.length === 0) return;\n\n  const { track } = createInventoryBar(container, api);\n\n  const indicators = {\n    open: '\\u25CF',      // ●\n    minimized: '\\u25CB', // ○\n    maximized: '\\u25A0', // ■\n    anchored: '\\u25C6'   // ◆\n  };\n\n  allChildren.forEach(child => {\n    const childId = child.id;\n    const state = classifyState(child, isAnchoredFn);\n    const name = child._name || childId.substring(0, 8);\n    const isFront = childId === frontChildId;\n\n    const bgStyle = isFront\n      ? 'background: var(--color-primary-light); border: 1px solid var(--color-primary);'\n      : state === 'minimized'\n        ? 'background: var(--color-bg-hover); opacity: 0.7; border: 1px solid transparent;'\n        : 'background: var(--color-bg-hover); border: 1px solid transparent;';\n\n    const chip = api.createElement('div', {\n      'data-inventory-id': childId,\n      'data-sort-key': `inv-${childId}`,\n      'data-state': state,\n      'data-is-front': isFront ? 'true' : 'false',\n      style: `\n        height: 20px;\n        padding: 0 6px;\n        max-width: ${CHIP_MAX_WIDTH}px;\n        border-radius: var(--border-radius);\n        cursor: pointer;\n        display: inline-flex;\n        align-items: center;\n        gap: 3px;\n        flex-shrink: 0;\n        font-size: 0.675rem;\n        line-height: 20px;\n        ${bgStyle}\n      `,\n      title: `${name} (${state})`\n    }, []);\n\n    const indicator = api.createElement('span', {\n      'data-sort-key': `inv-ind-${childId}`,\n      style: `font-size: 0.5rem; color: ${isFront ? 'var(--color-primary)' : 'var(--color-text-tertiary)'};`\n    }, [indicators[state]]);\n    chip.appendChild(indicator);\n\n    const text = api.createElement('span', {\n      'data-sort-key': `inv-txt-${childId}`,\n      style: 'overflow: hidden; text-overflow: ellipsis; white-space: nowrap;'\n    }, [name]);\n    chip.appendChild(text);\n\n    // Read state from data attributes at click time (not closures)\n    // because morphdom keeps old elements with old handlers but updates attributes\n    chip.addEventListener('click', async (e) => {\n      e.stopPropagation();\n      const curState = chip.getAttribute('data-state');\n      const curIsFront = chip.getAttribute('data-is-front') === 'true';\n      if (curState === 'minimized') {\n        await onRestore(childId);\n      } else if (curIsFront) {\n        await onMinimize(childId);\n      } else {\n        await onFocus(childId);\n      }\n    });\n\n    track.appendChild(chip);\n  });\n\n}\n\n// Return the ID of the topmost floating or maximized child\nexport function calculateFrontChild(allChildren, baseZ, isAnchoredFn) {\n  const maximized = allChildren.find(c => c.view?.maximized && !c.view?.minimized);\n  if (maximized) return maximized.id;\n\n  const floating = allChildren\n    .filter(c => !isAnchoredFn(c.view?.anchor) && !c.view?.minimized && !c.view?.maximized)\n    .sort((a, b) => (b.view?.z || 0) - (a.view?.z || 0));\n\n  return floating.length > 0 ? floating[0].id : null;\n}\n\n// Calculate what happens when restoring a window\n// Returns updated attachments array with target unminimized at front and all z-indices normalized\nexport function calculateRestore(childId, allChildren, isAnchoredFn) {\n  // Get floating, non-minimized children sorted by z (excluding the one being restored)\n  const floating = allChildren\n    .filter(c => !isAnchoredFn(c.view?.anchor) && !c.view?.minimized && c.id !== childId)\n    .map(c => ({ id: c.id, z: c.view?.z || 0 }))\n    .sort((a, b) => a.z - b.z);\n\n  // Add restored window at the end (front)\n  floating.push({ id: childId, z: floating.length });\n\n  // Build map of new z-values\n  const newZValues = new Map();\n  floating.forEach((c, idx) => {\n    newZValues.set(c.id, idx);\n  });\n\n  // Build updated children array\n  const updatedChildren = allChildren.map(c => {\n    if (c.id === childId) {\n      return {\n        ...c,\n        view: { ...(c.view || {}), minimized: false, z: newZValues.get(c.id) }\n      };\n    }\n    if (newZValues.has(c.id)) {\n      return {\n        ...c,\n        view: { ...(c.view || {}), z: newZValues.get(c.id) }\n      };\n    }\n    return c;\n  });\n\n  return { updatedChildren };\n}\n", "_symbols": {"BAR_HEIGHT": {"name": "BAR_HEIGHT", "line": 8, "col": 6, "endLine": 8, "endCol": 21, "kind": "variable", "scope": null}, "CHIP_MAX_WIDTH": {"name": "CHIP_MAX_WIDTH", "line": 9, "col": 6, "endLine": 9, "endCol": 26, "kind": "variable", "scope": null}, "CHIP_GAP": {"name": "CHIP_GAP", "line": 10, "col": 6, "endLine": 10, "endCol": 18, "kind": "variable", "scope": null}, "SCROLL_STEP": {"name": "SCROLL_STEP", "line": 11, "col": 6, "endLine": 11, "endCol": 23, "kind": "variable", "scope": null}, "classifyState": {"name": "classifyState", "line": 13, "col": 0, "endLine": 19, "endCol": 1, "kind": "function", "scope": null, "signature": "(child, isAnchoredFn)"}, "classifyState.v": {"name": "v", "line": 14, "col": 8, "endLine": 14, "endCol": 28, "kind": "variable", "scope": "classifyState"}, "ARROW_STYLE": {"name": "ARROW_STYLE", "line": 21, "col": 6, "endLine": 34, "endCol": 1, "kind": "variable", "scope": null}, "createInventoryBar": {"name": "createInventoryBar", "line": 36, "col": 0, "endLine": 102, "endCol": 1, "kind": "function", "scope": null, "signature": "(container, api)"}, "createInventoryBar.wrapper": {"name": "wrapper", "line": 37, "col": 8, "endLine": 52, "endCol": 8, "kind": "variable", "scope": "createInventoryBar"}, "createInventoryBar.leftBtn": {"name": "leftBtn", "line": 54, "col": 8, "endLine": 58, "endCol": 16, "kind": "variable", "scope": "createInventoryBar"}, "createInventoryBar.track": {"name": "track", "line": 101, "col": 11, "endLine": 101, "endCol": 16, "kind": "property", "scope": "createInventoryBar"}, "createInventoryBar.rightBtn": {"name": "rightBtn", "line": 74, "col": 8, "endLine": 78, "endCol": 16, "kind": "variable", "scope": "createInventoryBar"}, "createInventoryBar.updateArrows": {"name": "updateArrows", "line": 83, "col": 2, "endLine": 90, "endCol": 3, "kind": "function", "scope": "createInventoryBar", "signature": "()"}, "updateArrows.canScrollLeft": {"name": "canScrollLeft", "line": 84, "col": 10, "endLine": 84, "endCol": 46, "kind": "variable", "scope": "updateArrows"}, "updateArrows.canScrollRight": {"name": "canScrollRight", "line": 85, "col": 10, "endLine": 85, "endCol": 87, "kind": "variable", "scope": "updateArrows"}, "renderInventoryBar": {"name": "renderInventoryBar", "line": 105, "col": 7, "endLine": 186, "endCol": 1, "kind": "function", "scope": null, "signature": "(allChildren, container, api, options)"}, "renderInventoryBar.existing": {"name": "existing", "line": 108, "col": 8, "endLine": 108, "endCol": 66, "kind": "variable", "scope": "renderInventoryBar"}, "renderInventoryBar.indicators": {"name": "indicators", "line": 115, "col": 8, "endLine": 120, "endCol": 3, "kind": "variable", "scope": "renderInventoryBar"}, "indicators.open": {"name": "open", "line": 116, "col": 4, "endLine": 116, "endCol": 18, "kind": "property", "scope": "indicators"}, "indicators.minimized": {"name": "minimized", "line": 117, "col": 4, "endLine": 117, "endCol": 23, "kind": "property", "scope": "indicators"}, "indicators.maximized": {"name": "maximized", "line": 118, "col": 4, "endLine": 118, "endCol": 23, "kind": "property", "scope": "indicators"}, "indicators.anchored": {"name": "anchored", "line": 119, "col": 4, "endLine": 119, "endCol": 22, "kind": "property", "scope": "indicators"}, "renderInventoryBar.childId": {"name": "childId", "line": 123, "col": 10, "endLine": 123, "endCol": 28, "kind": "variable", "scope": "renderInventoryBar"}, "renderInventoryBar.state": {"name": "state", "line": 124, "col": 10, "endLine": 124, "endCol": 52, "kind": "variable", "scope": "renderInventoryBar"}, "renderInventoryBar.name": {"name": "name", "line": 125, "col": 10, "endLine": 125, "endCol": 55, "kind": "variable", "scope": "renderInventoryBar"}, "renderInventoryBar.isFront": {"name": "isFront", "line": 126, "col": 10, "endLine": 126, "endCol": 44, "kind": "variable", "scope": "renderInventoryBar"}, "renderInventoryBar.bgStyle": {"name": "bgStyle", "line": 128, "col": 10, "endLine": 132, "endCol": 77, "kind": "variable", "scope": "renderInventoryBar"}, "renderInventoryBar.chip": {"name": "chip", "line": 134, "col": 10, "endLine": 154, "endCol": 10, "kind": "variable", "scope": "renderInventoryBar"}, "renderInventoryBar.indicator": {"name": "indicator", "line": 156, "col": 10, "endLine": 159, "endCol": 27, "kind": "variable", "scope": "renderInventoryBar"}, "renderInventoryBar.text": {"name": "text", "line": 162, "col": 10, "endLine": 165, "endCol": 14, "kind": "variable", "scope": "renderInventoryBar"}, "renderInventoryBar.curState": {"name": "curState", "line": 172, "col": 12, "endLine": 172, "endCol": 54, "kind": "variable", "scope": "renderInventoryBar"}, "renderInventoryBar.curIsFront": {"name": "curIsFront", "line": 173, "col": 12, "endLine": 173, "endCol": 70, "kind": "variable", "scope": "renderInventoryBar"}, "calculateFrontChild": {"name": "calculateFrontChild", "line": 189, "col": 7, "endLine": 198, "endCol": 1, "kind": "function", "scope": null, "signature": "(allChildren, baseZ, isAnchoredFn)"}, "calculateFrontChild.maximized": {"name": "maximized", "line": 190, "col": 8, "endLine": 190, "endCol": 82, "kind": "variable", "scope": "calculateFrontChild"}, "calculateFrontChild.floating": {"name": "floating", "line": 193, "col": 8, "endLine": 195, "endCol": 56, "kind": "variable", "scope": "calculateFrontChild"}, "calculateRestore": {"name": "calculateRestore", "line": 202, "col": 7, "endLine": 236, "endCol": 1, "kind": "function", "scope": null, "signature": "(childId, allChildren, isAnchoredFn)"}, "calculateRestore.floating": {"name": "floating", "line": 204, "col": 8, "endLine": 207, "endCol": 30, "kind": "variable", "scope": "calculateRestore"}, "calculateRestore.id": {"name": "id", "line": 210, "col": 18, "endLine": 210, "endCol": 29, "kind": "property", "scope": "calculateRestore"}, "calculateRestore.z": {"name": "z", "line": 210, "col": 31, "endLine": 210, "endCol": 49, "kind": "property", "scope": "calculateRestore"}, "calculateRestore.newZValues": {"name": "newZValues", "line": 213, "col": 8, "endLine": 213, "endCol": 30, "kind": "variable", "scope": "calculateRestore"}, "calculateRestore.updatedChildren": {"name": "updatedChildren", "line": 235, "col": 11, "endLine": 235, "endCol": 26, "kind": "property", "scope": "calculateRestore"}}}, "modified": 1774532370127, "created": 1770322000000, "attachments": []}
+{
+  "id": "6dd254a8-dc94-4300-8a2e-19ce4165e22e",
+  "name": "window-minimize-lib",
+  "type": "66666666-0000-0000-0000-000000000000",
+  "content": {
+    "description": [
+      ":doc",
+      [
+        ":p",
+        {
+          "s": "Inventory bar and restore logic for spatial-canvas-view. Shows all attachments as compact chips in a 24px bar at the bottom of the canvas, with state indicators and click-to-focus/restore/minimize."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "API"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": "const minLib = await api.require('window-minimize-lib');\n\n// Render inventory bar with all children\nminLib.renderInventoryBar(allChildren, container, api, {\n  nameMap,       // plain JS object: childId -> display name\n  isAnchoredFn,  // from anchor-lib.isAnchored\n  frontChildId,  // ID of topmost floating/maximized child\n  onRestore,     // callback for minimized chips\n  onFocus,       // callback for open (non-front) chips\n  onMinimize     // callback for front chip (second click)\n});\n\n// Calculate which child is at the front\nminLib.calculateFrontChild(allChildren, baseZ, isAnchoredFn);\n\n// Calculate z-index normalization when restoring\nminLib.calculateRestore(childId, allChildren, isAnchoredFn);"
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "State Indicators"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "● open (floating)"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "○ minimized"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "■ maximized"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "◆ docked/pinned"
+            }
+          ]
+        ]
+      ],
+      [
+        ":p",
+        {
+          "s": "Front child is highlighted with primary color."
+        }
+      ]
+    ],
+    "code": "// Item: window-minimize-lib\n// ID: 6dd254a8-dc94-4300-8a2e-19ce4165e22e\n// Type: 66666666-0000-0000-0000-000000000000\n//\n// Inventory bar and restore logic for spatial-canvas-view.\n// Shows all attachments as compact chips with state indicators.\n\nconst BAR_HEIGHT = 24;\nconst CHIP_MAX_WIDTH = 140;\nconst CHIP_GAP = 2;\nconst SCROLL_STEP = 120;\n\nfunction classifyState(child, isAnchoredFn) {\n  const v = child.view || {};\n  if (v.minimized) return 'minimized';\n  if (v.maximized) return 'maximized';\n  if (isAnchoredFn(v.anchor)) return 'anchored';\n  return 'open';\n}\n\nconst ARROW_STYLE = `\n  flex-shrink: 0;\n  width: 20px; height: 20px;\n  padding: 0; border: none;\n  background: transparent;\n  border-radius: var(--border-radius);\n  cursor: pointer;\n  font-size: 0.675rem;\n  color: var(--color-text-tertiary);\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  opacity: 0.3;\n`;\n\nfunction createInventoryBar(container, api) {\n  const wrapper = api.createElement('div', {\n    'data-inventory-bar': 'true',\n    style: `\n      position: absolute;\n      bottom: 0; left: 0; right: 0;\n      height: ${BAR_HEIGHT}px;\n      display: flex;\n      align-items: center;\n      gap: 2px;\n      padding: 0 2px;\n      background: var(--color-bg-chrome);\n      border-top: 1px solid var(--color-border-light);\n      z-index: 1;\n      pointer-events: auto;\n    `\n  }, []);\n\n  const leftBtn = api.createElement('button', {\n    'data-scroll-left': 'true',\n    style: ARROW_STYLE,\n    title: 'Scroll left'\n  }, ['\\u25C0']);\n\n  const track = api.createElement('div', {\n    'data-inventory-track': 'true',\n    style: `\n      flex: 1; min-width: 0;\n      display: flex;\n      align-items: center;\n      gap: ${CHIP_GAP}px;\n      overflow-x: auto;\n      scrollbar-width: none;\n      white-space: nowrap;\n      scroll-behavior: smooth;\n    `\n  }, []);\n\n  const rightBtn = api.createElement('button', {\n    'data-scroll-right': 'true',\n    style: ARROW_STYLE,\n    title: 'Scroll right'\n  }, ['\\u25B6']);\n\n  leftBtn.addEventListener('click', () => { track.scrollLeft -= SCROLL_STEP; });\n  rightBtn.addEventListener('click', () => { track.scrollLeft += SCROLL_STEP; });\n\n  function updateArrows() {\n    const canScrollLeft = track.scrollLeft > 1;\n    const canScrollRight = track.scrollLeft < track.scrollWidth - track.clientWidth - 1;\n    leftBtn.style.opacity = canScrollLeft ? '1' : '0.3';\n    leftBtn.style.cursor = canScrollLeft ? 'pointer' : 'default';\n    rightBtn.style.opacity = canScrollRight ? '1' : '0.3';\n    rightBtn.style.cursor = canScrollRight ? 'pointer' : 'default';\n  }\n\n  track.addEventListener('scroll', updateArrows);\n  // Fire updateArrows when track gets layout (initial mount) or resizes\n  new ResizeObserver(updateArrows).observe(track);\n\n  wrapper.appendChild(leftBtn);\n  wrapper.appendChild(track);\n  wrapper.appendChild(rightBtn);\n  container.appendChild(wrapper);\n\n  return { track };\n}\n\n// Render inventory bar showing all children with state indicators\nexport function renderInventoryBar(allChildren, container, api, options) {\n  const { isAnchoredFn, frontChildId, onRestore, onFocus, onMinimize } = options;\n\n  const existing = container.querySelector('[data-inventory-bar]');\n  if (existing) existing.remove();\n\n  if (!allChildren || allChildren.length === 0) return;\n\n  const { track } = createInventoryBar(container, api);\n\n  const indicators = {\n    open: '\\u25CF',      // ●\n    minimized: '\\u25CB', // ○\n    maximized: '\\u25A0', // ■\n    anchored: '\\u25C6'   // ◆\n  };\n\n  allChildren.forEach(child => {\n    const childId = child.id;\n    const state = classifyState(child, isAnchoredFn);\n    const name = child._name || childId.substring(0, 8);\n    const isFront = childId === frontChildId;\n\n    const bgStyle = isFront\n      ? 'background: var(--color-primary-light); border: 1px solid var(--color-primary);'\n      : state === 'minimized'\n        ? 'background: var(--color-bg-hover); opacity: 0.7; border: 1px solid transparent;'\n        : 'background: var(--color-bg-hover); border: 1px solid transparent;';\n\n    const chip = api.createElement('div', {\n      'data-inventory-id': childId,\n      'data-sort-key': `inv-${childId}`,\n      'data-state': state,\n      'data-is-front': isFront ? 'true' : 'false',\n      style: `\n        height: 20px;\n        padding: 0 6px;\n        max-width: ${CHIP_MAX_WIDTH}px;\n        border-radius: var(--border-radius);\n        cursor: pointer;\n        display: inline-flex;\n        align-items: center;\n        gap: 3px;\n        flex-shrink: 0;\n        font-size: 0.675rem;\n        line-height: 20px;\n        ${bgStyle}\n      `,\n      title: `${name} (${state})`\n    }, []);\n\n    const indicator = api.createElement('span', {\n      'data-sort-key': `inv-ind-${childId}`,\n      style: `font-size: 0.5rem; color: ${isFront ? 'var(--color-primary)' : 'var(--color-text-tertiary)'};`\n    }, [indicators[state]]);\n    chip.appendChild(indicator);\n\n    const text = api.createElement('span', {\n      'data-sort-key': `inv-txt-${childId}`,\n      style: 'overflow: hidden; text-overflow: ellipsis; white-space: nowrap;'\n    }, [name]);\n    chip.appendChild(text);\n\n    // Read state from data attributes at click time (not closures)\n    // because morphdom keeps old elements with old handlers but updates attributes\n    chip.addEventListener('click', async (e) => {\n      e.stopPropagation();\n      const curState = chip.getAttribute('data-state');\n      const curIsFront = chip.getAttribute('data-is-front') === 'true';\n      if (curState === 'minimized') {\n        await onRestore(childId);\n      } else if (curIsFront) {\n        await onMinimize(childId);\n      } else {\n        await onFocus(childId);\n      }\n    });\n\n    track.appendChild(chip);\n  });\n\n}\n\n// Return the ID of the topmost floating or maximized child\nexport function calculateFrontChild(allChildren, baseZ, isAnchoredFn) {\n  const maximized = allChildren.find(c => c.view?.maximized && !c.view?.minimized);\n  if (maximized) return maximized.id;\n\n  const floating = allChildren\n    .filter(c => !isAnchoredFn(c.view?.anchor) && !c.view?.minimized && !c.view?.maximized)\n    .sort((a, b) => (b.view?.z || 0) - (a.view?.z || 0));\n\n  return floating.length > 0 ? floating[0].id : null;\n}\n\n// Calculate what happens when restoring a window\n// Returns updated attachments array with target unminimized at front and all z-indices normalized\nexport function calculateRestore(childId, allChildren, isAnchoredFn) {\n  // Get floating, non-minimized children sorted by z (excluding the one being restored)\n  const floating = allChildren\n    .filter(c => !isAnchoredFn(c.view?.anchor) && !c.view?.minimized && c.id !== childId)\n    .map(c => ({ id: c.id, z: c.view?.z || 0 }))\n    .sort((a, b) => a.z - b.z);\n\n  // Add restored window at the end (front)\n  floating.push({ id: childId, z: floating.length });\n\n  // Build map of new z-values\n  const newZValues = new Map();\n  floating.forEach((c, idx) => {\n    newZValues.set(c.id, idx);\n  });\n\n  // Build updated children array\n  const updatedChildren = allChildren.map(c => {\n    if (c.id === childId) {\n      return {\n        ...c,\n        view: { ...(c.view || {}), minimized: false, z: newZValues.get(c.id) }\n      };\n    }\n    if (newZValues.has(c.id)) {\n      return {\n        ...c,\n        view: { ...(c.view || {}), z: newZValues.get(c.id) }\n      };\n    }\n    return c;\n  });\n\n  return { updatedChildren };\n}\n",
+    "_symbols": {
+      "BAR_HEIGHT": {
+        "name": "BAR_HEIGHT",
+        "line": 8,
+        "col": 6,
+        "endLine": 8,
+        "endCol": 21,
+        "kind": "variable",
+        "scope": null
+      },
+      "CHIP_MAX_WIDTH": {
+        "name": "CHIP_MAX_WIDTH",
+        "line": 9,
+        "col": 6,
+        "endLine": 9,
+        "endCol": 26,
+        "kind": "variable",
+        "scope": null
+      },
+      "CHIP_GAP": {
+        "name": "CHIP_GAP",
+        "line": 10,
+        "col": 6,
+        "endLine": 10,
+        "endCol": 18,
+        "kind": "variable",
+        "scope": null
+      },
+      "SCROLL_STEP": {
+        "name": "SCROLL_STEP",
+        "line": 11,
+        "col": 6,
+        "endLine": 11,
+        "endCol": 23,
+        "kind": "variable",
+        "scope": null
+      },
+      "classifyState": {
+        "name": "classifyState",
+        "line": 13,
+        "col": 0,
+        "endLine": 19,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(child, isAnchoredFn)"
+      },
+      "classifyState.v": {
+        "name": "v",
+        "line": 14,
+        "col": 8,
+        "endLine": 14,
+        "endCol": 28,
+        "kind": "variable",
+        "scope": "classifyState"
+      },
+      "ARROW_STYLE": {
+        "name": "ARROW_STYLE",
+        "line": 21,
+        "col": 6,
+        "endLine": 34,
+        "endCol": 1,
+        "kind": "variable",
+        "scope": null
+      },
+      "createInventoryBar": {
+        "name": "createInventoryBar",
+        "line": 36,
+        "col": 0,
+        "endLine": 102,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(container, api)"
+      },
+      "createInventoryBar.wrapper": {
+        "name": "wrapper",
+        "line": 37,
+        "col": 8,
+        "endLine": 52,
+        "endCol": 8,
+        "kind": "variable",
+        "scope": "createInventoryBar"
+      },
+      "createInventoryBar.leftBtn": {
+        "name": "leftBtn",
+        "line": 54,
+        "col": 8,
+        "endLine": 58,
+        "endCol": 16,
+        "kind": "variable",
+        "scope": "createInventoryBar"
+      },
+      "createInventoryBar.track": {
+        "name": "track",
+        "line": 101,
+        "col": 11,
+        "endLine": 101,
+        "endCol": 16,
+        "kind": "property",
+        "scope": "createInventoryBar"
+      },
+      "createInventoryBar.rightBtn": {
+        "name": "rightBtn",
+        "line": 74,
+        "col": 8,
+        "endLine": 78,
+        "endCol": 16,
+        "kind": "variable",
+        "scope": "createInventoryBar"
+      },
+      "createInventoryBar.updateArrows": {
+        "name": "updateArrows",
+        "line": 83,
+        "col": 2,
+        "endLine": 90,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "createInventoryBar",
+        "signature": "()"
+      },
+      "updateArrows.canScrollLeft": {
+        "name": "canScrollLeft",
+        "line": 84,
+        "col": 10,
+        "endLine": 84,
+        "endCol": 46,
+        "kind": "variable",
+        "scope": "updateArrows"
+      },
+      "updateArrows.canScrollRight": {
+        "name": "canScrollRight",
+        "line": 85,
+        "col": 10,
+        "endLine": 85,
+        "endCol": 87,
+        "kind": "variable",
+        "scope": "updateArrows"
+      },
+      "renderInventoryBar": {
+        "name": "renderInventoryBar",
+        "line": 105,
+        "col": 7,
+        "endLine": 186,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(allChildren, container, api, options)"
+      },
+      "renderInventoryBar.existing": {
+        "name": "existing",
+        "line": 108,
+        "col": 8,
+        "endLine": 108,
+        "endCol": 66,
+        "kind": "variable",
+        "scope": "renderInventoryBar"
+      },
+      "renderInventoryBar.indicators": {
+        "name": "indicators",
+        "line": 115,
+        "col": 8,
+        "endLine": 120,
+        "endCol": 3,
+        "kind": "variable",
+        "scope": "renderInventoryBar"
+      },
+      "indicators.open": {
+        "name": "open",
+        "line": 116,
+        "col": 4,
+        "endLine": 116,
+        "endCol": 18,
+        "kind": "property",
+        "scope": "indicators"
+      },
+      "indicators.minimized": {
+        "name": "minimized",
+        "line": 117,
+        "col": 4,
+        "endLine": 117,
+        "endCol": 23,
+        "kind": "property",
+        "scope": "indicators"
+      },
+      "indicators.maximized": {
+        "name": "maximized",
+        "line": 118,
+        "col": 4,
+        "endLine": 118,
+        "endCol": 23,
+        "kind": "property",
+        "scope": "indicators"
+      },
+      "indicators.anchored": {
+        "name": "anchored",
+        "line": 119,
+        "col": 4,
+        "endLine": 119,
+        "endCol": 22,
+        "kind": "property",
+        "scope": "indicators"
+      },
+      "renderInventoryBar.childId": {
+        "name": "childId",
+        "line": 123,
+        "col": 10,
+        "endLine": 123,
+        "endCol": 28,
+        "kind": "variable",
+        "scope": "renderInventoryBar"
+      },
+      "renderInventoryBar.state": {
+        "name": "state",
+        "line": 124,
+        "col": 10,
+        "endLine": 124,
+        "endCol": 52,
+        "kind": "variable",
+        "scope": "renderInventoryBar"
+      },
+      "renderInventoryBar.name": {
+        "name": "name",
+        "line": 125,
+        "col": 10,
+        "endLine": 125,
+        "endCol": 55,
+        "kind": "variable",
+        "scope": "renderInventoryBar"
+      },
+      "renderInventoryBar.isFront": {
+        "name": "isFront",
+        "line": 126,
+        "col": 10,
+        "endLine": 126,
+        "endCol": 44,
+        "kind": "variable",
+        "scope": "renderInventoryBar"
+      },
+      "renderInventoryBar.bgStyle": {
+        "name": "bgStyle",
+        "line": 128,
+        "col": 10,
+        "endLine": 132,
+        "endCol": 77,
+        "kind": "variable",
+        "scope": "renderInventoryBar"
+      },
+      "renderInventoryBar.chip": {
+        "name": "chip",
+        "line": 134,
+        "col": 10,
+        "endLine": 154,
+        "endCol": 10,
+        "kind": "variable",
+        "scope": "renderInventoryBar"
+      },
+      "renderInventoryBar.indicator": {
+        "name": "indicator",
+        "line": 156,
+        "col": 10,
+        "endLine": 159,
+        "endCol": 27,
+        "kind": "variable",
+        "scope": "renderInventoryBar"
+      },
+      "renderInventoryBar.text": {
+        "name": "text",
+        "line": 162,
+        "col": 10,
+        "endLine": 165,
+        "endCol": 14,
+        "kind": "variable",
+        "scope": "renderInventoryBar"
+      },
+      "renderInventoryBar.curState": {
+        "name": "curState",
+        "line": 172,
+        "col": 12,
+        "endLine": 172,
+        "endCol": 54,
+        "kind": "variable",
+        "scope": "renderInventoryBar"
+      },
+      "renderInventoryBar.curIsFront": {
+        "name": "curIsFront",
+        "line": 173,
+        "col": 12,
+        "endLine": 173,
+        "endCol": 70,
+        "kind": "variable",
+        "scope": "renderInventoryBar"
+      },
+      "calculateFrontChild": {
+        "name": "calculateFrontChild",
+        "line": 189,
+        "col": 7,
+        "endLine": 198,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(allChildren, baseZ, isAnchoredFn)"
+      },
+      "calculateFrontChild.maximized": {
+        "name": "maximized",
+        "line": 190,
+        "col": 8,
+        "endLine": 190,
+        "endCol": 82,
+        "kind": "variable",
+        "scope": "calculateFrontChild"
+      },
+      "calculateFrontChild.floating": {
+        "name": "floating",
+        "line": 193,
+        "col": 8,
+        "endLine": 195,
+        "endCol": 56,
+        "kind": "variable",
+        "scope": "calculateFrontChild"
+      },
+      "calculateRestore": {
+        "name": "calculateRestore",
+        "line": 202,
+        "col": 7,
+        "endLine": 236,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(childId, allChildren, isAnchoredFn)"
+      },
+      "calculateRestore.floating": {
+        "name": "floating",
+        "line": 204,
+        "col": 8,
+        "endLine": 207,
+        "endCol": 30,
+        "kind": "variable",
+        "scope": "calculateRestore"
+      },
+      "calculateRestore.id": {
+        "name": "id",
+        "line": 210,
+        "col": 18,
+        "endLine": 210,
+        "endCol": 29,
+        "kind": "property",
+        "scope": "calculateRestore"
+      },
+      "calculateRestore.z": {
+        "name": "z",
+        "line": 210,
+        "col": 31,
+        "endLine": 210,
+        "endCol": 49,
+        "kind": "property",
+        "scope": "calculateRestore"
+      },
+      "calculateRestore.newZValues": {
+        "name": "newZValues",
+        "line": 213,
+        "col": 8,
+        "endLine": 213,
+        "endCol": 30,
+        "kind": "variable",
+        "scope": "calculateRestore"
+      },
+      "calculateRestore.updatedChildren": {
+        "name": "updatedChildren",
+        "line": 235,
+        "col": 11,
+        "endLine": 235,
+        "endCol": 26,
+        "kind": "property",
+        "scope": "calculateRestore"
+      }
+    }
+  },
+  "modified": 1774988048706,
+  "created": 1770322000000,
+  "attachments": []
+}

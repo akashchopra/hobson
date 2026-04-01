@@ -1,235 +1,296 @@
 (defn render [item api]
   (:doc
     (:p "Workspace view that shows one attachment at a time as a tab.")
-    (:p "On mobile: swipe in from the right edge or tap the nub to open a "
-        "full-screen tab switcher overlay.")
-    (:p "On desktop: horizontal tab bar at the top. Available as an "
-        "alternative to the spatial canvas via Change View."))
-
+    (:p
+      "On mobile: swipe in from the right edge or tap the nub to open a "
+      "full-screen tab switcher overlay.")
+    (:p
+      "On desktop: horizontal tab bar at the top. Available as an "
+      "alternative to the spatial canvas via Change View."))
   (def tab-lib (require "tab-state-lib"))
-
   (def attachments (or (:attachments item) []))
-  (def specs
-    (map (fn [a] (if (string? a) {:id a} a)) attachments))
-
-  ;; Read active tab from persistent lib state; default to first attachment
-  (def active-id
+  (def specs (map (fn [a] (if (string? a) {:id a} a)) attachments))
+  (def
+    active-id
     (let [stored ((:get-active-tab tab-lib) (:id item))]
-      (if (and stored (some (fn [s] (= (:id s) stored)) specs))
+      (if
+        (and stored (some (fn [s] (= (:id s) stored)) specs))
         stored
         (when (seq specs) (:id (first specs))))))
-
-  ;; Resolve tab info for the overlay and tab bar
-  (def tab-info
+  (def
+    tab-info
     (for [spec (seq specs)]
       (let [id (:id spec)
-            child (get-item id :select (fn [it] [(:name it) (get-in it [:content :title])]))]
+            child (get-item
+                    id
+                    :select
+                    (fn [it] [(:name it) (get-in it [:content :title])]))]
         {:id id
          :name (or (:name child) (get-in child [:content :title]) (subs id 0 8))})))
-
-  ;; Watch workspace attachments for changes
   (get-item (:id item) :select (fn [it] (map :id (or (:attachments it) []))))
-
-  ;; Open-item handler: when a child view opens an item (e.g. link click),
-  ;; add it as an attachment if new, and switch to it as the active tab.
-  (def open-item-handler
+  (def
+    open-item-handler
     (fn [item-id-or-att]
-      (let [att-id (if (map? item-id-or-att) (:id item-id-or-att) item-id-or-att)
+      (let [att-id (if
+                     (map? item-id-or-att)
+                     (:id item-id-or-att)
+                     item-id-or-att)
             fresh (get-item (:id item))
             fresh-children (or (:attachments fresh) [])
             existing (some (fn [c] (= (:id c) att-id)) fresh-children)]
-        (when (not existing)
-          (set-item! (assoc fresh
-                       :attachments (conj fresh-children {:id att-id})
-                       :modified (now))))
+        (when
+          (not existing)
+          (set-item!
+            (assoc
+              fresh
+              :attachments
+              (conj fresh-children {:id att-id})
+              :modified
+              (now))))
         ((:set-active-tab! tab-lib) (:id item) att-id)
         (rerender!))))
-
-  ;; Gesture tracking state (local atoms — fine to reset, purely ephemeral)
   (def touch-x (atom 0))
   (def touch-y (atom 0))
   (def tracking (atom false))
-
   (def EDGE-ZONE 24)
   (def SWIPE-THRESHOLD 50)
-
-  ;; Show workspace context menu (Change View, etc.) positioned near the trigger
   (defn show-workspace-menu [container x y]
     (let [existing (invoke container "querySelector" ".ws-menu-backdrop")]
       (when existing (invoke existing "remove")))
     (let [ctx-lib (require "context-menu-lib")
           dismiss (fn []
-                    (let [bg (invoke container "querySelector" ".ws-menu-backdrop")
+                    (let [bg (invoke
+                               container
+                               "querySelector"
+                               ".ws-menu-backdrop")
                           mn (invoke container "querySelector" ".ws-menu-pos")]
                       (when bg (invoke bg "remove"))
                       (when mn (invoke mn "remove"))))
-          menu (invoke ctx-lib "buildItemMenu" api (:id item) {:onDismiss dismiss})
+          menu (invoke
+                 ctx-lib
+                 "buildItemMenu"
+                 api
+                 (:id item)
+                 {:onDismiss dismiss})
           _ (invoke (dom-get menu :classList) "add" "submenu-left")
           backdrop (hiccup->dom
-                     [:div.ws-menu-backdrop
-                       {:style "position:fixed; top:0; left:0; right:0; bottom:0; z-index:9999;"}])
+                     [:div.ws-menu-backdrop {:style "position:fixed; top:0; left:0; right:0; bottom:0; z-index:9999;"}
+])
           pos (hiccup->dom
-                [:div.ws-menu-pos
-                  {:style (str "position:fixed; top:" y "px; right:8px; z-index:10000; "
-                               "background:var(--color-bg-surface); border-radius:var(--border-radius-lg); "
-                               "box-shadow:var(--shadow-md);")}])]
+                [:div.ws-menu-pos {:style (str
+                                            "position:fixed; top:"
+                                            y
+                                            "px; right:8px; z-index:10000; "
+                                            "background:var(--color-bg-surface); border-radius:var(--border-radius-lg); "
+                                            "box-shadow:var(--shadow-md);")}
+])]
       (dom-on! backdrop :click (fn [_] (dismiss)))
       (invoke pos "appendChild" menu)
       (invoke container "appendChild" backdrop)
       (invoke container "appendChild" pos)))
-
-  ;; Show the tab switcher overlay imperatively.
-  ;; Reads fresh data from storage to avoid stale-closure issues after morphdom re-renders.
   (defn show-tab-overlay [container]
     (let [fresh (get-item (:id item))
           fresh-atts (or (:attachments fresh) [])
           fresh-specs (map (fn [a] (if (string? a) {:id a} a)) fresh-atts)
           tabs (for [spec (seq fresh-specs)]
-                 (let [id (:id spec)
-                       child (get-item id)]
+                 (let [id (:id spec) child (get-item id)]
                    {:id id
-                    :name (or (:name child) (get-in child [:content :title]) (subs id 0 8))}))
+                    :name (or
+                            (:name child)
+                            (get-in child [:content :title])
+                            (subs id 0 8))}))
           cur-active (let [stored ((:get-active-tab tab-lib) (:id item))]
-                       (if (and stored (some (fn [s] (= (:id s) stored)) fresh-specs))
+                       (if
+                         (and
+                           stored
+                           (some (fn [s] (= (:id s) stored)) fresh-specs))
                          stored
                          (when (seq fresh-specs) (:id (first fresh-specs)))))
           overlay (hiccup->dom
-            [:div.tab-switcher-overlay
-              {:style "position:fixed; top:0; left:0; right:0; bottom:0; background:var(--color-bg-body); z-index:10000; display:flex; flex-direction:column;"}
+                    [:div.tab-switcher-overlay {:style "position:fixed; top:0; left:0; right:0; bottom:0; background:var(--color-bg-body); z-index:10000; display:flex; flex-direction:column;"}
 
-              ;; Header
-              [:div {:style "display:flex; align-items:center; justify-content:space-between; padding:12px 16px; border-bottom:1px solid var(--color-border); flex-shrink:0;"}
-                [:span {:style "font-weight:600; font-size:1rem;"}
-                  (or (:name fresh) "Workspace")]
-                [:button {:style "background:none; border:none; color:var(--color-text-secondary); font-size:1.5rem; cursor:pointer; padding:4px 8px; min-height:44px; -webkit-tap-highlight-color:transparent;"
-                          :on-click (fn [_]
-                                      (invoke overlay "remove"))}
-                  "✕"]]
+                      [:div {:style "display:flex; align-items:center; justify-content:space-between; padding:12px 16px; border-bottom:1px solid var(--color-border); flex-shrink:0;"}
 
-              ;; Tab list
-              [:div {:style "flex:1; overflow-y:auto; padding:8px;"}
-                (for [tab (seq tabs)]
-                  (let [is-active (= (:id tab) cur-active)]
-                    [:div {:style (str
-                                    "display:flex; align-items:center; padding:12px 16px; "
-                                    "border-radius:8px; margin-bottom:4px; "
-                                    "min-height:48px; -webkit-tap-highlight-color:transparent; "
-                                    (if is-active
-                                      "background:var(--color-primary-bg); border:1px solid var(--color-primary); font-weight:600;"
-                                      "background:var(--color-bg-surface); border:1px solid var(--color-border);"))}
-                      [:span {:style "flex:1; cursor:pointer;"
-                              :on-click (fn [_]
-                                          ((:set-active-tab! tab-lib) (:id item) (:id tab))
-                                          (invoke overlay "remove")
-                                          (rerender!))}
-                        (:name tab)]
-                      [:button {:style "background:none; border:none; color:var(--color-text-tertiary); font-size:1.125rem; cursor:pointer; padding:4px 8px; min-height:44px; -webkit-tap-highlight-color:transparent;"
-                                :on-click (fn [_]
-                                            (detach! (:id tab))
-                                            (invoke overlay "remove")
-                                            (rerender!))}
-                        "✕"]]))]])]
+                        [:span {:style "font-weight:600; font-size:1rem;"}
+                          (or (:name fresh) "Workspace")]
+                        [:button {:style "background:none; border:none; color:var(--color-text-secondary); font-size:1.5rem; cursor:pointer; padding:4px 8px; min-height:44px; -webkit-tap-highlight-color:transparent;"
+                                  :on-click (fn [_] (invoke overlay "remove"))}
+                          "✕"]]
+                      [:div {:style "flex:1; overflow-y:auto; padding:8px;"}
+                        (for [tab (seq tabs)]
+                          (let [is-active (= (:id tab) cur-active)]
+                            [:div {:style (str
+                                            "display:flex; align-items:center; padding:12px 16px; "
+                                            "border-radius:8px; margin-bottom:4px; "
+                                            "min-height:48px; -webkit-tap-highlight-color:transparent; "
+                                            (if
+                                              is-active
+                                              "background:var(--color-primary-bg); border:1px solid var(--color-primary); font-weight:600;"
+                                              "background:var(--color-bg-surface); border:1px solid var(--color-border);"))}
+
+                              [:span {:style "flex:1; cursor:pointer;"
+                                      :on-click (fn [_]
+                                                  ((:set-active-tab! tab-lib)
+                                                    (:id item)
+                                                    (:id tab))
+                                                  (invoke overlay "remove")
+                                                  (rerender!))}
+                                (:name tab)]
+                              [:button {:style "background:none; border:none; color:var(--color-text-tertiary); font-size:1.125rem; cursor:pointer; padding:4px 8px; min-height:44px; -webkit-tap-highlight-color:transparent;"
+                                        :on-click (fn [_]
+                                                    (detach! (:id tab))
+                                                    (invoke overlay "remove")
+                                                    (rerender!))}
+                                "✕"]]))]])]
       (invoke container "appendChild" overlay)))
+  [:div.tabbed-workspace {:style "display:flex; flex-direction:column; height:100%; position:relative; overflow:hidden;"
+                          :on-touchstart (fn [e]
+                                           (let [touch (invoke
+                                                         (dom-get e :touches)
+                                                         "item"
+                                                         0)
+                                                 rect (invoke
+                                                        (dom-get
+                                                          e
+                                                          :currentTarget)
+                                                        "getBoundingClientRect")
+                                                 x (dom-get touch :clientX)
+                                                 right (dom-get rect :right)]
+                                             (when
+                                               (> x (- right EDGE-ZONE))
+                                               (reset! touch-x x)
+                                               (reset!
+                                                 touch-y
+                                                 (dom-get touch :clientY))
+                                               (reset! tracking true))))
+                          :on-touchmove (fn [e]
+                                          (when
+                                            (deref tracking)
+                                            (let [touch (invoke
+                                                          (dom-get e :touches)
+                                                          "item"
+                                                          0)
+                                                  dx (-
+                                                       (deref touch-x)
+                                                       (dom-get touch :clientX))
+                                                  dy (let [raw (-
+                                                                 (dom-get
+                                                                   touch
+                                                                   :clientY)
+                                                                 (deref touch-y))
+]
+                                                       (if
+                                                         (< raw 0)
+                                                         (- 0 raw)
+                                                         raw))]
+                                              (when
+                                                (and
+                                                  (> dx SWIPE-THRESHOLD)
+                                                  (> dx dy))
+                                                (reset! tracking false)
+                                                (show-tab-overlay
+                                                  (dom-get e :currentTarget))))))
+                          :on-touchend (fn [_] (reset! tracking false))}
+    [:style
+      ".env-desktop .tabbed-workspace-hint { display: none; }\n            .env-mobile .tabbed-workspace-tabbar { display: none !important; }\n            .tab-scroll-track::-webkit-scrollbar { display: none; }"]
+    [:div.tabbed-workspace-tabbar {:style "display:flex; border-bottom:1px solid var(--color-border); background:var(--color-bg-surface); flex-shrink:0; align-items:stretch;"}
 
-  [:div.tabbed-workspace
-    {:style "display:flex; flex-direction:column; height:100%; position:relative; overflow:hidden;"
-
-     :on-touchstart
-     (fn [e]
-       (let [touch (invoke (dom-get e :touches) "item" 0)
-             rect (invoke (dom-get e :currentTarget) "getBoundingClientRect")
-             x (dom-get touch :clientX)
-             right (dom-get rect :right)]
-         (when (> x (- right EDGE-ZONE))
-           (reset! touch-x x)
-           (reset! touch-y (dom-get touch :clientY))
-           (reset! tracking true))))
-
-     :on-touchmove
-     (fn [e]
-       (when (deref tracking)
-         (let [touch (invoke (dom-get e :touches) "item" 0)
-               dx (- (deref touch-x) (dom-get touch :clientX))
-               dy (let [raw (- (dom-get touch :clientY) (deref touch-y))]
-                    (if (< raw 0) (- 0 raw) raw))]
-           (when (and (> dx SWIPE-THRESHOLD) (> dx dy))
-             (reset! tracking false)
-             (show-tab-overlay (dom-get e :currentTarget))))))
-
-     :on-touchend
-     (fn [_] (reset! tracking false))}
-
-    ;; CSS for environment-specific visibility
-    [:style ".env-desktop .tabbed-workspace-hint { display: none; }
-            .env-mobile .tabbed-workspace-tabbar { display: none !important; }
-            .tab-scroll-track::-webkit-scrollbar { display: none; }"]
-
-    ;; Desktop tab bar with scroll controls
-    [:div.tabbed-workspace-tabbar
-      {:style "display:flex; border-bottom:1px solid var(--color-border); background:var(--color-bg-surface); flex-shrink:0; align-items:stretch;"}
-
-      ;; Scroll left
-      [:button.tab-scroll-left
-        {:style "flex-shrink:0; width:20px; border:none; background:transparent; cursor:pointer; font-size:0.675rem; color:var(--color-text-tertiary); display:flex; align-items:center; justify-content:center; opacity:0.3;"
-         :on-click (fn [e]
-                     (let [track (invoke (invoke (dom-get e :target) "closest" ".tabbed-workspace-tabbar") "querySelector" ".tab-scroll-track")]
-                       (dom-set! track :scrollLeft (- (dom-get track :scrollLeft) 120))))}
+      [:button.tab-scroll-left {:style "flex-shrink:0; width:20px; border:none; background:transparent; cursor:pointer; font-size:0.675rem; color:var(--color-text-tertiary); display:flex; align-items:center; justify-content:center; opacity:0.3;"
+                                :on-click (fn [e]
+                                            (let [track (invoke
+                                                          (invoke
+                                                            (dom-get e :target)
+                                                            "closest"
+                                                            ".tabbed-workspace-tabbar")
+                                                          "querySelector"
+                                                          ".tab-scroll-track")
+]
+                                              (dom-set!
+                                                track
+                                                :scrollLeft
+                                                (-
+                                                  (dom-get track :scrollLeft)
+                                                  120))))}
         "◀"]
+      [:div.tab-scroll-track {:style "flex:1; min-width:0; display:flex; align-items:stretch; overflow-x:auto; scrollbar-width:none; scroll-behavior:smooth; gap:0;"}
 
-      ;; Scrollable tab track
-      [:div.tab-scroll-track
-        {:style "flex:1; min-width:0; display:flex; align-items:stretch; overflow-x:auto; scrollbar-width:none; scroll-behavior:smooth; gap:0;"}
         (for [tab (seq tab-info)]
           (let [is-active (= (:id tab) active-id)]
             [:div {:style (str
                             "display:flex; align-items:center; padding:6px 12px; "
                             "cursor:pointer; white-space:nowrap; font-size:0.8125rem; flex-shrink:0; "
                             "border-bottom:2px solid "
-                            (if is-active "var(--color-primary);" "transparent;")
-                            " color:" (if is-active "var(--color-text);" "var(--color-text-secondary);"))}
+                            (if
+                              is-active
+                              "var(--color-primary);"
+                              "transparent;")
+                            " color:"
+                            (if
+                              is-active
+                              "var(--color-text);"
+                              "var(--color-text-secondary);"))}
+
               [:span {:on-click (fn [_]
-                                  ((:set-active-tab! tab-lib) (:id item) (:id tab))
+                                  ((:set-active-tab! tab-lib)
+                                    (:id item)
+                                    (:id tab))
                                   (rerender!))}
+
                 (:name tab)]
               [:button {:style "background:none; border:none; color:var(--color-text-tertiary); font-size:0.75rem; cursor:pointer; padding:2px 4px; margin-left:6px; border-radius:3px; line-height:1;"
-                        :on-click (fn [_]
-                                    (detach! (:id tab))
-                                    (rerender!))}
+                        :on-click (fn [_] (detach! (:id tab)) (rerender!))}
                 "✕"]]))]
-
-      ;; Scroll right
-      [:button.tab-scroll-right
-        {:style "flex-shrink:0; width:20px; border:none; background:transparent; cursor:pointer; font-size:0.675rem; color:var(--color-text-tertiary); display:flex; align-items:center; justify-content:center; opacity:0.3;"
-         :on-click (fn [e]
-                     (let [track (invoke (invoke (dom-get e :target) "closest" ".tabbed-workspace-tabbar") "querySelector" ".tab-scroll-track")]
-                       (dom-set! track :scrollLeft (+ (dom-get track :scrollLeft) 120))))}
+      [:button.tab-scroll-right {:style "flex-shrink:0; width:20px; border:none; background:transparent; cursor:pointer; font-size:0.675rem; color:var(--color-text-tertiary); display:flex; align-items:center; justify-content:center; opacity:0.3;"
+                                 :on-click (fn [e]
+                                             (let [track (invoke
+                                                           (invoke
+                                                             (dom-get e :target)
+                                                             "closest"
+                                                             ".tabbed-workspace-tabbar")
+                                                           "querySelector"
+                                                           ".tab-scroll-track")
+]
+                                               (dom-set!
+                                                 track
+                                                 :scrollLeft
+                                                 (+
+                                                   (dom-get track :scrollLeft)
+                                                   120))))}
         "▶"]
-
-      ;; Workspace menu button — access Change View, etc.
       [:div {:style "flex-shrink:0; display:flex; align-items:center; padding:4px 8px; cursor:pointer; color:var(--color-text-secondary); font-size:0.875rem; border-bottom:2px solid transparent;"
              :on-click (fn [e]
-                         (let [container (invoke (dom-get e :target) "closest" ".tabbed-workspace")
-                               rect (invoke (dom-get e :currentTarget) "getBoundingClientRect")]
-                           (show-workspace-menu container (dom-get rect :left) (dom-get rect :bottom))))}
+                         (let [container (invoke
+                                           (dom-get e :target)
+                                           "closest"
+                                           ".tabbed-workspace")
+                               rect (invoke
+                                      (dom-get e :currentTarget)
+                                      "getBoundingClientRect")]
+                           (show-workspace-menu
+                             container
+                             (dom-get rect :left)
+                             (dom-get rect :bottom))))}
         "⋯"]]
-
-    ;; Content area — render the active tab
-    [:div.tabbed-workspace-content
-      {:style "flex:1; overflow:auto; min-height:0; display:flex; flex-direction:column;"
-       :data-item-id active-id
-       :data-parent-id (:id item)}
-      (if active-id
+    [:div.tabbed-workspace-content {:style "flex:1; overflow:auto; min-height:0; display:flex; flex-direction:column;"
+                                    :data-item-id active-id
+                                    :data-parent-id (:id item)}
+      (if
+        active-id
         [:render-child {:item active-id
                         :open-item open-item-handler
                         :style "flex:1; min-height:0; display:flex; flex-direction:column;"}]
         [:div {:style "padding:40px; text-align:center; color:var(--color-text-secondary); flex:1; display:flex; align-items:center; justify-content:center;"}
-          "No items in this workspace."])]
 
-    ;; Mobile: tab switcher nub on right edge — tappable
-    [:div.tabbed-workspace-hint
-      {:style "position:absolute; right:0; top:50%; transform:translateY(-50%); width:20px; height:56px; background:var(--color-bg-surface); border:1px solid var(--color-border); border-right:none; border-radius:8px 0 0 8px; display:flex; align-items:center; justify-content:center; opacity:0.7; cursor:pointer; z-index:10; -webkit-tap-highlight-color:transparent;"
-       :on-click (fn [e]
-                   (let [container (invoke (dom-get e :target) "closest" ".tabbed-workspace")]
-                     (show-tab-overlay container)))}
+          "No items in this workspace."])]
+    [:div.tabbed-workspace-hint {:style "position:absolute; right:0; top:50%; transform:translateY(-50%); width:20px; height:56px; background:var(--color-bg-surface); border:1px solid var(--color-border); border-right:none; border-radius:8px 0 0 8px; display:flex; align-items:center; justify-content:center; opacity:0.7; cursor:pointer; z-index:10; -webkit-tap-highlight-color:transparent;"
+                                 :on-click (fn [e]
+                                             (let [container (invoke
+                                                               (dom-get
+                                                                 e
+                                                                 :target)
+                                                               "closest"
+                                                               ".tabbed-workspace")
+]
+                                               (show-tab-overlay container)))}
       [:span {:style "font-size:0.625rem; color:var(--color-text-secondary);"}
         "◀"]]])

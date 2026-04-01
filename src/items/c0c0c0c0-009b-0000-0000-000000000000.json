@@ -1,1 +1,871 @@
-{"id": "c0c0c0c0-009b-0000-0000-000000000000", "name": "History, Versioning & Sync Design", "type": "871ae771-b9b1-4f40-8c7f-d9038bfb69c3", "created": 1742860800000, "modified": 1774171349703, "content": {"description": [":doc", [":p", [":em", {"s": "Design for system-level undo, item history, nested instance promotion (atomic commits), and device-to-device sync. Replaces the Automerge direction explored in "}, [":item-ref", {"id": "c0c0c0c0-0098-0000-0000-000000000000", "s": "Automerge Investigation"}], {"s": "."}]], [":h2", {"s": "Motivation"}], [":p", {"s": "Three needs converge:"}], [":ol", [":li", [":p", [":strong", {"s": "System-level undo."}], {"s": " Deleting an item, removing an attachment, changing a type are all irreversible today. The system needs a way to revert destructive operations."}]], [":li", [":p", [":strong", {"s": "Replacing git as the versioning mechanism."}], {"s": " Item history should live inside Hobson, not in an external tool. This fits the \"everything in Hobson\" philosophy and makes history available at runtime — browsable, revertable, and syncable."}]], [":li", [":p", [":strong", {"s": "Mobile sync."}], {"s": " Single-user, device-to-device sync. Hobson needs to be accessible on mobile, which requires syncing data between devices."}]]], [":h2", {"s": "Why not Automerge"}], [":p", {"s": "Automerge was prototyped and benchmarked (see "}, [":item-ref", {"id": "c0c0c0c0-0098-0000-0000-000000000000", "s": "Automerge Investigation"}], {"s": "). The prototype surfaced a fundamental impedance mismatch: Automerge wants fine-grained operations (mutations inside A.change()), but Hobson's API provides coarse-grained snapshots (api.get() → mutate → api.set()). This creates permanent complexity:"}], [":ul", [":li", [":p", [":strong", {"s": "Diffing layer."}], {"s": " The storage module must reverse-engineer intent from snapshot comparisons. This is inherently lossy (array insertions cannot be detected without LCS) and fragile (every new data structure may need diffing fixes). The storage module nearly doubled in size (276 → 506 lines)."}]], [":li", [":p", [":strong", {"s": "Map key ordering."}], {"s": " Automerge maps are unordered. Any code relying on Object.keys() iteration order breaks. Fixable for top-level item fields, but not for arbitrary nested objects (e.g., view-spec ui_hints) without data model changes in every affected item."}]], [":li", [":p", [":strong", {"s": "Bootstrap complexity."}], {"s": " If Automerge is the storage layer, it must be available before the kernel loads, creating a chicken-and-egg problem requiring a BIOS layer or dual IDB stores."}]], [":li", [":p", [":strong", {"s": "Wrong sweet spot."}], {"s": " Automerge excels at large text documents with character-level collaborative edits. Hobson items are small structured JSON objects with many fields — CRDT per-field metadata dominates (40x WASM heap ratio)."}]]], [":p", {"s": "CRDTs solve concurrent multi-user editing. Hobson is single-user. The actual sync need (device-to-device for one person) is much simpler and doesn't require CRDTs."}], [":hr"], [":h2", {"s": "Design"}], [":h3", {"s": "1. Per-item history (kernel)"}], [":p", {"s": "A new "}, [":code", {"s": "item-history"}], {"s": " IDB object store holds historical snapshots. Each entry is "}, [":code", {"s": "{itemId, timestamp, snapshot}"}], {"s": ", where snapshot is the full item state at that point. The store is append-only."}], [":p", {"s": "On every saveItem(), before writing the new state to the items store, the previous state is written to item-history. This happens in the kernel write path — it cannot be bypassed or broken by userland code."}], [":p", [":strong", {"s": "Why kernel, not userland:"}], {"s": " Although the ITEM_UPDATED event carries the previous state (so a userland listener could capture it), history is a safety net. It must survive userland failures — a buggy code item must not be able to disable history. It must be available in safe mode. And the kernel already owns IDB."}], [":p", {"s": "Three new kernel storage APIs:"}], [":ul", [":li", [":p", [":code", {"s": "getHistory(id)"}], {"s": " — returns list of {itemId, timestamp} entries for an item"}]], [":li", [":p", [":code", {"s": "viewAt(id, timestamp)"}], {"s": " — returns the full item snapshot at that timestamp"}]], [":li", [":p", [":code", {"s": "revertTo(id, timestamp)"}], {"s": " — restores an item to a previous state. Goes through the normal write path (saveItem), so the revert itself is recorded in history."}]]], [":p", [":strong", {"s": "Storage representation."}], {"s": " Initial implementation stores full snapshots. The API returns full item objects regardless of internal representation, so a future migration to diff-based storage is invisible to callers."}], [":h3", {"s": "2. Nested instance promotion (userland)"}], [":p", {"s": "Nested instances provide safe isolation for risky changes, especially kernel-level editing. If a change breaks the nested instance, the parent is unaffected — discard and try again."}], [":p", {"s": "Promoting a nested instance to its parent is an atomic commit: all changed items are applied to the parent in one operation. This gives Hobson grouped, reviewable changesets without imposing an explicit commit workflow."}], [":p", {"s": "The promotion mechanism:"}], [":ol", [":li", [":p", [":strong", {"s": "Create:"}], {"s": " A nested instance is created as a full copy of the parent's items. Self-contained, no fallback chain to the parent on reads."}]], [":li", [":p", [":strong", {"s": "Work:"}], {"s": " Edit items in the nested instance. The parent is unaffected."}]], [":li", [":p", [":strong", {"s": "Diff:"}], {"s": " Identify which items in the nested instance differ from their parent counterparts (new, modified, or deleted). The item's modified timestamp gives a fast check, with full comparison as fallback."}]], [":li", [":p", [":strong", {"s": "Promote:"}], {"s": " Apply changes to the parent. Each promoted item goes through the normal write path (saveItem), so history is captured automatically. All promoted items share a promotion timestamp."}]], [":li", [":p", [":strong", {"s": "Cleanup:"}], {"s": " Discard the nested instance after successful promotion."}]]], [":p", {"s": "The nested instance's name/description serves as the commit message."}], [":h3", {"s": "3. Device-to-device sync (future)"}], [":p", {"s": "Single-user sync between devices. No CRDTs needed — concurrent edits to the same item are rare for one person, and when they occur, last-write-wins with a prompt on conflict is sufficient."}], [":p", {"s": "Mechanism:"}], [":ul", [":li", [":p", {"s": "Exchange items as JSON over any transport (relay server, WebRTC, shared file)."}]], [":li", [":p", {"s": "Compare modified timestamps. Push the newer version. Flag conflicts where both sides modified since last sync."}]], [":li", [":p", {"s": "History entries from item-history sync alongside items. History entries are immutable and append-only, keyed by (itemId, timestamp) — no conflicts possible, just union the sets. This means edits made on device A can be reverted on device B."}]]], [":hr"], [":h2", {"s": "Layer responsibilities"}], [":table", [":thead", [":tr", [":th", {"s": "Concern"}], [":th", {"s": "Layer"}], [":th", {"s": "Notes"}]]], [":tbody", [":tr", [":td", {"s": "item-history IDB store"}], [":td", {"s": "Kernel"}], [":td", {"s": "Owned by kernel storage module"}]], [":tr", [":td", {"s": "History capture on write"}], [":td", {"s": "Kernel"}], [":td", {"s": "In saveItem() write path, not bypassable"}]], [":tr", [":td", {"s": "getHistory / viewAt / revertTo APIs"}], [":td", {"s": "Kernel"}], [":td", {"s": "Exposed on the kernel API"}]], [":tr", [":td", {"s": "Nested instance creation (full copy)"}], [":td", {"s": "Userland"}], [":td", {"s": "Extends existing nested instance logic. Needs to be built"}]], [":tr", [":td", {"s": "Nested instance diff + promote"}], [":td", {"s": "Userland"}], [":td", {"s": "Extends existing nested instance logic. Needs to be built"}]], [":tr", [":td", {"s": "History viewer UI"}], [":td", {"s": "Userland"}], [":td", {"s": "Browse and revert per-item history"}]], [":tr", [":td", {"s": "Instance management UI"}], [":td", {"s": "Userland"}], [":td", {"s": "Create, switch, promote, discard instances"}]], [":tr", [":td", {"s": "Changeset annotations"}], [":td", {"s": "Userland"}], [":td", {"s": "Optional retrospective grouping of history entries"}]], [":tr", [":td", {"s": "Sync transport + conflict UI"}], [":td", {"s": "TBD"}], [":td", {"s": "Future work, not yet designed"}]]]], [":hr"], [":h2", {"s": "Storage estimates"}], [":p", {"s": "Based on the current item set (342 items, 6.6 MB total JSON, ~7000 historical edits across 653 git commits):"}], [":table", [":thead", [":tr", [":th", {"s": "Metric"}], [":th", {"s": "Estimate"}]]], [":tbody", [":tr", [":td", {"s": "Current items store"}], [":td", {"s": "6.6 MB"}]], [":tr", [":td", {"s": "History store (full snapshots, to date)"}], [":td", {"s": "~100–200 MB (overestimate; items were smaller in earlier edits)"}]], [":tr", [":td", {"s": "Projected 1 year"}], [":td", {"s": "~400 MB"}]], [":tr", [":td", {"s": "Nested instance (full copy)"}], [":td", {"s": "~6.6 MB per active instance"}]]]], [":p", {"s": "Well within IDB limits on desktop (10+ GB). Mobile browsers (Safari/iOS) cap at ~1 GB and may evict under storage pressure — monitor in practice. If full-snapshot storage becomes a concern, migrate to diff-based storage behind the same API."}], [":hr"], [":h2", {"s": "Open questions"}], [":ul", [":li", [":p", [":strong", {"s": "Backup story."}], {"s": " If history lives in Hobson and git is no longer the versioning mechanism, what is the backup? Options: periodic export (backup.json already exists), sync to a second device, or both. Don't remove git as a safety net until one of these is in place."}]], [":li", [":p", [":strong", {"s": "History for deleted items."}], {"s": " When an item is deleted, its history entries remain in item-history (append-only store, nothing is ever removed). Undelete could reconstruct from the most recent history entry. Needs API design."}]], [":li", [":p", [":strong", {"s": "Sync conflict UI."}], {"s": " When both devices modified the same item since last sync, how is the conflict presented to the user? Needs design when sync work begins."}]], [":li", [":p", [":strong", {"s": "History viewer diffing."}], {"s": " The history API returns full snapshots. A useful history viewer needs to show what changed between versions. Structured field-level diffing (\"name changed from X to Y, tag Z added\") is more useful than raw JSON diff for items. This is a userland concern."}]]]], "tags": ["bff75873-edb8-412e-81c9-c744e68fe29f", "c0c0c0c0-0085-0000-0000-000000000000"]}, "attachments": []}
+{
+  "id": "c0c0c0c0-009b-0000-0000-000000000000",
+  "name": "History, Versioning & Sync Design",
+  "type": "871ae771-b9b1-4f40-8c7f-d9038bfb69c3",
+  "created": 1742860800000,
+  "modified": 1774988061692,
+  "content": {
+    "description": [
+      ":doc",
+      [
+        ":p",
+        [
+          ":em",
+          {
+            "s": "Design for system-level undo, item history, nested instance promotion (atomic commits), and device-to-device sync. Replaces the Automerge direction explored in "
+          },
+          [
+            ":item-ref",
+            {
+              "id": "c0c0c0c0-0098-0000-0000-000000000000",
+              "s": "Automerge Investigation"
+            }
+          ],
+          {
+            "s": "."
+          }
+        ]
+      ],
+      [
+        ":h2",
+        {
+          "s": "Motivation"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Three needs converge:"
+        }
+      ],
+      [
+        ":ol",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "System-level undo."
+              }
+            ],
+            {
+              "s": " Deleting an item, removing an attachment, changing a type are all irreversible today. The system needs a way to revert destructive operations."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Replacing git as the versioning mechanism."
+              }
+            ],
+            {
+              "s": " Item history should live inside Hobson, not in an external tool. This fits the \"everything in Hobson\" philosophy and makes history available at runtime — browsable, revertable, and syncable."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Mobile sync."
+              }
+            ],
+            {
+              "s": " Single-user, device-to-device sync. Hobson needs to be accessible on mobile, which requires syncing data between devices."
+            }
+          ]
+        ]
+      ],
+      [
+        ":h2",
+        {
+          "s": "Why not Automerge"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Automerge was prototyped and benchmarked (see "
+        },
+        [
+          ":item-ref",
+          {
+            "id": "c0c0c0c0-0098-0000-0000-000000000000",
+            "s": "Automerge Investigation"
+          }
+        ],
+        {
+          "s": "). The prototype surfaced a fundamental impedance mismatch: Automerge wants fine-grained operations (mutations inside A.change()), but Hobson's API provides coarse-grained snapshots (api.get() → mutate → api.set()). This creates permanent complexity:"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Diffing layer."
+              }
+            ],
+            {
+              "s": " The storage module must reverse-engineer intent from snapshot comparisons. This is inherently lossy (array insertions cannot be detected without LCS) and fragile (every new data structure may need diffing fixes). The storage module nearly doubled in size (276 → 506 lines)."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Map key ordering."
+              }
+            ],
+            {
+              "s": " Automerge maps are unordered. Any code relying on Object.keys() iteration order breaks. Fixable for top-level item fields, but not for arbitrary nested objects (e.g., view-spec ui_hints) without data model changes in every affected item."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Bootstrap complexity."
+              }
+            ],
+            {
+              "s": " If Automerge is the storage layer, it must be available before the kernel loads, creating a chicken-and-egg problem requiring a BIOS layer or dual IDB stores."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Wrong sweet spot."
+              }
+            ],
+            {
+              "s": " Automerge excels at large text documents with character-level collaborative edits. Hobson items are small structured JSON objects with many fields — CRDT per-field metadata dominates (40x WASM heap ratio)."
+            }
+          ]
+        ]
+      ],
+      [
+        ":p",
+        {
+          "s": "CRDTs solve concurrent multi-user editing. Hobson is single-user. The actual sync need (device-to-device for one person) is much simpler and doesn't require CRDTs."
+        }
+      ],
+      [
+        ":hr"
+      ],
+      [
+        ":h2",
+        {
+          "s": "Design"
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "1. Per-item history (kernel)"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "A new "
+        },
+        [
+          ":code",
+          {
+            "s": "item-history"
+          }
+        ],
+        {
+          "s": " IDB object store holds historical snapshots. Each entry is "
+        },
+        [
+          ":code",
+          {
+            "s": "{itemId, timestamp, snapshot}"
+          }
+        ],
+        {
+          "s": ", where snapshot is the full item state at that point. The store is append-only."
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "On every saveItem(), before writing the new state to the items store, the previous state is written to item-history. This happens in the kernel write path — it cannot be bypassed or broken by userland code."
+        }
+      ],
+      [
+        ":p",
+        [
+          ":strong",
+          {
+            "s": "Why kernel, not userland:"
+          }
+        ],
+        {
+          "s": " Although the ITEM_UPDATED event carries the previous state (so a userland listener could capture it), history is a safety net. It must survive userland failures — a buggy code item must not be able to disable history. It must be available in safe mode. And the kernel already owns IDB."
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Three new kernel storage APIs:"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":code",
+              {
+                "s": "getHistory(id)"
+              }
+            ],
+            {
+              "s": " — returns list of {itemId, timestamp} entries for an item"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":code",
+              {
+                "s": "viewAt(id, timestamp)"
+              }
+            ],
+            {
+              "s": " — returns the full item snapshot at that timestamp"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":code",
+              {
+                "s": "revertTo(id, timestamp)"
+              }
+            ],
+            {
+              "s": " — restores an item to a previous state. Goes through the normal write path (saveItem), so the revert itself is recorded in history."
+            }
+          ]
+        ]
+      ],
+      [
+        ":p",
+        [
+          ":strong",
+          {
+            "s": "Storage representation."
+          }
+        ],
+        {
+          "s": " Initial implementation stores full snapshots. The API returns full item objects regardless of internal representation, so a future migration to diff-based storage is invisible to callers."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "2. Nested instance promotion (userland)"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Nested instances provide safe isolation for risky changes, especially kernel-level editing. If a change breaks the nested instance, the parent is unaffected — discard and try again."
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Promoting a nested instance to its parent is an atomic commit: all changed items are applied to the parent in one operation. This gives Hobson grouped, reviewable changesets without imposing an explicit commit workflow."
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The promotion mechanism:"
+        }
+      ],
+      [
+        ":ol",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Create:"
+              }
+            ],
+            {
+              "s": " A nested instance is created as a full copy of the parent's items. Self-contained, no fallback chain to the parent on reads."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Work:"
+              }
+            ],
+            {
+              "s": " Edit items in the nested instance. The parent is unaffected."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Diff:"
+              }
+            ],
+            {
+              "s": " Identify which items in the nested instance differ from their parent counterparts (new, modified, or deleted). The item's modified timestamp gives a fast check, with full comparison as fallback."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Promote:"
+              }
+            ],
+            {
+              "s": " Apply changes to the parent. Each promoted item goes through the normal write path (saveItem), so history is captured automatically. All promoted items share a promotion timestamp."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Cleanup:"
+              }
+            ],
+            {
+              "s": " Discard the nested instance after successful promotion."
+            }
+          ]
+        ]
+      ],
+      [
+        ":p",
+        {
+          "s": "The nested instance's name/description serves as the commit message."
+        }
+      ],
+      [
+        ":h3",
+        {
+          "s": "3. Device-to-device sync (future)"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Single-user sync between devices. No CRDTs needed — concurrent edits to the same item are rare for one person, and when they occur, last-write-wins with a prompt on conflict is sufficient."
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Mechanism:"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Exchange items as JSON over any transport (relay server, WebRTC, shared file)."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Compare modified timestamps. Push the newer version. Flag conflicts where both sides modified since last sync."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "History entries from item-history sync alongside items. History entries are immutable and append-only, keyed by (itemId, timestamp) — no conflicts possible, just union the sets. This means edits made on device A can be reverted on device B."
+            }
+          ]
+        ]
+      ],
+      [
+        ":hr"
+      ],
+      [
+        ":h2",
+        {
+          "s": "Layer responsibilities"
+        }
+      ],
+      [
+        ":table",
+        [
+          ":thead",
+          [
+            ":tr",
+            [
+              ":th",
+              {
+                "s": "Concern"
+              }
+            ],
+            [
+              ":th",
+              {
+                "s": "Layer"
+              }
+            ],
+            [
+              ":th",
+              {
+                "s": "Notes"
+              }
+            ]
+          ]
+        ],
+        [
+          ":tbody",
+          [
+            ":tr",
+            [
+              ":td",
+              {
+                "s": "item-history IDB store"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Kernel"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Owned by kernel storage module"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              {
+                "s": "History capture on write"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Kernel"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "In saveItem() write path, not bypassable"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              {
+                "s": "getHistory / viewAt / revertTo APIs"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Kernel"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Exposed on the kernel API"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              {
+                "s": "Nested instance creation (full copy)"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Userland"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Extends existing nested instance logic. Needs to be built"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              {
+                "s": "Nested instance diff + promote"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Userland"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Extends existing nested instance logic. Needs to be built"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              {
+                "s": "History viewer UI"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Userland"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Browse and revert per-item history"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              {
+                "s": "Instance management UI"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Userland"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Create, switch, promote, discard instances"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              {
+                "s": "Changeset annotations"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Userland"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Optional retrospective grouping of history entries"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              {
+                "s": "Sync transport + conflict UI"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "TBD"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "Future work, not yet designed"
+              }
+            ]
+          ]
+        ]
+      ],
+      [
+        ":hr"
+      ],
+      [
+        ":h2",
+        {
+          "s": "Storage estimates"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Based on the current item set (342 items, 6.6 MB total JSON, ~7000 historical edits across 653 git commits):"
+        }
+      ],
+      [
+        ":table",
+        [
+          ":thead",
+          [
+            ":tr",
+            [
+              ":th",
+              {
+                "s": "Metric"
+              }
+            ],
+            [
+              ":th",
+              {
+                "s": "Estimate"
+              }
+            ]
+          ]
+        ],
+        [
+          ":tbody",
+          [
+            ":tr",
+            [
+              ":td",
+              {
+                "s": "Current items store"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "6.6 MB"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              {
+                "s": "History store (full snapshots, to date)"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "~100–200 MB (overestimate; items were smaller in earlier edits)"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              {
+                "s": "Projected 1 year"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "~400 MB"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              {
+                "s": "Nested instance (full copy)"
+              }
+            ],
+            [
+              ":td",
+              {
+                "s": "~6.6 MB per active instance"
+              }
+            ]
+          ]
+        ]
+      ],
+      [
+        ":p",
+        {
+          "s": "Well within IDB limits on desktop (10+ GB). Mobile browsers (Safari/iOS) cap at ~1 GB and may evict under storage pressure — monitor in practice. If full-snapshot storage becomes a concern, migrate to diff-based storage behind the same API."
+        }
+      ],
+      [
+        ":hr"
+      ],
+      [
+        ":h2",
+        {
+          "s": "Open questions"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Backup story."
+              }
+            ],
+            {
+              "s": " If history lives in Hobson and git is no longer the versioning mechanism, what is the backup? Options: periodic export (backup.json already exists), sync to a second device, or both. Don't remove git as a safety net until one of these is in place."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "History for deleted items."
+              }
+            ],
+            {
+              "s": " When an item is deleted, its history entries remain in item-history (append-only store, nothing is ever removed). Undelete could reconstruct from the most recent history entry. Needs API design."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Sync conflict UI."
+              }
+            ],
+            {
+              "s": " When both devices modified the same item since last sync, how is the conflict presented to the user? Needs design when sync work begins."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "History viewer diffing."
+              }
+            ],
+            {
+              "s": " The history API returns full snapshots. A useful history viewer needs to show what changed between versions. Structured field-level diffing (\"name changed from X to Y, tag Z added\") is more useful than raw JSON diff for items. This is a userland concern."
+            }
+          ]
+        ]
+      ]
+    ],
+    "tags": [
+      "bff75873-edb8-412e-81c9-c744e68fe29f",
+      "c0c0c0c0-0085-0000-0000-000000000000"
+    ]
+  },
+  "attachments": []
+}

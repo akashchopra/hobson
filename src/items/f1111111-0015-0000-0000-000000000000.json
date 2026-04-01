@@ -1,0 +1,299 @@
+{
+  "id": "f1111111-0015-0000-0000-000000000000",
+  "name": "file-mirror",
+  "type": "66666666-0000-0000-0000-000000000000",
+  "created": 1775174400000,
+  "modified": 1775044868891,
+  "watches": [
+    {
+      "event": "e0e00000-0002-0002-0000-000000000000"
+    }
+  ],
+  "content": {
+    "description": [
+      ":doc",
+      [
+        ":p",
+        {
+          "s": "Auto-exports items to disk as JSON and .code sidecar files on every save. Tauri-only — silently disabled in browser. Configure the "
+        },
+        [
+          ":code",
+          {
+            "s": "path"
+          }
+        ],
+        {
+          "s": " field to point at your src/items directory."
+        }
+      ]
+    ],
+    "path": "/home/akash/Documents/Code/Hobson/src/items/",
+    "enabled": true,
+    "code": "// file-mirror — Auto-exports items to disk as JSON + code sidecar files.\n// Tauri-only. Listens for item changes and writes to the configured path.\n\nconst SELF_ID = 'f1111111-0015-0000-0000-000000000000';\nconst ITEM_EVENT = 'e0e00000-0001-0000-0000-000000000000';\nconst ITEM_DELETED_ID = 'e0e00000-0001-0003-0000-000000000000';\nconst DEBOUNCE_MS = 2000;\n\nlet unsubscribe = null;\nlet hob = null;\nlet _api = null;\nconst pending = new Map();\n\nexport async function onKernelBootComplete({ safeMode }, api) {\n  if (safeMode) return;\n\n  const tauri = window.__TAURI__;\n  if (!tauri) return;\n\n  const self = await api.get(SELF_ID);\n  const basePath = self.content?.path;\n  if (!basePath) {\n    console.warn('[file-mirror] No export path configured');\n    return;\n  }\n\n  _api = api;\n\n  if (self.content?.enabled === false) {\n    console.log('[file-mirror] Disabled by config');\n    return;\n  }\n\n  unsubscribe = api.events.on(ITEM_EVENT, (event) => {\n    const { id, item } = event.content;\n\n    if (pending.has(id)) clearTimeout(pending.get(id));\n\n    if (event.type === ITEM_DELETED_ID) {\n      removePair(tauri, basePath, id);\n      return;\n    }\n\n    pending.set(id, setTimeout(() => {\n      pending.delete(id);\n      writeItem(tauri, basePath, item, api);\n    }, DEBOUNCE_MS));\n  });\n\n  console.log(`[file-mirror] Exporting to ${basePath}`);\n}\n\nasync function writeItem(tauri, basePath, item, api) {\n  try {\n    const json = JSON.stringify(item, null, 2);\n    await tauri.fs.writeTextFile(`${basePath}/${item.id}.json`, json);\n    const wrote = ['.json'];\n\n    const hasJS = !!item.content?.code;\n    const hasHob = Array.isArray(item.content?.hob);\n\n    if (hasJS || hasHob) {\n      if (hasHob && !hob) {\n        hob = await api.require('40b00001-0000-4000-8000-000000000000');\n      }\n      const parts = [];\n      if (hasJS && hasHob) {\n        parts.push(';;; --- JavaScript ---');\n        parts.push(item.content.code);\n        parts.push('');\n        parts.push(';;; --- Hob ---');\n        parts.push(hob.prettyPrintAll(item.content.hob));\n      } else if (hasJS) {\n        parts.push(item.content.code);\n      } else {\n        parts.push(hob.prettyPrintAll(item.content.hob));\n      }\n      await tauri.fs.writeTextFile(`${basePath}/${item.id}.code`, parts.join('\\n'));\n      wrote.push('.code');\n    }\n\n    console.log(`[file-mirror] ${item.name || item.id} (${wrote.join(' ')})`);\n  } catch (e) {\n    console.error(`[file-mirror] Failed to export ${item.id}:`, e);\n  }\n}\n\nasync function removePair(tauri, basePath, id) {\n  pending.delete(id);\n  try { await tauri.fs.remove(`${basePath}/${id}.json`); } catch (e) { /* may not exist */ }\n  try { await tauri.fs.remove(`${basePath}/${id}.code`); } catch (e) { /* may not exist */ }\n}\n\n/** Write all items to disk. Call from REPL: (await api.require('file-mirror')).fullSync() */\nexport async function fullSync() {\n  if (!_api) throw new Error('file-mirror not initialized (boot not complete?)');\n  const tauri = window.__TAURI__;\n  if (!tauri) throw new Error('Not running in Tauri');\n\n  const self = await _api.get(SELF_ID);\n  const basePath = self.content?.path;\n  if (!basePath) throw new Error('No export path configured');\n\n  const items = await _api.getAll();\n  let count = 0;\n  for (const item of items) {\n    await writeItem(tauri, basePath, item, _api);\n    count++;\n  }\n  console.log(`[file-mirror] Full sync complete: ${count} items`);\n  return count;\n}\n\nexport function cleanup() {\n  for (const timeout of pending.values()) clearTimeout(timeout);\n  pending.clear();\n  if (unsubscribe) { unsubscribe(); unsubscribe = null; }\n}\n",
+    "tags": [
+      "c0c0c0c0-0085-0000-0000-000000000000"
+    ],
+    "_symbols": {
+      "SELF_ID": {
+        "name": "SELF_ID",
+        "line": 4,
+        "col": 6,
+        "endLine": 4,
+        "endCol": 54,
+        "kind": "variable",
+        "scope": null
+      },
+      "ITEM_EVENT": {
+        "name": "ITEM_EVENT",
+        "line": 5,
+        "col": 6,
+        "endLine": 5,
+        "endCol": 57,
+        "kind": "variable",
+        "scope": null
+      },
+      "ITEM_DELETED_ID": {
+        "name": "ITEM_DELETED_ID",
+        "line": 6,
+        "col": 6,
+        "endLine": 6,
+        "endCol": 62,
+        "kind": "variable",
+        "scope": null
+      },
+      "DEBOUNCE_MS": {
+        "name": "DEBOUNCE_MS",
+        "line": 7,
+        "col": 6,
+        "endLine": 7,
+        "endCol": 24,
+        "kind": "variable",
+        "scope": null
+      },
+      "unsubscribe": {
+        "name": "unsubscribe",
+        "line": 9,
+        "col": 4,
+        "endLine": 9,
+        "endCol": 22,
+        "kind": "variable",
+        "scope": null
+      },
+      "hob": {
+        "name": "hob",
+        "line": 10,
+        "col": 4,
+        "endLine": 10,
+        "endCol": 14,
+        "kind": "variable",
+        "scope": null
+      },
+      "_api": {
+        "name": "_api",
+        "line": 11,
+        "col": 4,
+        "endLine": 11,
+        "endCol": 15,
+        "kind": "variable",
+        "scope": null
+      },
+      "pending": {
+        "name": "pending",
+        "line": 12,
+        "col": 6,
+        "endLine": 12,
+        "endCol": 25,
+        "kind": "variable",
+        "scope": null
+      },
+      "onKernelBootComplete": {
+        "name": "onKernelBootComplete",
+        "line": 14,
+        "col": 7,
+        "endLine": 51,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "({ ... }, api)"
+      },
+      "onKernelBootComplete.tauri": {
+        "name": "tauri",
+        "line": 17,
+        "col": 8,
+        "endLine": 17,
+        "endCol": 32,
+        "kind": "variable",
+        "scope": "onKernelBootComplete"
+      },
+      "onKernelBootComplete.self": {
+        "name": "self",
+        "line": 20,
+        "col": 8,
+        "endLine": 20,
+        "endCol": 37,
+        "kind": "variable",
+        "scope": "onKernelBootComplete"
+      },
+      "onKernelBootComplete.basePath": {
+        "name": "basePath",
+        "line": 21,
+        "col": 8,
+        "endLine": 21,
+        "endCol": 37,
+        "kind": "variable",
+        "scope": "onKernelBootComplete"
+      },
+      "writeItem": {
+        "name": "writeItem",
+        "line": 53,
+        "col": 0,
+        "endLine": 86,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(tauri, basePath, item, api)"
+      },
+      "writeItem.json": {
+        "name": "json",
+        "line": 55,
+        "col": 10,
+        "endLine": 55,
+        "endCol": 46,
+        "kind": "variable",
+        "scope": "writeItem"
+      },
+      "writeItem.wrote": {
+        "name": "wrote",
+        "line": 57,
+        "col": 10,
+        "endLine": 57,
+        "endCol": 27,
+        "kind": "variable",
+        "scope": "writeItem"
+      },
+      "writeItem.hasJS": {
+        "name": "hasJS",
+        "line": 59,
+        "col": 10,
+        "endLine": 59,
+        "endCol": 38,
+        "kind": "variable",
+        "scope": "writeItem"
+      },
+      "writeItem.hasHob": {
+        "name": "hasHob",
+        "line": 60,
+        "col": 10,
+        "endLine": 60,
+        "endCol": 51,
+        "kind": "variable",
+        "scope": "writeItem"
+      },
+      "writeItem.parts": {
+        "name": "parts",
+        "line": 66,
+        "col": 12,
+        "endLine": 66,
+        "endCol": 22,
+        "kind": "variable",
+        "scope": "writeItem"
+      },
+      "removePair": {
+        "name": "removePair",
+        "line": 88,
+        "col": 0,
+        "endLine": 92,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(tauri, basePath, id)"
+      },
+      "fullSync": {
+        "name": "fullSync",
+        "line": 95,
+        "col": 7,
+        "endLine": 112,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "()",
+        "description": "Write all items to disk. Call from REPL: (await api.require('file-mirror')).fullSync()"
+      },
+      "fullSync.tauri": {
+        "name": "tauri",
+        "line": 97,
+        "col": 8,
+        "endLine": 97,
+        "endCol": 32,
+        "kind": "variable",
+        "scope": "fullSync"
+      },
+      "fullSync.self": {
+        "name": "self",
+        "line": 100,
+        "col": 8,
+        "endLine": 100,
+        "endCol": 38,
+        "kind": "variable",
+        "scope": "fullSync"
+      },
+      "fullSync.basePath": {
+        "name": "basePath",
+        "line": 101,
+        "col": 8,
+        "endLine": 101,
+        "endCol": 37,
+        "kind": "variable",
+        "scope": "fullSync"
+      },
+      "fullSync.items": {
+        "name": "items",
+        "line": 104,
+        "col": 8,
+        "endLine": 104,
+        "endCol": 35,
+        "kind": "variable",
+        "scope": "fullSync"
+      },
+      "fullSync.count": {
+        "name": "count",
+        "line": 105,
+        "col": 6,
+        "endLine": 105,
+        "endCol": 15,
+        "kind": "variable",
+        "scope": "fullSync"
+      },
+      "fullSync.item": {
+        "name": "item",
+        "line": 106,
+        "col": 13,
+        "endLine": 106,
+        "endCol": 17,
+        "kind": "variable",
+        "scope": "fullSync"
+      },
+      "cleanup": {
+        "name": "cleanup",
+        "line": 114,
+        "col": 7,
+        "endLine": 118,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "()"
+      },
+      "cleanup.timeout": {
+        "name": "timeout",
+        "line": 115,
+        "col": 13,
+        "endLine": 115,
+        "endCol": 20,
+        "kind": "variable",
+        "scope": "cleanup"
+      }
+    }
+  },
+  "attachments": []
+}

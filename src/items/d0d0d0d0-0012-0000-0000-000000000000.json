@@ -1,1 +1,370 @@
-{"id": "d0d0d0d0-0012-0000-0000-000000000000", "name": "image-editor-view", "type": "aaaaaaaa-0000-0000-0000-000000000000", "created": 1774607975531, "modified": 1774610025139, "content": {"for_type": "d0d0d0d0-0010-0000-0000-000000000000", "displayName": "Image Editor", "capabilities": ["read", "write"], "ui_hints": {"content.data": {"mode": "editable"}}, "description": [":doc", [":p", {"s": "Editor for image items. Supports file picker (Tauri or browser), drag-and-drop, and paste from clipboard."}]], "code": "// image-editor-view — Editor for image items\n// Provides file picker (Tauri dialog or input[type=file]), drag-and-drop, paste from clipboard\n\nexport async function render(item, api) {\n  const el = api.createElement('div', { className: 'image-editor-view' });\n  el.style.cssText = 'display: flex; flex-direction: column; gap: 12px; padding: 8px;';\n\n  // --- Name field ---\n  const nameInput = api.createElement('input');\n  nameInput.type = 'text';\n  nameInput.value = item.name || '';\n  nameInput.placeholder = 'Image name';\n  nameInput.style.cssText = 'font-size: 1.25rem; font-weight: 600; padding: 4px 8px; border: 1px solid var(--color-border); border-radius: var(--border-radius); background: var(--color-bg-surface); color: var(--color-text); outline: none;';\n\n  // --- Alt text field ---\n  const altInput = api.createElement('input');\n  altInput.type = 'text';\n  altInput.value = item.content?.alt || '';\n  altInput.placeholder = 'Alt text (accessibility)';\n  altInput.style.cssText = 'font-size: 0.875rem; padding: 4px 8px; border: 1px solid var(--color-border); border-radius: var(--border-radius); background: var(--color-bg-surface); color: var(--color-text); outline: none;';\n\n  // --- Preview area ---\n  const preview = api.createElement('div');\n  preview.style.cssText = 'display: flex; justify-content: center; align-items: center; min-height: 120px;';\n\n  function renderPreview() {\n    preview.innerHTML = '';\n    const data = item.content?.data;\n    if (data) {\n      const img = api.createElement('img');\n      img.src = data;\n      img.alt = item.content?.alt || item.name || '';\n      img.style.cssText = 'max-width: 100%; max-height: 60vh; height: auto; border-radius: var(--border-radius);';\n      img.draggable = false;\n      preview.appendChild(img);\n    }\n  }\n  renderPreview();\n\n  // --- Drop zone (shown when no image, or as overlay) ---\n  const dropZone = api.createElement('div');\n  dropZone.style.cssText = 'padding: 2em; text-align: center; border: 2px dashed var(--color-border); border-radius: var(--border-radius); color: var(--color-text-secondary); cursor: pointer; transition: border-color 0.15s, background 0.15s;';\n  dropZone.textContent = item.content?.data ? 'Drop image to replace, paste, or click to browse' : 'Drop image here, paste, or click to browse';\n\n  // --- File reading helper ---\n  async function loadFile(file) {\n    if (!file || !file.type.startsWith('image/')) return;\n    const dataUrl = await new Promise((resolve, reject) => {\n      const reader = new FileReader();\n      reader.onload = () => resolve(reader.result);\n      reader.onerror = reject;\n      reader.readAsDataURL(file);\n    });\n    item.content = item.content || {};\n    item.content.data = dataUrl;\n    item.content.mimeType = file.type;\n    if (!item.name || item.name === 'Untitled') item.name = file.name.replace(/\\.[^.]+$/, '');\n    nameInput.value = item.name;\n    renderPreview();\n    dropZone.textContent = 'Drop image to replace, paste, or click to browse';\n  }\n\n  // --- Tauri file picker or fallback ---\n  async function pickFile() {\n    const tauri = window.__TAURI__;\n    if (tauri) {\n      try {\n        const result = await tauri.dialog.open({\n          multiple: false,\n          filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico'] }]\n        });\n        if (result) {\n          const bytes = await tauri.fs.readFile(result);\n          // Detect mime type from extension\n          const ext = result.split('.').pop().toLowerCase();\n          const mimeMap = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml', bmp: 'image/bmp', ico: 'image/x-icon' };\n          const mimeType = mimeMap[ext] || 'image/png';\n          // Convert to base64 data URL\n          let binary = '';\n          for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);\n          const b64 = btoa(binary);\n          item.content = item.content || {};\n          item.content.data = 'data:' + mimeType + ';base64,' + b64;\n          item.content.mimeType = mimeType;\n          const fileName = result.split('/').pop().split('\\\\').pop().replace(/\\.[^.]+$/, '');\n          if (!item.name || item.name === 'Untitled') item.name = fileName;\n          nameInput.value = item.name;\n          renderPreview();\n          dropZone.textContent = 'Drop image to replace, paste, or click to browse';\n        }\n      } catch (e) {\n        console.error('[image-editor] Tauri file picker error:', e);\n      }\n    } else {\n      // Browser fallback\n      const input = document.createElement('input');\n      input.type = 'file';\n      input.accept = 'image/*';\n      input.onchange = () => { if (input.files[0]) loadFile(input.files[0]); };\n      input.click();\n    }\n  }\n\n  dropZone.addEventListener('click', pickFile);\n\n  // --- Drag and drop ---\n  dropZone.addEventListener('dragover', (e) => {\n    e.preventDefault();\n    dropZone.style.borderColor = 'var(--color-primary)';\n    dropZone.style.background = 'var(--color-primary-light)';\n  });\n  dropZone.addEventListener('dragleave', () => {\n    dropZone.style.borderColor = 'var(--color-border)';\n    dropZone.style.background = '';\n  });\n  dropZone.addEventListener('drop', (e) => {\n    e.preventDefault();\n    dropZone.style.borderColor = 'var(--color-border)';\n    dropZone.style.background = '';\n    const file = e.dataTransfer.files[0];\n    if (file) loadFile(file);\n  });\n\n  // --- Paste from clipboard ---\n  el.addEventListener('paste', (e) => {\n    const items = e.clipboardData?.items;\n    if (!items) return;\n    for (const clipItem of items) {\n      if (clipItem.type.startsWith('image/')) {\n        e.preventDefault();\n        loadFile(clipItem.getAsFile());\n        return;\n      }\n    }\n  });\n  // Make el focusable for paste events\n  el.tabIndex = 0;\n\n  // --- Action buttons ---\n  const actions = api.createElement('div');\n  actions.style.cssText = 'display: flex; gap: 8px; justify-content: flex-end;';\n\n  const cancelBtn = api.createElement('button');\n  cancelBtn.textContent = 'Cancel';\n  cancelBtn.style.cssText = 'padding: 6px 16px; background: var(--color-bg-surface-alt); color: var(--color-text); border: 1px solid var(--color-border); border-radius: var(--border-radius); cursor: pointer; font-size: 0.875rem;';\n  cancelBtn.addEventListener('click', async () => {\n    if (api.restorePreviousView) await api.restorePreviousView(item.id);\n  });\n  actions.appendChild(cancelBtn);\n\n  const saveBtn = api.createElement('button');\n  saveBtn.textContent = 'Save';\n  saveBtn.style.cssText = 'padding: 6px 16px; background: var(--color-primary); color: white; border: none; border-radius: var(--border-radius); cursor: pointer; font-size: 0.875rem;';\n  saveBtn.addEventListener('click', async () => {\n    item.name = nameInput.value || item.name;\n    item.content = item.content || {};\n    if (altInput.value) item.content.alt = altInput.value;\n    else delete item.content.alt;\n    await api.update(item);\n    if (api.restorePreviousView) await api.restorePreviousView(item.id);\n  });\n  actions.appendChild(saveBtn);\n\n  el.appendChild(nameInput);\n  el.appendChild(altInput);\n  el.appendChild(preview);\n  el.appendChild(dropZone);\n  el.appendChild(actions);\n\n  return el;\n}\n", "_symbols": {"render": {"name": "render", "line": 4, "col": 7, "endLine": 171, "endCol": 1, "kind": "function", "scope": null, "signature": "(item, api)"}, "render.el": {"name": "el", "line": 5, "col": 8, "endLine": 5, "endCol": 73, "kind": "variable", "scope": "render"}, "render.nameInput": {"name": "nameInput", "line": 9, "col": 8, "endLine": 9, "endCol": 46, "kind": "variable", "scope": "render"}, "render.altInput": {"name": "altInput", "line": 16, "col": 8, "endLine": 16, "endCol": 45, "kind": "variable", "scope": "render"}, "render.preview": {"name": "preview", "line": 23, "col": 8, "endLine": 23, "endCol": 42, "kind": "variable", "scope": "render"}, "render.renderPreview": {"name": "renderPreview", "line": 26, "col": 2, "endLine": 37, "endCol": 3, "kind": "function", "scope": "render", "signature": "()"}, "renderPreview.data": {"name": "data", "line": 28, "col": 10, "endLine": 28, "endCol": 35, "kind": "variable", "scope": "renderPreview"}, "renderPreview.img": {"name": "img", "line": 30, "col": 12, "endLine": 30, "endCol": 42, "kind": "variable", "scope": "renderPreview"}, "render.dropZone": {"name": "dropZone", "line": 41, "col": 8, "endLine": 41, "endCol": 43, "kind": "variable", "scope": "render"}, "render.loadFile": {"name": "loadFile", "line": 46, "col": 2, "endLine": 61, "endCol": 3, "kind": "function", "scope": "render", "signature": "(file)"}, "loadFile.dataUrl": {"name": "dataUrl", "line": 48, "col": 10, "endLine": 53, "endCol": 6, "kind": "variable", "scope": "loadFile"}, "render.pickFile": {"name": "pickFile", "line": 64, "col": 2, "endLine": 102, "endCol": 3, "kind": "function", "scope": "render", "signature": "()"}, "pickFile.tauri": {"name": "tauri", "line": 65, "col": 10, "endLine": 65, "endCol": 34, "kind": "variable", "scope": "pickFile"}, "pickFile.result": {"name": "result", "line": 68, "col": 14, "endLine": 71, "endCol": 10, "kind": "variable", "scope": "pickFile"}, "pickFile.bytes": {"name": "bytes", "line": 73, "col": 16, "endLine": 73, "endCol": 55, "kind": "variable", "scope": "pickFile"}, "pickFile.ext": {"name": "ext", "line": 75, "col": 16, "endLine": 75, "endCol": 59, "kind": "variable", "scope": "pickFile"}, "pickFile.mimeMap": {"name": "mimeMap", "line": 76, "col": 16, "endLine": 76, "endCol": 184, "kind": "variable", "scope": "pickFile"}, "mimeMap.png": {"name": "png", "line": 76, "col": 28, "endLine": 76, "endCol": 44, "kind": "property", "scope": "mimeMap"}, "mimeMap.jpg": {"name": "jpg", "line": 76, "col": 46, "endLine": 76, "endCol": 63, "kind": "property", "scope": "mimeMap"}, "mimeMap.jpeg": {"name": "jpeg", "line": 76, "col": 65, "endLine": 76, "endCol": 83, "kind": "property", "scope": "mimeMap"}, "mimeMap.gif": {"name": "gif", "line": 76, "col": 85, "endLine": 76, "endCol": 101, "kind": "property", "scope": "mimeMap"}, "mimeMap.webp": {"name": "webp", "line": 76, "col": 103, "endLine": 76, "endCol": 121, "kind": "property", "scope": "mimeMap"}, "mimeMap.svg": {"name": "svg", "line": 76, "col": 123, "endLine": 76, "endCol": 143, "kind": "property", "scope": "mimeMap"}, "mimeMap.bmp": {"name": "bmp", "line": 76, "col": 145, "endLine": 76, "endCol": 161, "kind": "property", "scope": "mimeMap"}, "mimeMap.ico": {"name": "ico", "line": 76, "col": 163, "endLine": 76, "endCol": 182, "kind": "property", "scope": "mimeMap"}, "pickFile.mimeType": {"name": "mimeType", "line": 77, "col": 16, "endLine": 77, "endCol": 54, "kind": "variable", "scope": "pickFile"}, "pickFile.binary": {"name": "binary", "line": 79, "col": 14, "endLine": 79, "endCol": 25, "kind": "variable", "scope": "pickFile"}, "pickFile.i": {"name": "i", "line": 80, "col": 19, "endLine": 80, "endCol": 24, "kind": "variable", "scope": "pickFile"}, "pickFile.b64": {"name": "b64", "line": 81, "col": 16, "endLine": 81, "endCol": 34, "kind": "variable", "scope": "pickFile"}, "pickFile.fileName": {"name": "fileName", "line": 85, "col": 16, "endLine": 85, "endCol": 92, "kind": "variable", "scope": "pickFile"}, "pickFile.input": {"name": "input", "line": 96, "col": 12, "endLine": 96, "endCol": 51, "kind": "variable", "scope": "pickFile"}, "render.file": {"name": "file", "line": 120, "col": 10, "endLine": 120, "endCol": 40, "kind": "variable", "scope": "render"}, "render.items": {"name": "items", "line": 126, "col": 10, "endLine": 126, "endCol": 40, "kind": "variable", "scope": "render"}, "render.clipItem": {"name": "clipItem", "line": 128, "col": 15, "endLine": 128, "endCol": 23, "kind": "variable", "scope": "render"}, "render.actions": {"name": "actions", "line": 140, "col": 8, "endLine": 140, "endCol": 42, "kind": "variable", "scope": "render"}, "render.cancelBtn": {"name": "cancelBtn", "line": 143, "col": 8, "endLine": 143, "endCol": 47, "kind": "variable", "scope": "render"}, "render.saveBtn": {"name": "saveBtn", "line": 151, "col": 8, "endLine": 151, "endCol": 45, "kind": "variable", "scope": "render"}}}, "attachments": []}
+{
+  "id": "d0d0d0d0-0012-0000-0000-000000000000",
+  "name": "image-editor-view",
+  "type": "aaaaaaaa-0000-0000-0000-000000000000",
+  "created": 1774607975531,
+  "modified": 1774610025139,
+  "content": {
+    "for_type": "d0d0d0d0-0010-0000-0000-000000000000",
+    "displayName": "Image Editor",
+    "capabilities": [
+      "read",
+      "write"
+    ],
+    "ui_hints": {
+      "content.data": {
+        "mode": "editable"
+      }
+    },
+    "description": [
+      ":doc",
+      [
+        ":p",
+        {
+          "s": "Editor for image items. Supports file picker (Tauri or browser), drag-and-drop, and paste from clipboard."
+        }
+      ]
+    ],
+    "code": "// image-editor-view — Editor for image items\n// Provides file picker (Tauri dialog or input[type=file]), drag-and-drop, paste from clipboard\n\nexport async function render(item, api) {\n  const el = api.createElement('div', { className: 'image-editor-view' });\n  el.style.cssText = 'display: flex; flex-direction: column; gap: 12px; padding: 8px;';\n\n  // --- Name field ---\n  const nameInput = api.createElement('input');\n  nameInput.type = 'text';\n  nameInput.value = item.name || '';\n  nameInput.placeholder = 'Image name';\n  nameInput.style.cssText = 'font-size: 1.25rem; font-weight: 600; padding: 4px 8px; border: 1px solid var(--color-border); border-radius: var(--border-radius); background: var(--color-bg-surface); color: var(--color-text); outline: none;';\n\n  // --- Alt text field ---\n  const altInput = api.createElement('input');\n  altInput.type = 'text';\n  altInput.value = item.content?.alt || '';\n  altInput.placeholder = 'Alt text (accessibility)';\n  altInput.style.cssText = 'font-size: 0.875rem; padding: 4px 8px; border: 1px solid var(--color-border); border-radius: var(--border-radius); background: var(--color-bg-surface); color: var(--color-text); outline: none;';\n\n  // --- Preview area ---\n  const preview = api.createElement('div');\n  preview.style.cssText = 'display: flex; justify-content: center; align-items: center; min-height: 120px;';\n\n  function renderPreview() {\n    preview.innerHTML = '';\n    const data = item.content?.data;\n    if (data) {\n      const img = api.createElement('img');\n      img.src = data;\n      img.alt = item.content?.alt || item.name || '';\n      img.style.cssText = 'max-width: 100%; max-height: 60vh; height: auto; border-radius: var(--border-radius);';\n      img.draggable = false;\n      preview.appendChild(img);\n    }\n  }\n  renderPreview();\n\n  // --- Drop zone (shown when no image, or as overlay) ---\n  const dropZone = api.createElement('div');\n  dropZone.style.cssText = 'padding: 2em; text-align: center; border: 2px dashed var(--color-border); border-radius: var(--border-radius); color: var(--color-text-secondary); cursor: pointer; transition: border-color 0.15s, background 0.15s;';\n  dropZone.textContent = item.content?.data ? 'Drop image to replace, paste, or click to browse' : 'Drop image here, paste, or click to browse';\n\n  // --- File reading helper ---\n  async function loadFile(file) {\n    if (!file || !file.type.startsWith('image/')) return;\n    const dataUrl = await new Promise((resolve, reject) => {\n      const reader = new FileReader();\n      reader.onload = () => resolve(reader.result);\n      reader.onerror = reject;\n      reader.readAsDataURL(file);\n    });\n    item.content = item.content || {};\n    item.content.data = dataUrl;\n    item.content.mimeType = file.type;\n    if (!item.name || item.name === 'Untitled') item.name = file.name.replace(/\\.[^.]+$/, '');\n    nameInput.value = item.name;\n    renderPreview();\n    dropZone.textContent = 'Drop image to replace, paste, or click to browse';\n  }\n\n  // --- Tauri file picker or fallback ---\n  async function pickFile() {\n    const tauri = window.__TAURI__;\n    if (tauri) {\n      try {\n        const result = await tauri.dialog.open({\n          multiple: false,\n          filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico'] }]\n        });\n        if (result) {\n          const bytes = await tauri.fs.readFile(result);\n          // Detect mime type from extension\n          const ext = result.split('.').pop().toLowerCase();\n          const mimeMap = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml', bmp: 'image/bmp', ico: 'image/x-icon' };\n          const mimeType = mimeMap[ext] || 'image/png';\n          // Convert to base64 data URL\n          let binary = '';\n          for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);\n          const b64 = btoa(binary);\n          item.content = item.content || {};\n          item.content.data = 'data:' + mimeType + ';base64,' + b64;\n          item.content.mimeType = mimeType;\n          const fileName = result.split('/').pop().split('\\\\').pop().replace(/\\.[^.]+$/, '');\n          if (!item.name || item.name === 'Untitled') item.name = fileName;\n          nameInput.value = item.name;\n          renderPreview();\n          dropZone.textContent = 'Drop image to replace, paste, or click to browse';\n        }\n      } catch (e) {\n        console.error('[image-editor] Tauri file picker error:', e);\n      }\n    } else {\n      // Browser fallback\n      const input = document.createElement('input');\n      input.type = 'file';\n      input.accept = 'image/*';\n      input.onchange = () => { if (input.files[0]) loadFile(input.files[0]); };\n      input.click();\n    }\n  }\n\n  dropZone.addEventListener('click', pickFile);\n\n  // --- Drag and drop ---\n  dropZone.addEventListener('dragover', (e) => {\n    e.preventDefault();\n    dropZone.style.borderColor = 'var(--color-primary)';\n    dropZone.style.background = 'var(--color-primary-light)';\n  });\n  dropZone.addEventListener('dragleave', () => {\n    dropZone.style.borderColor = 'var(--color-border)';\n    dropZone.style.background = '';\n  });\n  dropZone.addEventListener('drop', (e) => {\n    e.preventDefault();\n    dropZone.style.borderColor = 'var(--color-border)';\n    dropZone.style.background = '';\n    const file = e.dataTransfer.files[0];\n    if (file) loadFile(file);\n  });\n\n  // --- Paste from clipboard ---\n  el.addEventListener('paste', (e) => {\n    const items = e.clipboardData?.items;\n    if (!items) return;\n    for (const clipItem of items) {\n      if (clipItem.type.startsWith('image/')) {\n        e.preventDefault();\n        loadFile(clipItem.getAsFile());\n        return;\n      }\n    }\n  });\n  // Make el focusable for paste events\n  el.tabIndex = 0;\n\n  // --- Action buttons ---\n  const actions = api.createElement('div');\n  actions.style.cssText = 'display: flex; gap: 8px; justify-content: flex-end;';\n\n  const cancelBtn = api.createElement('button');\n  cancelBtn.textContent = 'Cancel';\n  cancelBtn.style.cssText = 'padding: 6px 16px; background: var(--color-bg-surface-alt); color: var(--color-text); border: 1px solid var(--color-border); border-radius: var(--border-radius); cursor: pointer; font-size: 0.875rem;';\n  cancelBtn.addEventListener('click', async () => {\n    if (api.restorePreviousView) await api.restorePreviousView(item.id);\n  });\n  actions.appendChild(cancelBtn);\n\n  const saveBtn = api.createElement('button');\n  saveBtn.textContent = 'Save';\n  saveBtn.style.cssText = 'padding: 6px 16px; background: var(--color-primary); color: white; border: none; border-radius: var(--border-radius); cursor: pointer; font-size: 0.875rem;';\n  saveBtn.addEventListener('click', async () => {\n    item.name = nameInput.value || item.name;\n    item.content = item.content || {};\n    if (altInput.value) item.content.alt = altInput.value;\n    else delete item.content.alt;\n    await api.update(item);\n    if (api.restorePreviousView) await api.restorePreviousView(item.id);\n  });\n  actions.appendChild(saveBtn);\n\n  el.appendChild(nameInput);\n  el.appendChild(altInput);\n  el.appendChild(preview);\n  el.appendChild(dropZone);\n  el.appendChild(actions);\n\n  return el;\n}\n",
+    "_symbols": {
+      "render": {
+        "name": "render",
+        "line": 4,
+        "col": 7,
+        "endLine": 171,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(item, api)"
+      },
+      "render.el": {
+        "name": "el",
+        "line": 5,
+        "col": 8,
+        "endLine": 5,
+        "endCol": 73,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.nameInput": {
+        "name": "nameInput",
+        "line": 9,
+        "col": 8,
+        "endLine": 9,
+        "endCol": 46,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.altInput": {
+        "name": "altInput",
+        "line": 16,
+        "col": 8,
+        "endLine": 16,
+        "endCol": 45,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.preview": {
+        "name": "preview",
+        "line": 23,
+        "col": 8,
+        "endLine": 23,
+        "endCol": 42,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.renderPreview": {
+        "name": "renderPreview",
+        "line": 26,
+        "col": 2,
+        "endLine": 37,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "render",
+        "signature": "()"
+      },
+      "renderPreview.data": {
+        "name": "data",
+        "line": 28,
+        "col": 10,
+        "endLine": 28,
+        "endCol": 35,
+        "kind": "variable",
+        "scope": "renderPreview"
+      },
+      "renderPreview.img": {
+        "name": "img",
+        "line": 30,
+        "col": 12,
+        "endLine": 30,
+        "endCol": 42,
+        "kind": "variable",
+        "scope": "renderPreview"
+      },
+      "render.dropZone": {
+        "name": "dropZone",
+        "line": 41,
+        "col": 8,
+        "endLine": 41,
+        "endCol": 43,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.loadFile": {
+        "name": "loadFile",
+        "line": 46,
+        "col": 2,
+        "endLine": 61,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "render",
+        "signature": "(file)"
+      },
+      "loadFile.dataUrl": {
+        "name": "dataUrl",
+        "line": 48,
+        "col": 10,
+        "endLine": 53,
+        "endCol": 6,
+        "kind": "variable",
+        "scope": "loadFile"
+      },
+      "render.pickFile": {
+        "name": "pickFile",
+        "line": 64,
+        "col": 2,
+        "endLine": 102,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "render",
+        "signature": "()"
+      },
+      "pickFile.tauri": {
+        "name": "tauri",
+        "line": 65,
+        "col": 10,
+        "endLine": 65,
+        "endCol": 34,
+        "kind": "variable",
+        "scope": "pickFile"
+      },
+      "pickFile.result": {
+        "name": "result",
+        "line": 68,
+        "col": 14,
+        "endLine": 71,
+        "endCol": 10,
+        "kind": "variable",
+        "scope": "pickFile"
+      },
+      "pickFile.bytes": {
+        "name": "bytes",
+        "line": 73,
+        "col": 16,
+        "endLine": 73,
+        "endCol": 55,
+        "kind": "variable",
+        "scope": "pickFile"
+      },
+      "pickFile.ext": {
+        "name": "ext",
+        "line": 75,
+        "col": 16,
+        "endLine": 75,
+        "endCol": 59,
+        "kind": "variable",
+        "scope": "pickFile"
+      },
+      "pickFile.mimeMap": {
+        "name": "mimeMap",
+        "line": 76,
+        "col": 16,
+        "endLine": 76,
+        "endCol": 184,
+        "kind": "variable",
+        "scope": "pickFile"
+      },
+      "mimeMap.png": {
+        "name": "png",
+        "line": 76,
+        "col": 28,
+        "endLine": 76,
+        "endCol": 44,
+        "kind": "property",
+        "scope": "mimeMap"
+      },
+      "mimeMap.jpg": {
+        "name": "jpg",
+        "line": 76,
+        "col": 46,
+        "endLine": 76,
+        "endCol": 63,
+        "kind": "property",
+        "scope": "mimeMap"
+      },
+      "mimeMap.jpeg": {
+        "name": "jpeg",
+        "line": 76,
+        "col": 65,
+        "endLine": 76,
+        "endCol": 83,
+        "kind": "property",
+        "scope": "mimeMap"
+      },
+      "mimeMap.gif": {
+        "name": "gif",
+        "line": 76,
+        "col": 85,
+        "endLine": 76,
+        "endCol": 101,
+        "kind": "property",
+        "scope": "mimeMap"
+      },
+      "mimeMap.webp": {
+        "name": "webp",
+        "line": 76,
+        "col": 103,
+        "endLine": 76,
+        "endCol": 121,
+        "kind": "property",
+        "scope": "mimeMap"
+      },
+      "mimeMap.svg": {
+        "name": "svg",
+        "line": 76,
+        "col": 123,
+        "endLine": 76,
+        "endCol": 143,
+        "kind": "property",
+        "scope": "mimeMap"
+      },
+      "mimeMap.bmp": {
+        "name": "bmp",
+        "line": 76,
+        "col": 145,
+        "endLine": 76,
+        "endCol": 161,
+        "kind": "property",
+        "scope": "mimeMap"
+      },
+      "mimeMap.ico": {
+        "name": "ico",
+        "line": 76,
+        "col": 163,
+        "endLine": 76,
+        "endCol": 182,
+        "kind": "property",
+        "scope": "mimeMap"
+      },
+      "pickFile.mimeType": {
+        "name": "mimeType",
+        "line": 77,
+        "col": 16,
+        "endLine": 77,
+        "endCol": 54,
+        "kind": "variable",
+        "scope": "pickFile"
+      },
+      "pickFile.binary": {
+        "name": "binary",
+        "line": 79,
+        "col": 14,
+        "endLine": 79,
+        "endCol": 25,
+        "kind": "variable",
+        "scope": "pickFile"
+      },
+      "pickFile.i": {
+        "name": "i",
+        "line": 80,
+        "col": 19,
+        "endLine": 80,
+        "endCol": 24,
+        "kind": "variable",
+        "scope": "pickFile"
+      },
+      "pickFile.b64": {
+        "name": "b64",
+        "line": 81,
+        "col": 16,
+        "endLine": 81,
+        "endCol": 34,
+        "kind": "variable",
+        "scope": "pickFile"
+      },
+      "pickFile.fileName": {
+        "name": "fileName",
+        "line": 85,
+        "col": 16,
+        "endLine": 85,
+        "endCol": 92,
+        "kind": "variable",
+        "scope": "pickFile"
+      },
+      "pickFile.input": {
+        "name": "input",
+        "line": 96,
+        "col": 12,
+        "endLine": 96,
+        "endCol": 51,
+        "kind": "variable",
+        "scope": "pickFile"
+      },
+      "render.file": {
+        "name": "file",
+        "line": 120,
+        "col": 10,
+        "endLine": 120,
+        "endCol": 40,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.items": {
+        "name": "items",
+        "line": 126,
+        "col": 10,
+        "endLine": 126,
+        "endCol": 40,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.clipItem": {
+        "name": "clipItem",
+        "line": 128,
+        "col": 15,
+        "endLine": 128,
+        "endCol": 23,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.actions": {
+        "name": "actions",
+        "line": 140,
+        "col": 8,
+        "endLine": 140,
+        "endCol": 42,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.cancelBtn": {
+        "name": "cancelBtn",
+        "line": 143,
+        "col": 8,
+        "endLine": 143,
+        "endCol": 47,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.saveBtn": {
+        "name": "saveBtn",
+        "line": 151,
+        "col": 8,
+        "endLine": 151,
+        "endCol": 45,
+        "kind": "variable",
+        "scope": "render"
+      }
+    }
+  },
+  "attachments": []
+}

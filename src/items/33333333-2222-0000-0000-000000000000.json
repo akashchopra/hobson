@@ -1,1 +1,1202 @@
-{"id": "33333333-2222-0000-0000-000000000000", "type": "33333333-0000-0000-0000-000000000000", "name": "kernel:storage", "created": 0, "modified": 1774532369014, "content": {"code": "// kernel-storage module\n// See [Architecture Overview - Storage Architecture](item://a0a0a0a0-d0c0-4000-8000-000000000003#Storage-Architecture)\n// Owns IndexedDB access and ID prefixing for nested instance isolation.\n\n// [BEGIN:Storage]\n/** Storage layer — wraps IndexedDB with ID-prefix isolation and in-memory caching. */\nexport class Storage {\n  constructor(db, instanceId) {\n    this._db = db;\n    this._instanceId = instanceId || null;\n    this._cache = new Map();\n    this._allCached = false;\n  }\n\n  /** Get the nested instance ID (null for main instance).\n   * @returns {string|null}\n   */\n  get instanceId() {\n    return this._instanceId;\n  }\n\n  /** Initialize storage (no-op — db is already open). */\n  async initialize() {\n    // db is already open, passed from the bootloader\n  }\n\n  // --- Private: ID prefixing for nested instance isolation ---\n\n  _prefixId(id) {\n    return this._instanceId ? `${this._instanceId}:${id}` : id;\n  }\n\n  _stripPrefix(id) {\n    if (!this._instanceId) return id;\n    const prefix = `${this._instanceId}:`;\n    return id.startsWith(prefix) ? id.slice(prefix.length) : id;\n  }\n\n  _stripItemPrefix(item) {\n    if (!this._instanceId || !item) return item;\n    return { ...item, id: this._stripPrefix(item.id) };\n  }\n\n  // --- Private: IndexedDB operations ---\n\n  _idbGet(id) {\n    const actualId = this._prefixId(id);\n    return new Promise((resolve, reject) => {\n      const tx = this._db.transaction('items', 'readonly');\n      const req = tx.objectStore('items').get(actualId);\n      req.onsuccess = () => resolve(this._stripItemPrefix(req.result));\n      req.onerror = () => reject(req.error);\n    });\n  }\n\n  _idbSet(item) {\n    const toStore = this._instanceId\n      ? { ...item, id: this._prefixId(item.id) }\n      : item;\n    return new Promise((resolve, reject) => {\n      const tx = this._db.transaction('items', 'readwrite');\n      const req = tx.objectStore('items').put(toStore);\n      req.onsuccess = () => resolve();\n      req.onerror = () => reject(req.error);\n    });\n  }\n\n  _idbDelete(id) {\n    const actualId = this._prefixId(id);\n    return new Promise((resolve, reject) => {\n      const tx = this._db.transaction('items', 'readwrite');\n      const req = tx.objectStore('items').delete(actualId);\n      req.onsuccess = () => resolve();\n      req.onerror = () => reject(req.error);\n    });\n  }\n\n  /** Fetch all items in this instance's namespace (with prefixes stripped). */\n  _idbGetAll() {\n    return new Promise((resolve, reject) => {\n      const tx = this._db.transaction('items', 'readonly');\n      const req = tx.objectStore('items').getAll();\n      req.onsuccess = () => {\n        let items = req.result;\n        if (this._instanceId) {\n          const prefix = `${this._instanceId}:`;\n          items = items\n            .filter(item => item.id.startsWith(prefix))\n            .map(item => this._stripItemPrefix(item));\n        }\n        resolve(items);\n      };\n      req.onerror = () => reject(req.error);\n    });\n  }\n\n  // --- Public API ---\n\n  /** Retrieve an item by ID. Throws if not found.\n   * @param {string} id - Item GUID\n   * @returns {Promise<Object>} The item\n   */\n  async get(id) {\n    const cached = this._cache.get(id);\n    if (cached) return cached;\n    const result = await this._idbGet(id);\n    if (!result) {\n      throw new Error(`Item not found: ${id}`);\n    }\n    this._cache.set(id, result);\n    return result;\n  }\n\n  /** Validate and persist an item.\n   * @param {Object} item - The item to save\n   * @param {Object} [kernel] - Kernel reference for validation context\n   */\n  async set(item, kernel) {\n    await this._validateItem(item, kernel);\n    await this._idbSet(item);\n    this._cache.set(item.id, item);\n  }\n\n  /** Delete an item from storage and cache.\n   * @param {string} id - Item GUID to delete\n   */\n  async delete(id) {\n    this._cache.delete(id);\n    return this._idbDelete(id);\n  }\n\n  /** Find items matching a filter object (key-value pairs matched against item fields).\n   * @param {Object} filter - e.g. {type: \"...\", name: \"...\"}\n   * @returns {Promise<Object[]>} Matching items (excludes nested instance items)\n   */\n  async query(filter) {\n    if (this._allCached) {\n      // Exclude nested instance items (have ':' in ID)\n      const items = [];\n      for (const item of this._cache.values()) {\n        if (!item.id.includes(':')) items.push(item);\n      }\n      return items.filter(item => {\n        for (const [key, value] of Object.entries(filter)) {\n          if (item[key] !== value) return false;\n        }\n        return true;\n      });\n    }\n    const allItems = await this.getAll();\n    return allItems.filter(item => {\n      for (const [key, value] of Object.entries(filter)) {\n        if (item[key] !== value) return false;\n      }\n      return true;\n    });\n  }\n\n  /** Get all items (excludes nested instance items). Populates cache on first call.\n   * @returns {Promise<Object[]>}\n   */\n  async getAll() {\n    if (this._allCached) {\n      const items = [];\n      for (const item of this._cache.values()) {\n        if (!item.id.includes(':')) items.push(item);\n      }\n      return items;\n    }\n    const allItems = await this._idbGetAll();\n    // Filter out nested instance items (items with ':' in their stripped ID)\n    const items = allItems.filter(item => !item.id.includes(':'));\n    for (const item of items) {\n      this._cache.set(item.id, item);\n    }\n    this._allCached = true;\n    return items;\n  }\n\n  /** Get all items including nested instance items.\n   * @returns {Promise<Object[]>}\n   */\n  async getAllRaw() {\n    return this._idbGetAll();\n  }\n\n  /** Delete all items whose ID starts with a prefix.\n   * @param {string} prefix - ID prefix to match\n   * @returns {Promise<number>} Number of items deleted\n   */\n  async deleteByPrefix(prefix) {\n    const allItems = await this.getAllRaw();\n    const toDelete = allItems.filter(item => item.id.startsWith(prefix));\n    for (const item of toDelete) {\n      await this.delete(item.id);\n    }\n    return toDelete.length;\n  }\n\n  /** Check if an item exists in storage.\n   * @param {string} id - Item GUID\n   * @returns {Promise<boolean>}\n   */\n  async exists(id) {\n    if (this._cache.has(id)) return true;\n    try {\n      await this.get(id);\n      return true;\n    } catch {\n      return false;\n    }\n  }\n\n  // --- History operations (item-history IDB store) ---\n\n  /** Write a history entry (previous state before an update or deletion).\n   * @param {string} itemId - Item GUID\n   * @param {number} timestamp - Timestamp for this entry (previous.modified or Date.now() for deletions)\n   * @param {Object} snapshot - Full item state at this point\n   * @param {boolean} [deleted=false] - True if this records a deletion\n   */\n  async writeHistory(itemId, timestamp, snapshot, deleted = false) {\n    return new Promise((resolve, reject) => {\n      const tx = this._db.transaction('item-history', 'readwrite');\n      const req = tx.objectStore('item-history').put({ itemId, timestamp, snapshot, deleted });\n      req.onsuccess = () => resolve();\n      req.onerror = () => reject(req.error);\n    });\n  }\n\n  /** Get history entries for an item (without snapshots, for listing).\n   * @param {string} itemId - Item GUID\n   * @returns {Promise<Array<{itemId, timestamp, deleted}>>}\n   */\n  async getHistory(itemId) {\n    return new Promise((resolve, reject) => {\n      const tx = this._db.transaction('item-history', 'readonly');\n      const index = tx.objectStore('item-history').index('itemId');\n      const req = index.getAll(itemId);\n      req.onsuccess = () => {\n        resolve(req.result.map(e => ({ itemId: e.itemId, timestamp: e.timestamp, deleted: !!e.deleted })));\n      };\n      req.onerror = () => reject(req.error);\n    });\n  }\n\n  /** Get a specific history entry with full snapshot.\n   * @param {string} itemId - Item GUID\n   * @param {number} timestamp - Exact timestamp of the entry\n   * @returns {Promise<Object|null>} The full history entry or null\n   */\n  async getHistoryEntry(itemId, timestamp) {\n    return new Promise((resolve, reject) => {\n      const tx = this._db.transaction('item-history', 'readonly');\n      const req = tx.objectStore('item-history').get([itemId, timestamp]);\n      req.onsuccess = () => resolve(req.result || null);\n      req.onerror = () => reject(req.error);\n    });\n  }\n\n  /** Get all deletion records since a given timestamp.\n   * Used by sync to inform the other device about deleted items.\n   * @param {number} since - Timestamp threshold\n   * @returns {Promise<Array<{itemId, timestamp}>>}\n   */\n  async getDeletedSince(since) {\n    return new Promise((resolve, reject) => {\n      const tx = this._db.transaction('item-history', 'readonly');\n      const req = tx.objectStore('item-history').getAll();\n      req.onsuccess = () => {\n        const deletions = req.result\n          .filter(e => e.deleted && e.timestamp > since)\n          .map(e => ({ itemId: e.itemId, timestamp: e.timestamp }));\n        resolve(deletions);\n      };\n      req.onerror = () => reject(req.error);\n    });\n  }\n\n  // [BEGIN:validateItem]\n  /** Validate an item before storage — checks type chain and code name uniqueness.\n   * @param {Object} item - The item to validate\n   * @param {Object} [kernel] - Kernel reference for code item checks\n   */\n  async _validateItem(item, kernel) {\n    // See [item/atom](item://00000000-0000-0000-0000-000000000000)\n    const ITEM_ID = kernel?.IDS?.ITEM || \"00000000-0000-0000-0000-000000000000\";\n    const TYPE_DEFINITION_ID = kernel?.IDS?.TYPE_DEFINITION || \"11111111-0000-0000-0000-000000000000\";\n\n    // Validate type chain (must reach a valid root, no unexpected cycles)\n    await this._validateTypeChain(item.type, new Set(), ITEM_ID, TYPE_DEFINITION_ID);\n\n    // If code item, validate name uniqueness within the same namespace\n    if (kernel && await kernel.isCodeItem(item)) {\n      if (!item.name) {\n        throw new Error(`Code item ${item.id} must have a name`);\n      }\n\n      const itemNamespace = item.id.includes(':') ? item.id.split(':')[0] : '';\n      const existing = await this.query({ name: item.name });\n      const conflict = existing.find(i => {\n        if (i.id === item.id) return false;\n        const existingNamespace = i.id.includes(':') ? i.id.split(':')[0] : '';\n        return existingNamespace === itemNamespace;\n      });\n\n      if (conflict) {\n        throw new Error(`Code item named '${item.name}' already exists in this namespace (id: ${conflict.id})`);\n      }\n    }\n  }\n  // [END:validateItem]\n\n  // [BEGIN:validateTypeChain]\n  async _validateTypeChain(typeId, visited, ITEM_ID, TYPE_DEFINITION_ID) {\n    // Valid termination points:\n    // - ITEM (old model: atom.type = atom)\n    // - TYPE_DEFINITION (new model: type-definition.type = type-definition)\n    if (typeId === ITEM_ID || typeId === TYPE_DEFINITION_ID) {\n      return;\n    }\n\n    if (visited.has(typeId)) {\n      throw new Error(`Circular type chain detected at: ${typeId}`);\n    }\n\n    visited.add(typeId);\n\n    try {\n      const typeItem = await this.get(typeId);\n      await this._validateTypeChain(typeItem.type, visited, ITEM_ID, TYPE_DEFINITION_ID);\n    } catch (error) {\n      if (error.message.includes(\"not found\")) {\n        throw new Error(`Type chain broken - item '${typeId}' not found`);\n      }\n      throw error;\n    }\n  }\n  // [END:validateTypeChain]\n}\n// [END:Storage]\n", "description": [":doc", [":p", {"s": "The storage layer wrapping IndexedDB with validation, caching, and ID-prefix isolation for "}, [":item-ref", {"s": "c0c0c0c0-0037-0000-0000-000000000000"}, {"s": "Nested Instance"}], {"s": " support. Receives the raw IndexedDB handle and instance ID from the "}, [":item-ref", {"s": "f761e023-da8d-492d-9933-a75adcc8d316"}, {"s": "bootloader"}], {"s": "."}], [":h2", {"s": "Responsibilities"}], [":table", [":thead", [":tr", [":th", {"s": "Operation"}], [":th", {"s": "Description"}]]], [":tbody", [":tr", [":td", [":code", {"s": "get(id)"}]], [":td", {"s": "Fetch item by ID, throws if not found"}]], [":tr", [":td", [":code", {"s": "set(item, kernel)"}]], [":td", {"s": "Save item with validation"}]], [":tr", [":td", [":code", {"s": "delete(id)"}]], [":td", {"s": "Remove item"}]], [":tr", [":td", [":code", {"s": "query(filter)"}]], [":td", {"s": "Find items matching criteria"}]], [":tr", [":td", [":code", {"s": "getAll()"}]], [":td", {"s": "Return all items"}]], [":tr", [":td", [":code", {"s": "exists(id)"}]], [":td", {"s": "Check if item exists"}]]]], [":h2", {"s": "Validation"}], [":p", {"s": "On every "}, [":code", {"s": "set()"}], {"s": ", the storage module validates:"}], [":ol", [":li", [":p", [":strong", {"s": "Type chain integrity"}], {"s": ": Walks from "}, [":code", {"s": "item.type"}], {"s": " up via "}, [":code", {"s": ".type"}], {"s": " references, ensuring the chain reaches "}, [":item-ref", {"s": "00000000-0000-0000-0000-000000000000"}, {"s": "kernel:item"}], {"s": " without cycles or broken references."}]], [":li", [":p", [":strong", {"s": "Code item name uniqueness"}], {"s": ": If the item is a code item, ensures no other code item in the same namespace has the same name."}]]], [":h2", {"s": "Nested Instance Support"}], [":p", {"s": "The storage module owns ID prefixing directly:"}], [":code-block", {"s": "?instance=abc → items stored/retrieved with \"abc:\" prefix"}], [":p", {"s": "The bootloader passes the raw IndexedDB handle and instance ID. Storage handles all prefixing and stripping internally, enabling true isolation while sharing the same IndexedDB."}], [":h2", {"s": "Key Implementation Patterns"}], [":ul", [":li", [":p", [":item-ref", {"s": "c0c0c0c0-0014-0000-0000-000000000000"}, {"s": "Type Chain Validation"}], {"s": " — Bounded type chain walking, circular reference detection, validation rules"}]], [":li", [":p", [":item-ref", {"s": "c0c0c0c0-0013-0000-0000-000000000000"}, {"s": "Cycle-Safe Traversal"}], {"s": " — Visited-set pattern used in "}, [":code", {"s": "_validateTypeChain"}]]]], [":h2", {"s": "See Also"}], [":ul", [":li", [":p", [":item-ref", {"s": "c0c0c0c0-0002-0000-0000-000000000000"}, {"s": "Bootstrap"}], {"s": " — How the bootloader opens IndexedDB and hands off to the kernel"}]], [":li", [":p", [":item-ref", {"s": "11111111-0000-0000-0000-000000000000"}, {"s": "kernel:type-definition"}], {"s": " — Type chains and validation"}]]]], "_symbols": {"Storage": {"name": "Storage", "line": 7, "col": 7, "endLine": 340, "endCol": 1, "kind": "class", "scope": null, "description": "Storage layer — wraps IndexedDB with ID-prefix isolation and in-memory caching."}, "Storage.constructor": {"name": "constructor", "line": 8, "col": 2, "endLine": 13, "endCol": 3, "kind": "method", "scope": "Storage", "signature": "(db, instanceId)"}, "Storage.instanceId": {"name": "instanceId", "line": 18, "col": 2, "endLine": 20, "endCol": 3, "kind": "method", "scope": "Storage", "signature": "()", "description": "Get the nested instance ID (null for main instance).", "returns": {"type": "string|null"}}, "Storage.initialize": {"name": "initialize", "line": 23, "col": 2, "endLine": 25, "endCol": 3, "kind": "method", "scope": "Storage", "signature": "()", "description": "Initialize storage (no-op — db is already open)."}, "Storage._prefixId": {"name": "_prefixId", "line": 29, "col": 2, "endLine": 31, "endCol": 3, "kind": "method", "scope": "Storage", "signature": "(id)"}, "Storage._stripPrefix": {"name": "_stripPrefix", "line": 33, "col": 2, "endLine": 37, "endCol": 3, "kind": "method", "scope": "Storage", "signature": "(id)"}, "Storage._stripPrefix.prefix": {"name": "prefix", "line": 35, "col": 10, "endLine": 35, "endCol": 41, "kind": "variable", "scope": "Storage._stripPrefix"}, "Storage._stripItemPrefix": {"name": "_stripItemPrefix", "line": 39, "col": 2, "endLine": 42, "endCol": 3, "kind": "method", "scope": "Storage", "signature": "(item)"}, "Storage._stripItemPrefix.id": {"name": "id", "line": 41, "col": 22, "endLine": 41, "endCol": 52, "kind": "property", "scope": "Storage._stripItemPrefix"}, "Storage._idbGet": {"name": "_idbGet", "line": 46, "col": 2, "endLine": 54, "endCol": 3, "kind": "method", "scope": "Storage", "signature": "(id)"}, "Storage._idbGet.actualId": {"name": "actualId", "line": 47, "col": 10, "endLine": 47, "endCol": 39, "kind": "variable", "scope": "Storage._idbGet"}, "Storage._idbGet.tx": {"name": "tx", "line": 49, "col": 12, "endLine": 49, "endCol": 58, "kind": "variable", "scope": "Storage._idbGet"}, "Storage._idbGet.req": {"name": "req", "line": 50, "col": 12, "endLine": 50, "endCol": 55, "kind": "variable", "scope": "Storage._idbGet"}, "Storage._idbSet": {"name": "_idbSet", "line": 56, "col": 2, "endLine": 66, "endCol": 3, "kind": "method", "scope": "Storage", "signature": "(item)"}, "Storage._idbSet.toStore": {"name": "toStore", "line": 57, "col": 10, "endLine": 59, "endCol": 12, "kind": "variable", "scope": "Storage._idbSet"}, "Storage._idbSet.tx": {"name": "tx", "line": 61, "col": 12, "endLine": 61, "endCol": 59, "kind": "variable", "scope": "Storage._idbSet"}, "Storage._idbSet.req": {"name": "req", "line": 62, "col": 12, "endLine": 62, "endCol": 54, "kind": "variable", "scope": "Storage._idbSet"}, "Storage._idbDelete": {"name": "_idbDelete", "line": 68, "col": 2, "endLine": 76, "endCol": 3, "kind": "method", "scope": "Storage", "signature": "(id)"}, "Storage._idbDelete.actualId": {"name": "actualId", "line": 69, "col": 10, "endLine": 69, "endCol": 39, "kind": "variable", "scope": "Storage._idbDelete"}, "Storage._idbDelete.tx": {"name": "tx", "line": 71, "col": 12, "endLine": 71, "endCol": 59, "kind": "variable", "scope": "Storage._idbDelete"}, "Storage._idbDelete.req": {"name": "req", "line": 72, "col": 12, "endLine": 72, "endCol": 58, "kind": "variable", "scope": "Storage._idbDelete"}, "Storage._idbGetAll": {"name": "_idbGetAll", "line": 79, "col": 2, "endLine": 95, "endCol": 3, "kind": "method", "scope": "Storage", "signature": "()", "description": "Fetch all items in this instance's namespace (with prefixes stripped)."}, "Storage._idbGetAll.tx": {"name": "tx", "line": 81, "col": 12, "endLine": 81, "endCol": 58, "kind": "variable", "scope": "Storage._idbGetAll"}, "Storage._idbGetAll.req": {"name": "req", "line": 82, "col": 12, "endLine": 82, "endCol": 50, "kind": "variable", "scope": "Storage._idbGetAll"}, "Storage._idbGetAll.items": {"name": "items", "line": 84, "col": 12, "endLine": 84, "endCol": 30, "kind": "variable", "scope": "Storage._idbGetAll"}, "Storage._idbGetAll.prefix": {"name": "prefix", "line": 86, "col": 16, "endLine": 86, "endCol": 47, "kind": "variable", "scope": "Storage._idbGetAll"}, "Storage.get": {"name": "get", "line": 103, "col": 2, "endLine": 112, "endCol": 3, "kind": "method", "scope": "Storage", "signature": "(id)", "description": "Retrieve an item by ID. Throws if not found.", "params": [{"name": "id", "type": "string", "description": "Item GUID"}], "returns": {"type": "Promise<Object>", "description": "The item"}}, "Storage.get.cached": {"name": "cached", "line": 104, "col": 10, "endLine": 104, "endCol": 38, "kind": "variable", "scope": "Storage.get"}, "Storage.get.result": {"name": "result", "line": 106, "col": 10, "endLine": 106, "endCol": 41, "kind": "variable", "scope": "Storage.get"}, "Storage.set": {"name": "set", "line": 118, "col": 2, "endLine": 122, "endCol": 3, "kind": "method", "scope": "Storage", "signature": "(item, kernel)", "description": "Validate and persist an item.", "params": [{"name": "item", "type": "Object", "description": "The item to save"}, {"name": "kernel", "type": "Object", "description": "Kernel reference for validation context"}]}, "Storage.delete": {"name": "delete", "line": 127, "col": 2, "endLine": 130, "endCol": 3, "kind": "method", "scope": "Storage", "signature": "(id)", "description": "Delete an item from storage and cache.", "params": [{"name": "id", "type": "string", "description": "Item GUID to delete"}]}, "Storage.query": {"name": "query", "line": 136, "col": 2, "endLine": 157, "endCol": 3, "kind": "method", "scope": "Storage", "signature": "(filter)", "description": "Find items matching a filter object (key-value pairs matched against item fields).", "params": [{"name": "filter", "type": "Object", "description": "e.g. {type: \"...\", name: \"...\"}"}], "returns": {"type": "Promise<Object[]>", "description": "Matching items (excludes nested instance items)"}}, "Storage.query.items": {"name": "items", "line": 139, "col": 12, "endLine": 139, "endCol": 22, "kind": "variable", "scope": "Storage.query"}, "Storage.query.item": {"name": "item", "line": 140, "col": 17, "endLine": 140, "endCol": 21, "kind": "variable", "scope": "Storage.query"}, "Storage.query.allItems": {"name": "allItems", "line": 150, "col": 10, "endLine": 150, "endCol": 40, "kind": "variable", "scope": "Storage.query"}, "Storage.getAll": {"name": "getAll", "line": 162, "col": 2, "endLine": 178, "endCol": 3, "kind": "method", "scope": "Storage", "signature": "()", "description": "Get all items (excludes nested instance items). Populates cache on first call.", "returns": {"type": "Promise<Object[]>"}}, "Storage.getAll.items": {"name": "items", "line": 172, "col": 10, "endLine": 172, "endCol": 65, "kind": "variable", "scope": "Storage.getAll"}, "Storage.getAll.item": {"name": "item", "line": 173, "col": 15, "endLine": 173, "endCol": 19, "kind": "variable", "scope": "Storage.getAll"}, "Storage.getAll.allItems": {"name": "allItems", "line": 170, "col": 10, "endLine": 170, "endCol": 44, "kind": "variable", "scope": "Storage.getAll"}, "Storage.getAllRaw": {"name": "getAllRaw", "line": 183, "col": 2, "endLine": 185, "endCol": 3, "kind": "method", "scope": "Storage", "signature": "()", "description": "Get all items including nested instance items.", "returns": {"type": "Promise<Object[]>"}}, "Storage.deleteByPrefix": {"name": "deleteByPrefix", "line": 191, "col": 2, "endLine": 198, "endCol": 3, "kind": "method", "scope": "Storage", "signature": "(prefix)", "description": "Delete all items whose ID starts with a prefix.", "params": [{"name": "prefix", "type": "string", "description": "ID prefix to match"}], "returns": {"type": "Promise<number>", "description": "Number of items deleted"}}, "Storage.deleteByPrefix.allItems": {"name": "allItems", "line": 192, "col": 10, "endLine": 192, "endCol": 43, "kind": "variable", "scope": "Storage.deleteByPrefix"}, "Storage.deleteByPrefix.toDelete": {"name": "toDelete", "line": 193, "col": 10, "endLine": 193, "endCol": 72, "kind": "variable", "scope": "Storage.deleteByPrefix"}, "Storage.deleteByPrefix.item": {"name": "item", "line": 194, "col": 15, "endLine": 194, "endCol": 19, "kind": "variable", "scope": "Storage.deleteByPrefix"}, "Storage.exists": {"name": "exists", "line": 204, "col": 2, "endLine": 212, "endCol": 3, "kind": "method", "scope": "Storage", "signature": "(id)", "description": "Check if an item exists in storage.", "params": [{"name": "id", "type": "string", "description": "Item GUID"}], "returns": {"type": "Promise<boolean>"}}, "Storage.writeHistory": {"name": "writeHistory", "line": 222, "col": 2, "endLine": 229, "endCol": 3, "kind": "method", "scope": "Storage", "signature": "(itemId, timestamp, snapshot, deleted = ...)", "description": "Write a history entry (previous state before an update or deletion).", "params": [{"name": "itemId", "type": "string", "description": "Item GUID"}, {"name": "timestamp", "type": "number", "description": "Timestamp for this entry (previous.modified or Date.now() for deletions)"}, {"name": "snapshot", "type": "Object", "description": "Full item state at this point"}, {"name": "deleted", "type": "boolean", "description": "=false] - True if this records a deletion"}]}, "Storage.writeHistory.tx": {"name": "tx", "line": 224, "col": 12, "endLine": 224, "endCol": 66, "kind": "variable", "scope": "Storage.writeHistory"}, "Storage.writeHistory.req": {"name": "req", "line": 225, "col": 12, "endLine": 225, "endCol": 94, "kind": "variable", "scope": "Storage.writeHistory"}, "Storage.getHistory": {"name": "getHistory", "line": 235, "col": 2, "endLine": 245, "endCol": 3, "kind": "method", "scope": "Storage", "signature": "(itemId)", "description": "Get history entries for an item (without snapshots, for listing).", "params": [{"name": "itemId", "type": "string", "description": "Item GUID"}], "returns": {"type": "Promise<Array<{itemId, timestamp, deleted", "description": ">>}"}}, "Storage.getHistory.tx": {"name": "tx", "line": 237, "col": 12, "endLine": 237, "endCol": 65, "kind": "variable", "scope": "Storage.getHistory"}, "Storage.getHistory.index": {"name": "index", "line": 238, "col": 12, "endLine": 238, "endCol": 66, "kind": "variable", "scope": "Storage.getHistory"}, "Storage.getHistory.req": {"name": "req", "line": 239, "col": 12, "endLine": 239, "endCol": 38, "kind": "variable", "scope": "Storage.getHistory"}, "Storage.getHistory.itemId": {"name": "itemId", "line": 241, "col": 39, "endLine": 241, "endCol": 55, "kind": "property", "scope": "Storage.getHistory"}, "Storage.getHistory.timestamp": {"name": "timestamp", "line": 241, "col": 57, "endLine": 241, "endCol": 79, "kind": "property", "scope": "Storage.getHistory"}, "Storage.getHistory.deleted": {"name": "deleted", "line": 241, "col": 81, "endLine": 241, "endCol": 101, "kind": "property", "scope": "Storage.getHistory"}, "Storage.getHistoryEntry": {"name": "getHistoryEntry", "line": 252, "col": 2, "endLine": 259, "endCol": 3, "kind": "method", "scope": "Storage", "signature": "(itemId, timestamp)", "description": "Get a specific history entry with full snapshot.", "params": [{"name": "itemId", "type": "string", "description": "Item GUID"}, {"name": "timestamp", "type": "number", "description": "Exact timestamp of the entry"}], "returns": {"type": "Promise<Object|null>", "description": "The full history entry or null"}}, "Storage.getHistoryEntry.tx": {"name": "tx", "line": 254, "col": 12, "endLine": 254, "endCol": 65, "kind": "variable", "scope": "Storage.getHistoryEntry"}, "Storage.getHistoryEntry.req": {"name": "req", "line": 255, "col": 12, "endLine": 255, "endCol": 73, "kind": "variable", "scope": "Storage.getHistoryEntry"}, "Storage.getDeletedSince": {"name": "getDeletedSince", "line": 266, "col": 2, "endLine": 278, "endCol": 3, "kind": "method", "scope": "Storage", "signature": "(since)", "description": "Get all deletion records since a given timestamp.\nUsed by sync to inform the other device about deleted items.", "params": [{"name": "since", "type": "number", "description": "Timestamp threshold"}], "returns": {"type": "Promise<Array<{itemId, timestamp", "description": ">>}"}}, "Storage.getDeletedSince.tx": {"name": "tx", "line": 268, "col": 12, "endLine": 268, "endCol": 65, "kind": "variable", "scope": "Storage.getDeletedSince"}, "Storage.getDeletedSince.req": {"name": "req", "line": 269, "col": 12, "endLine": 269, "endCol": 57, "kind": "variable", "scope": "Storage.getDeletedSince"}, "Storage.getDeletedSince.deletions": {"name": "deletions", "line": 271, "col": 14, "endLine": 273, "endCol": 67, "kind": "variable", "scope": "Storage.getDeletedSince"}, "Storage._validateItem": {"name": "_validateItem", "line": 285, "col": 2, "endLine": 311, "endCol": 3, "kind": "method", "scope": "Storage", "signature": "(item, kernel)", "description": "Validate an item before storage — checks type chain and code name uniqueness.", "params": [{"name": "item", "type": "Object", "description": "The item to validate"}, {"name": "kernel", "type": "Object", "description": "Kernel reference for code item checks"}]}, "Storage._validateItem.ITEM_ID": {"name": "ITEM_ID", "line": 287, "col": 10, "endLine": 287, "endCol": 79, "kind": "variable", "scope": "Storage._validateItem"}, "Storage._validateItem.TYPE_DEFINITION_ID": {"name": "TYPE_DEFINITION_ID", "line": 288, "col": 10, "endLine": 288, "endCol": 101, "kind": "variable", "scope": "Storage._validateItem"}, "Storage._validateItem.itemNamespace": {"name": "itemNamespace", "line": 299, "col": 12, "endLine": 299, "endCol": 78, "kind": "variable", "scope": "Storage._validateItem"}, "Storage._validateItem.existing": {"name": "existing", "line": 300, "col": 12, "endLine": 300, "endCol": 60, "kind": "variable", "scope": "Storage._validateItem"}, "Storage._validateItem.conflict": {"name": "conflict", "line": 301, "col": 12, "endLine": 305, "endCol": 8, "kind": "variable", "scope": "Storage._validateItem"}, "Storage._validateTypeChain": {"name": "_validateTypeChain", "line": 315, "col": 2, "endLine": 338, "endCol": 3, "kind": "method", "scope": "Storage", "signature": "(typeId, visited, ITEM_ID, TYPE_DEFINITION_ID)"}, "Storage._validateTypeChain.typeItem": {"name": "typeItem", "line": 330, "col": 12, "endLine": 330, "endCol": 45, "kind": "variable", "scope": "Storage._validateTypeChain"}}}, "attachments": []}
+{
+  "id": "33333333-2222-0000-0000-000000000000",
+  "type": "33333333-0000-0000-0000-000000000000",
+  "name": "kernel:storage",
+  "created": 0,
+  "modified": 1774988045665,
+  "content": {
+    "code": "// kernel-storage module\n// See [Architecture Overview - Storage Architecture](item://a0a0a0a0-d0c0-4000-8000-000000000003#Storage-Architecture)\n// Owns IndexedDB access and ID prefixing for nested instance isolation.\n\n// [BEGIN:Storage]\n/** Storage layer — wraps IndexedDB with ID-prefix isolation and in-memory caching. */\nexport class Storage {\n  constructor(db, instanceId) {\n    this._db = db;\n    this._instanceId = instanceId || null;\n    this._cache = new Map();\n    this._allCached = false;\n  }\n\n  /** Get the nested instance ID (null for main instance).\n   * @returns {string|null}\n   */\n  get instanceId() {\n    return this._instanceId;\n  }\n\n  /** Initialize storage (no-op — db is already open). */\n  async initialize() {\n    // db is already open, passed from the bootloader\n  }\n\n  // --- Private: ID prefixing for nested instance isolation ---\n\n  _prefixId(id) {\n    return this._instanceId ? `${this._instanceId}:${id}` : id;\n  }\n\n  _stripPrefix(id) {\n    if (!this._instanceId) return id;\n    const prefix = `${this._instanceId}:`;\n    return id.startsWith(prefix) ? id.slice(prefix.length) : id;\n  }\n\n  _stripItemPrefix(item) {\n    if (!this._instanceId || !item) return item;\n    return { ...item, id: this._stripPrefix(item.id) };\n  }\n\n  // --- Private: IndexedDB operations ---\n\n  _idbGet(id) {\n    const actualId = this._prefixId(id);\n    return new Promise((resolve, reject) => {\n      const tx = this._db.transaction('items', 'readonly');\n      const req = tx.objectStore('items').get(actualId);\n      req.onsuccess = () => resolve(this._stripItemPrefix(req.result));\n      req.onerror = () => reject(req.error);\n    });\n  }\n\n  _idbSet(item) {\n    const toStore = this._instanceId\n      ? { ...item, id: this._prefixId(item.id) }\n      : item;\n    return new Promise((resolve, reject) => {\n      const tx = this._db.transaction('items', 'readwrite');\n      const req = tx.objectStore('items').put(toStore);\n      req.onsuccess = () => resolve();\n      req.onerror = () => reject(req.error);\n    });\n  }\n\n  _idbDelete(id) {\n    const actualId = this._prefixId(id);\n    return new Promise((resolve, reject) => {\n      const tx = this._db.transaction('items', 'readwrite');\n      const req = tx.objectStore('items').delete(actualId);\n      req.onsuccess = () => resolve();\n      req.onerror = () => reject(req.error);\n    });\n  }\n\n  /** Fetch all items in this instance's namespace (with prefixes stripped). */\n  _idbGetAll() {\n    return new Promise((resolve, reject) => {\n      const tx = this._db.transaction('items', 'readonly');\n      const req = tx.objectStore('items').getAll();\n      req.onsuccess = () => {\n        let items = req.result;\n        if (this._instanceId) {\n          const prefix = `${this._instanceId}:`;\n          items = items\n            .filter(item => item.id.startsWith(prefix))\n            .map(item => this._stripItemPrefix(item));\n        }\n        resolve(items);\n      };\n      req.onerror = () => reject(req.error);\n    });\n  }\n\n  // --- Public API ---\n\n  /** Retrieve an item by ID. Throws if not found.\n   * @param {string} id - Item GUID\n   * @returns {Promise<Object>} The item\n   */\n  async get(id) {\n    const cached = this._cache.get(id);\n    if (cached) return cached;\n    const result = await this._idbGet(id);\n    if (!result) {\n      throw new Error(`Item not found: ${id}`);\n    }\n    this._cache.set(id, result);\n    return result;\n  }\n\n  /** Validate and persist an item.\n   * @param {Object} item - The item to save\n   * @param {Object} [kernel] - Kernel reference for validation context\n   */\n  async set(item, kernel) {\n    await this._validateItem(item, kernel);\n    await this._idbSet(item);\n    this._cache.set(item.id, item);\n  }\n\n  /** Delete an item from storage and cache.\n   * @param {string} id - Item GUID to delete\n   */\n  async delete(id) {\n    this._cache.delete(id);\n    return this._idbDelete(id);\n  }\n\n  /** Find items matching a filter object (key-value pairs matched against item fields).\n   * @param {Object} filter - e.g. {type: \"...\", name: \"...\"}\n   * @returns {Promise<Object[]>} Matching items (excludes nested instance items)\n   */\n  async query(filter) {\n    if (this._allCached) {\n      // Exclude nested instance items (have ':' in ID)\n      const items = [];\n      for (const item of this._cache.values()) {\n        if (!item.id.includes(':')) items.push(item);\n      }\n      return items.filter(item => {\n        for (const [key, value] of Object.entries(filter)) {\n          if (item[key] !== value) return false;\n        }\n        return true;\n      });\n    }\n    const allItems = await this.getAll();\n    return allItems.filter(item => {\n      for (const [key, value] of Object.entries(filter)) {\n        if (item[key] !== value) return false;\n      }\n      return true;\n    });\n  }\n\n  /** Get all items (excludes nested instance items). Populates cache on first call.\n   * @returns {Promise<Object[]>}\n   */\n  async getAll() {\n    if (this._allCached) {\n      const items = [];\n      for (const item of this._cache.values()) {\n        if (!item.id.includes(':')) items.push(item);\n      }\n      return items;\n    }\n    const allItems = await this._idbGetAll();\n    // Filter out nested instance items (items with ':' in their stripped ID)\n    const items = allItems.filter(item => !item.id.includes(':'));\n    for (const item of items) {\n      this._cache.set(item.id, item);\n    }\n    this._allCached = true;\n    return items;\n  }\n\n  /** Get all items including nested instance items.\n   * @returns {Promise<Object[]>}\n   */\n  async getAllRaw() {\n    return this._idbGetAll();\n  }\n\n  /** Delete all items whose ID starts with a prefix.\n   * @param {string} prefix - ID prefix to match\n   * @returns {Promise<number>} Number of items deleted\n   */\n  async deleteByPrefix(prefix) {\n    const allItems = await this.getAllRaw();\n    const toDelete = allItems.filter(item => item.id.startsWith(prefix));\n    for (const item of toDelete) {\n      await this.delete(item.id);\n    }\n    return toDelete.length;\n  }\n\n  /** Check if an item exists in storage.\n   * @param {string} id - Item GUID\n   * @returns {Promise<boolean>}\n   */\n  async exists(id) {\n    if (this._cache.has(id)) return true;\n    try {\n      await this.get(id);\n      return true;\n    } catch {\n      return false;\n    }\n  }\n\n  // --- History operations (item-history IDB store) ---\n\n  /** Write a history entry (previous state before an update or deletion).\n   * @param {string} itemId - Item GUID\n   * @param {number} timestamp - Timestamp for this entry (previous.modified or Date.now() for deletions)\n   * @param {Object} snapshot - Full item state at this point\n   * @param {boolean} [deleted=false] - True if this records a deletion\n   */\n  async writeHistory(itemId, timestamp, snapshot, deleted = false) {\n    return new Promise((resolve, reject) => {\n      const tx = this._db.transaction('item-history', 'readwrite');\n      const req = tx.objectStore('item-history').put({ itemId, timestamp, snapshot, deleted });\n      req.onsuccess = () => resolve();\n      req.onerror = () => reject(req.error);\n    });\n  }\n\n  /** Get history entries for an item (without snapshots, for listing).\n   * @param {string} itemId - Item GUID\n   * @returns {Promise<Array<{itemId, timestamp, deleted}>>}\n   */\n  async getHistory(itemId) {\n    return new Promise((resolve, reject) => {\n      const tx = this._db.transaction('item-history', 'readonly');\n      const index = tx.objectStore('item-history').index('itemId');\n      const req = index.getAll(itemId);\n      req.onsuccess = () => {\n        resolve(req.result.map(e => ({ itemId: e.itemId, timestamp: e.timestamp, deleted: !!e.deleted })));\n      };\n      req.onerror = () => reject(req.error);\n    });\n  }\n\n  /** Get a specific history entry with full snapshot.\n   * @param {string} itemId - Item GUID\n   * @param {number} timestamp - Exact timestamp of the entry\n   * @returns {Promise<Object|null>} The full history entry or null\n   */\n  async getHistoryEntry(itemId, timestamp) {\n    return new Promise((resolve, reject) => {\n      const tx = this._db.transaction('item-history', 'readonly');\n      const req = tx.objectStore('item-history').get([itemId, timestamp]);\n      req.onsuccess = () => resolve(req.result || null);\n      req.onerror = () => reject(req.error);\n    });\n  }\n\n  /** Get all deletion records since a given timestamp.\n   * Used by sync to inform the other device about deleted items.\n   * @param {number} since - Timestamp threshold\n   * @returns {Promise<Array<{itemId, timestamp}>>}\n   */\n  async getDeletedSince(since) {\n    return new Promise((resolve, reject) => {\n      const tx = this._db.transaction('item-history', 'readonly');\n      const req = tx.objectStore('item-history').getAll();\n      req.onsuccess = () => {\n        const deletions = req.result\n          .filter(e => e.deleted && e.timestamp > since)\n          .map(e => ({ itemId: e.itemId, timestamp: e.timestamp }));\n        resolve(deletions);\n      };\n      req.onerror = () => reject(req.error);\n    });\n  }\n\n  // [BEGIN:validateItem]\n  /** Validate an item before storage — checks type chain and code name uniqueness.\n   * @param {Object} item - The item to validate\n   * @param {Object} [kernel] - Kernel reference for code item checks\n   */\n  async _validateItem(item, kernel) {\n    // See [item/atom](item://00000000-0000-0000-0000-000000000000)\n    const ITEM_ID = kernel?.IDS?.ITEM || \"00000000-0000-0000-0000-000000000000\";\n    const TYPE_DEFINITION_ID = kernel?.IDS?.TYPE_DEFINITION || \"11111111-0000-0000-0000-000000000000\";\n\n    // Validate type chain (must reach a valid root, no unexpected cycles)\n    await this._validateTypeChain(item.type, new Set(), ITEM_ID, TYPE_DEFINITION_ID);\n\n    // If code item, validate name uniqueness within the same namespace\n    if (kernel && await kernel.isCodeItem(item)) {\n      if (!item.name) {\n        throw new Error(`Code item ${item.id} must have a name`);\n      }\n\n      const itemNamespace = item.id.includes(':') ? item.id.split(':')[0] : '';\n      const existing = await this.query({ name: item.name });\n      const conflict = existing.find(i => {\n        if (i.id === item.id) return false;\n        const existingNamespace = i.id.includes(':') ? i.id.split(':')[0] : '';\n        return existingNamespace === itemNamespace;\n      });\n\n      if (conflict) {\n        throw new Error(`Code item named '${item.name}' already exists in this namespace (id: ${conflict.id})`);\n      }\n    }\n  }\n  // [END:validateItem]\n\n  // [BEGIN:validateTypeChain]\n  async _validateTypeChain(typeId, visited, ITEM_ID, TYPE_DEFINITION_ID) {\n    // Valid termination points:\n    // - ITEM (old model: atom.type = atom)\n    // - TYPE_DEFINITION (new model: type-definition.type = type-definition)\n    if (typeId === ITEM_ID || typeId === TYPE_DEFINITION_ID) {\n      return;\n    }\n\n    if (visited.has(typeId)) {\n      throw new Error(`Circular type chain detected at: ${typeId}`);\n    }\n\n    visited.add(typeId);\n\n    try {\n      const typeItem = await this.get(typeId);\n      await this._validateTypeChain(typeItem.type, visited, ITEM_ID, TYPE_DEFINITION_ID);\n    } catch (error) {\n      if (error.message.includes(\"not found\")) {\n        throw new Error(`Type chain broken - item '${typeId}' not found`);\n      }\n      throw error;\n    }\n  }\n  // [END:validateTypeChain]\n}\n// [END:Storage]\n",
+    "description": [
+      ":doc",
+      [
+        ":p",
+        {
+          "s": "The storage layer wrapping IndexedDB with validation, caching, and ID-prefix isolation for "
+        },
+        [
+          ":item-ref",
+          {
+            "s": "c0c0c0c0-0037-0000-0000-000000000000"
+          },
+          {
+            "s": "Nested Instance"
+          }
+        ],
+        {
+          "s": " support. Receives the raw IndexedDB handle and instance ID from the "
+        },
+        [
+          ":item-ref",
+          {
+            "s": "f761e023-da8d-492d-9933-a75adcc8d316"
+          },
+          {
+            "s": "bootloader"
+          }
+        ],
+        {
+          "s": "."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Responsibilities"
+        }
+      ],
+      [
+        ":table",
+        [
+          ":thead",
+          [
+            ":tr",
+            [
+              ":th",
+              {
+                "s": "Operation"
+              }
+            ],
+            [
+              ":th",
+              {
+                "s": "Description"
+              }
+            ]
+          ]
+        ],
+        [
+          ":tbody",
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "get(id)"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Fetch item by ID, throws if not found"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "set(item, kernel)"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Save item with validation"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "delete(id)"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Remove item"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "query(filter)"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Find items matching criteria"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "getAll()"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Return all items"
+              }
+            ]
+          ],
+          [
+            ":tr",
+            [
+              ":td",
+              [
+                ":code",
+                {
+                  "s": "exists(id)"
+                }
+              ]
+            ],
+            [
+              ":td",
+              {
+                "s": "Check if item exists"
+              }
+            ]
+          ]
+        ]
+      ],
+      [
+        ":h2",
+        {
+          "s": "Validation"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "On every "
+        },
+        [
+          ":code",
+          {
+            "s": "set()"
+          }
+        ],
+        {
+          "s": ", the storage module validates:"
+        }
+      ],
+      [
+        ":ol",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Type chain integrity"
+              }
+            ],
+            {
+              "s": ": Walks from "
+            },
+            [
+              ":code",
+              {
+                "s": "item.type"
+              }
+            ],
+            {
+              "s": " up via "
+            },
+            [
+              ":code",
+              {
+                "s": ".type"
+              }
+            ],
+            {
+              "s": " references, ensuring the chain reaches "
+            },
+            [
+              ":item-ref",
+              {
+                "s": "00000000-0000-0000-0000-000000000000"
+              },
+              {
+                "s": "kernel:item"
+              }
+            ],
+            {
+              "s": " without cycles or broken references."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Code item name uniqueness"
+              }
+            ],
+            {
+              "s": ": If the item is a code item, ensures no other code item in the same namespace has the same name."
+            }
+          ]
+        ]
+      ],
+      [
+        ":h2",
+        {
+          "s": "Nested Instance Support"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The storage module owns ID prefixing directly:"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": "?instance=abc → items stored/retrieved with \"abc:\" prefix"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The bootloader passes the raw IndexedDB handle and instance ID. Storage handles all prefixing and stripping internally, enabling true isolation while sharing the same IndexedDB."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Key Implementation Patterns"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":item-ref",
+              {
+                "s": "c0c0c0c0-0014-0000-0000-000000000000"
+              },
+              {
+                "s": "Type Chain Validation"
+              }
+            ],
+            {
+              "s": " — Bounded type chain walking, circular reference detection, validation rules"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":item-ref",
+              {
+                "s": "c0c0c0c0-0013-0000-0000-000000000000"
+              },
+              {
+                "s": "Cycle-Safe Traversal"
+              }
+            ],
+            {
+              "s": " — Visited-set pattern used in "
+            },
+            [
+              ":code",
+              {
+                "s": "_validateTypeChain"
+              }
+            ]
+          ]
+        ]
+      ],
+      [
+        ":h2",
+        {
+          "s": "See Also"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":item-ref",
+              {
+                "s": "c0c0c0c0-0002-0000-0000-000000000000"
+              },
+              {
+                "s": "Bootstrap"
+              }
+            ],
+            {
+              "s": " — How the bootloader opens IndexedDB and hands off to the kernel"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":item-ref",
+              {
+                "s": "11111111-0000-0000-0000-000000000000"
+              },
+              {
+                "s": "kernel:type-definition"
+              }
+            ],
+            {
+              "s": " — Type chains and validation"
+            }
+          ]
+        ]
+      ]
+    ],
+    "_symbols": {
+      "Storage": {
+        "name": "Storage",
+        "line": 7,
+        "col": 7,
+        "endLine": 340,
+        "endCol": 1,
+        "kind": "class",
+        "scope": null,
+        "description": "Storage layer — wraps IndexedDB with ID-prefix isolation and in-memory caching."
+      },
+      "Storage.constructor": {
+        "name": "constructor",
+        "line": 8,
+        "col": 2,
+        "endLine": 13,
+        "endCol": 3,
+        "kind": "method",
+        "scope": "Storage",
+        "signature": "(db, instanceId)"
+      },
+      "Storage.instanceId": {
+        "name": "instanceId",
+        "line": 18,
+        "col": 2,
+        "endLine": 20,
+        "endCol": 3,
+        "kind": "method",
+        "scope": "Storage",
+        "signature": "()",
+        "description": "Get the nested instance ID (null for main instance).",
+        "returns": {
+          "type": "string|null"
+        }
+      },
+      "Storage.initialize": {
+        "name": "initialize",
+        "line": 23,
+        "col": 2,
+        "endLine": 25,
+        "endCol": 3,
+        "kind": "method",
+        "scope": "Storage",
+        "signature": "()",
+        "description": "Initialize storage (no-op — db is already open)."
+      },
+      "Storage._prefixId": {
+        "name": "_prefixId",
+        "line": 29,
+        "col": 2,
+        "endLine": 31,
+        "endCol": 3,
+        "kind": "method",
+        "scope": "Storage",
+        "signature": "(id)"
+      },
+      "Storage._stripPrefix": {
+        "name": "_stripPrefix",
+        "line": 33,
+        "col": 2,
+        "endLine": 37,
+        "endCol": 3,
+        "kind": "method",
+        "scope": "Storage",
+        "signature": "(id)"
+      },
+      "Storage._stripPrefix.prefix": {
+        "name": "prefix",
+        "line": 35,
+        "col": 10,
+        "endLine": 35,
+        "endCol": 41,
+        "kind": "variable",
+        "scope": "Storage._stripPrefix"
+      },
+      "Storage._stripItemPrefix": {
+        "name": "_stripItemPrefix",
+        "line": 39,
+        "col": 2,
+        "endLine": 42,
+        "endCol": 3,
+        "kind": "method",
+        "scope": "Storage",
+        "signature": "(item)"
+      },
+      "Storage._stripItemPrefix.id": {
+        "name": "id",
+        "line": 41,
+        "col": 22,
+        "endLine": 41,
+        "endCol": 52,
+        "kind": "property",
+        "scope": "Storage._stripItemPrefix"
+      },
+      "Storage._idbGet": {
+        "name": "_idbGet",
+        "line": 46,
+        "col": 2,
+        "endLine": 54,
+        "endCol": 3,
+        "kind": "method",
+        "scope": "Storage",
+        "signature": "(id)"
+      },
+      "Storage._idbGet.actualId": {
+        "name": "actualId",
+        "line": 47,
+        "col": 10,
+        "endLine": 47,
+        "endCol": 39,
+        "kind": "variable",
+        "scope": "Storage._idbGet"
+      },
+      "Storage._idbGet.tx": {
+        "name": "tx",
+        "line": 49,
+        "col": 12,
+        "endLine": 49,
+        "endCol": 58,
+        "kind": "variable",
+        "scope": "Storage._idbGet"
+      },
+      "Storage._idbGet.req": {
+        "name": "req",
+        "line": 50,
+        "col": 12,
+        "endLine": 50,
+        "endCol": 55,
+        "kind": "variable",
+        "scope": "Storage._idbGet"
+      },
+      "Storage._idbSet": {
+        "name": "_idbSet",
+        "line": 56,
+        "col": 2,
+        "endLine": 66,
+        "endCol": 3,
+        "kind": "method",
+        "scope": "Storage",
+        "signature": "(item)"
+      },
+      "Storage._idbSet.toStore": {
+        "name": "toStore",
+        "line": 57,
+        "col": 10,
+        "endLine": 59,
+        "endCol": 12,
+        "kind": "variable",
+        "scope": "Storage._idbSet"
+      },
+      "Storage._idbSet.tx": {
+        "name": "tx",
+        "line": 61,
+        "col": 12,
+        "endLine": 61,
+        "endCol": 59,
+        "kind": "variable",
+        "scope": "Storage._idbSet"
+      },
+      "Storage._idbSet.req": {
+        "name": "req",
+        "line": 62,
+        "col": 12,
+        "endLine": 62,
+        "endCol": 54,
+        "kind": "variable",
+        "scope": "Storage._idbSet"
+      },
+      "Storage._idbDelete": {
+        "name": "_idbDelete",
+        "line": 68,
+        "col": 2,
+        "endLine": 76,
+        "endCol": 3,
+        "kind": "method",
+        "scope": "Storage",
+        "signature": "(id)"
+      },
+      "Storage._idbDelete.actualId": {
+        "name": "actualId",
+        "line": 69,
+        "col": 10,
+        "endLine": 69,
+        "endCol": 39,
+        "kind": "variable",
+        "scope": "Storage._idbDelete"
+      },
+      "Storage._idbDelete.tx": {
+        "name": "tx",
+        "line": 71,
+        "col": 12,
+        "endLine": 71,
+        "endCol": 59,
+        "kind": "variable",
+        "scope": "Storage._idbDelete"
+      },
+      "Storage._idbDelete.req": {
+        "name": "req",
+        "line": 72,
+        "col": 12,
+        "endLine": 72,
+        "endCol": 58,
+        "kind": "variable",
+        "scope": "Storage._idbDelete"
+      },
+      "Storage._idbGetAll": {
+        "name": "_idbGetAll",
+        "line": 79,
+        "col": 2,
+        "endLine": 95,
+        "endCol": 3,
+        "kind": "method",
+        "scope": "Storage",
+        "signature": "()",
+        "description": "Fetch all items in this instance's namespace (with prefixes stripped)."
+      },
+      "Storage._idbGetAll.tx": {
+        "name": "tx",
+        "line": 81,
+        "col": 12,
+        "endLine": 81,
+        "endCol": 58,
+        "kind": "variable",
+        "scope": "Storage._idbGetAll"
+      },
+      "Storage._idbGetAll.req": {
+        "name": "req",
+        "line": 82,
+        "col": 12,
+        "endLine": 82,
+        "endCol": 50,
+        "kind": "variable",
+        "scope": "Storage._idbGetAll"
+      },
+      "Storage._idbGetAll.items": {
+        "name": "items",
+        "line": 84,
+        "col": 12,
+        "endLine": 84,
+        "endCol": 30,
+        "kind": "variable",
+        "scope": "Storage._idbGetAll"
+      },
+      "Storage._idbGetAll.prefix": {
+        "name": "prefix",
+        "line": 86,
+        "col": 16,
+        "endLine": 86,
+        "endCol": 47,
+        "kind": "variable",
+        "scope": "Storage._idbGetAll"
+      },
+      "Storage.get": {
+        "name": "get",
+        "line": 103,
+        "col": 2,
+        "endLine": 112,
+        "endCol": 3,
+        "kind": "method",
+        "scope": "Storage",
+        "signature": "(id)",
+        "description": "Retrieve an item by ID. Throws if not found.",
+        "params": [
+          {
+            "name": "id",
+            "type": "string",
+            "description": "Item GUID"
+          }
+        ],
+        "returns": {
+          "type": "Promise<Object>",
+          "description": "The item"
+        }
+      },
+      "Storage.get.cached": {
+        "name": "cached",
+        "line": 104,
+        "col": 10,
+        "endLine": 104,
+        "endCol": 38,
+        "kind": "variable",
+        "scope": "Storage.get"
+      },
+      "Storage.get.result": {
+        "name": "result",
+        "line": 106,
+        "col": 10,
+        "endLine": 106,
+        "endCol": 41,
+        "kind": "variable",
+        "scope": "Storage.get"
+      },
+      "Storage.set": {
+        "name": "set",
+        "line": 118,
+        "col": 2,
+        "endLine": 122,
+        "endCol": 3,
+        "kind": "method",
+        "scope": "Storage",
+        "signature": "(item, kernel)",
+        "description": "Validate and persist an item.",
+        "params": [
+          {
+            "name": "item",
+            "type": "Object",
+            "description": "The item to save"
+          },
+          {
+            "name": "kernel",
+            "type": "Object",
+            "description": "Kernel reference for validation context"
+          }
+        ]
+      },
+      "Storage.delete": {
+        "name": "delete",
+        "line": 127,
+        "col": 2,
+        "endLine": 130,
+        "endCol": 3,
+        "kind": "method",
+        "scope": "Storage",
+        "signature": "(id)",
+        "description": "Delete an item from storage and cache.",
+        "params": [
+          {
+            "name": "id",
+            "type": "string",
+            "description": "Item GUID to delete"
+          }
+        ]
+      },
+      "Storage.query": {
+        "name": "query",
+        "line": 136,
+        "col": 2,
+        "endLine": 157,
+        "endCol": 3,
+        "kind": "method",
+        "scope": "Storage",
+        "signature": "(filter)",
+        "description": "Find items matching a filter object (key-value pairs matched against item fields).",
+        "params": [
+          {
+            "name": "filter",
+            "type": "Object",
+            "description": "e.g. {type: \"...\", name: \"...\"}"
+          }
+        ],
+        "returns": {
+          "type": "Promise<Object[]>",
+          "description": "Matching items (excludes nested instance items)"
+        }
+      },
+      "Storage.query.items": {
+        "name": "items",
+        "line": 139,
+        "col": 12,
+        "endLine": 139,
+        "endCol": 22,
+        "kind": "variable",
+        "scope": "Storage.query"
+      },
+      "Storage.query.item": {
+        "name": "item",
+        "line": 140,
+        "col": 17,
+        "endLine": 140,
+        "endCol": 21,
+        "kind": "variable",
+        "scope": "Storage.query"
+      },
+      "Storage.query.allItems": {
+        "name": "allItems",
+        "line": 150,
+        "col": 10,
+        "endLine": 150,
+        "endCol": 40,
+        "kind": "variable",
+        "scope": "Storage.query"
+      },
+      "Storage.getAll": {
+        "name": "getAll",
+        "line": 162,
+        "col": 2,
+        "endLine": 178,
+        "endCol": 3,
+        "kind": "method",
+        "scope": "Storage",
+        "signature": "()",
+        "description": "Get all items (excludes nested instance items). Populates cache on first call.",
+        "returns": {
+          "type": "Promise<Object[]>"
+        }
+      },
+      "Storage.getAll.items": {
+        "name": "items",
+        "line": 172,
+        "col": 10,
+        "endLine": 172,
+        "endCol": 65,
+        "kind": "variable",
+        "scope": "Storage.getAll"
+      },
+      "Storage.getAll.item": {
+        "name": "item",
+        "line": 173,
+        "col": 15,
+        "endLine": 173,
+        "endCol": 19,
+        "kind": "variable",
+        "scope": "Storage.getAll"
+      },
+      "Storage.getAll.allItems": {
+        "name": "allItems",
+        "line": 170,
+        "col": 10,
+        "endLine": 170,
+        "endCol": 44,
+        "kind": "variable",
+        "scope": "Storage.getAll"
+      },
+      "Storage.getAllRaw": {
+        "name": "getAllRaw",
+        "line": 183,
+        "col": 2,
+        "endLine": 185,
+        "endCol": 3,
+        "kind": "method",
+        "scope": "Storage",
+        "signature": "()",
+        "description": "Get all items including nested instance items.",
+        "returns": {
+          "type": "Promise<Object[]>"
+        }
+      },
+      "Storage.deleteByPrefix": {
+        "name": "deleteByPrefix",
+        "line": 191,
+        "col": 2,
+        "endLine": 198,
+        "endCol": 3,
+        "kind": "method",
+        "scope": "Storage",
+        "signature": "(prefix)",
+        "description": "Delete all items whose ID starts with a prefix.",
+        "params": [
+          {
+            "name": "prefix",
+            "type": "string",
+            "description": "ID prefix to match"
+          }
+        ],
+        "returns": {
+          "type": "Promise<number>",
+          "description": "Number of items deleted"
+        }
+      },
+      "Storage.deleteByPrefix.allItems": {
+        "name": "allItems",
+        "line": 192,
+        "col": 10,
+        "endLine": 192,
+        "endCol": 43,
+        "kind": "variable",
+        "scope": "Storage.deleteByPrefix"
+      },
+      "Storage.deleteByPrefix.toDelete": {
+        "name": "toDelete",
+        "line": 193,
+        "col": 10,
+        "endLine": 193,
+        "endCol": 72,
+        "kind": "variable",
+        "scope": "Storage.deleteByPrefix"
+      },
+      "Storage.deleteByPrefix.item": {
+        "name": "item",
+        "line": 194,
+        "col": 15,
+        "endLine": 194,
+        "endCol": 19,
+        "kind": "variable",
+        "scope": "Storage.deleteByPrefix"
+      },
+      "Storage.exists": {
+        "name": "exists",
+        "line": 204,
+        "col": 2,
+        "endLine": 212,
+        "endCol": 3,
+        "kind": "method",
+        "scope": "Storage",
+        "signature": "(id)",
+        "description": "Check if an item exists in storage.",
+        "params": [
+          {
+            "name": "id",
+            "type": "string",
+            "description": "Item GUID"
+          }
+        ],
+        "returns": {
+          "type": "Promise<boolean>"
+        }
+      },
+      "Storage.writeHistory": {
+        "name": "writeHistory",
+        "line": 222,
+        "col": 2,
+        "endLine": 229,
+        "endCol": 3,
+        "kind": "method",
+        "scope": "Storage",
+        "signature": "(itemId, timestamp, snapshot, deleted = ...)",
+        "description": "Write a history entry (previous state before an update or deletion).",
+        "params": [
+          {
+            "name": "itemId",
+            "type": "string",
+            "description": "Item GUID"
+          },
+          {
+            "name": "timestamp",
+            "type": "number",
+            "description": "Timestamp for this entry (previous.modified or Date.now() for deletions)"
+          },
+          {
+            "name": "snapshot",
+            "type": "Object",
+            "description": "Full item state at this point"
+          },
+          {
+            "name": "deleted",
+            "type": "boolean",
+            "description": "=false] - True if this records a deletion"
+          }
+        ]
+      },
+      "Storage.writeHistory.tx": {
+        "name": "tx",
+        "line": 224,
+        "col": 12,
+        "endLine": 224,
+        "endCol": 66,
+        "kind": "variable",
+        "scope": "Storage.writeHistory"
+      },
+      "Storage.writeHistory.req": {
+        "name": "req",
+        "line": 225,
+        "col": 12,
+        "endLine": 225,
+        "endCol": 94,
+        "kind": "variable",
+        "scope": "Storage.writeHistory"
+      },
+      "Storage.getHistory": {
+        "name": "getHistory",
+        "line": 235,
+        "col": 2,
+        "endLine": 245,
+        "endCol": 3,
+        "kind": "method",
+        "scope": "Storage",
+        "signature": "(itemId)",
+        "description": "Get history entries for an item (without snapshots, for listing).",
+        "params": [
+          {
+            "name": "itemId",
+            "type": "string",
+            "description": "Item GUID"
+          }
+        ],
+        "returns": {
+          "type": "Promise<Array<{itemId, timestamp, deleted",
+          "description": ">>}"
+        }
+      },
+      "Storage.getHistory.tx": {
+        "name": "tx",
+        "line": 237,
+        "col": 12,
+        "endLine": 237,
+        "endCol": 65,
+        "kind": "variable",
+        "scope": "Storage.getHistory"
+      },
+      "Storage.getHistory.index": {
+        "name": "index",
+        "line": 238,
+        "col": 12,
+        "endLine": 238,
+        "endCol": 66,
+        "kind": "variable",
+        "scope": "Storage.getHistory"
+      },
+      "Storage.getHistory.req": {
+        "name": "req",
+        "line": 239,
+        "col": 12,
+        "endLine": 239,
+        "endCol": 38,
+        "kind": "variable",
+        "scope": "Storage.getHistory"
+      },
+      "Storage.getHistory.itemId": {
+        "name": "itemId",
+        "line": 241,
+        "col": 39,
+        "endLine": 241,
+        "endCol": 55,
+        "kind": "property",
+        "scope": "Storage.getHistory"
+      },
+      "Storage.getHistory.timestamp": {
+        "name": "timestamp",
+        "line": 241,
+        "col": 57,
+        "endLine": 241,
+        "endCol": 79,
+        "kind": "property",
+        "scope": "Storage.getHistory"
+      },
+      "Storage.getHistory.deleted": {
+        "name": "deleted",
+        "line": 241,
+        "col": 81,
+        "endLine": 241,
+        "endCol": 101,
+        "kind": "property",
+        "scope": "Storage.getHistory"
+      },
+      "Storage.getHistoryEntry": {
+        "name": "getHistoryEntry",
+        "line": 252,
+        "col": 2,
+        "endLine": 259,
+        "endCol": 3,
+        "kind": "method",
+        "scope": "Storage",
+        "signature": "(itemId, timestamp)",
+        "description": "Get a specific history entry with full snapshot.",
+        "params": [
+          {
+            "name": "itemId",
+            "type": "string",
+            "description": "Item GUID"
+          },
+          {
+            "name": "timestamp",
+            "type": "number",
+            "description": "Exact timestamp of the entry"
+          }
+        ],
+        "returns": {
+          "type": "Promise<Object|null>",
+          "description": "The full history entry or null"
+        }
+      },
+      "Storage.getHistoryEntry.tx": {
+        "name": "tx",
+        "line": 254,
+        "col": 12,
+        "endLine": 254,
+        "endCol": 65,
+        "kind": "variable",
+        "scope": "Storage.getHistoryEntry"
+      },
+      "Storage.getHistoryEntry.req": {
+        "name": "req",
+        "line": 255,
+        "col": 12,
+        "endLine": 255,
+        "endCol": 73,
+        "kind": "variable",
+        "scope": "Storage.getHistoryEntry"
+      },
+      "Storage.getDeletedSince": {
+        "name": "getDeletedSince",
+        "line": 266,
+        "col": 2,
+        "endLine": 278,
+        "endCol": 3,
+        "kind": "method",
+        "scope": "Storage",
+        "signature": "(since)",
+        "description": "Get all deletion records since a given timestamp.\nUsed by sync to inform the other device about deleted items.",
+        "params": [
+          {
+            "name": "since",
+            "type": "number",
+            "description": "Timestamp threshold"
+          }
+        ],
+        "returns": {
+          "type": "Promise<Array<{itemId, timestamp",
+          "description": ">>}"
+        }
+      },
+      "Storage.getDeletedSince.tx": {
+        "name": "tx",
+        "line": 268,
+        "col": 12,
+        "endLine": 268,
+        "endCol": 65,
+        "kind": "variable",
+        "scope": "Storage.getDeletedSince"
+      },
+      "Storage.getDeletedSince.req": {
+        "name": "req",
+        "line": 269,
+        "col": 12,
+        "endLine": 269,
+        "endCol": 57,
+        "kind": "variable",
+        "scope": "Storage.getDeletedSince"
+      },
+      "Storage.getDeletedSince.deletions": {
+        "name": "deletions",
+        "line": 271,
+        "col": 14,
+        "endLine": 273,
+        "endCol": 67,
+        "kind": "variable",
+        "scope": "Storage.getDeletedSince"
+      },
+      "Storage._validateItem": {
+        "name": "_validateItem",
+        "line": 285,
+        "col": 2,
+        "endLine": 311,
+        "endCol": 3,
+        "kind": "method",
+        "scope": "Storage",
+        "signature": "(item, kernel)",
+        "description": "Validate an item before storage — checks type chain and code name uniqueness.",
+        "params": [
+          {
+            "name": "item",
+            "type": "Object",
+            "description": "The item to validate"
+          },
+          {
+            "name": "kernel",
+            "type": "Object",
+            "description": "Kernel reference for code item checks"
+          }
+        ]
+      },
+      "Storage._validateItem.ITEM_ID": {
+        "name": "ITEM_ID",
+        "line": 287,
+        "col": 10,
+        "endLine": 287,
+        "endCol": 79,
+        "kind": "variable",
+        "scope": "Storage._validateItem"
+      },
+      "Storage._validateItem.TYPE_DEFINITION_ID": {
+        "name": "TYPE_DEFINITION_ID",
+        "line": 288,
+        "col": 10,
+        "endLine": 288,
+        "endCol": 101,
+        "kind": "variable",
+        "scope": "Storage._validateItem"
+      },
+      "Storage._validateItem.itemNamespace": {
+        "name": "itemNamespace",
+        "line": 299,
+        "col": 12,
+        "endLine": 299,
+        "endCol": 78,
+        "kind": "variable",
+        "scope": "Storage._validateItem"
+      },
+      "Storage._validateItem.existing": {
+        "name": "existing",
+        "line": 300,
+        "col": 12,
+        "endLine": 300,
+        "endCol": 60,
+        "kind": "variable",
+        "scope": "Storage._validateItem"
+      },
+      "Storage._validateItem.conflict": {
+        "name": "conflict",
+        "line": 301,
+        "col": 12,
+        "endLine": 305,
+        "endCol": 8,
+        "kind": "variable",
+        "scope": "Storage._validateItem"
+      },
+      "Storage._validateTypeChain": {
+        "name": "_validateTypeChain",
+        "line": 315,
+        "col": 2,
+        "endLine": 338,
+        "endCol": 3,
+        "kind": "method",
+        "scope": "Storage",
+        "signature": "(typeId, visited, ITEM_ID, TYPE_DEFINITION_ID)"
+      },
+      "Storage._validateTypeChain.typeItem": {
+        "name": "typeItem",
+        "line": 330,
+        "col": 12,
+        "endLine": 330,
+        "endCol": 45,
+        "kind": "variable",
+        "scope": "Storage._validateTypeChain"
+      }
+    }
+  },
+  "attachments": []
+}

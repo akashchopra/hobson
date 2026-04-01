@@ -1,1 +1,1000 @@
-{"id": "ac0ac0ac-0005-0000-0000-000000000000", "name": "introspect-lib", "type": "66666666-0000-0000-0000-000000000000", "created": 1770732205900, "modified": 1773243817246, "watches": [{"event": "e0e00000-0002-0002-0000-000000000000"}], "content": {"description": [":doc", [":p", {"s": "REPL introspection functions for runtime discoverability."}], [":p", {"s": "Registers four globals on boot:"}], [":ul", [":li", [":p", [":strong", {"s": "`dir(obj)`"}], {"s": " — Enumerate object properties, grouped into Functions / Namespaces / Values"}]], [":li", [":p", [":strong", {"s": "`await help(obj)`"}], {"s": " — Resolve source item via kernel API detection or WeakMap provenance, show symbols with signatures and line numbers"}]], [":li", [":p", [":strong", {"s": "`await help(obj, \"method\")`"}], {"s": " — Show details for a specific method (signature, kind, line, navigation command)"}]], [":li", [":p", [":strong", {"s": "`await symbolSearch(\"pattern\")`"}], {"s": " — Cross-item symbol search across all code items, with optional kind/scope filters"}]], [":li", [":p", [":strong", {"s": "`await symbols(\"name\")`"}], {"s": " — Full dump of all "}, [":code", {"s": "_symbols"}], {"s": " for a code item, grouped by kind"}]]], [":h2", {"s": "Source Resolution"}], [":ol", [":li", [":p", [":strong", {"s": "Kernel API"}], {"s": ": Detected via "}, [":code", {"s": "IDS"}], {"s": " reference equality (shared const)"}]], [":li", [":p", [":strong", {"s": "API sub-namespaces"}], {"s": ": Key-set matching against "}, [":code", {"s": "api.events"}], {"s": ", "}, [":code", {"s": "api.viewport"}], {"s": ", etc."}]], [":li", [":p", [":strong", {"s": "Libraries"}], {"s": ": WeakMap provenance from "}, [":code", {"s": "moduleSystem.getModuleInfo()"}]]]], [":h2", {"s": "See Also"}], [":ul", [":li", [":p", [":item-ref", {"s": "c0c0c0c0-0052-0000-0000-000000000000"}, {"s": "Symbol Browser & API Help"}], {"s": " — Design doc for this feature"}]], [":li", [":p", [":item-ref", {"s": "ac0ac0ac-0003-0000-0000-000000000000"}, {"s": "symbol-extractor-lib"}], {"s": " — Extracts "}, [":code", {"s": "_symbols"}], {"s": " from code items"}]], [":li", [":p", [":item-ref", {"s": "ac0ac0ac-0004-0000-0000-000000000000"}, {"s": "symbol-indexer-watch"}], {"s": " — Indexes symbols on item save"}]]]], "code": "// REPL introspection — dir(), help(), symbols(), symbolSearch()\n\nlet _api = null;\n\nexport async function onKernelBootComplete(payload, api) {\n  _api = api;\n  window.dir = dir;\n  window.help = help;\n  window.symbols = symbols;\n  window.symbolSearch = symbolSearch;\n}\n\n// --- dir(obj) — synchronous ---\n// Enumerates keys, groups into Functions / Namespaces / Values\nfunction dir(obj) {\n  if (obj == null) return 'dir() requires an argument';\n  if (typeof obj !== 'object' && typeof obj !== 'function') {\n    return `(${typeof obj}) ${String(obj)}`;\n  }\n\n  const keys = Object.keys(obj).sort();\n  if (keys.length === 0) return '(no enumerable properties)';\n\n  const fns = [], ns = [], vals = [];\n  for (const k of keys) {\n    try {\n      const v = obj[k];\n      if (typeof v === 'function') fns.push(k);\n      else if (v && typeof v === 'object' && Object.keys(v).length > 0) ns.push(k);\n      else vals.push(k);\n    } catch { vals.push(k); }\n  }\n\n  const lines = [];\n  if (fns.length)  lines.push('Functions:  ' + fns.join(', '));\n  if (ns.length)   lines.push('Namespaces: ' + ns.join(', '));\n  if (vals.length) lines.push('Values:     ' + vals.join(', '));\n  return lines.join('\\n');\n}\n\n// --- help(obj, methodName?) — async ---\n// Resolves source item via kernel API detection, sub-namespace matching, or WeakMap provenance.\n// Shows symbols from _symbols index.\nasync function help(obj, methodName) {\n  if (!_api) return 'help() not ready \\u2014 wait for boot';\n  if (obj == null) return 'Usage: help(obj) or help(obj, \"methodName\")';\n  if (typeof obj === 'string') return await symbols(obj);\n  if (typeof obj !== 'object' && typeof obj !== 'function') {\n    return `(${typeof obj}) \\u2014 pass an object or module to help()`;\n  }\n\n  const source = resolveSource(obj);\n  if (!source) {\n    if (methodName) return 'Could not determine source item. Try: await symbols(\"item-name\")';\n    return 'Could not determine source item.\\n\\n' + dir(obj);\n  }\n\n  const item = await _api.get(source.itemId);\n  const syms = item?.content?._symbols;\n  if (!syms) return `Source: ${source.itemName}\\nNo _symbols indexed for this item.`;\n\n  return methodName\n    ? formatMethodHelp(syms, source, methodName)\n    : formatScopeHelp(syms, source);\n}\n\n// Resolve an object to { itemId, itemName, scope }\nfunction resolveSource(obj) {\n  // Strategy 1: Kernel API — IDS is a shared module-level const across all createAPI() calls\n  if (obj.IDS && obj.IDS === window.kernel?.IDS) {\n    return { itemId: _api.IDS.KERNEL_CORE, itemName: 'kernel:core', scope: 'api' };\n  }\n\n  // Strategy 2: API sub-namespaces — match keys against our boot api's sub-namespace objects\n  const nsMap = { events: 'api.events', viewport: 'api.viewport', instances: 'api.instances', helpers: 'api.helpers' };\n  for (const [ns, scope] of Object.entries(nsMap)) {\n    if (_api[ns] && keysMatch(obj, _api[ns])) {\n      return { itemId: _api.IDS.KERNEL_CORE, itemName: 'kernel:core', scope };\n    }\n  }\n\n  // Strategy 3: WeakMap provenance (loaded libraries)\n  const info = window.kernel?.moduleSystem?.getModuleInfo(obj);\n  if (info) return { itemId: info.itemId, itemName: info.itemName, scope: null };\n\n  return null;\n}\n\nfunction keysMatch(a, b) {\n  const ak = Object.keys(a).sort().join('\\0');\n  const bk = Object.keys(b).sort().join('\\0');\n  return ak === bk && ak.length > 0;\n}\n\n// Format help for a single method/symbol\nfunction formatMethodHelp(syms, source, methodName) {\n  const prefix = source.scope ? source.scope + '.' : '';\n  let sym = syms[prefix + methodName];\n\n  // Fallback: search by name within scope\n  if (!sym) {\n    for (const s of Object.values(syms)) {\n      if (s.name === methodName && (!source.scope || s.scope === source.scope)) {\n        sym = s;\n        break;\n      }\n    }\n  }\n\n  if (!sym) {\n    const hint = source.scope ? ` (scope: ${source.scope})` : '';\n    return `No symbol \"${methodName}\" found in ${source.itemName}${hint}`;\n  }\n\n  const lines = [\n    `${sym.name}${sym.signature || ''}`,\n  ];\n  if (sym.description) lines.push(`  ${sym.description}`);\n  lines.push(`  Kind: ${sym.kind}  |  Line: ${sym.line}`);\n  if (sym.params) {\n    for (const p of sym.params) {\n      const type = p.type ? ` (${p.type})` : '';\n      const desc = p.description ? ` - ${p.description}` : '';\n      lines.push(`  Param: ${p.name}${type}${desc}`);\n    }\n  }\n  if (sym.returns) {\n    const type = sym.returns.type || '';\n    const desc = sym.returns.description ? ` - ${sym.returns.description}` : '';\n    lines.push(`  Returns: ${type}${desc}`);\n  }\n  lines.push(`  Source: ${source.itemName}`);\n  lines.push(`  Navigate: api.navigate('${source.itemId}', { symbol: '${sym.name}' })`);\n  return lines.join('\\n');\n}\n\n// Format help for an entire scope (all symbols at that level)\nfunction formatScopeHelp(syms, source) {\n  const entries = Object.values(syms);\n  let relevant;\n\n  if (source.scope) {\n    // Scoped (kernel API / sub-namespace): show symbols AT this scope\n    relevant = entries.filter(s => s.scope === source.scope);\n  } else {\n    // Unscoped (library): show top-level symbols + class methods\n    const topLevel = entries.filter(s => s.scope === null);\n    const classNames = new Set(topLevel.filter(s => s.kind === 'class').map(s => s.name));\n    const classMethods = classNames.size > 0\n      ? entries.filter(s => s.scope && classNames.has(s.scope))\n      : [];\n    relevant = [...topLevel, ...classMethods];\n  }\n\n  if (relevant.length === 0) {\n    const hint = source.scope ? ` in scope \"${source.scope}\"` : '';\n    return `Source: ${source.itemName}\\nNo symbols found${hint}.`;\n  }\n\n  const labelOf = (kind) => ({\n    'class': 'Classes', 'method': 'Methods', 'function': 'Functions',\n    'property-function': 'Functions', 'field-function': 'Functions',\n    'property': 'Properties', 'field': 'Fields', 'variable': 'Variables'\n  })[kind] || kind;\n\n  const groups = {};\n  for (const s of relevant) {\n    const label = labelOf(s.kind);\n    (groups[label] ??= []).push(s);\n  }\n\n  const lines = [`Source: ${source.itemName} (${source.itemId})`];\n  if (source.scope) lines.push(`Scope: ${source.scope}`);\n  lines.push('');\n\n  const labelOrder = ['Classes', 'Methods', 'Functions', 'Properties', 'Fields', 'Variables'];\n  for (const label of labelOrder) {\n    if (!groups[label]) continue;\n    lines.push(`${label}:`);\n    for (const s of groups[label].sort((a, b) => a.name.localeCompare(b.name))) {\n      const scope = s.scope && s.scope !== source.scope ? ` [${s.scope}]` : '';\n      lines.push(`  ${s.name}${s.signature || ''}${scope}  (line ${s.line})`);\n      if (s.description) lines.push(`    ${s.description.split('\\n')[0]}`);\n    }\n    delete groups[label];\n  }\n\n  // Any remaining kind labels not in labelOrder\n  for (const [label, arr] of Object.entries(groups)) {\n    lines.push(`${label}:`);\n    for (const s of arr.sort((a, b) => a.name.localeCompare(b.name))) {\n      lines.push(`  ${s.name}${s.signature || ''}  (line ${s.line})`);\n      if (s.description) lines.push(`    ${s.description.split('\\n')[0]}`);\n    }\n  }\n\n  return lines.join('\\n');\n}\n\n// --- symbols(nameOrId) — async ---\n// Full dump of all _symbols for an item, grouped by kind.\nasync function symbols(nameOrId) {\n  if (!_api) return 'symbols() not ready \\u2014 wait for boot';\n  if (!nameOrId) return 'Usage: await symbols(\"item-name\") or await symbols(\"guid\")';\n\n  let item;\n  if (nameOrId.includes('-') && nameOrId.length >= 36) {\n    try { item = await _api.get(nameOrId); } catch (e) { /* not found by id */ }\n  }\n  if (!item) {\n    item = await _api.helpers.findByName(nameOrId);\n  }\n  if (!item) return `Item not found: ${nameOrId}`;\n\n  const syms = item.content?._symbols;\n  if (!syms) return `${item.name || item.id} has no indexed symbols.`;\n\n  const entries = Object.values(syms);\n  const groups = {};\n  for (const s of entries) {\n    (groups[s.kind] ??= []).push(s);\n  }\n\n  const lines = [`Symbols for: ${item.name || item.id} (${item.id})`];\n  lines.push(`Total: ${entries.length} symbols`);\n  lines.push('');\n\n  const kindOrder = ['class', 'method', 'function', 'property-function', 'field-function', 'property', 'field', 'variable'];\n  const kindLabels = {\n    'class': 'Classes', 'method': 'Methods', 'function': 'Functions',\n    'property-function': 'Property Functions', 'field-function': 'Field Functions',\n    'property': 'Properties', 'field': 'Fields', 'variable': 'Variables'\n  };\n\n  for (const kind of kindOrder) {\n    if (!groups[kind]) continue;\n    lines.push(`${kindLabels[kind]}:`);\n    for (const s of groups[kind].sort((a, b) => a.line - b.line)) {\n      const scope = s.scope ? ` [${s.scope}]` : '';\n      lines.push(`  ${s.name}${s.signature || ''}  (line ${s.line})${scope}`);\n    }\n    delete groups[kind];\n  }\n\n  // Any remaining kinds\n  for (const [kind, arr] of Object.entries(groups)) {\n    lines.push(`${kind}:`);\n    for (const s of arr.sort((a, b) => a.line - b.line)) {\n      lines.push(`  ${s.name}${s.signature || ''}  (line ${s.line})${s.scope ? ` [${s.scope}]` : ''}`);\n    }\n  }\n\n  return lines.join('\\n');\n}\n\n// --- symbolSearch(pattern, options?) — async ---\n// Cross-item symbol search. Scans _symbols across all code items.\n// pattern: string (case-insensitive substring) or RegExp\n// options: { kind?, scope?, limit? }\nasync function symbolSearch(pattern, options = {}) {\n  if (!_api) return 'symbolSearch() not ready \\u2014 wait for boot';\n  if (!pattern) return 'Usage: await symbolSearch(\"name\") or await symbolSearch(/pattern/, { kind: \"function\" })';\n\n  const isRegex = pattern instanceof RegExp;\n  const test = isRegex\n    ? (name) => pattern.test(name)\n    : (name) => name.toLowerCase().includes(pattern.toLowerCase());\n\n  const { kind, scope, limit = 50 } = options;\n\n  const allItems = await _api.getAll();\n  const matches = []; // { itemName, itemId, sym }\n\n  for (const item of allItems) {\n    const syms = item.content?._symbols;\n    if (!syms) continue;\n\n    for (const sym of Object.values(syms)) {\n      if (!test(sym.name)) continue;\n      if (kind && sym.kind !== kind) continue;\n      if (scope !== undefined && sym.scope !== scope) continue;\n      matches.push({ itemName: item.name || item.id, itemId: item.id, sym });\n    }\n  }\n\n  if (matches.length === 0) {\n    return `No symbols matching \"${pattern}\" found.`;\n  }\n\n  // Group by item\n  const byItem = new Map();\n  for (const m of matches) {\n    (byItem.get(m.itemId) ?? (() => { const a = []; byItem.set(m.itemId, a); return a; })()).push(m);\n  }\n\n  const truncated = matches.length > limit;\n  const lines = [`Symbol search: ${isRegex ? pattern : `\"${pattern}\"`} (${matches.length} match${matches.length === 1 ? '' : 'es'} across ${byItem.size} item${byItem.size === 1 ? '' : 's'})${truncated ? ` \\u2014 showing first ${limit}` : ''}`];\n  lines.push('');\n\n  let shown = 0;\n  for (const [itemId, itemMatches] of byItem) {\n    if (shown >= limit) break;\n    lines.push(`${itemMatches[0].itemName}:`);\n    for (const m of itemMatches.sort((a, b) => a.sym.line - b.sym.line)) {\n      if (shown >= limit) break;\n      const s = m.sym;\n      const scopeHint = s.scope ? ` [${s.scope}]` : '';\n      lines.push(`  ${s.name}${s.signature || ''}  ${s.kind}  (line ${s.line})${scopeHint}`);\n      shown++;\n    }\n  }\n\n  return lines.join('\\n');\n}\n", "_symbols": {"_api": {"name": "_api", "line": 3, "col": 4, "endLine": 3, "endCol": 15, "kind": "variable", "scope": null}, "onKernelBootComplete": {"name": "onKernelBootComplete", "line": 5, "col": 7, "endLine": 11, "endCol": 1, "kind": "function", "scope": null, "signature": "(payload, api)"}, "dir": {"name": "dir", "line": 15, "col": 0, "endLine": 39, "endCol": 1, "kind": "function", "scope": null, "signature": "(obj)"}, "dir.keys": {"name": "keys", "line": 21, "col": 8, "endLine": 21, "endCol": 38, "kind": "variable", "scope": "dir"}, "dir.fns": {"name": "fns", "line": 24, "col": 8, "endLine": 24, "endCol": 16, "kind": "variable", "scope": "dir"}, "dir.ns": {"name": "ns", "line": 24, "col": 18, "endLine": 24, "endCol": 25, "kind": "variable", "scope": "dir"}, "dir.vals": {"name": "vals", "line": 24, "col": 27, "endLine": 24, "endCol": 36, "kind": "variable", "scope": "dir"}, "dir.k": {"name": "k", "line": 25, "col": 13, "endLine": 25, "endCol": 14, "kind": "variable", "scope": "dir"}, "dir.v": {"name": "v", "line": 27, "col": 12, "endLine": 27, "endCol": 22, "kind": "variable", "scope": "dir"}, "dir.lines": {"name": "lines", "line": 34, "col": 8, "endLine": 34, "endCol": 18, "kind": "variable", "scope": "dir"}, "help": {"name": "help", "line": 44, "col": 0, "endLine": 65, "endCol": 1, "kind": "function", "scope": null, "signature": "(obj, methodName)"}, "help.source": {"name": "source", "line": 52, "col": 8, "endLine": 52, "endCol": 35, "kind": "variable", "scope": "help"}, "help.item": {"name": "item", "line": 58, "col": 8, "endLine": 58, "endCol": 44, "kind": "variable", "scope": "help"}, "help.syms": {"name": "syms", "line": 59, "col": 8, "endLine": 59, "endCol": 38, "kind": "variable", "scope": "help"}, "resolveSource": {"name": "resolveSource", "line": 68, "col": 0, "endLine": 87, "endCol": 1, "kind": "function", "scope": null, "signature": "(obj)"}, "resolveSource.itemId": {"name": "itemId", "line": 84, "col": 21, "endLine": 84, "endCol": 40, "kind": "property", "scope": "resolveSource"}, "resolveSource.itemName": {"name": "itemName", "line": 84, "col": 42, "endLine": 84, "endCol": 65, "kind": "property", "scope": "resolveSource"}, "resolveSource.scope": {"name": "scope", "line": 84, "col": 67, "endLine": 84, "endCol": 78, "kind": "property", "scope": "resolveSource"}, "resolveSource.nsMap": {"name": "nsMap", "line": 75, "col": 8, "endLine": 75, "endCol": 118, "kind": "variable", "scope": "resolveSource"}, "nsMap.events": {"name": "events", "line": 75, "col": 18, "endLine": 75, "endCol": 38, "kind": "property", "scope": "nsMap"}, "nsMap.viewport": {"name": "viewport", "line": 75, "col": 40, "endLine": 75, "endCol": 64, "kind": "property", "scope": "nsMap"}, "nsMap.instances": {"name": "instances", "line": 75, "col": 66, "endLine": 75, "endCol": 92, "kind": "property", "scope": "nsMap"}, "nsMap.helpers": {"name": "helpers", "line": 75, "col": 94, "endLine": 75, "endCol": 116, "kind": "property", "scope": "nsMap"}, "resolveSource.info": {"name": "info", "line": 83, "col": 8, "endLine": 83, "endCol": 62, "kind": "variable", "scope": "resolveSource"}, "keysMatch": {"name": "keysMatch", "line": 89, "col": 0, "endLine": 93, "endCol": 1, "kind": "function", "scope": null, "signature": "(a, b)"}, "keysMatch.ak": {"name": "ak", "line": 90, "col": 8, "endLine": 90, "endCol": 45, "kind": "variable", "scope": "keysMatch"}, "keysMatch.bk": {"name": "bk", "line": 91, "col": 8, "endLine": 91, "endCol": 45, "kind": "variable", "scope": "keysMatch"}, "formatMethodHelp": {"name": "formatMethodHelp", "line": 96, "col": 0, "endLine": 135, "endCol": 1, "kind": "function", "scope": null, "signature": "(syms, source, methodName)"}, "formatMethodHelp.prefix": {"name": "prefix", "line": 97, "col": 8, "endLine": 97, "endCol": 55, "kind": "variable", "scope": "formatMethodHelp"}, "formatMethodHelp.sym": {"name": "sym", "line": 98, "col": 6, "endLine": 98, "endCol": 37, "kind": "variable", "scope": "formatMethodHelp"}, "formatMethodHelp.s": {"name": "s", "line": 102, "col": 15, "endLine": 102, "endCol": 16, "kind": "variable", "scope": "formatMethodHelp"}, "formatMethodHelp.hint": {"name": "hint", "line": 111, "col": 10, "endLine": 111, "endCol": 64, "kind": "variable", "scope": "formatMethodHelp"}, "formatMethodHelp.lines": {"name": "lines", "line": 115, "col": 8, "endLine": 117, "endCol": 3, "kind": "variable", "scope": "formatMethodHelp"}, "formatMethodHelp.p": {"name": "p", "line": 121, "col": 15, "endLine": 121, "endCol": 16, "kind": "variable", "scope": "formatMethodHelp"}, "formatMethodHelp.type": {"name": "type", "line": 128, "col": 10, "endLine": 128, "endCol": 39, "kind": "variable", "scope": "formatMethodHelp"}, "formatMethodHelp.desc": {"name": "desc", "line": 129, "col": 10, "endLine": 129, "endCol": 79, "kind": "variable", "scope": "formatMethodHelp"}, "formatScopeHelp": {"name": "formatScopeHelp", "line": 138, "col": 0, "endLine": 198, "endCol": 1, "kind": "function", "scope": null, "signature": "(syms, source)"}, "formatScopeHelp.entries": {"name": "entries", "line": 139, "col": 8, "endLine": 139, "endCol": 37, "kind": "variable", "scope": "formatScopeHelp"}, "formatScopeHelp.relevant": {"name": "relevant", "line": 140, "col": 6, "endLine": 140, "endCol": 14, "kind": "variable", "scope": "formatScopeHelp"}, "formatScopeHelp.topLevel": {"name": "topLevel", "line": 147, "col": 10, "endLine": 147, "endCol": 58, "kind": "variable", "scope": "formatScopeHelp"}, "formatScopeHelp.classNames": {"name": "classNames", "line": 148, "col": 10, "endLine": 148, "endCol": 89, "kind": "variable", "scope": "formatScopeHelp"}, "formatScopeHelp.classMethods": {"name": "classMethods", "line": 149, "col": 10, "endLine": 151, "endCol": 10, "kind": "variable", "scope": "formatScopeHelp"}, "formatScopeHelp.hint": {"name": "hint", "line": 156, "col": 10, "endLine": 156, "endCol": 66, "kind": "variable", "scope": "formatScopeHelp"}, "formatScopeHelp.labelOf": {"name": "labelOf", "line": 160, "col": 8, "endLine": 164, "endCol": 18, "kind": "function", "scope": "formatScopeHelp", "signature": "(kind)"}, "formatScopeHelp.groups": {"name": "groups", "line": 166, "col": 8, "endLine": 166, "endCol": 19, "kind": "variable", "scope": "formatScopeHelp"}, "formatScopeHelp.s": {"name": "s", "line": 191, "col": 15, "endLine": 191, "endCol": 16, "kind": "variable", "scope": "formatScopeHelp"}, "formatScopeHelp.label": {"name": "label", "line": 177, "col": 13, "endLine": 177, "endCol": 18, "kind": "variable", "scope": "formatScopeHelp"}, "formatScopeHelp.lines": {"name": "lines", "line": 172, "col": 8, "endLine": 172, "endCol": 65, "kind": "variable", "scope": "formatScopeHelp"}, "formatScopeHelp.labelOrder": {"name": "labelOrder", "line": 176, "col": 8, "endLine": 176, "endCol": 93, "kind": "variable", "scope": "formatScopeHelp"}, "formatScopeHelp.scope": {"name": "scope", "line": 181, "col": 12, "endLine": 181, "endCol": 78, "kind": "variable", "scope": "formatScopeHelp"}, "symbols": {"name": "symbols", "line": 202, "col": 0, "endLine": 254, "endCol": 1, "kind": "function", "scope": null, "signature": "(nameOrId)"}, "symbols.item": {"name": "item", "line": 206, "col": 6, "endLine": 206, "endCol": 10, "kind": "variable", "scope": "symbols"}, "symbols.syms": {"name": "syms", "line": 215, "col": 8, "endLine": 215, "endCol": 37, "kind": "variable", "scope": "symbols"}, "symbols.entries": {"name": "entries", "line": 218, "col": 8, "endLine": 218, "endCol": 37, "kind": "variable", "scope": "symbols"}, "symbols.groups": {"name": "groups", "line": 219, "col": 8, "endLine": 219, "endCol": 19, "kind": "variable", "scope": "symbols"}, "symbols.s": {"name": "s", "line": 248, "col": 15, "endLine": 248, "endCol": 16, "kind": "variable", "scope": "symbols"}, "symbols.lines": {"name": "lines", "line": 224, "col": 8, "endLine": 224, "endCol": 69, "kind": "variable", "scope": "symbols"}, "symbols.kindOrder": {"name": "kindOrder", "line": 228, "col": 8, "endLine": 228, "endCol": 123, "kind": "variable", "scope": "symbols"}, "symbols.kindLabels": {"name": "kindLabels", "line": 229, "col": 8, "endLine": 233, "endCol": 3, "kind": "variable", "scope": "symbols"}, "symbols.kind": {"name": "kind", "line": 235, "col": 13, "endLine": 235, "endCol": 17, "kind": "variable", "scope": "symbols"}, "symbols.scope": {"name": "scope", "line": 239, "col": 12, "endLine": 239, "endCol": 50, "kind": "variable", "scope": "symbols"}, "symbolSearch": {"name": "symbolSearch", "line": 260, "col": 0, "endLine": 314, "endCol": 1, "kind": "function", "scope": null, "signature": "(pattern, options = ...)"}, "symbolSearch.isRegex": {"name": "isRegex", "line": 264, "col": 8, "endLine": 264, "endCol": 43, "kind": "variable", "scope": "symbolSearch"}, "symbolSearch.test": {"name": "test", "line": 265, "col": 8, "endLine": 267, "endCol": 66, "kind": "variable", "scope": "symbolSearch"}, "symbolSearch.allItems": {"name": "allItems", "line": 271, "col": 8, "endLine": 271, "endCol": 38, "kind": "variable", "scope": "symbolSearch"}, "symbolSearch.matches": {"name": "matches", "line": 272, "col": 8, "endLine": 272, "endCol": 20, "kind": "variable", "scope": "symbolSearch"}, "symbolSearch.item": {"name": "item", "line": 274, "col": 13, "endLine": 274, "endCol": 17, "kind": "variable", "scope": "symbolSearch"}, "symbolSearch.syms": {"name": "syms", "line": 275, "col": 10, "endLine": 275, "endCol": 39, "kind": "variable", "scope": "symbolSearch"}, "symbolSearch.sym": {"name": "sym", "line": 282, "col": 70, "endLine": 282, "endCol": 73, "kind": "property", "scope": "symbolSearch"}, "symbolSearch.itemName": {"name": "itemName", "line": 282, "col": 21, "endLine": 282, "endCol": 51, "kind": "property", "scope": "symbolSearch"}, "symbolSearch.itemId": {"name": "itemId", "line": 282, "col": 53, "endLine": 282, "endCol": 68, "kind": "property", "scope": "symbolSearch"}, "symbolSearch.byItem": {"name": "byItem", "line": 291, "col": 8, "endLine": 291, "endCol": 26, "kind": "variable", "scope": "symbolSearch"}, "symbolSearch.m": {"name": "m", "line": 304, "col": 15, "endLine": 304, "endCol": 16, "kind": "variable", "scope": "symbolSearch"}, "symbolSearch.a": {"name": "a", "line": 293, "col": 44, "endLine": 293, "endCol": 50, "kind": "variable", "scope": "symbolSearch"}, "symbolSearch.truncated": {"name": "truncated", "line": 296, "col": 8, "endLine": 296, "endCol": 42, "kind": "variable", "scope": "symbolSearch"}, "symbolSearch.lines": {"name": "lines", "line": 297, "col": 8, "endLine": 297, "endCol": 243, "kind": "variable", "scope": "symbolSearch"}, "symbolSearch.shown": {"name": "shown", "line": 300, "col": 6, "endLine": 300, "endCol": 15, "kind": "variable", "scope": "symbolSearch"}, "symbolSearch.s": {"name": "s", "line": 306, "col": 12, "endLine": 306, "endCol": 21, "kind": "variable", "scope": "symbolSearch"}, "symbolSearch.scopeHint": {"name": "scopeHint", "line": 307, "col": 12, "endLine": 307, "endCol": 54, "kind": "variable", "scope": "symbolSearch"}}}, "attachments": []}
+{
+  "id": "ac0ac0ac-0005-0000-0000-000000000000",
+  "name": "introspect-lib",
+  "type": "66666666-0000-0000-0000-000000000000",
+  "created": 1770732205900,
+  "modified": 1774988058097,
+  "watches": [
+    {
+      "event": "e0e00000-0002-0002-0000-000000000000"
+    }
+  ],
+  "content": {
+    "description": [
+      ":doc",
+      [
+        ":p",
+        {
+          "s": "REPL introspection functions for runtime discoverability."
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Registers four globals on boot:"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "`dir(obj)`"
+              }
+            ],
+            {
+              "s": " — Enumerate object properties, grouped into Functions / Namespaces / Values"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "`await help(obj)`"
+              }
+            ],
+            {
+              "s": " — Resolve source item via kernel API detection or WeakMap provenance, show symbols with signatures and line numbers"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "`await help(obj, \"method\")`"
+              }
+            ],
+            {
+              "s": " — Show details for a specific method (signature, kind, line, navigation command)"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "`await symbolSearch(\"pattern\")`"
+              }
+            ],
+            {
+              "s": " — Cross-item symbol search across all code items, with optional kind/scope filters"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "`await symbols(\"name\")`"
+              }
+            ],
+            {
+              "s": " — Full dump of all "
+            },
+            [
+              ":code",
+              {
+                "s": "_symbols"
+              }
+            ],
+            {
+              "s": " for a code item, grouped by kind"
+            }
+          ]
+        ]
+      ],
+      [
+        ":h2",
+        {
+          "s": "Source Resolution"
+        }
+      ],
+      [
+        ":ol",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Kernel API"
+              }
+            ],
+            {
+              "s": ": Detected via "
+            },
+            [
+              ":code",
+              {
+                "s": "IDS"
+              }
+            ],
+            {
+              "s": " reference equality (shared const)"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "API sub-namespaces"
+              }
+            ],
+            {
+              "s": ": Key-set matching against "
+            },
+            [
+              ":code",
+              {
+                "s": "api.events"
+              }
+            ],
+            {
+              "s": ", "
+            },
+            [
+              ":code",
+              {
+                "s": "api.viewport"
+              }
+            ],
+            {
+              "s": ", etc."
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":strong",
+              {
+                "s": "Libraries"
+              }
+            ],
+            {
+              "s": ": WeakMap provenance from "
+            },
+            [
+              ":code",
+              {
+                "s": "moduleSystem.getModuleInfo()"
+              }
+            ]
+          ]
+        ]
+      ],
+      [
+        ":h2",
+        {
+          "s": "See Also"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":item-ref",
+              {
+                "s": "c0c0c0c0-0052-0000-0000-000000000000"
+              },
+              {
+                "s": "Symbol Browser & API Help"
+              }
+            ],
+            {
+              "s": " — Design doc for this feature"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":item-ref",
+              {
+                "s": "ac0ac0ac-0003-0000-0000-000000000000"
+              },
+              {
+                "s": "symbol-extractor-lib"
+              }
+            ],
+            {
+              "s": " — Extracts "
+            },
+            [
+              ":code",
+              {
+                "s": "_symbols"
+              }
+            ],
+            {
+              "s": " from code items"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":item-ref",
+              {
+                "s": "ac0ac0ac-0004-0000-0000-000000000000"
+              },
+              {
+                "s": "symbol-indexer-watch"
+              }
+            ],
+            {
+              "s": " — Indexes symbols on item save"
+            }
+          ]
+        ]
+      ]
+    ],
+    "code": "// REPL introspection — dir(), help(), symbols(), symbolSearch()\n\nlet _api = null;\n\nexport async function onKernelBootComplete(payload, api) {\n  _api = api;\n  window.dir = dir;\n  window.help = help;\n  window.symbols = symbols;\n  window.symbolSearch = symbolSearch;\n}\n\n// --- dir(obj) — synchronous ---\n// Enumerates keys, groups into Functions / Namespaces / Values\nfunction dir(obj) {\n  if (obj == null) return 'dir() requires an argument';\n  if (typeof obj !== 'object' && typeof obj !== 'function') {\n    return `(${typeof obj}) ${String(obj)}`;\n  }\n\n  const keys = Object.keys(obj).sort();\n  if (keys.length === 0) return '(no enumerable properties)';\n\n  const fns = [], ns = [], vals = [];\n  for (const k of keys) {\n    try {\n      const v = obj[k];\n      if (typeof v === 'function') fns.push(k);\n      else if (v && typeof v === 'object' && Object.keys(v).length > 0) ns.push(k);\n      else vals.push(k);\n    } catch { vals.push(k); }\n  }\n\n  const lines = [];\n  if (fns.length)  lines.push('Functions:  ' + fns.join(', '));\n  if (ns.length)   lines.push('Namespaces: ' + ns.join(', '));\n  if (vals.length) lines.push('Values:     ' + vals.join(', '));\n  return lines.join('\\n');\n}\n\n// --- help(obj, methodName?) — async ---\n// Resolves source item via kernel API detection, sub-namespace matching, or WeakMap provenance.\n// Shows symbols from _symbols index.\nasync function help(obj, methodName) {\n  if (!_api) return 'help() not ready \\u2014 wait for boot';\n  if (obj == null) return 'Usage: help(obj) or help(obj, \"methodName\")';\n  if (typeof obj === 'string') return await symbols(obj);\n  if (typeof obj !== 'object' && typeof obj !== 'function') {\n    return `(${typeof obj}) \\u2014 pass an object or module to help()`;\n  }\n\n  const source = resolveSource(obj);\n  if (!source) {\n    if (methodName) return 'Could not determine source item. Try: await symbols(\"item-name\")';\n    return 'Could not determine source item.\\n\\n' + dir(obj);\n  }\n\n  const item = await _api.get(source.itemId);\n  const syms = item?.content?._symbols;\n  if (!syms) return `Source: ${source.itemName}\\nNo _symbols indexed for this item.`;\n\n  return methodName\n    ? formatMethodHelp(syms, source, methodName)\n    : formatScopeHelp(syms, source);\n}\n\n// Resolve an object to { itemId, itemName, scope }\nfunction resolveSource(obj) {\n  // Strategy 1: Kernel API — IDS is a shared module-level const across all createAPI() calls\n  if (obj.IDS && obj.IDS === window.kernel?.IDS) {\n    return { itemId: _api.IDS.KERNEL_CORE, itemName: 'kernel:core', scope: 'api' };\n  }\n\n  // Strategy 2: API sub-namespaces — match keys against our boot api's sub-namespace objects\n  const nsMap = { events: 'api.events', viewport: 'api.viewport', instances: 'api.instances', helpers: 'api.helpers' };\n  for (const [ns, scope] of Object.entries(nsMap)) {\n    if (_api[ns] && keysMatch(obj, _api[ns])) {\n      return { itemId: _api.IDS.KERNEL_CORE, itemName: 'kernel:core', scope };\n    }\n  }\n\n  // Strategy 3: WeakMap provenance (loaded libraries)\n  const info = window.kernel?.moduleSystem?.getModuleInfo(obj);\n  if (info) return { itemId: info.itemId, itemName: info.itemName, scope: null };\n\n  return null;\n}\n\nfunction keysMatch(a, b) {\n  const ak = Object.keys(a).sort().join('\\0');\n  const bk = Object.keys(b).sort().join('\\0');\n  return ak === bk && ak.length > 0;\n}\n\n// Format help for a single method/symbol\nfunction formatMethodHelp(syms, source, methodName) {\n  const prefix = source.scope ? source.scope + '.' : '';\n  let sym = syms[prefix + methodName];\n\n  // Fallback: search by name within scope\n  if (!sym) {\n    for (const s of Object.values(syms)) {\n      if (s.name === methodName && (!source.scope || s.scope === source.scope)) {\n        sym = s;\n        break;\n      }\n    }\n  }\n\n  if (!sym) {\n    const hint = source.scope ? ` (scope: ${source.scope})` : '';\n    return `No symbol \"${methodName}\" found in ${source.itemName}${hint}`;\n  }\n\n  const lines = [\n    `${sym.name}${sym.signature || ''}`,\n  ];\n  if (sym.description) lines.push(`  ${sym.description}`);\n  lines.push(`  Kind: ${sym.kind}  |  Line: ${sym.line}`);\n  if (sym.params) {\n    for (const p of sym.params) {\n      const type = p.type ? ` (${p.type})` : '';\n      const desc = p.description ? ` - ${p.description}` : '';\n      lines.push(`  Param: ${p.name}${type}${desc}`);\n    }\n  }\n  if (sym.returns) {\n    const type = sym.returns.type || '';\n    const desc = sym.returns.description ? ` - ${sym.returns.description}` : '';\n    lines.push(`  Returns: ${type}${desc}`);\n  }\n  lines.push(`  Source: ${source.itemName}`);\n  lines.push(`  Navigate: api.navigate('${source.itemId}', { symbol: '${sym.name}' })`);\n  return lines.join('\\n');\n}\n\n// Format help for an entire scope (all symbols at that level)\nfunction formatScopeHelp(syms, source) {\n  const entries = Object.values(syms);\n  let relevant;\n\n  if (source.scope) {\n    // Scoped (kernel API / sub-namespace): show symbols AT this scope\n    relevant = entries.filter(s => s.scope === source.scope);\n  } else {\n    // Unscoped (library): show top-level symbols + class methods\n    const topLevel = entries.filter(s => s.scope === null);\n    const classNames = new Set(topLevel.filter(s => s.kind === 'class').map(s => s.name));\n    const classMethods = classNames.size > 0\n      ? entries.filter(s => s.scope && classNames.has(s.scope))\n      : [];\n    relevant = [...topLevel, ...classMethods];\n  }\n\n  if (relevant.length === 0) {\n    const hint = source.scope ? ` in scope \"${source.scope}\"` : '';\n    return `Source: ${source.itemName}\\nNo symbols found${hint}.`;\n  }\n\n  const labelOf = (kind) => ({\n    'class': 'Classes', 'method': 'Methods', 'function': 'Functions',\n    'property-function': 'Functions', 'field-function': 'Functions',\n    'property': 'Properties', 'field': 'Fields', 'variable': 'Variables'\n  })[kind] || kind;\n\n  const groups = {};\n  for (const s of relevant) {\n    const label = labelOf(s.kind);\n    (groups[label] ??= []).push(s);\n  }\n\n  const lines = [`Source: ${source.itemName} (${source.itemId})`];\n  if (source.scope) lines.push(`Scope: ${source.scope}`);\n  lines.push('');\n\n  const labelOrder = ['Classes', 'Methods', 'Functions', 'Properties', 'Fields', 'Variables'];\n  for (const label of labelOrder) {\n    if (!groups[label]) continue;\n    lines.push(`${label}:`);\n    for (const s of groups[label].sort((a, b) => a.name.localeCompare(b.name))) {\n      const scope = s.scope && s.scope !== source.scope ? ` [${s.scope}]` : '';\n      lines.push(`  ${s.name}${s.signature || ''}${scope}  (line ${s.line})`);\n      if (s.description) lines.push(`    ${s.description.split('\\n')[0]}`);\n    }\n    delete groups[label];\n  }\n\n  // Any remaining kind labels not in labelOrder\n  for (const [label, arr] of Object.entries(groups)) {\n    lines.push(`${label}:`);\n    for (const s of arr.sort((a, b) => a.name.localeCompare(b.name))) {\n      lines.push(`  ${s.name}${s.signature || ''}  (line ${s.line})`);\n      if (s.description) lines.push(`    ${s.description.split('\\n')[0]}`);\n    }\n  }\n\n  return lines.join('\\n');\n}\n\n// --- symbols(nameOrId) — async ---\n// Full dump of all _symbols for an item, grouped by kind.\nasync function symbols(nameOrId) {\n  if (!_api) return 'symbols() not ready \\u2014 wait for boot';\n  if (!nameOrId) return 'Usage: await symbols(\"item-name\") or await symbols(\"guid\")';\n\n  let item;\n  if (nameOrId.includes('-') && nameOrId.length >= 36) {\n    try { item = await _api.get(nameOrId); } catch (e) { /* not found by id */ }\n  }\n  if (!item) {\n    item = await _api.helpers.findByName(nameOrId);\n  }\n  if (!item) return `Item not found: ${nameOrId}`;\n\n  const syms = item.content?._symbols;\n  if (!syms) return `${item.name || item.id} has no indexed symbols.`;\n\n  const entries = Object.values(syms);\n  const groups = {};\n  for (const s of entries) {\n    (groups[s.kind] ??= []).push(s);\n  }\n\n  const lines = [`Symbols for: ${item.name || item.id} (${item.id})`];\n  lines.push(`Total: ${entries.length} symbols`);\n  lines.push('');\n\n  const kindOrder = ['class', 'method', 'function', 'property-function', 'field-function', 'property', 'field', 'variable'];\n  const kindLabels = {\n    'class': 'Classes', 'method': 'Methods', 'function': 'Functions',\n    'property-function': 'Property Functions', 'field-function': 'Field Functions',\n    'property': 'Properties', 'field': 'Fields', 'variable': 'Variables'\n  };\n\n  for (const kind of kindOrder) {\n    if (!groups[kind]) continue;\n    lines.push(`${kindLabels[kind]}:`);\n    for (const s of groups[kind].sort((a, b) => a.line - b.line)) {\n      const scope = s.scope ? ` [${s.scope}]` : '';\n      lines.push(`  ${s.name}${s.signature || ''}  (line ${s.line})${scope}`);\n    }\n    delete groups[kind];\n  }\n\n  // Any remaining kinds\n  for (const [kind, arr] of Object.entries(groups)) {\n    lines.push(`${kind}:`);\n    for (const s of arr.sort((a, b) => a.line - b.line)) {\n      lines.push(`  ${s.name}${s.signature || ''}  (line ${s.line})${s.scope ? ` [${s.scope}]` : ''}`);\n    }\n  }\n\n  return lines.join('\\n');\n}\n\n// --- symbolSearch(pattern, options?) — async ---\n// Cross-item symbol search. Scans _symbols across all code items.\n// pattern: string (case-insensitive substring) or RegExp\n// options: { kind?, scope?, limit? }\nasync function symbolSearch(pattern, options = {}) {\n  if (!_api) return 'symbolSearch() not ready \\u2014 wait for boot';\n  if (!pattern) return 'Usage: await symbolSearch(\"name\") or await symbolSearch(/pattern/, { kind: \"function\" })';\n\n  const isRegex = pattern instanceof RegExp;\n  const test = isRegex\n    ? (name) => pattern.test(name)\n    : (name) => name.toLowerCase().includes(pattern.toLowerCase());\n\n  const { kind, scope, limit = 50 } = options;\n\n  const allItems = await _api.getAll();\n  const matches = []; // { itemName, itemId, sym }\n\n  for (const item of allItems) {\n    const syms = item.content?._symbols;\n    if (!syms) continue;\n\n    for (const sym of Object.values(syms)) {\n      if (!test(sym.name)) continue;\n      if (kind && sym.kind !== kind) continue;\n      if (scope !== undefined && sym.scope !== scope) continue;\n      matches.push({ itemName: item.name || item.id, itemId: item.id, sym });\n    }\n  }\n\n  if (matches.length === 0) {\n    return `No symbols matching \"${pattern}\" found.`;\n  }\n\n  // Group by item\n  const byItem = new Map();\n  for (const m of matches) {\n    (byItem.get(m.itemId) ?? (() => { const a = []; byItem.set(m.itemId, a); return a; })()).push(m);\n  }\n\n  const truncated = matches.length > limit;\n  const lines = [`Symbol search: ${isRegex ? pattern : `\"${pattern}\"`} (${matches.length} match${matches.length === 1 ? '' : 'es'} across ${byItem.size} item${byItem.size === 1 ? '' : 's'})${truncated ? ` \\u2014 showing first ${limit}` : ''}`];\n  lines.push('');\n\n  let shown = 0;\n  for (const [itemId, itemMatches] of byItem) {\n    if (shown >= limit) break;\n    lines.push(`${itemMatches[0].itemName}:`);\n    for (const m of itemMatches.sort((a, b) => a.sym.line - b.sym.line)) {\n      if (shown >= limit) break;\n      const s = m.sym;\n      const scopeHint = s.scope ? ` [${s.scope}]` : '';\n      lines.push(`  ${s.name}${s.signature || ''}  ${s.kind}  (line ${s.line})${scopeHint}`);\n      shown++;\n    }\n  }\n\n  return lines.join('\\n');\n}\n",
+    "_symbols": {
+      "_api": {
+        "name": "_api",
+        "line": 3,
+        "col": 4,
+        "endLine": 3,
+        "endCol": 15,
+        "kind": "variable",
+        "scope": null
+      },
+      "onKernelBootComplete": {
+        "name": "onKernelBootComplete",
+        "line": 5,
+        "col": 7,
+        "endLine": 11,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(payload, api)"
+      },
+      "dir": {
+        "name": "dir",
+        "line": 15,
+        "col": 0,
+        "endLine": 39,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(obj)"
+      },
+      "dir.keys": {
+        "name": "keys",
+        "line": 21,
+        "col": 8,
+        "endLine": 21,
+        "endCol": 38,
+        "kind": "variable",
+        "scope": "dir"
+      },
+      "dir.fns": {
+        "name": "fns",
+        "line": 24,
+        "col": 8,
+        "endLine": 24,
+        "endCol": 16,
+        "kind": "variable",
+        "scope": "dir"
+      },
+      "dir.ns": {
+        "name": "ns",
+        "line": 24,
+        "col": 18,
+        "endLine": 24,
+        "endCol": 25,
+        "kind": "variable",
+        "scope": "dir"
+      },
+      "dir.vals": {
+        "name": "vals",
+        "line": 24,
+        "col": 27,
+        "endLine": 24,
+        "endCol": 36,
+        "kind": "variable",
+        "scope": "dir"
+      },
+      "dir.k": {
+        "name": "k",
+        "line": 25,
+        "col": 13,
+        "endLine": 25,
+        "endCol": 14,
+        "kind": "variable",
+        "scope": "dir"
+      },
+      "dir.v": {
+        "name": "v",
+        "line": 27,
+        "col": 12,
+        "endLine": 27,
+        "endCol": 22,
+        "kind": "variable",
+        "scope": "dir"
+      },
+      "dir.lines": {
+        "name": "lines",
+        "line": 34,
+        "col": 8,
+        "endLine": 34,
+        "endCol": 18,
+        "kind": "variable",
+        "scope": "dir"
+      },
+      "help": {
+        "name": "help",
+        "line": 44,
+        "col": 0,
+        "endLine": 65,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(obj, methodName)"
+      },
+      "help.source": {
+        "name": "source",
+        "line": 52,
+        "col": 8,
+        "endLine": 52,
+        "endCol": 35,
+        "kind": "variable",
+        "scope": "help"
+      },
+      "help.item": {
+        "name": "item",
+        "line": 58,
+        "col": 8,
+        "endLine": 58,
+        "endCol": 44,
+        "kind": "variable",
+        "scope": "help"
+      },
+      "help.syms": {
+        "name": "syms",
+        "line": 59,
+        "col": 8,
+        "endLine": 59,
+        "endCol": 38,
+        "kind": "variable",
+        "scope": "help"
+      },
+      "resolveSource": {
+        "name": "resolveSource",
+        "line": 68,
+        "col": 0,
+        "endLine": 87,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(obj)"
+      },
+      "resolveSource.itemId": {
+        "name": "itemId",
+        "line": 84,
+        "col": 21,
+        "endLine": 84,
+        "endCol": 40,
+        "kind": "property",
+        "scope": "resolveSource"
+      },
+      "resolveSource.itemName": {
+        "name": "itemName",
+        "line": 84,
+        "col": 42,
+        "endLine": 84,
+        "endCol": 65,
+        "kind": "property",
+        "scope": "resolveSource"
+      },
+      "resolveSource.scope": {
+        "name": "scope",
+        "line": 84,
+        "col": 67,
+        "endLine": 84,
+        "endCol": 78,
+        "kind": "property",
+        "scope": "resolveSource"
+      },
+      "resolveSource.nsMap": {
+        "name": "nsMap",
+        "line": 75,
+        "col": 8,
+        "endLine": 75,
+        "endCol": 118,
+        "kind": "variable",
+        "scope": "resolveSource"
+      },
+      "nsMap.events": {
+        "name": "events",
+        "line": 75,
+        "col": 18,
+        "endLine": 75,
+        "endCol": 38,
+        "kind": "property",
+        "scope": "nsMap"
+      },
+      "nsMap.viewport": {
+        "name": "viewport",
+        "line": 75,
+        "col": 40,
+        "endLine": 75,
+        "endCol": 64,
+        "kind": "property",
+        "scope": "nsMap"
+      },
+      "nsMap.instances": {
+        "name": "instances",
+        "line": 75,
+        "col": 66,
+        "endLine": 75,
+        "endCol": 92,
+        "kind": "property",
+        "scope": "nsMap"
+      },
+      "nsMap.helpers": {
+        "name": "helpers",
+        "line": 75,
+        "col": 94,
+        "endLine": 75,
+        "endCol": 116,
+        "kind": "property",
+        "scope": "nsMap"
+      },
+      "resolveSource.info": {
+        "name": "info",
+        "line": 83,
+        "col": 8,
+        "endLine": 83,
+        "endCol": 62,
+        "kind": "variable",
+        "scope": "resolveSource"
+      },
+      "keysMatch": {
+        "name": "keysMatch",
+        "line": 89,
+        "col": 0,
+        "endLine": 93,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(a, b)"
+      },
+      "keysMatch.ak": {
+        "name": "ak",
+        "line": 90,
+        "col": 8,
+        "endLine": 90,
+        "endCol": 45,
+        "kind": "variable",
+        "scope": "keysMatch"
+      },
+      "keysMatch.bk": {
+        "name": "bk",
+        "line": 91,
+        "col": 8,
+        "endLine": 91,
+        "endCol": 45,
+        "kind": "variable",
+        "scope": "keysMatch"
+      },
+      "formatMethodHelp": {
+        "name": "formatMethodHelp",
+        "line": 96,
+        "col": 0,
+        "endLine": 135,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(syms, source, methodName)"
+      },
+      "formatMethodHelp.prefix": {
+        "name": "prefix",
+        "line": 97,
+        "col": 8,
+        "endLine": 97,
+        "endCol": 55,
+        "kind": "variable",
+        "scope": "formatMethodHelp"
+      },
+      "formatMethodHelp.sym": {
+        "name": "sym",
+        "line": 98,
+        "col": 6,
+        "endLine": 98,
+        "endCol": 37,
+        "kind": "variable",
+        "scope": "formatMethodHelp"
+      },
+      "formatMethodHelp.s": {
+        "name": "s",
+        "line": 102,
+        "col": 15,
+        "endLine": 102,
+        "endCol": 16,
+        "kind": "variable",
+        "scope": "formatMethodHelp"
+      },
+      "formatMethodHelp.hint": {
+        "name": "hint",
+        "line": 111,
+        "col": 10,
+        "endLine": 111,
+        "endCol": 64,
+        "kind": "variable",
+        "scope": "formatMethodHelp"
+      },
+      "formatMethodHelp.lines": {
+        "name": "lines",
+        "line": 115,
+        "col": 8,
+        "endLine": 117,
+        "endCol": 3,
+        "kind": "variable",
+        "scope": "formatMethodHelp"
+      },
+      "formatMethodHelp.p": {
+        "name": "p",
+        "line": 121,
+        "col": 15,
+        "endLine": 121,
+        "endCol": 16,
+        "kind": "variable",
+        "scope": "formatMethodHelp"
+      },
+      "formatMethodHelp.type": {
+        "name": "type",
+        "line": 128,
+        "col": 10,
+        "endLine": 128,
+        "endCol": 39,
+        "kind": "variable",
+        "scope": "formatMethodHelp"
+      },
+      "formatMethodHelp.desc": {
+        "name": "desc",
+        "line": 129,
+        "col": 10,
+        "endLine": 129,
+        "endCol": 79,
+        "kind": "variable",
+        "scope": "formatMethodHelp"
+      },
+      "formatScopeHelp": {
+        "name": "formatScopeHelp",
+        "line": 138,
+        "col": 0,
+        "endLine": 198,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(syms, source)"
+      },
+      "formatScopeHelp.entries": {
+        "name": "entries",
+        "line": 139,
+        "col": 8,
+        "endLine": 139,
+        "endCol": 37,
+        "kind": "variable",
+        "scope": "formatScopeHelp"
+      },
+      "formatScopeHelp.relevant": {
+        "name": "relevant",
+        "line": 140,
+        "col": 6,
+        "endLine": 140,
+        "endCol": 14,
+        "kind": "variable",
+        "scope": "formatScopeHelp"
+      },
+      "formatScopeHelp.topLevel": {
+        "name": "topLevel",
+        "line": 147,
+        "col": 10,
+        "endLine": 147,
+        "endCol": 58,
+        "kind": "variable",
+        "scope": "formatScopeHelp"
+      },
+      "formatScopeHelp.classNames": {
+        "name": "classNames",
+        "line": 148,
+        "col": 10,
+        "endLine": 148,
+        "endCol": 89,
+        "kind": "variable",
+        "scope": "formatScopeHelp"
+      },
+      "formatScopeHelp.classMethods": {
+        "name": "classMethods",
+        "line": 149,
+        "col": 10,
+        "endLine": 151,
+        "endCol": 10,
+        "kind": "variable",
+        "scope": "formatScopeHelp"
+      },
+      "formatScopeHelp.hint": {
+        "name": "hint",
+        "line": 156,
+        "col": 10,
+        "endLine": 156,
+        "endCol": 66,
+        "kind": "variable",
+        "scope": "formatScopeHelp"
+      },
+      "formatScopeHelp.labelOf": {
+        "name": "labelOf",
+        "line": 160,
+        "col": 8,
+        "endLine": 164,
+        "endCol": 18,
+        "kind": "function",
+        "scope": "formatScopeHelp",
+        "signature": "(kind)"
+      },
+      "formatScopeHelp.groups": {
+        "name": "groups",
+        "line": 166,
+        "col": 8,
+        "endLine": 166,
+        "endCol": 19,
+        "kind": "variable",
+        "scope": "formatScopeHelp"
+      },
+      "formatScopeHelp.s": {
+        "name": "s",
+        "line": 191,
+        "col": 15,
+        "endLine": 191,
+        "endCol": 16,
+        "kind": "variable",
+        "scope": "formatScopeHelp"
+      },
+      "formatScopeHelp.label": {
+        "name": "label",
+        "line": 177,
+        "col": 13,
+        "endLine": 177,
+        "endCol": 18,
+        "kind": "variable",
+        "scope": "formatScopeHelp"
+      },
+      "formatScopeHelp.lines": {
+        "name": "lines",
+        "line": 172,
+        "col": 8,
+        "endLine": 172,
+        "endCol": 65,
+        "kind": "variable",
+        "scope": "formatScopeHelp"
+      },
+      "formatScopeHelp.labelOrder": {
+        "name": "labelOrder",
+        "line": 176,
+        "col": 8,
+        "endLine": 176,
+        "endCol": 93,
+        "kind": "variable",
+        "scope": "formatScopeHelp"
+      },
+      "formatScopeHelp.scope": {
+        "name": "scope",
+        "line": 181,
+        "col": 12,
+        "endLine": 181,
+        "endCol": 78,
+        "kind": "variable",
+        "scope": "formatScopeHelp"
+      },
+      "symbols": {
+        "name": "symbols",
+        "line": 202,
+        "col": 0,
+        "endLine": 254,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(nameOrId)"
+      },
+      "symbols.item": {
+        "name": "item",
+        "line": 206,
+        "col": 6,
+        "endLine": 206,
+        "endCol": 10,
+        "kind": "variable",
+        "scope": "symbols"
+      },
+      "symbols.syms": {
+        "name": "syms",
+        "line": 215,
+        "col": 8,
+        "endLine": 215,
+        "endCol": 37,
+        "kind": "variable",
+        "scope": "symbols"
+      },
+      "symbols.entries": {
+        "name": "entries",
+        "line": 218,
+        "col": 8,
+        "endLine": 218,
+        "endCol": 37,
+        "kind": "variable",
+        "scope": "symbols"
+      },
+      "symbols.groups": {
+        "name": "groups",
+        "line": 219,
+        "col": 8,
+        "endLine": 219,
+        "endCol": 19,
+        "kind": "variable",
+        "scope": "symbols"
+      },
+      "symbols.s": {
+        "name": "s",
+        "line": 248,
+        "col": 15,
+        "endLine": 248,
+        "endCol": 16,
+        "kind": "variable",
+        "scope": "symbols"
+      },
+      "symbols.lines": {
+        "name": "lines",
+        "line": 224,
+        "col": 8,
+        "endLine": 224,
+        "endCol": 69,
+        "kind": "variable",
+        "scope": "symbols"
+      },
+      "symbols.kindOrder": {
+        "name": "kindOrder",
+        "line": 228,
+        "col": 8,
+        "endLine": 228,
+        "endCol": 123,
+        "kind": "variable",
+        "scope": "symbols"
+      },
+      "symbols.kindLabels": {
+        "name": "kindLabels",
+        "line": 229,
+        "col": 8,
+        "endLine": 233,
+        "endCol": 3,
+        "kind": "variable",
+        "scope": "symbols"
+      },
+      "symbols.kind": {
+        "name": "kind",
+        "line": 235,
+        "col": 13,
+        "endLine": 235,
+        "endCol": 17,
+        "kind": "variable",
+        "scope": "symbols"
+      },
+      "symbols.scope": {
+        "name": "scope",
+        "line": 239,
+        "col": 12,
+        "endLine": 239,
+        "endCol": 50,
+        "kind": "variable",
+        "scope": "symbols"
+      },
+      "symbolSearch": {
+        "name": "symbolSearch",
+        "line": 260,
+        "col": 0,
+        "endLine": 314,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(pattern, options = ...)"
+      },
+      "symbolSearch.isRegex": {
+        "name": "isRegex",
+        "line": 264,
+        "col": 8,
+        "endLine": 264,
+        "endCol": 43,
+        "kind": "variable",
+        "scope": "symbolSearch"
+      },
+      "symbolSearch.test": {
+        "name": "test",
+        "line": 265,
+        "col": 8,
+        "endLine": 267,
+        "endCol": 66,
+        "kind": "variable",
+        "scope": "symbolSearch"
+      },
+      "symbolSearch.allItems": {
+        "name": "allItems",
+        "line": 271,
+        "col": 8,
+        "endLine": 271,
+        "endCol": 38,
+        "kind": "variable",
+        "scope": "symbolSearch"
+      },
+      "symbolSearch.matches": {
+        "name": "matches",
+        "line": 272,
+        "col": 8,
+        "endLine": 272,
+        "endCol": 20,
+        "kind": "variable",
+        "scope": "symbolSearch"
+      },
+      "symbolSearch.item": {
+        "name": "item",
+        "line": 274,
+        "col": 13,
+        "endLine": 274,
+        "endCol": 17,
+        "kind": "variable",
+        "scope": "symbolSearch"
+      },
+      "symbolSearch.syms": {
+        "name": "syms",
+        "line": 275,
+        "col": 10,
+        "endLine": 275,
+        "endCol": 39,
+        "kind": "variable",
+        "scope": "symbolSearch"
+      },
+      "symbolSearch.sym": {
+        "name": "sym",
+        "line": 282,
+        "col": 70,
+        "endLine": 282,
+        "endCol": 73,
+        "kind": "property",
+        "scope": "symbolSearch"
+      },
+      "symbolSearch.itemName": {
+        "name": "itemName",
+        "line": 282,
+        "col": 21,
+        "endLine": 282,
+        "endCol": 51,
+        "kind": "property",
+        "scope": "symbolSearch"
+      },
+      "symbolSearch.itemId": {
+        "name": "itemId",
+        "line": 282,
+        "col": 53,
+        "endLine": 282,
+        "endCol": 68,
+        "kind": "property",
+        "scope": "symbolSearch"
+      },
+      "symbolSearch.byItem": {
+        "name": "byItem",
+        "line": 291,
+        "col": 8,
+        "endLine": 291,
+        "endCol": 26,
+        "kind": "variable",
+        "scope": "symbolSearch"
+      },
+      "symbolSearch.m": {
+        "name": "m",
+        "line": 304,
+        "col": 15,
+        "endLine": 304,
+        "endCol": 16,
+        "kind": "variable",
+        "scope": "symbolSearch"
+      },
+      "symbolSearch.a": {
+        "name": "a",
+        "line": 293,
+        "col": 44,
+        "endLine": 293,
+        "endCol": 50,
+        "kind": "variable",
+        "scope": "symbolSearch"
+      },
+      "symbolSearch.truncated": {
+        "name": "truncated",
+        "line": 296,
+        "col": 8,
+        "endLine": 296,
+        "endCol": 42,
+        "kind": "variable",
+        "scope": "symbolSearch"
+      },
+      "symbolSearch.lines": {
+        "name": "lines",
+        "line": 297,
+        "col": 8,
+        "endLine": 297,
+        "endCol": 243,
+        "kind": "variable",
+        "scope": "symbolSearch"
+      },
+      "symbolSearch.shown": {
+        "name": "shown",
+        "line": 300,
+        "col": 6,
+        "endLine": 300,
+        "endCol": 15,
+        "kind": "variable",
+        "scope": "symbolSearch"
+      },
+      "symbolSearch.s": {
+        "name": "s",
+        "line": 306,
+        "col": 12,
+        "endLine": 306,
+        "endCol": 21,
+        "kind": "variable",
+        "scope": "symbolSearch"
+      },
+      "symbolSearch.scopeHint": {
+        "name": "scopeHint",
+        "line": 307,
+        "col": 12,
+        "endLine": 307,
+        "endCol": 54,
+        "kind": "variable",
+        "scope": "symbolSearch"
+      }
+    }
+  },
+  "attachments": []
+}

@@ -1,1 +1,829 @@
-{"id": "f1111111-0002-0000-0000-000000000000", "type": "66666666-0000-0000-0000-000000000000", "name": "viewport-manager", "created": 1738368000000, "modified": 1774975422719, "watches": [{"event": "e0e00000-0002-0002-0000-000000000000"}], "content": {"description": [":doc", [":p", {"s": "Stateless viewport management library. Reads root from URL, view config from viewport item. No module-level caching - sources of truth are URL + viewport item."}]], "code": "// Viewport Manager Library\n// Reads from URL (root) and viewport item (view config).\n// RenderingSystem singleton is managed by viewport-rendering module.\n\nconst VIEWPORT_ID_DESKTOP = \"88888888-0000-0000-0000-000000000000\";\nconst VIEWPORT_ID_MOBILE = \"88888888-0001-0000-0000-000000000000\";\nlet activeViewportId = VIEWPORT_ID_DESKTOP;\n\nexport function getViewportId() { return activeViewportId; }\n\nconst VIEWPORT_RENDERING_ID = \"f1111111-0008-0000-0000-000000000000\";\nconst EVENT_IDS = {\n  VIEWPORT_ROOT_CHANGED: \"e0e00000-0003-0002-0000-000000000000\",\n  VIEWPORT_SELECTION_CHANGED: \"e0e00000-0003-0001-0000-000000000000\",\n  VIEWPORT_READY: \"e0e00000-0003-0003-0000-000000000000\"\n};\n\n// ============================================================================\n// Boot handler — initializes the rendering singleton and performs first render\n// ============================================================================\n\nexport async function onKernelBootComplete({ safeMode, rootElement }, _api) {\n  if (safeMode) return;\n\n  // Load viewport-rendering and initialize its singleton\n  const vpRendering = await window.kernel.moduleSystem.require(VIEWPORT_RENDERING_ID);\n  const rs = vpRendering.getRendering();\n  rs.rootElement = rootElement;\n\n  // Resolve active viewport based on environment\n  activeViewportId = (rs.env.touch || rs.env.pointer === 'coarse')\n    ? VIEWPORT_ID_MOBILE : VIEWPORT_ID_DESKTOP;\n\n  // Register popstate handler for browser back/forward\n  if (!window._hobsonPopstateHandler) {\n    window._hobsonPopstateHandler = handlePopstate;\n    window.addEventListener('popstate', handlePopstate);\n  }\n\n  // Sync URL ↔ viewport item\n  let urlRoot = getRoot();\n  if (urlRoot) {\n    const viewport = await window.kernel.storage.get(activeViewportId);\n    const currentChild = viewport.attachments?.[0];\n    if (currentChild?.id !== urlRoot) {\n      await persistRootChange(urlRoot, currentChild?.id);\n    }\n  } else {\n    // No ?root= in URL (Tauri default, direct file load) — populate from stored state\n    const viewport = await window.kernel.storage.get(activeViewportId);\n    const storedRoot = viewport.attachments?.[0]?.id\n      || (typeof viewport.attachments?.[0] === 'string' ? viewport.attachments[0] : null);\n    if (storedRoot) {\n      const url = new URL(window.location);\n      url.searchParams.set('root', storedRoot);\n      window.history.replaceState({ itemId: storedRoot }, '', url);\n      urlRoot = storedRoot;\n    }\n  }\n\n  // Initial render\n  await rs.renderViewport();\n\n  // Signal that viewport infrastructure is ready (sticky: replays for late subscribers)\n  window.kernel.events.emit({\n    type: EVENT_IDS.VIEWPORT_READY,\n    content: {\n      rootElement,\n      rootId: urlRoot || null\n    }\n  }, { sticky: true });\n}\n\n// ============================================================================\n// Internal helpers\n// ============================================================================\n\nasync function handlePopstate(e) {\n  const urlRoot = getRoot();\n  if (urlRoot) {\n    const viewport = await window.kernel.storage.get(activeViewportId);\n    const previous = viewport.attachments?.[0]?.id;\n\n    if (previous !== urlRoot) {\n      await persistRootChange(urlRoot, previous);\n    }\n\n    window.kernel.events.emit({\n      type: EVENT_IDS.VIEWPORT_ROOT_CHANGED,\n      content: { rootId: urlRoot, previous, initial: false, popstate: true }\n    });\n\n    const rs = await getRenderingAsync();\n    if (rs) await rs.renderViewport();\n  }\n}\n\nasync function persistRootChange(newRootId, previousRootId, viewId) {\n  const viewport = await window.kernel.storage.get(activeViewportId);\n  if (newRootId === previousRootId && !viewId) return;\n\n  const spec = newRootId ? { id: newRootId } : null;\n  if (spec && viewId) spec.view = { type: viewId };\n\n  viewport.attachments = spec ? [spec] : [];\n  viewport.modified = Date.now();\n  await window.kernel.saveItem(viewport, { silent: true });\n}\n\nasync function getChildSpec() {\n  try {\n    const viewport = await window.kernel.storage.get(activeViewportId);\n    return viewport.attachments?.[0] || null;\n  } catch (e) {\n    console.warn('[viewport-manager] Failed to read viewport item:', e);\n    return null;\n  }\n}\n\nasync function updateChildSpec(updater) {\n  try {\n    const viewport = await window.kernel.storage.get(activeViewportId);\n    const root = getRoot()\n      || (viewport.attachments?.[0]?.id)\n      || (typeof viewport.attachments?.[0] === 'string' ? viewport.attachments[0] : null);\n    if (!root) return;\n\n    let childSpec = viewport.attachments?.[0];\n    if (!childSpec || childSpec.id !== root) {\n      childSpec = { id: root };\n    }\n\n    const updated = updater(childSpec);\n    viewport.attachments = [updated];\n    viewport.modified = Date.now();\n    await window.kernel.saveItem(viewport, { silent: true });\n  } catch (e) {\n    console.warn('[viewport-manager] Failed to update viewport item:', e);\n  }\n}\n\n// ============================================================================\n// Public API — exported functions delegate to the singleton\n// ============================================================================\n\n/** Get the RenderingSystem synchronously (returns null if not yet initialized). */\nexport function getRendering() {\n  const vpRendering = window.kernel?.moduleSystem?.getCached(VIEWPORT_RENDERING_ID);\n  return vpRendering?.getRendering() || null;\n}\n\n/** Get the RenderingSystem asynchronously (loads viewport-rendering if needed). */\nasync function getRenderingAsync() {\n  const vpRendering = await window.kernel.moduleSystem.require(VIEWPORT_RENDERING_ID);\n  return vpRendering.getRendering();\n}\n\nexport async function navigate(itemId, params = {}) {\n  const { view, ...urlParams } = params;\n\n  const viewport = await window.kernel.storage.get(activeViewportId);\n  const previous = viewport.attachments?.[0]?.id;\n\n  const url = new URL(window.location);\n  url.searchParams.set('root', itemId);\n  url.searchParams.delete('field');\n  url.searchParams.delete('line');\n  url.searchParams.delete('col');\n  url.searchParams.delete('symbol');\n  url.searchParams.delete('region');\n\n  if (urlParams.field) url.searchParams.set('field', urlParams.field);\n  if (urlParams.line) url.searchParams.set('line', urlParams.line);\n  if (urlParams.col) url.searchParams.set('col', urlParams.col);\n  if (urlParams.symbol) url.searchParams.set('symbol', urlParams.symbol);\n  if (urlParams.region) url.searchParams.set('region', urlParams.region);\n\n  if (url.href !== window.location.href) {\n    window.history.pushState({ itemId, ...urlParams }, '', url);\n  }\n\n  await persistRootChange(itemId, previous, view);\n\n  window.kernel.events.emit({\n    type: EVENT_IDS.VIEWPORT_ROOT_CHANGED,\n    content: { rootId: itemId, previous, initial: false, popstate: false }\n  });\n\n  const rs = await getRenderingAsync();\n  if (rs) await rs.renderViewport();\n}\n\nexport function getRoot() {\n  const params = new URLSearchParams(window.location.search);\n  return params.get('root');\n}\n\nexport async function getRootView() {\n  const child = await getChildSpec();\n  if (!child) return null;\n  return child.view?.type || child.view || child.renderer || null;\n}\n\nexport async function setRootView(viewId, storePrevious = true) {\n  const childSpec = await getChildSpec();\n  const currentViewType = childSpec?.view?.type;\n\n  // No-op if already on this view\n  if (currentViewType === viewId) return;\n\n  // Look up saved state for target view\n  const savedState = viewId ? childSpec?.savedViewStates?.[viewId] : null;\n\n  // Update viewport spec atomically: save current state, set new view\n  await updateChildSpec(child => {\n    const newChild = { ...child };\n    const savedViewStates = { ...(child.savedViewStates || {}) };\n\n    // Save current view state to map\n    if (storePrevious && currentViewType && child.view) {\n      savedViewStates[currentViewType] = {\n        viewConfig: { ...child.view }\n      };\n    }\n\n    // Set new view (restore from saved or fresh)\n    if (savedState) {\n      newChild.view = { ...savedState.viewConfig };\n      delete savedViewStates[viewId];\n    } else if (viewId) {\n      newChild.view = { type: viewId };\n    } else {\n      delete newChild.view;\n    }\n\n    newChild.savedViewStates = Object.keys(savedViewStates).length > 0 ? savedViewStates : undefined;\n    if (currentViewType) newChild.previousViewType = currentViewType;\n    delete newChild.previousView; // migrate away from legacy\n    return newChild;\n  });\n}\n\nexport async function getRootViewConfig() {\n  const child = await getChildSpec();\n  if (!child?.view) return null;\n  if (typeof child.view === 'object') return child.view;\n  return { type: child.view };\n}\n\nexport async function updateRootViewConfig(updates) {\n  await updateChildSpec(child => {\n    const currentView = child.view || {};\n    return { ...child, view: { ...currentView, ...updates } };\n  });\n}\n\nexport async function restorePreviousRootView() {\n  const child = await getChildSpec();\n  // New mechanism: switch to the previous view type via savedViewStates\n  if (child?.previousViewType) {\n    await setRootView(child.previousViewType);\n    return true;\n  }\n  // Legacy fallback: old previousView field\n  if (child?.previousView) {\n    await setRootView(child.previousView.type);\n    return true;\n  }\n  return false;\n}\n\nexport async function hasPreviousView() {\n  const child = await getChildSpec();\n  return !!(child?.previousViewType || child?.previousView);\n}\n\n// No-op — kept for API compatibility\nexport async function forcePersist() {}\n", "_symbols": {"VIEWPORT_ID_DESKTOP": {"name": "VIEWPORT_ID_DESKTOP", "line": 5, "col": 6, "endLine": 5, "endCol": 66, "kind": "variable", "scope": null}, "VIEWPORT_ID_MOBILE": {"name": "VIEWPORT_ID_MOBILE", "line": 6, "col": 6, "endLine": 6, "endCol": 65, "kind": "variable", "scope": null}, "activeViewportId": {"name": "activeViewportId", "line": 7, "col": 4, "endLine": 7, "endCol": 42, "kind": "variable", "scope": null}, "getViewportId": {"name": "getViewportId", "line": 9, "col": 7, "endLine": 9, "endCol": 60, "kind": "function", "scope": null, "signature": "()"}, "VIEWPORT_RENDERING_ID": {"name": "VIEWPORT_RENDERING_ID", "line": 11, "col": 6, "endLine": 11, "endCol": 68, "kind": "variable", "scope": null}, "EVENT_IDS": {"name": "EVENT_IDS", "line": 12, "col": 6, "endLine": 16, "endCol": 1, "kind": "variable", "scope": null}, "EVENT_IDS.VIEWPORT_ROOT_CHANGED": {"name": "VIEWPORT_ROOT_CHANGED", "line": 13, "col": 2, "endLine": 13, "endCol": 63, "kind": "property", "scope": "EVENT_IDS"}, "EVENT_IDS.VIEWPORT_SELECTION_CHANGED": {"name": "VIEWPORT_SELECTION_CHANGED", "line": 14, "col": 2, "endLine": 14, "endCol": 68, "kind": "property", "scope": "EVENT_IDS"}, "EVENT_IDS.VIEWPORT_READY": {"name": "VIEWPORT_READY", "line": 15, "col": 2, "endLine": 15, "endCol": 56, "kind": "property", "scope": "EVENT_IDS"}, "onKernelBootComplete": {"name": "onKernelBootComplete", "line": 22, "col": 7, "endLine": 72, "endCol": 1, "kind": "function", "scope": null, "signature": "({ ... }, _api)"}, "onKernelBootComplete.vpRendering": {"name": "vpRendering", "line": 26, "col": 8, "endLine": 26, "endCol": 85, "kind": "variable", "scope": "onKernelBootComplete"}, "onKernelBootComplete.rs": {"name": "rs", "line": 27, "col": 8, "endLine": 27, "endCol": 39, "kind": "variable", "scope": "onKernelBootComplete"}, "onKernelBootComplete.urlRoot": {"name": "urlRoot", "line": 41, "col": 6, "endLine": 41, "endCol": 25, "kind": "variable", "scope": "onKernelBootComplete"}, "onKernelBootComplete.viewport": {"name": "viewport", "line": 50, "col": 10, "endLine": 50, "endCol": 70, "kind": "variable", "scope": "onKernelBootComplete"}, "onKernelBootComplete.currentChild": {"name": "currentChild", "line": 44, "col": 10, "endLine": 44, "endCol": 50, "kind": "variable", "scope": "onKernelBootComplete"}, "onKernelBootComplete.storedRoot": {"name": "storedRoot", "line": 51, "col": 10, "endLine": 52, "endCol": 89, "kind": "variable", "scope": "onKernelBootComplete"}, "onKernelBootComplete.url": {"name": "url", "line": 54, "col": 12, "endLine": 54, "endCol": 42, "kind": "variable", "scope": "onKernelBootComplete"}, "onKernelBootComplete.itemId": {"name": "itemId", "line": 56, "col": 36, "endLine": 56, "endCol": 54, "kind": "property", "scope": "onKernelBootComplete"}, "onKernelBootComplete.type": {"name": "type", "line": 66, "col": 4, "endLine": 66, "endCol": 34, "kind": "property", "scope": "onKernelBootComplete"}, "onKernelBootComplete.content": {"name": "content", "line": 67, "col": 4, "endLine": 70, "endCol": 5, "kind": "property", "scope": "onKernelBootComplete"}, "onKernelBootComplete.content.rootElement": {"name": "rootElement", "line": 68, "col": 6, "endLine": 68, "endCol": 17, "kind": "property", "scope": "onKernelBootComplete.content"}, "onKernelBootComplete.content.rootId": {"name": "rootId", "line": 69, "col": 6, "endLine": 69, "endCol": 29, "kind": "property", "scope": "onKernelBootComplete.content"}, "onKernelBootComplete.sticky": {"name": "sticky", "line": 71, "col": 7, "endLine": 71, "endCol": 19, "kind": "property", "scope": "onKernelBootComplete"}, "handlePopstate": {"name": "handlePopstate", "line": 78, "col": 0, "endLine": 96, "endCol": 1, "kind": "function", "scope": null, "signature": "(e)"}, "handlePopstate.urlRoot": {"name": "urlRoot", "line": 79, "col": 8, "endLine": 79, "endCol": 27, "kind": "variable", "scope": "handlePopstate"}, "handlePopstate.viewport": {"name": "viewport", "line": 81, "col": 10, "endLine": 81, "endCol": 70, "kind": "variable", "scope": "handlePopstate"}, "handlePopstate.previous": {"name": "previous", "line": 82, "col": 10, "endLine": 82, "endCol": 50, "kind": "variable", "scope": "handlePopstate"}, "handlePopstate.type": {"name": "type", "line": 89, "col": 6, "endLine": 89, "endCol": 43, "kind": "property", "scope": "handlePopstate"}, "handlePopstate.content": {"name": "content", "line": 90, "col": 6, "endLine": 90, "endCol": 76, "kind": "property", "scope": "handlePopstate"}, "handlePopstate.content.rootId": {"name": "rootId", "line": 90, "col": 17, "endLine": 90, "endCol": 32, "kind": "property", "scope": "handlePopstate.content"}, "handlePopstate.content.previous": {"name": "previous", "line": 90, "col": 34, "endLine": 90, "endCol": 42, "kind": "property", "scope": "handlePopstate.content"}, "handlePopstate.content.initial": {"name": "initial", "line": 90, "col": 44, "endLine": 90, "endCol": 58, "kind": "property", "scope": "handlePopstate.content"}, "handlePopstate.content.popstate": {"name": "popstate", "line": 90, "col": 60, "endLine": 90, "endCol": 74, "kind": "property", "scope": "handlePopstate.content"}, "handlePopstate.rs": {"name": "rs", "line": 93, "col": 10, "endLine": 93, "endCol": 40, "kind": "variable", "scope": "handlePopstate"}, "persistRootChange": {"name": "persistRootChange", "line": 98, "col": 0, "endLine": 108, "endCol": 1, "kind": "function", "scope": null, "signature": "(newRootId, previousRootId, viewId)"}, "persistRootChange.viewport": {"name": "viewport", "line": 99, "col": 8, "endLine": 99, "endCol": 68, "kind": "variable", "scope": "persistRootChange"}, "persistRootChange.spec": {"name": "spec", "line": 102, "col": 8, "endLine": 102, "endCol": 51, "kind": "variable", "scope": "persistRootChange"}, "persistRootChange.type": {"name": "type", "line": 103, "col": 36, "endLine": 103, "endCol": 48, "kind": "property", "scope": "persistRootChange"}, "persistRootChange.silent": {"name": "silent", "line": 107, "col": 43, "endLine": 107, "endCol": 55, "kind": "property", "scope": "persistRootChange"}, "getChildSpec": {"name": "getChildSpec", "line": 110, "col": 0, "endLine": 118, "endCol": 1, "kind": "function", "scope": null, "signature": "()"}, "getChildSpec.viewport": {"name": "viewport", "line": 112, "col": 10, "endLine": 112, "endCol": 70, "kind": "variable", "scope": "getChildSpec"}, "updateChildSpec": {"name": "updateChildSpec", "line": 120, "col": 0, "endLine": 140, "endCol": 1, "kind": "function", "scope": null, "signature": "(updater)"}, "updateChildSpec.viewport": {"name": "viewport", "line": 122, "col": 10, "endLine": 122, "endCol": 70, "kind": "variable", "scope": "updateChildSpec"}, "updateChildSpec.root": {"name": "root", "line": 123, "col": 10, "endLine": 125, "endCol": 89, "kind": "variable", "scope": "updateChildSpec"}, "updateChildSpec.childSpec": {"name": "childSpec", "line": 128, "col": 8, "endLine": 128, "endCol": 45, "kind": "variable", "scope": "updateChildSpec"}, "updateChildSpec.id": {"name": "id", "line": 130, "col": 20, "endLine": 130, "endCol": 28, "kind": "property", "scope": "updateChildSpec"}, "updateChildSpec.updated": {"name": "updated", "line": 133, "col": 10, "endLine": 133, "endCol": 38, "kind": "variable", "scope": "updateChildSpec"}, "updateChildSpec.silent": {"name": "silent", "line": 136, "col": 45, "endLine": 136, "endCol": 57, "kind": "property", "scope": "updateChildSpec"}, "getRendering": {"name": "getRendering", "line": 147, "col": 7, "endLine": 150, "endCol": 1, "kind": "function", "scope": null, "signature": "()", "description": "Get the RenderingSystem synchronously (returns null if not yet initialized)."}, "getRendering.vpRendering": {"name": "vpRendering", "line": 148, "col": 8, "endLine": 148, "endCol": 83, "kind": "variable", "scope": "getRendering"}, "getRenderingAsync": {"name": "getRenderingAsync", "line": 153, "col": 0, "endLine": 156, "endCol": 1, "kind": "function", "scope": null, "signature": "()", "description": "Get the RenderingSystem asynchronously (loads viewport-rendering if needed)."}, "getRenderingAsync.vpRendering": {"name": "vpRendering", "line": 154, "col": 8, "endLine": 154, "endCol": 85, "kind": "variable", "scope": "getRenderingAsync"}, "navigate": {"name": "navigate", "line": 158, "col": 7, "endLine": 191, "endCol": 1, "kind": "function", "scope": null, "signature": "(itemId, params = ...)"}, "navigate.viewport": {"name": "viewport", "line": 161, "col": 8, "endLine": 161, "endCol": 68, "kind": "variable", "scope": "navigate"}, "navigate.previous": {"name": "previous", "line": 162, "col": 8, "endLine": 162, "endCol": 48, "kind": "variable", "scope": "navigate"}, "navigate.url": {"name": "url", "line": 164, "col": 8, "endLine": 164, "endCol": 38, "kind": "variable", "scope": "navigate"}, "navigate.itemId": {"name": "itemId", "line": 179, "col": 31, "endLine": 179, "endCol": 37, "kind": "property", "scope": "navigate"}, "navigate.type": {"name": "type", "line": 185, "col": 4, "endLine": 185, "endCol": 41, "kind": "property", "scope": "navigate"}, "navigate.content": {"name": "content", "line": 186, "col": 4, "endLine": 186, "endCol": 74, "kind": "property", "scope": "navigate"}, "navigate.content.rootId": {"name": "rootId", "line": 186, "col": 15, "endLine": 186, "endCol": 29, "kind": "property", "scope": "navigate.content"}, "navigate.content.previous": {"name": "previous", "line": 186, "col": 31, "endLine": 186, "endCol": 39, "kind": "property", "scope": "navigate.content"}, "navigate.content.initial": {"name": "initial", "line": 186, "col": 41, "endLine": 186, "endCol": 55, "kind": "property", "scope": "navigate.content"}, "navigate.content.popstate": {"name": "popstate", "line": 186, "col": 57, "endLine": 186, "endCol": 72, "kind": "property", "scope": "navigate.content"}, "navigate.rs": {"name": "rs", "line": 189, "col": 8, "endLine": 189, "endCol": 38, "kind": "variable", "scope": "navigate"}, "getRoot": {"name": "getRoot", "line": 193, "col": 7, "endLine": 196, "endCol": 1, "kind": "function", "scope": null, "signature": "()"}, "getRoot.params": {"name": "params", "line": 194, "col": 8, "endLine": 194, "endCol": 60, "kind": "variable", "scope": "getRoot"}, "getRootView": {"name": "getRootView", "line": 198, "col": 7, "endLine": 202, "endCol": 1, "kind": "function", "scope": null, "signature": "()"}, "getRootView.child": {"name": "child", "line": 199, "col": 8, "endLine": 199, "endCol": 36, "kind": "variable", "scope": "getRootView"}, "setRootView": {"name": "setRootView", "line": 204, "col": 7, "endLine": 241, "endCol": 1, "kind": "function", "scope": null, "signature": "(viewId, storePrevious = ...)"}, "setRootView.childSpec": {"name": "childSpec", "line": 205, "col": 8, "endLine": 205, "endCol": 40, "kind": "variable", "scope": "setRootView"}, "setRootView.currentViewType": {"name": "currentViewType", "line": 206, "col": 8, "endLine": 206, "endCol": 47, "kind": "variable", "scope": "setRootView"}, "setRootView.savedState": {"name": "savedState", "line": 212, "col": 8, "endLine": 212, "endCol": 73, "kind": "variable", "scope": "setRootView"}, "setRootView.newChild": {"name": "newChild", "line": 216, "col": 10, "endLine": 216, "endCol": 33, "kind": "variable", "scope": "setRootView"}, "setRootView.savedViewStates": {"name": "savedViewStates", "line": 217, "col": 10, "endLine": 217, "endCol": 64, "kind": "variable", "scope": "setRootView"}, "setRootView.viewConfig": {"name": "viewConfig", "line": 222, "col": 8, "endLine": 222, "endCol": 37, "kind": "property", "scope": "setRootView"}, "setRootView.type": {"name": "type", "line": 231, "col": 24, "endLine": 231, "endCol": 36, "kind": "property", "scope": "setRootView"}, "getRootViewConfig": {"name": "getRootViewConfig", "line": 243, "col": 7, "endLine": 248, "endCol": 1, "kind": "function", "scope": null, "signature": "()"}, "getRootViewConfig.child": {"name": "child", "line": 244, "col": 8, "endLine": 244, "endCol": 36, "kind": "variable", "scope": "getRootViewConfig"}, "getRootViewConfig.type": {"name": "type", "line": 247, "col": 11, "endLine": 247, "endCol": 27, "kind": "property", "scope": "getRootViewConfig"}, "updateRootViewConfig": {"name": "updateRootViewConfig", "line": 250, "col": 7, "endLine": 255, "endCol": 1, "kind": "function", "scope": null, "signature": "(updates)"}, "updateRootViewConfig.currentView": {"name": "currentView", "line": 252, "col": 10, "endLine": 252, "endCol": 40, "kind": "variable", "scope": "updateRootViewConfig"}, "updateRootViewConfig.view": {"name": "view", "line": 253, "col": 23, "endLine": 253, "endCol": 59, "kind": "property", "scope": "updateRootViewConfig"}, "restorePreviousRootView": {"name": "restorePreviousRootView", "line": 257, "col": 7, "endLine": 270, "endCol": 1, "kind": "function", "scope": null, "signature": "()"}, "restorePreviousRootView.child": {"name": "child", "line": 258, "col": 8, "endLine": 258, "endCol": 36, "kind": "variable", "scope": "restorePreviousRootView"}, "hasPreviousView": {"name": "hasPreviousView", "line": 272, "col": 7, "endLine": 275, "endCol": 1, "kind": "function", "scope": null, "signature": "()"}, "hasPreviousView.child": {"name": "child", "line": 273, "col": 8, "endLine": 273, "endCol": 36, "kind": "variable", "scope": "hasPreviousView"}, "forcePersist": {"name": "forcePersist", "line": 278, "col": 7, "endLine": 278, "endCol": 39, "kind": "function", "scope": null, "signature": "()"}}}, "attachments": []}
+{
+  "id": "f1111111-0002-0000-0000-000000000000",
+  "type": "66666666-0000-0000-0000-000000000000",
+  "name": "viewport-manager",
+  "created": 1738368000000,
+  "modified": 1774975422719,
+  "watches": [
+    {
+      "event": "e0e00000-0002-0002-0000-000000000000"
+    }
+  ],
+  "content": {
+    "description": [
+      ":doc",
+      [
+        ":p",
+        {
+          "s": "Stateless viewport management library. Reads root from URL, view config from viewport item. No module-level caching - sources of truth are URL + viewport item."
+        }
+      ]
+    ],
+    "code": "// Viewport Manager Library\n// Reads from URL (root) and viewport item (view config).\n// RenderingSystem singleton is managed by viewport-rendering module.\n\nconst VIEWPORT_ID_DESKTOP = \"88888888-0000-0000-0000-000000000000\";\nconst VIEWPORT_ID_MOBILE = \"88888888-0001-0000-0000-000000000000\";\nlet activeViewportId = VIEWPORT_ID_DESKTOP;\n\nexport function getViewportId() { return activeViewportId; }\n\nconst VIEWPORT_RENDERING_ID = \"f1111111-0008-0000-0000-000000000000\";\nconst EVENT_IDS = {\n  VIEWPORT_ROOT_CHANGED: \"e0e00000-0003-0002-0000-000000000000\",\n  VIEWPORT_SELECTION_CHANGED: \"e0e00000-0003-0001-0000-000000000000\",\n  VIEWPORT_READY: \"e0e00000-0003-0003-0000-000000000000\"\n};\n\n// ============================================================================\n// Boot handler — initializes the rendering singleton and performs first render\n// ============================================================================\n\nexport async function onKernelBootComplete({ safeMode, rootElement }, _api) {\n  if (safeMode) return;\n\n  // Load viewport-rendering and initialize its singleton\n  const vpRendering = await window.kernel.moduleSystem.require(VIEWPORT_RENDERING_ID);\n  const rs = vpRendering.getRendering();\n  rs.rootElement = rootElement;\n\n  // Resolve active viewport based on environment\n  activeViewportId = (rs.env.touch || rs.env.pointer === 'coarse')\n    ? VIEWPORT_ID_MOBILE : VIEWPORT_ID_DESKTOP;\n\n  // Register popstate handler for browser back/forward\n  if (!window._hobsonPopstateHandler) {\n    window._hobsonPopstateHandler = handlePopstate;\n    window.addEventListener('popstate', handlePopstate);\n  }\n\n  // Sync URL ↔ viewport item\n  let urlRoot = getRoot();\n  if (urlRoot) {\n    const viewport = await window.kernel.storage.get(activeViewportId);\n    const currentChild = viewport.attachments?.[0];\n    if (currentChild?.id !== urlRoot) {\n      await persistRootChange(urlRoot, currentChild?.id);\n    }\n  } else {\n    // No ?root= in URL (Tauri default, direct file load) — populate from stored state\n    const viewport = await window.kernel.storage.get(activeViewportId);\n    const storedRoot = viewport.attachments?.[0]?.id\n      || (typeof viewport.attachments?.[0] === 'string' ? viewport.attachments[0] : null);\n    if (storedRoot) {\n      const url = new URL(window.location);\n      url.searchParams.set('root', storedRoot);\n      window.history.replaceState({ itemId: storedRoot }, '', url);\n      urlRoot = storedRoot;\n    }\n  }\n\n  // Initial render\n  await rs.renderViewport();\n\n  // Signal that viewport infrastructure is ready (sticky: replays for late subscribers)\n  window.kernel.events.emit({\n    type: EVENT_IDS.VIEWPORT_READY,\n    content: {\n      rootElement,\n      rootId: urlRoot || null\n    }\n  }, { sticky: true });\n}\n\n// ============================================================================\n// Internal helpers\n// ============================================================================\n\nasync function handlePopstate(e) {\n  const urlRoot = getRoot();\n  if (urlRoot) {\n    const viewport = await window.kernel.storage.get(activeViewportId);\n    const previous = viewport.attachments?.[0]?.id;\n\n    if (previous !== urlRoot) {\n      await persistRootChange(urlRoot, previous);\n    }\n\n    window.kernel.events.emit({\n      type: EVENT_IDS.VIEWPORT_ROOT_CHANGED,\n      content: { rootId: urlRoot, previous, initial: false, popstate: true }\n    });\n\n    const rs = await getRenderingAsync();\n    if (rs) await rs.renderViewport();\n  }\n}\n\nasync function persistRootChange(newRootId, previousRootId, viewId) {\n  const viewport = await window.kernel.storage.get(activeViewportId);\n  if (newRootId === previousRootId && !viewId) return;\n\n  const spec = newRootId ? { id: newRootId } : null;\n  if (spec && viewId) spec.view = { type: viewId };\n\n  viewport.attachments = spec ? [spec] : [];\n  viewport.modified = Date.now();\n  await window.kernel.saveItem(viewport, { silent: true });\n}\n\nasync function getChildSpec() {\n  try {\n    const viewport = await window.kernel.storage.get(activeViewportId);\n    return viewport.attachments?.[0] || null;\n  } catch (e) {\n    console.warn('[viewport-manager] Failed to read viewport item:', e);\n    return null;\n  }\n}\n\nasync function updateChildSpec(updater) {\n  try {\n    const viewport = await window.kernel.storage.get(activeViewportId);\n    const root = getRoot()\n      || (viewport.attachments?.[0]?.id)\n      || (typeof viewport.attachments?.[0] === 'string' ? viewport.attachments[0] : null);\n    if (!root) return;\n\n    let childSpec = viewport.attachments?.[0];\n    if (!childSpec || childSpec.id !== root) {\n      childSpec = { id: root };\n    }\n\n    const updated = updater(childSpec);\n    viewport.attachments = [updated];\n    viewport.modified = Date.now();\n    await window.kernel.saveItem(viewport, { silent: true });\n  } catch (e) {\n    console.warn('[viewport-manager] Failed to update viewport item:', e);\n  }\n}\n\n// ============================================================================\n// Public API — exported functions delegate to the singleton\n// ============================================================================\n\n/** Get the RenderingSystem synchronously (returns null if not yet initialized). */\nexport function getRendering() {\n  const vpRendering = window.kernel?.moduleSystem?.getCached(VIEWPORT_RENDERING_ID);\n  return vpRendering?.getRendering() || null;\n}\n\n/** Get the RenderingSystem asynchronously (loads viewport-rendering if needed). */\nasync function getRenderingAsync() {\n  const vpRendering = await window.kernel.moduleSystem.require(VIEWPORT_RENDERING_ID);\n  return vpRendering.getRendering();\n}\n\nexport async function navigate(itemId, params = {}) {\n  const { view, ...urlParams } = params;\n\n  const viewport = await window.kernel.storage.get(activeViewportId);\n  const previous = viewport.attachments?.[0]?.id;\n\n  const url = new URL(window.location);\n  url.searchParams.set('root', itemId);\n  url.searchParams.delete('field');\n  url.searchParams.delete('line');\n  url.searchParams.delete('col');\n  url.searchParams.delete('symbol');\n  url.searchParams.delete('region');\n\n  if (urlParams.field) url.searchParams.set('field', urlParams.field);\n  if (urlParams.line) url.searchParams.set('line', urlParams.line);\n  if (urlParams.col) url.searchParams.set('col', urlParams.col);\n  if (urlParams.symbol) url.searchParams.set('symbol', urlParams.symbol);\n  if (urlParams.region) url.searchParams.set('region', urlParams.region);\n\n  if (url.href !== window.location.href) {\n    window.history.pushState({ itemId, ...urlParams }, '', url);\n  }\n\n  await persistRootChange(itemId, previous, view);\n\n  window.kernel.events.emit({\n    type: EVENT_IDS.VIEWPORT_ROOT_CHANGED,\n    content: { rootId: itemId, previous, initial: false, popstate: false }\n  });\n\n  const rs = await getRenderingAsync();\n  if (rs) await rs.renderViewport();\n}\n\nexport function getRoot() {\n  const params = new URLSearchParams(window.location.search);\n  return params.get('root');\n}\n\nexport async function getRootView() {\n  const child = await getChildSpec();\n  if (!child) return null;\n  return child.view?.type || child.view || child.renderer || null;\n}\n\nexport async function setRootView(viewId, storePrevious = true) {\n  const childSpec = await getChildSpec();\n  const currentViewType = childSpec?.view?.type;\n\n  // No-op if already on this view\n  if (currentViewType === viewId) return;\n\n  // Look up saved state for target view\n  const savedState = viewId ? childSpec?.savedViewStates?.[viewId] : null;\n\n  // Update viewport spec atomically: save current state, set new view\n  await updateChildSpec(child => {\n    const newChild = { ...child };\n    const savedViewStates = { ...(child.savedViewStates || {}) };\n\n    // Save current view state to map\n    if (storePrevious && currentViewType && child.view) {\n      savedViewStates[currentViewType] = {\n        viewConfig: { ...child.view }\n      };\n    }\n\n    // Set new view (restore from saved or fresh)\n    if (savedState) {\n      newChild.view = { ...savedState.viewConfig };\n      delete savedViewStates[viewId];\n    } else if (viewId) {\n      newChild.view = { type: viewId };\n    } else {\n      delete newChild.view;\n    }\n\n    newChild.savedViewStates = Object.keys(savedViewStates).length > 0 ? savedViewStates : undefined;\n    if (currentViewType) newChild.previousViewType = currentViewType;\n    delete newChild.previousView; // migrate away from legacy\n    return newChild;\n  });\n}\n\nexport async function getRootViewConfig() {\n  const child = await getChildSpec();\n  if (!child?.view) return null;\n  if (typeof child.view === 'object') return child.view;\n  return { type: child.view };\n}\n\nexport async function updateRootViewConfig(updates) {\n  await updateChildSpec(child => {\n    const currentView = child.view || {};\n    return { ...child, view: { ...currentView, ...updates } };\n  });\n}\n\nexport async function restorePreviousRootView() {\n  const child = await getChildSpec();\n  // New mechanism: switch to the previous view type via savedViewStates\n  if (child?.previousViewType) {\n    await setRootView(child.previousViewType);\n    return true;\n  }\n  // Legacy fallback: old previousView field\n  if (child?.previousView) {\n    await setRootView(child.previousView.type);\n    return true;\n  }\n  return false;\n}\n\nexport async function hasPreviousView() {\n  const child = await getChildSpec();\n  return !!(child?.previousViewType || child?.previousView);\n}\n\n// No-op — kept for API compatibility\nexport async function forcePersist() {}\n",
+    "_symbols": {
+      "VIEWPORT_ID_DESKTOP": {
+        "name": "VIEWPORT_ID_DESKTOP",
+        "line": 5,
+        "col": 6,
+        "endLine": 5,
+        "endCol": 66,
+        "kind": "variable",
+        "scope": null
+      },
+      "VIEWPORT_ID_MOBILE": {
+        "name": "VIEWPORT_ID_MOBILE",
+        "line": 6,
+        "col": 6,
+        "endLine": 6,
+        "endCol": 65,
+        "kind": "variable",
+        "scope": null
+      },
+      "activeViewportId": {
+        "name": "activeViewportId",
+        "line": 7,
+        "col": 4,
+        "endLine": 7,
+        "endCol": 42,
+        "kind": "variable",
+        "scope": null
+      },
+      "getViewportId": {
+        "name": "getViewportId",
+        "line": 9,
+        "col": 7,
+        "endLine": 9,
+        "endCol": 60,
+        "kind": "function",
+        "scope": null,
+        "signature": "()"
+      },
+      "VIEWPORT_RENDERING_ID": {
+        "name": "VIEWPORT_RENDERING_ID",
+        "line": 11,
+        "col": 6,
+        "endLine": 11,
+        "endCol": 68,
+        "kind": "variable",
+        "scope": null
+      },
+      "EVENT_IDS": {
+        "name": "EVENT_IDS",
+        "line": 12,
+        "col": 6,
+        "endLine": 16,
+        "endCol": 1,
+        "kind": "variable",
+        "scope": null
+      },
+      "EVENT_IDS.VIEWPORT_ROOT_CHANGED": {
+        "name": "VIEWPORT_ROOT_CHANGED",
+        "line": 13,
+        "col": 2,
+        "endLine": 13,
+        "endCol": 63,
+        "kind": "property",
+        "scope": "EVENT_IDS"
+      },
+      "EVENT_IDS.VIEWPORT_SELECTION_CHANGED": {
+        "name": "VIEWPORT_SELECTION_CHANGED",
+        "line": 14,
+        "col": 2,
+        "endLine": 14,
+        "endCol": 68,
+        "kind": "property",
+        "scope": "EVENT_IDS"
+      },
+      "EVENT_IDS.VIEWPORT_READY": {
+        "name": "VIEWPORT_READY",
+        "line": 15,
+        "col": 2,
+        "endLine": 15,
+        "endCol": 56,
+        "kind": "property",
+        "scope": "EVENT_IDS"
+      },
+      "onKernelBootComplete": {
+        "name": "onKernelBootComplete",
+        "line": 22,
+        "col": 7,
+        "endLine": 72,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "({ ... }, _api)"
+      },
+      "onKernelBootComplete.vpRendering": {
+        "name": "vpRendering",
+        "line": 26,
+        "col": 8,
+        "endLine": 26,
+        "endCol": 85,
+        "kind": "variable",
+        "scope": "onKernelBootComplete"
+      },
+      "onKernelBootComplete.rs": {
+        "name": "rs",
+        "line": 27,
+        "col": 8,
+        "endLine": 27,
+        "endCol": 39,
+        "kind": "variable",
+        "scope": "onKernelBootComplete"
+      },
+      "onKernelBootComplete.urlRoot": {
+        "name": "urlRoot",
+        "line": 41,
+        "col": 6,
+        "endLine": 41,
+        "endCol": 25,
+        "kind": "variable",
+        "scope": "onKernelBootComplete"
+      },
+      "onKernelBootComplete.viewport": {
+        "name": "viewport",
+        "line": 50,
+        "col": 10,
+        "endLine": 50,
+        "endCol": 70,
+        "kind": "variable",
+        "scope": "onKernelBootComplete"
+      },
+      "onKernelBootComplete.currentChild": {
+        "name": "currentChild",
+        "line": 44,
+        "col": 10,
+        "endLine": 44,
+        "endCol": 50,
+        "kind": "variable",
+        "scope": "onKernelBootComplete"
+      },
+      "onKernelBootComplete.storedRoot": {
+        "name": "storedRoot",
+        "line": 51,
+        "col": 10,
+        "endLine": 52,
+        "endCol": 89,
+        "kind": "variable",
+        "scope": "onKernelBootComplete"
+      },
+      "onKernelBootComplete.url": {
+        "name": "url",
+        "line": 54,
+        "col": 12,
+        "endLine": 54,
+        "endCol": 42,
+        "kind": "variable",
+        "scope": "onKernelBootComplete"
+      },
+      "onKernelBootComplete.itemId": {
+        "name": "itemId",
+        "line": 56,
+        "col": 36,
+        "endLine": 56,
+        "endCol": 54,
+        "kind": "property",
+        "scope": "onKernelBootComplete"
+      },
+      "onKernelBootComplete.type": {
+        "name": "type",
+        "line": 66,
+        "col": 4,
+        "endLine": 66,
+        "endCol": 34,
+        "kind": "property",
+        "scope": "onKernelBootComplete"
+      },
+      "onKernelBootComplete.content": {
+        "name": "content",
+        "line": 67,
+        "col": 4,
+        "endLine": 70,
+        "endCol": 5,
+        "kind": "property",
+        "scope": "onKernelBootComplete"
+      },
+      "onKernelBootComplete.content.rootElement": {
+        "name": "rootElement",
+        "line": 68,
+        "col": 6,
+        "endLine": 68,
+        "endCol": 17,
+        "kind": "property",
+        "scope": "onKernelBootComplete.content"
+      },
+      "onKernelBootComplete.content.rootId": {
+        "name": "rootId",
+        "line": 69,
+        "col": 6,
+        "endLine": 69,
+        "endCol": 29,
+        "kind": "property",
+        "scope": "onKernelBootComplete.content"
+      },
+      "onKernelBootComplete.sticky": {
+        "name": "sticky",
+        "line": 71,
+        "col": 7,
+        "endLine": 71,
+        "endCol": 19,
+        "kind": "property",
+        "scope": "onKernelBootComplete"
+      },
+      "handlePopstate": {
+        "name": "handlePopstate",
+        "line": 78,
+        "col": 0,
+        "endLine": 96,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(e)"
+      },
+      "handlePopstate.urlRoot": {
+        "name": "urlRoot",
+        "line": 79,
+        "col": 8,
+        "endLine": 79,
+        "endCol": 27,
+        "kind": "variable",
+        "scope": "handlePopstate"
+      },
+      "handlePopstate.viewport": {
+        "name": "viewport",
+        "line": 81,
+        "col": 10,
+        "endLine": 81,
+        "endCol": 70,
+        "kind": "variable",
+        "scope": "handlePopstate"
+      },
+      "handlePopstate.previous": {
+        "name": "previous",
+        "line": 82,
+        "col": 10,
+        "endLine": 82,
+        "endCol": 50,
+        "kind": "variable",
+        "scope": "handlePopstate"
+      },
+      "handlePopstate.type": {
+        "name": "type",
+        "line": 89,
+        "col": 6,
+        "endLine": 89,
+        "endCol": 43,
+        "kind": "property",
+        "scope": "handlePopstate"
+      },
+      "handlePopstate.content": {
+        "name": "content",
+        "line": 90,
+        "col": 6,
+        "endLine": 90,
+        "endCol": 76,
+        "kind": "property",
+        "scope": "handlePopstate"
+      },
+      "handlePopstate.content.rootId": {
+        "name": "rootId",
+        "line": 90,
+        "col": 17,
+        "endLine": 90,
+        "endCol": 32,
+        "kind": "property",
+        "scope": "handlePopstate.content"
+      },
+      "handlePopstate.content.previous": {
+        "name": "previous",
+        "line": 90,
+        "col": 34,
+        "endLine": 90,
+        "endCol": 42,
+        "kind": "property",
+        "scope": "handlePopstate.content"
+      },
+      "handlePopstate.content.initial": {
+        "name": "initial",
+        "line": 90,
+        "col": 44,
+        "endLine": 90,
+        "endCol": 58,
+        "kind": "property",
+        "scope": "handlePopstate.content"
+      },
+      "handlePopstate.content.popstate": {
+        "name": "popstate",
+        "line": 90,
+        "col": 60,
+        "endLine": 90,
+        "endCol": 74,
+        "kind": "property",
+        "scope": "handlePopstate.content"
+      },
+      "handlePopstate.rs": {
+        "name": "rs",
+        "line": 93,
+        "col": 10,
+        "endLine": 93,
+        "endCol": 40,
+        "kind": "variable",
+        "scope": "handlePopstate"
+      },
+      "persistRootChange": {
+        "name": "persistRootChange",
+        "line": 98,
+        "col": 0,
+        "endLine": 108,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(newRootId, previousRootId, viewId)"
+      },
+      "persistRootChange.viewport": {
+        "name": "viewport",
+        "line": 99,
+        "col": 8,
+        "endLine": 99,
+        "endCol": 68,
+        "kind": "variable",
+        "scope": "persistRootChange"
+      },
+      "persistRootChange.spec": {
+        "name": "spec",
+        "line": 102,
+        "col": 8,
+        "endLine": 102,
+        "endCol": 51,
+        "kind": "variable",
+        "scope": "persistRootChange"
+      },
+      "persistRootChange.type": {
+        "name": "type",
+        "line": 103,
+        "col": 36,
+        "endLine": 103,
+        "endCol": 48,
+        "kind": "property",
+        "scope": "persistRootChange"
+      },
+      "persistRootChange.silent": {
+        "name": "silent",
+        "line": 107,
+        "col": 43,
+        "endLine": 107,
+        "endCol": 55,
+        "kind": "property",
+        "scope": "persistRootChange"
+      },
+      "getChildSpec": {
+        "name": "getChildSpec",
+        "line": 110,
+        "col": 0,
+        "endLine": 118,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "()"
+      },
+      "getChildSpec.viewport": {
+        "name": "viewport",
+        "line": 112,
+        "col": 10,
+        "endLine": 112,
+        "endCol": 70,
+        "kind": "variable",
+        "scope": "getChildSpec"
+      },
+      "updateChildSpec": {
+        "name": "updateChildSpec",
+        "line": 120,
+        "col": 0,
+        "endLine": 140,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(updater)"
+      },
+      "updateChildSpec.viewport": {
+        "name": "viewport",
+        "line": 122,
+        "col": 10,
+        "endLine": 122,
+        "endCol": 70,
+        "kind": "variable",
+        "scope": "updateChildSpec"
+      },
+      "updateChildSpec.root": {
+        "name": "root",
+        "line": 123,
+        "col": 10,
+        "endLine": 125,
+        "endCol": 89,
+        "kind": "variable",
+        "scope": "updateChildSpec"
+      },
+      "updateChildSpec.childSpec": {
+        "name": "childSpec",
+        "line": 128,
+        "col": 8,
+        "endLine": 128,
+        "endCol": 45,
+        "kind": "variable",
+        "scope": "updateChildSpec"
+      },
+      "updateChildSpec.id": {
+        "name": "id",
+        "line": 130,
+        "col": 20,
+        "endLine": 130,
+        "endCol": 28,
+        "kind": "property",
+        "scope": "updateChildSpec"
+      },
+      "updateChildSpec.updated": {
+        "name": "updated",
+        "line": 133,
+        "col": 10,
+        "endLine": 133,
+        "endCol": 38,
+        "kind": "variable",
+        "scope": "updateChildSpec"
+      },
+      "updateChildSpec.silent": {
+        "name": "silent",
+        "line": 136,
+        "col": 45,
+        "endLine": 136,
+        "endCol": 57,
+        "kind": "property",
+        "scope": "updateChildSpec"
+      },
+      "getRendering": {
+        "name": "getRendering",
+        "line": 147,
+        "col": 7,
+        "endLine": 150,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "()",
+        "description": "Get the RenderingSystem synchronously (returns null if not yet initialized)."
+      },
+      "getRendering.vpRendering": {
+        "name": "vpRendering",
+        "line": 148,
+        "col": 8,
+        "endLine": 148,
+        "endCol": 83,
+        "kind": "variable",
+        "scope": "getRendering"
+      },
+      "getRenderingAsync": {
+        "name": "getRenderingAsync",
+        "line": 153,
+        "col": 0,
+        "endLine": 156,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "()",
+        "description": "Get the RenderingSystem asynchronously (loads viewport-rendering if needed)."
+      },
+      "getRenderingAsync.vpRendering": {
+        "name": "vpRendering",
+        "line": 154,
+        "col": 8,
+        "endLine": 154,
+        "endCol": 85,
+        "kind": "variable",
+        "scope": "getRenderingAsync"
+      },
+      "navigate": {
+        "name": "navigate",
+        "line": 158,
+        "col": 7,
+        "endLine": 191,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(itemId, params = ...)"
+      },
+      "navigate.viewport": {
+        "name": "viewport",
+        "line": 161,
+        "col": 8,
+        "endLine": 161,
+        "endCol": 68,
+        "kind": "variable",
+        "scope": "navigate"
+      },
+      "navigate.previous": {
+        "name": "previous",
+        "line": 162,
+        "col": 8,
+        "endLine": 162,
+        "endCol": 48,
+        "kind": "variable",
+        "scope": "navigate"
+      },
+      "navigate.url": {
+        "name": "url",
+        "line": 164,
+        "col": 8,
+        "endLine": 164,
+        "endCol": 38,
+        "kind": "variable",
+        "scope": "navigate"
+      },
+      "navigate.itemId": {
+        "name": "itemId",
+        "line": 179,
+        "col": 31,
+        "endLine": 179,
+        "endCol": 37,
+        "kind": "property",
+        "scope": "navigate"
+      },
+      "navigate.type": {
+        "name": "type",
+        "line": 185,
+        "col": 4,
+        "endLine": 185,
+        "endCol": 41,
+        "kind": "property",
+        "scope": "navigate"
+      },
+      "navigate.content": {
+        "name": "content",
+        "line": 186,
+        "col": 4,
+        "endLine": 186,
+        "endCol": 74,
+        "kind": "property",
+        "scope": "navigate"
+      },
+      "navigate.content.rootId": {
+        "name": "rootId",
+        "line": 186,
+        "col": 15,
+        "endLine": 186,
+        "endCol": 29,
+        "kind": "property",
+        "scope": "navigate.content"
+      },
+      "navigate.content.previous": {
+        "name": "previous",
+        "line": 186,
+        "col": 31,
+        "endLine": 186,
+        "endCol": 39,
+        "kind": "property",
+        "scope": "navigate.content"
+      },
+      "navigate.content.initial": {
+        "name": "initial",
+        "line": 186,
+        "col": 41,
+        "endLine": 186,
+        "endCol": 55,
+        "kind": "property",
+        "scope": "navigate.content"
+      },
+      "navigate.content.popstate": {
+        "name": "popstate",
+        "line": 186,
+        "col": 57,
+        "endLine": 186,
+        "endCol": 72,
+        "kind": "property",
+        "scope": "navigate.content"
+      },
+      "navigate.rs": {
+        "name": "rs",
+        "line": 189,
+        "col": 8,
+        "endLine": 189,
+        "endCol": 38,
+        "kind": "variable",
+        "scope": "navigate"
+      },
+      "getRoot": {
+        "name": "getRoot",
+        "line": 193,
+        "col": 7,
+        "endLine": 196,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "()"
+      },
+      "getRoot.params": {
+        "name": "params",
+        "line": 194,
+        "col": 8,
+        "endLine": 194,
+        "endCol": 60,
+        "kind": "variable",
+        "scope": "getRoot"
+      },
+      "getRootView": {
+        "name": "getRootView",
+        "line": 198,
+        "col": 7,
+        "endLine": 202,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "()"
+      },
+      "getRootView.child": {
+        "name": "child",
+        "line": 199,
+        "col": 8,
+        "endLine": 199,
+        "endCol": 36,
+        "kind": "variable",
+        "scope": "getRootView"
+      },
+      "setRootView": {
+        "name": "setRootView",
+        "line": 204,
+        "col": 7,
+        "endLine": 241,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(viewId, storePrevious = ...)"
+      },
+      "setRootView.childSpec": {
+        "name": "childSpec",
+        "line": 205,
+        "col": 8,
+        "endLine": 205,
+        "endCol": 40,
+        "kind": "variable",
+        "scope": "setRootView"
+      },
+      "setRootView.currentViewType": {
+        "name": "currentViewType",
+        "line": 206,
+        "col": 8,
+        "endLine": 206,
+        "endCol": 47,
+        "kind": "variable",
+        "scope": "setRootView"
+      },
+      "setRootView.savedState": {
+        "name": "savedState",
+        "line": 212,
+        "col": 8,
+        "endLine": 212,
+        "endCol": 73,
+        "kind": "variable",
+        "scope": "setRootView"
+      },
+      "setRootView.newChild": {
+        "name": "newChild",
+        "line": 216,
+        "col": 10,
+        "endLine": 216,
+        "endCol": 33,
+        "kind": "variable",
+        "scope": "setRootView"
+      },
+      "setRootView.savedViewStates": {
+        "name": "savedViewStates",
+        "line": 217,
+        "col": 10,
+        "endLine": 217,
+        "endCol": 64,
+        "kind": "variable",
+        "scope": "setRootView"
+      },
+      "setRootView.viewConfig": {
+        "name": "viewConfig",
+        "line": 222,
+        "col": 8,
+        "endLine": 222,
+        "endCol": 37,
+        "kind": "property",
+        "scope": "setRootView"
+      },
+      "setRootView.type": {
+        "name": "type",
+        "line": 231,
+        "col": 24,
+        "endLine": 231,
+        "endCol": 36,
+        "kind": "property",
+        "scope": "setRootView"
+      },
+      "getRootViewConfig": {
+        "name": "getRootViewConfig",
+        "line": 243,
+        "col": 7,
+        "endLine": 248,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "()"
+      },
+      "getRootViewConfig.child": {
+        "name": "child",
+        "line": 244,
+        "col": 8,
+        "endLine": 244,
+        "endCol": 36,
+        "kind": "variable",
+        "scope": "getRootViewConfig"
+      },
+      "getRootViewConfig.type": {
+        "name": "type",
+        "line": 247,
+        "col": 11,
+        "endLine": 247,
+        "endCol": 27,
+        "kind": "property",
+        "scope": "getRootViewConfig"
+      },
+      "updateRootViewConfig": {
+        "name": "updateRootViewConfig",
+        "line": 250,
+        "col": 7,
+        "endLine": 255,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(updates)"
+      },
+      "updateRootViewConfig.currentView": {
+        "name": "currentView",
+        "line": 252,
+        "col": 10,
+        "endLine": 252,
+        "endCol": 40,
+        "kind": "variable",
+        "scope": "updateRootViewConfig"
+      },
+      "updateRootViewConfig.view": {
+        "name": "view",
+        "line": 253,
+        "col": 23,
+        "endLine": 253,
+        "endCol": 59,
+        "kind": "property",
+        "scope": "updateRootViewConfig"
+      },
+      "restorePreviousRootView": {
+        "name": "restorePreviousRootView",
+        "line": 257,
+        "col": 7,
+        "endLine": 270,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "()"
+      },
+      "restorePreviousRootView.child": {
+        "name": "child",
+        "line": 258,
+        "col": 8,
+        "endLine": 258,
+        "endCol": 36,
+        "kind": "variable",
+        "scope": "restorePreviousRootView"
+      },
+      "hasPreviousView": {
+        "name": "hasPreviousView",
+        "line": 272,
+        "col": 7,
+        "endLine": 275,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "()"
+      },
+      "hasPreviousView.child": {
+        "name": "child",
+        "line": 273,
+        "col": 8,
+        "endLine": 273,
+        "endCol": 36,
+        "kind": "variable",
+        "scope": "hasPreviousView"
+      },
+      "forcePersist": {
+        "name": "forcePersist",
+        "line": 278,
+        "col": 7,
+        "endLine": 278,
+        "endCol": 39,
+        "kind": "function",
+        "scope": null,
+        "signature": "()"
+      }
+    }
+  },
+  "attachments": []
+}

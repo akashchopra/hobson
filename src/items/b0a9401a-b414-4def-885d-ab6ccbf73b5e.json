@@ -1,1 +1,183 @@
-{"id": "b0a9401a-b414-4def-885d-ab6ccbf73b5e", "type": "871ae771-b9b1-4f40-8c7f-d9038bfb69c3", "created": 1774857600000, "modified": 1774556758807, "attachments": [], "content": {"tags": ["c0c0c0c0-0040-0000-0000-000000000000", "c0c0c0c0-0085-0000-0000-000000000000"], "description": [":doc", [":h2", {"s": "Problem"}], [":p", {"s": "When switching the root workspace from spatial-canvas-view to sortable-list-view, child items render with their spatial-canvas-specific view overrides (e.g. History Viewer renders as item-history-view instead of a compact inline card). The sortable-list-view reads the attachment's view.type and uses it, but that view.type was set by/for the spatial canvas."}], [":h2", {"s": "Root cause"}], [":p", {"s": "The attachment spec carries three unrelated concerns in one object:"}], [":ol", [":li", {"s": "Compositional relationship — this item is a child of this parent (id)"}], [":li", {"s": "Per-context view preference — how to render this child in this parent (view.type)"}], [":li", {"s": "View-specific state — spatial positioning, background layers, previous view history (x, y, innerView, etc.)"}]], [":p", {"s": "Concern 3 is the problem. Spatial canvas positioning and innerView history are specific to a particular parent view, but stored on the shared attachment entry where every parent view sees them. A sortable list cannot distinguish \"the user wants this child rendered as item-history-view everywhere\" from \"the spatial canvas was using this view with these coordinates\"."}], [":h2", {"s": "Example"}], [":p", {"s": "A History Viewer attachment in a workspace:"}], [":code-block", {"s": "{\n  \"id\": \"d0d0d0d0-0031-...\",\n  \"view\": {\n    \"type\": \"item-history-view-id\",\n    \"innerView\": { \"type\": \"previous-view-id\" },\n    \"x\": 483, \"y\": 131, \"z\": 8,\n    \"width\": 600, \"height\": 500\n  }\n}", "lang": "json"}], [":p", {"s": "The view.type, innerView, and spatial fields are all spatial-canvas-specific, but the sortable list reads view.type and renders item-history-view instead of its default card view."}], [":h2", {"s": "How innerView gets set"}], [":p", {"s": "The \"View As...\" context menu handler (context-menu-lib) sets view.type to the newly selected view, then saves the previously-rendered view as innerView. This was designed for spatial-canvas-view's full-bleed background feature. It means the attachment accumulates view-switching history as a side effect."}], [":h2", {"s": "History"}], [":p", {"s": "Commit 75f39a8 removed the child view snapshot/restore mechanism from setAttachmentView. That code used to save all child view configs into savedViewStates on switch and clear them, restoring when switching back. It was removed to \"stop mutating shared item data on view switch\" (sync safety concern). The result is that spatial-canvas view state now persists across parent view switches."}], [":h2", {"s": "Options considered"}], [":p", [":strong", {"s": "A. sortable-list-view ignores view.type"}], {"s": " — Always use the default card view. Simple, but the sortable list can never have per-child view overrides."}], [":p", [":strong", {"s": "B. Re-introduce child view snapshot/restore"}], {"s": " — Save child view configs in savedViewStates on switch, clear them, restore on switch-back. Restores pre-75f39a8 behaviour but conflicts with the sync-safety intent."}], [":p", [":strong", {"s": "C. Scope view state per parent view"}], {"s": " — Store child view overrides (and spatial positioning) in a per-parent-view map rather than directly on the attachment. Each parent view gets its own namespace. This is the architecturally clean solution but a larger change."}], [":p", [":strong", {"s": "D. Heuristic: ignore view.type if spatial fields present"}], {"s": " — If the view config has x/y/width/height, treat it as spatial-canvas-specific. Fragile coupling between views."}], [":h2", {"s": "Design question"}], [":p", {"s": "The deeper question is whether the attachment spec should carry view-specific state at all, or whether view state should be scoped to the view that created it. This affects spatial positioning, view overrides, innerView history, and potentially future per-view state like scroll position or collapse state."}]]}, "name": "Attachment view state is not scoped to parent view"}
+{
+  "id": "b0a9401a-b414-4def-885d-ab6ccbf73b5e",
+  "type": "871ae771-b9b1-4f40-8c7f-d9038bfb69c3",
+  "created": 1774857600000,
+  "modified": 1774988058820,
+  "attachments": [],
+  "content": {
+    "tags": [
+      "c0c0c0c0-0040-0000-0000-000000000000",
+      "c0c0c0c0-0085-0000-0000-000000000000"
+    ],
+    "description": [
+      ":doc",
+      [
+        ":h2",
+        {
+          "s": "Problem"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "When switching the root workspace from spatial-canvas-view to sortable-list-view, child items render with their spatial-canvas-specific view overrides (e.g. History Viewer renders as item-history-view instead of a compact inline card). The sortable-list-view reads the attachment's view.type and uses it, but that view.type was set by/for the spatial canvas."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Root cause"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The attachment spec carries three unrelated concerns in one object:"
+        }
+      ],
+      [
+        ":ol",
+        [
+          ":li",
+          {
+            "s": "Compositional relationship — this item is a child of this parent (id)"
+          }
+        ],
+        [
+          ":li",
+          {
+            "s": "Per-context view preference — how to render this child in this parent (view.type)"
+          }
+        ],
+        [
+          ":li",
+          {
+            "s": "View-specific state — spatial positioning, background layers, previous view history (x, y, innerView, etc.)"
+          }
+        ]
+      ],
+      [
+        ":p",
+        {
+          "s": "Concern 3 is the problem. Spatial canvas positioning and innerView history are specific to a particular parent view, but stored on the shared attachment entry where every parent view sees them. A sortable list cannot distinguish \"the user wants this child rendered as item-history-view everywhere\" from \"the spatial canvas was using this view with these coordinates\"."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Example"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "A History Viewer attachment in a workspace:"
+        }
+      ],
+      [
+        ":code-block",
+        {
+          "s": "{\n  \"id\": \"d0d0d0d0-0031-...\",\n  \"view\": {\n    \"type\": \"item-history-view-id\",\n    \"innerView\": { \"type\": \"previous-view-id\" },\n    \"x\": 483, \"y\": 131, \"z\": 8,\n    \"width\": 600, \"height\": 500\n  }\n}",
+          "lang": "json"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The view.type, innerView, and spatial fields are all spatial-canvas-specific, but the sortable list reads view.type and renders item-history-view instead of its default card view."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "How innerView gets set"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The \"View As...\" context menu handler (context-menu-lib) sets view.type to the newly selected view, then saves the previously-rendered view as innerView. This was designed for spatial-canvas-view's full-bleed background feature. It means the attachment accumulates view-switching history as a side effect."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "History"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Commit 75f39a8 removed the child view snapshot/restore mechanism from setAttachmentView. That code used to save all child view configs into savedViewStates on switch and clear them, restoring when switching back. It was removed to \"stop mutating shared item data on view switch\" (sync safety concern). The result is that spatial-canvas view state now persists across parent view switches."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Options considered"
+        }
+      ],
+      [
+        ":p",
+        [
+          ":strong",
+          {
+            "s": "A. sortable-list-view ignores view.type"
+          }
+        ],
+        {
+          "s": " — Always use the default card view. Simple, but the sortable list can never have per-child view overrides."
+        }
+      ],
+      [
+        ":p",
+        [
+          ":strong",
+          {
+            "s": "B. Re-introduce child view snapshot/restore"
+          }
+        ],
+        {
+          "s": " — Save child view configs in savedViewStates on switch, clear them, restore on switch-back. Restores pre-75f39a8 behaviour but conflicts with the sync-safety intent."
+        }
+      ],
+      [
+        ":p",
+        [
+          ":strong",
+          {
+            "s": "C. Scope view state per parent view"
+          }
+        ],
+        {
+          "s": " — Store child view overrides (and spatial positioning) in a per-parent-view map rather than directly on the attachment. Each parent view gets its own namespace. This is the architecturally clean solution but a larger change."
+        }
+      ],
+      [
+        ":p",
+        [
+          ":strong",
+          {
+            "s": "D. Heuristic: ignore view.type if spatial fields present"
+          }
+        ],
+        {
+          "s": " — If the view config has x/y/width/height, treat it as spatial-canvas-specific. Fragile coupling between views."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Design question"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The deeper question is whether the attachment spec should carry view-specific state at all, or whether view state should be scoped to the view that created it. This affects spatial positioning, view overrides, innerView history, and potentially future per-view state like scroll position or collapse state."
+        }
+      ]
+    ]
+  },
+  "name": "Attachment view state is not scoped to parent view"
+}

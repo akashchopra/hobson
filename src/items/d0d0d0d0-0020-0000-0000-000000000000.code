@@ -1,39 +1,39 @@
-;; doc-query-helpers — Mid-level helpers for embedding dynamic tables in Active Text.
-;; Usage: (def h (require "doc-query-helpers"))
-;;        ((:query-table h) {:tags [@feature]} :name :created :modified)
-
-;; --- Internal helpers ---
-
 (defn header-for-field [field-key]
   (str/capitalize (str/replace (name field-key) "-" " ")))
 
 (defn parse-col-spec [spec]
-  (if (keyword? spec)
+  (if
+    (keyword? spec)
     {:field spec :header (header-for-field spec) :render nil}
-    (if (vector? spec)
-      (let [field (first spec)
-            second-val (nth spec 1)]
-        (if (string? second-val)
+    (if
+      (vector? spec)
+      (let [field (first spec) second-val (nth spec 1)]
+        (if
+          (string? second-val)
           {:field field :header second-val :render nil}
-          (if (keyword? second-val)
+          (if
+            (keyword? second-val)
             {:field field :header (header-for-field field) :render second-val}
             {:field field :header (header-for-field field) :render second-val})))
       spec)))
 
-(def tier-1-fields
-  {:name    {:header "Name"     :render :item-link}
-   :id      {:header "ID"       :render :id}
-   :created {:header "Created"  :render :timestamp}
+(def
+  tier-1-fields
+  {:name {:header "Name" :render :item-link}
+   :id {:header "ID" :render :id}
+   :created {:header "Created" :render :timestamp}
    :modified {:header "Modified" :render :timestamp}
-   :type    {:header "Type"     :render :type-link}})
+   :type {:header "Type" :render :type-link}})
 
 (defn resolve-col [spec]
   (let [parsed (parse-col-spec spec)
         field (:field parsed)
         tier1 (get tier-1-fields field)]
-    (if (and tier1 (nil? (:render parsed)))
+    (if
+      (and tier1 (nil? (:render parsed)))
       (merge parsed tier1)
-      (if (nil? (:header parsed))
+      (if
+        (nil? (:header parsed))
         (assoc parsed :header (or (:header tier1) (header-for-field field)))
         parsed))))
 
@@ -41,53 +41,53 @@
   (let [renderer (:render col)]
     (cond
       (fn? renderer)
-        (renderer val item)
+      (renderer val item)
       (= renderer :item-link)
-        [:item-ref (:id item) (or val (:name item) (subs (str (:id item)) 0 8))]
+      [:item-ref (:id item) (or val (:name item) (subs (str (:id item)) 0 8))]
       (= renderer :id)
-        [:code (subs (str val) 0 8)]
+      [:code (subs (str val) 0 8)]
       (= renderer :timestamp)
-        (if (nil? val) "" (format-date val))
+      (if (nil? val) "" (format-date val))
       (= renderer :type-link)
-        (let [type-item (get-item val)]
-          (if type-item
-            [:item-ref (:id type-item) (:name type-item)]
-            (if (nil? val) "" (subs (str val) 0 8))))
+      (let [type-item (get-item val)]
+        (if
+          type-item
+          [:item-ref (:id type-item) (:name type-item)]
+          (if (nil? val) "" (subs (str val) 0 8))))
       (= renderer :transclude)
-        (transclude item (:field col))
+      (transclude item (:field col))
       (= renderer :image)
-        (hiccup->dom [:img {:src val :style "max-width: 100%; height: auto;"}])
+      (hiccup->dom [:img {:src val :style "max-width: 100%; height: auto;"}])
       (= renderer :code)
-        [:code (str val)]
+      [:code (str val)]
       (= renderer :item-ref)
-        (let [ref-item (get-item val)]
-          (if ref-item
-            [:item-ref (:id ref-item) (:name ref-item)]
-            (if (nil? val) "" (str val))))
+      (let [ref-item (get-item val)]
+        (if
+          ref-item
+          [:item-ref (:id ref-item) (:name ref-item)]
+          (if (nil? val) "" (str val))))
       (= renderer :raw)
-        (str val)
+      (str val)
       :else
-        (if (nil? val) "" (str val)))))
+      (if (nil? val) "" (str val)))))
 
 (defn build-header-row [cols]
   (concat [:tr] (map (fn [col] [:th (:header col)]) cols)))
 
 (defn build-data-row [item cols]
-  (concat [:tr]
-    (map (fn [col]
-      (let [val (get-field item (:field col))]
-        [:td (render-cell val item col)]))
+  (concat
+    [:tr]
+    (map
+      (fn [col]
+        (let [val (get-field item (:field col))]
+          [:td (render-cell val item col)]))
       cols)))
-
-;; --- Public API ---
 
 (defn item-table [items & col-specs]
   (let [cols (map resolve-col col-specs)]
     [:table
       [:thead (build-header-row cols)]
-      (concat [:tbody]
-        (map (fn [item] (build-data-row item cols)) items))]))
+      (concat [:tbody] (map (fn [item] (build-data-row item cols)) items))]))
 
 (defn query-table [filter-map & col-specs]
-  (let [items (find-items filter-map)]
-    (apply item-table items col-specs)))
+  (let [items (find-items filter-map)] (apply item-table items col-specs)))

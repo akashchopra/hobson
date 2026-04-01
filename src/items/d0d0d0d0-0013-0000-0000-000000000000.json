@@ -1,1 +1,442 @@
-{"id": "d0d0d0d0-0013-0000-0000-000000000000", "name": "image-import-lib", "type": "66666666-0000-0000-0000-000000000000", "created": 1774607975531, "modified": 1774608431553, "content": {"description": [":doc", [":p", {"s": "Creates image items from various sources: data URLs, Blobs/Files, or filesystem paths (Tauri). Used by obsidian-import and the image editor."}]], "code": "// image-import-lib — Creates image items from various sources\n// Used by obsidian-import, paste handlers, and the image editor\n\nconst IMAGE_TYPE = 'd0d0d0d0-0010-0000-0000-000000000000';\n\n/** Create an image item from a base64 data URL.\n * @param {Object} api - Hobson API\n * @param {string} dataUrl - Base64 data URL (data:image/png;base64,...)\n * @param {Object} [opts] - Options: name, alt\n * @returns {Promise<string>} The new image item's ID\n */\nexport async function fromDataUrl(api, dataUrl, opts = {}) {\n  const mimeMatch = dataUrl.match(/^data:([^;]+);/);\n  const mimeType = mimeMatch ? mimeMatch[1] : 'image/png';\n  const id = crypto.randomUUID();\n  const item = {\n    id,\n    name: opts.name || 'Image',\n    type: IMAGE_TYPE,\n    created: Date.now(),\n    modified: Date.now(),\n    content: {\n      data: dataUrl,\n      mimeType,\n      alt: opts.alt || undefined\n    },\n    attachments: []\n  };\n  await api.set(item);\n  return id;\n}\n\n/** Create an image item from a Blob or File.\n * @param {Object} api - Hobson API\n * @param {Blob|File} blob - Image blob\n * @param {Object} [opts] - Options: name, alt\n * @returns {Promise<string>} The new image item's ID\n */\nexport async function fromBlob(api, blob, opts = {}) {\n  const dataUrl = await new Promise((resolve, reject) => {\n    const reader = new FileReader();\n    reader.onload = () => resolve(reader.result);\n    reader.onerror = reject;\n    reader.readAsDataURL(blob);\n  });\n  const name = opts.name || (blob.name ? blob.name.replace(/\\.[^.]+$/, '') : 'Image');\n  return fromDataUrl(api, dataUrl, { ...opts, name });\n}\n\n/** Create an image item from a file path (Tauri only).\n * @param {Object} api - Hobson API\n * @param {string} filePath - Absolute file path\n * @param {Object} [opts] - Options: name, alt\n * @returns {Promise<string>} The new image item's ID\n */\nexport async function fromFile(api, filePath, opts = {}) {\n  const tauri = window.__TAURI__;\n  if (!tauri) throw new Error('fromFile requires Tauri (filesystem access)');\n\n  const bytes = await tauri.fs.readFile(filePath);\n  const ext = filePath.split('.').pop().toLowerCase();\n  const mimeMap = {\n    png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg',\n    gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml',\n    bmp: 'image/bmp', ico: 'image/x-icon'\n  };\n  const mimeType = mimeMap[ext] || 'image/png';\n\n  // Convert Uint8Array to base64\n  let binary = '';\n  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);\n  const b64 = btoa(binary);\n  const dataUrl = 'data:' + mimeType + ';base64,' + b64;\n\n  const fileName = filePath.split('/').pop().split('\\\\').pop().replace(/\\.[^.]+$/, '');\n  const name = opts.name || fileName || 'Image';\n\n  return fromDataUrl(api, dataUrl, { ...opts, name });\n}\n", "_symbols": {"IMAGE_TYPE": {"name": "IMAGE_TYPE", "line": 4, "col": 6, "endLine": 4, "endCol": 57, "kind": "variable", "scope": null}, "fromDataUrl": {"name": "fromDataUrl", "line": 12, "col": 7, "endLine": 31, "endCol": 1, "kind": "function", "scope": null, "signature": "(api, dataUrl, opts = ...)", "description": "Create an image item from a base64 data URL.", "params": [{"name": "api", "type": "Object", "description": "Hobson API"}, {"name": "dataUrl", "type": "string", "description": "Base64 data URL (data:image/png;base64,...)"}, {"name": "opts", "type": "Object", "description": "Options: name, alt"}], "returns": {"type": "Promise<string>", "description": "The new image item's ID"}}, "fromDataUrl.mimeMatch": {"name": "mimeMatch", "line": 13, "col": 8, "endLine": 13, "endCol": 51, "kind": "variable", "scope": "fromDataUrl"}, "fromDataUrl.mimeType": {"name": "mimeType", "line": 14, "col": 8, "endLine": 14, "endCol": 57, "kind": "variable", "scope": "fromDataUrl"}, "fromDataUrl.id": {"name": "id", "line": 15, "col": 8, "endLine": 15, "endCol": 32, "kind": "variable", "scope": "fromDataUrl"}, "fromDataUrl.item": {"name": "item", "line": 16, "col": 8, "endLine": 28, "endCol": 3, "kind": "variable", "scope": "fromDataUrl"}, "item.id": {"name": "id", "line": 17, "col": 4, "endLine": 17, "endCol": 6, "kind": "property", "scope": "item"}, "item.name": {"name": "name", "line": 18, "col": 4, "endLine": 18, "endCol": 30, "kind": "property", "scope": "item"}, "item.type": {"name": "type", "line": 19, "col": 4, "endLine": 19, "endCol": 20, "kind": "property", "scope": "item"}, "item.created": {"name": "created", "line": 20, "col": 4, "endLine": 20, "endCol": 23, "kind": "property", "scope": "item"}, "item.modified": {"name": "modified", "line": 21, "col": 4, "endLine": 21, "endCol": 24, "kind": "property", "scope": "item"}, "item.content": {"name": "content", "line": 22, "col": 4, "endLine": 26, "endCol": 5, "kind": "property", "scope": "item"}, "item.content.data": {"name": "data", "line": 23, "col": 6, "endLine": 23, "endCol": 19, "kind": "property", "scope": "item.content"}, "item.content.mimeType": {"name": "mimeType", "line": 24, "col": 6, "endLine": 24, "endCol": 14, "kind": "property", "scope": "item.content"}, "item.content.alt": {"name": "alt", "line": 25, "col": 6, "endLine": 25, "endCol": 32, "kind": "property", "scope": "item.content"}, "item.attachments": {"name": "attachments", "line": 27, "col": 4, "endLine": 27, "endCol": 19, "kind": "property", "scope": "item"}, "fromBlob": {"name": "fromBlob", "line": 39, "col": 7, "endLine": 48, "endCol": 1, "kind": "function", "scope": null, "signature": "(api, blob, opts = ...)", "description": "Create an image item from a Blob or File.", "params": [{"name": "api", "type": "Object", "description": "Hobson API"}, {"name": "blob", "type": "Blob|File", "description": "Image blob"}, {"name": "opts", "type": "Object", "description": "Options: name, alt"}], "returns": {"type": "Promise<string>", "description": "The new image item's ID"}}, "fromBlob.dataUrl": {"name": "dataUrl", "line": 40, "col": 8, "endLine": 45, "endCol": 4, "kind": "variable", "scope": "fromBlob"}, "fromBlob.name": {"name": "name", "line": 47, "col": 46, "endLine": 47, "endCol": 50, "kind": "property", "scope": "fromBlob"}, "fromFile": {"name": "fromFile", "line": 56, "col": 7, "endLine": 79, "endCol": 1, "kind": "function", "scope": null, "signature": "(api, filePath, opts = ...)", "description": "Create an image item from a file path (Tauri only).", "params": [{"name": "api", "type": "Object", "description": "Hobson API"}, {"name": "filePath", "type": "string", "description": "Absolute file path"}, {"name": "opts", "type": "Object", "description": "Options: name, alt"}], "returns": {"type": "Promise<string>", "description": "The new image item's ID"}}, "fromFile.tauri": {"name": "tauri", "line": 57, "col": 8, "endLine": 57, "endCol": 32, "kind": "variable", "scope": "fromFile"}, "fromFile.bytes": {"name": "bytes", "line": 60, "col": 8, "endLine": 60, "endCol": 49, "kind": "variable", "scope": "fromFile"}, "fromFile.ext": {"name": "ext", "line": 61, "col": 8, "endLine": 61, "endCol": 53, "kind": "variable", "scope": "fromFile"}, "fromFile.mimeMap": {"name": "mimeMap", "line": 62, "col": 8, "endLine": 66, "endCol": 3, "kind": "variable", "scope": "fromFile"}, "mimeMap.png": {"name": "png", "line": 63, "col": 4, "endLine": 63, "endCol": 20, "kind": "property", "scope": "mimeMap"}, "mimeMap.jpg": {"name": "jpg", "line": 63, "col": 22, "endLine": 63, "endCol": 39, "kind": "property", "scope": "mimeMap"}, "mimeMap.jpeg": {"name": "jpeg", "line": 63, "col": 41, "endLine": 63, "endCol": 59, "kind": "property", "scope": "mimeMap"}, "mimeMap.gif": {"name": "gif", "line": 64, "col": 4, "endLine": 64, "endCol": 20, "kind": "property", "scope": "mimeMap"}, "mimeMap.webp": {"name": "webp", "line": 64, "col": 22, "endLine": 64, "endCol": 40, "kind": "property", "scope": "mimeMap"}, "mimeMap.svg": {"name": "svg", "line": 64, "col": 42, "endLine": 64, "endCol": 62, "kind": "property", "scope": "mimeMap"}, "mimeMap.bmp": {"name": "bmp", "line": 65, "col": 4, "endLine": 65, "endCol": 20, "kind": "property", "scope": "mimeMap"}, "mimeMap.ico": {"name": "ico", "line": 65, "col": 22, "endLine": 65, "endCol": 41, "kind": "property", "scope": "mimeMap"}, "fromFile.mimeType": {"name": "mimeType", "line": 67, "col": 8, "endLine": 67, "endCol": 46, "kind": "variable", "scope": "fromFile"}, "fromFile.binary": {"name": "binary", "line": 70, "col": 6, "endLine": 70, "endCol": 17, "kind": "variable", "scope": "fromFile"}, "fromFile.i": {"name": "i", "line": 71, "col": 11, "endLine": 71, "endCol": 16, "kind": "variable", "scope": "fromFile"}, "fromFile.b64": {"name": "b64", "line": 72, "col": 8, "endLine": 72, "endCol": 26, "kind": "variable", "scope": "fromFile"}, "fromFile.dataUrl": {"name": "dataUrl", "line": 73, "col": 8, "endLine": 73, "endCol": 55, "kind": "variable", "scope": "fromFile"}, "fromFile.fileName": {"name": "fileName", "line": 75, "col": 8, "endLine": 75, "endCol": 86, "kind": "variable", "scope": "fromFile"}, "fromFile.name": {"name": "name", "line": 78, "col": 46, "endLine": 78, "endCol": 50, "kind": "property", "scope": "fromFile"}}}, "attachments": []}
+{
+  "id": "d0d0d0d0-0013-0000-0000-000000000000",
+  "name": "image-import-lib",
+  "type": "66666666-0000-0000-0000-000000000000",
+  "created": 1774607975531,
+  "modified": 1774608431553,
+  "content": {
+    "description": [
+      ":doc",
+      [
+        ":p",
+        {
+          "s": "Creates image items from various sources: data URLs, Blobs/Files, or filesystem paths (Tauri). Used by obsidian-import and the image editor."
+        }
+      ]
+    ],
+    "code": "// image-import-lib — Creates image items from various sources\n// Used by obsidian-import, paste handlers, and the image editor\n\nconst IMAGE_TYPE = 'd0d0d0d0-0010-0000-0000-000000000000';\n\n/** Create an image item from a base64 data URL.\n * @param {Object} api - Hobson API\n * @param {string} dataUrl - Base64 data URL (data:image/png;base64,...)\n * @param {Object} [opts] - Options: name, alt\n * @returns {Promise<string>} The new image item's ID\n */\nexport async function fromDataUrl(api, dataUrl, opts = {}) {\n  const mimeMatch = dataUrl.match(/^data:([^;]+);/);\n  const mimeType = mimeMatch ? mimeMatch[1] : 'image/png';\n  const id = crypto.randomUUID();\n  const item = {\n    id,\n    name: opts.name || 'Image',\n    type: IMAGE_TYPE,\n    created: Date.now(),\n    modified: Date.now(),\n    content: {\n      data: dataUrl,\n      mimeType,\n      alt: opts.alt || undefined\n    },\n    attachments: []\n  };\n  await api.set(item);\n  return id;\n}\n\n/** Create an image item from a Blob or File.\n * @param {Object} api - Hobson API\n * @param {Blob|File} blob - Image blob\n * @param {Object} [opts] - Options: name, alt\n * @returns {Promise<string>} The new image item's ID\n */\nexport async function fromBlob(api, blob, opts = {}) {\n  const dataUrl = await new Promise((resolve, reject) => {\n    const reader = new FileReader();\n    reader.onload = () => resolve(reader.result);\n    reader.onerror = reject;\n    reader.readAsDataURL(blob);\n  });\n  const name = opts.name || (blob.name ? blob.name.replace(/\\.[^.]+$/, '') : 'Image');\n  return fromDataUrl(api, dataUrl, { ...opts, name });\n}\n\n/** Create an image item from a file path (Tauri only).\n * @param {Object} api - Hobson API\n * @param {string} filePath - Absolute file path\n * @param {Object} [opts] - Options: name, alt\n * @returns {Promise<string>} The new image item's ID\n */\nexport async function fromFile(api, filePath, opts = {}) {\n  const tauri = window.__TAURI__;\n  if (!tauri) throw new Error('fromFile requires Tauri (filesystem access)');\n\n  const bytes = await tauri.fs.readFile(filePath);\n  const ext = filePath.split('.').pop().toLowerCase();\n  const mimeMap = {\n    png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg',\n    gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml',\n    bmp: 'image/bmp', ico: 'image/x-icon'\n  };\n  const mimeType = mimeMap[ext] || 'image/png';\n\n  // Convert Uint8Array to base64\n  let binary = '';\n  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);\n  const b64 = btoa(binary);\n  const dataUrl = 'data:' + mimeType + ';base64,' + b64;\n\n  const fileName = filePath.split('/').pop().split('\\\\').pop().replace(/\\.[^.]+$/, '');\n  const name = opts.name || fileName || 'Image';\n\n  return fromDataUrl(api, dataUrl, { ...opts, name });\n}\n",
+    "_symbols": {
+      "IMAGE_TYPE": {
+        "name": "IMAGE_TYPE",
+        "line": 4,
+        "col": 6,
+        "endLine": 4,
+        "endCol": 57,
+        "kind": "variable",
+        "scope": null
+      },
+      "fromDataUrl": {
+        "name": "fromDataUrl",
+        "line": 12,
+        "col": 7,
+        "endLine": 31,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(api, dataUrl, opts = ...)",
+        "description": "Create an image item from a base64 data URL.",
+        "params": [
+          {
+            "name": "api",
+            "type": "Object",
+            "description": "Hobson API"
+          },
+          {
+            "name": "dataUrl",
+            "type": "string",
+            "description": "Base64 data URL (data:image/png;base64,...)"
+          },
+          {
+            "name": "opts",
+            "type": "Object",
+            "description": "Options: name, alt"
+          }
+        ],
+        "returns": {
+          "type": "Promise<string>",
+          "description": "The new image item's ID"
+        }
+      },
+      "fromDataUrl.mimeMatch": {
+        "name": "mimeMatch",
+        "line": 13,
+        "col": 8,
+        "endLine": 13,
+        "endCol": 51,
+        "kind": "variable",
+        "scope": "fromDataUrl"
+      },
+      "fromDataUrl.mimeType": {
+        "name": "mimeType",
+        "line": 14,
+        "col": 8,
+        "endLine": 14,
+        "endCol": 57,
+        "kind": "variable",
+        "scope": "fromDataUrl"
+      },
+      "fromDataUrl.id": {
+        "name": "id",
+        "line": 15,
+        "col": 8,
+        "endLine": 15,
+        "endCol": 32,
+        "kind": "variable",
+        "scope": "fromDataUrl"
+      },
+      "fromDataUrl.item": {
+        "name": "item",
+        "line": 16,
+        "col": 8,
+        "endLine": 28,
+        "endCol": 3,
+        "kind": "variable",
+        "scope": "fromDataUrl"
+      },
+      "item.id": {
+        "name": "id",
+        "line": 17,
+        "col": 4,
+        "endLine": 17,
+        "endCol": 6,
+        "kind": "property",
+        "scope": "item"
+      },
+      "item.name": {
+        "name": "name",
+        "line": 18,
+        "col": 4,
+        "endLine": 18,
+        "endCol": 30,
+        "kind": "property",
+        "scope": "item"
+      },
+      "item.type": {
+        "name": "type",
+        "line": 19,
+        "col": 4,
+        "endLine": 19,
+        "endCol": 20,
+        "kind": "property",
+        "scope": "item"
+      },
+      "item.created": {
+        "name": "created",
+        "line": 20,
+        "col": 4,
+        "endLine": 20,
+        "endCol": 23,
+        "kind": "property",
+        "scope": "item"
+      },
+      "item.modified": {
+        "name": "modified",
+        "line": 21,
+        "col": 4,
+        "endLine": 21,
+        "endCol": 24,
+        "kind": "property",
+        "scope": "item"
+      },
+      "item.content": {
+        "name": "content",
+        "line": 22,
+        "col": 4,
+        "endLine": 26,
+        "endCol": 5,
+        "kind": "property",
+        "scope": "item"
+      },
+      "item.content.data": {
+        "name": "data",
+        "line": 23,
+        "col": 6,
+        "endLine": 23,
+        "endCol": 19,
+        "kind": "property",
+        "scope": "item.content"
+      },
+      "item.content.mimeType": {
+        "name": "mimeType",
+        "line": 24,
+        "col": 6,
+        "endLine": 24,
+        "endCol": 14,
+        "kind": "property",
+        "scope": "item.content"
+      },
+      "item.content.alt": {
+        "name": "alt",
+        "line": 25,
+        "col": 6,
+        "endLine": 25,
+        "endCol": 32,
+        "kind": "property",
+        "scope": "item.content"
+      },
+      "item.attachments": {
+        "name": "attachments",
+        "line": 27,
+        "col": 4,
+        "endLine": 27,
+        "endCol": 19,
+        "kind": "property",
+        "scope": "item"
+      },
+      "fromBlob": {
+        "name": "fromBlob",
+        "line": 39,
+        "col": 7,
+        "endLine": 48,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(api, blob, opts = ...)",
+        "description": "Create an image item from a Blob or File.",
+        "params": [
+          {
+            "name": "api",
+            "type": "Object",
+            "description": "Hobson API"
+          },
+          {
+            "name": "blob",
+            "type": "Blob|File",
+            "description": "Image blob"
+          },
+          {
+            "name": "opts",
+            "type": "Object",
+            "description": "Options: name, alt"
+          }
+        ],
+        "returns": {
+          "type": "Promise<string>",
+          "description": "The new image item's ID"
+        }
+      },
+      "fromBlob.dataUrl": {
+        "name": "dataUrl",
+        "line": 40,
+        "col": 8,
+        "endLine": 45,
+        "endCol": 4,
+        "kind": "variable",
+        "scope": "fromBlob"
+      },
+      "fromBlob.name": {
+        "name": "name",
+        "line": 47,
+        "col": 46,
+        "endLine": 47,
+        "endCol": 50,
+        "kind": "property",
+        "scope": "fromBlob"
+      },
+      "fromFile": {
+        "name": "fromFile",
+        "line": 56,
+        "col": 7,
+        "endLine": 79,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(api, filePath, opts = ...)",
+        "description": "Create an image item from a file path (Tauri only).",
+        "params": [
+          {
+            "name": "api",
+            "type": "Object",
+            "description": "Hobson API"
+          },
+          {
+            "name": "filePath",
+            "type": "string",
+            "description": "Absolute file path"
+          },
+          {
+            "name": "opts",
+            "type": "Object",
+            "description": "Options: name, alt"
+          }
+        ],
+        "returns": {
+          "type": "Promise<string>",
+          "description": "The new image item's ID"
+        }
+      },
+      "fromFile.tauri": {
+        "name": "tauri",
+        "line": 57,
+        "col": 8,
+        "endLine": 57,
+        "endCol": 32,
+        "kind": "variable",
+        "scope": "fromFile"
+      },
+      "fromFile.bytes": {
+        "name": "bytes",
+        "line": 60,
+        "col": 8,
+        "endLine": 60,
+        "endCol": 49,
+        "kind": "variable",
+        "scope": "fromFile"
+      },
+      "fromFile.ext": {
+        "name": "ext",
+        "line": 61,
+        "col": 8,
+        "endLine": 61,
+        "endCol": 53,
+        "kind": "variable",
+        "scope": "fromFile"
+      },
+      "fromFile.mimeMap": {
+        "name": "mimeMap",
+        "line": 62,
+        "col": 8,
+        "endLine": 66,
+        "endCol": 3,
+        "kind": "variable",
+        "scope": "fromFile"
+      },
+      "mimeMap.png": {
+        "name": "png",
+        "line": 63,
+        "col": 4,
+        "endLine": 63,
+        "endCol": 20,
+        "kind": "property",
+        "scope": "mimeMap"
+      },
+      "mimeMap.jpg": {
+        "name": "jpg",
+        "line": 63,
+        "col": 22,
+        "endLine": 63,
+        "endCol": 39,
+        "kind": "property",
+        "scope": "mimeMap"
+      },
+      "mimeMap.jpeg": {
+        "name": "jpeg",
+        "line": 63,
+        "col": 41,
+        "endLine": 63,
+        "endCol": 59,
+        "kind": "property",
+        "scope": "mimeMap"
+      },
+      "mimeMap.gif": {
+        "name": "gif",
+        "line": 64,
+        "col": 4,
+        "endLine": 64,
+        "endCol": 20,
+        "kind": "property",
+        "scope": "mimeMap"
+      },
+      "mimeMap.webp": {
+        "name": "webp",
+        "line": 64,
+        "col": 22,
+        "endLine": 64,
+        "endCol": 40,
+        "kind": "property",
+        "scope": "mimeMap"
+      },
+      "mimeMap.svg": {
+        "name": "svg",
+        "line": 64,
+        "col": 42,
+        "endLine": 64,
+        "endCol": 62,
+        "kind": "property",
+        "scope": "mimeMap"
+      },
+      "mimeMap.bmp": {
+        "name": "bmp",
+        "line": 65,
+        "col": 4,
+        "endLine": 65,
+        "endCol": 20,
+        "kind": "property",
+        "scope": "mimeMap"
+      },
+      "mimeMap.ico": {
+        "name": "ico",
+        "line": 65,
+        "col": 22,
+        "endLine": 65,
+        "endCol": 41,
+        "kind": "property",
+        "scope": "mimeMap"
+      },
+      "fromFile.mimeType": {
+        "name": "mimeType",
+        "line": 67,
+        "col": 8,
+        "endLine": 67,
+        "endCol": 46,
+        "kind": "variable",
+        "scope": "fromFile"
+      },
+      "fromFile.binary": {
+        "name": "binary",
+        "line": 70,
+        "col": 6,
+        "endLine": 70,
+        "endCol": 17,
+        "kind": "variable",
+        "scope": "fromFile"
+      },
+      "fromFile.i": {
+        "name": "i",
+        "line": 71,
+        "col": 11,
+        "endLine": 71,
+        "endCol": 16,
+        "kind": "variable",
+        "scope": "fromFile"
+      },
+      "fromFile.b64": {
+        "name": "b64",
+        "line": 72,
+        "col": 8,
+        "endLine": 72,
+        "endCol": 26,
+        "kind": "variable",
+        "scope": "fromFile"
+      },
+      "fromFile.dataUrl": {
+        "name": "dataUrl",
+        "line": 73,
+        "col": 8,
+        "endLine": 73,
+        "endCol": 55,
+        "kind": "variable",
+        "scope": "fromFile"
+      },
+      "fromFile.fileName": {
+        "name": "fileName",
+        "line": 75,
+        "col": 8,
+        "endLine": 75,
+        "endCol": 86,
+        "kind": "variable",
+        "scope": "fromFile"
+      },
+      "fromFile.name": {
+        "name": "name",
+        "line": 78,
+        "col": 46,
+        "endLine": 78,
+        "endCol": 50,
+        "kind": "property",
+        "scope": "fromFile"
+      }
+    }
+  },
+  "attachments": []
+}

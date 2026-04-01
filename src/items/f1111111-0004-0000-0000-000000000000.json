@@ -1,1 +1,420 @@
-{"id": "f1111111-0004-0000-0000-000000000000", "type": "66666666-0000-0000-0000-000000000000", "name": "keyboard-shortcuts", "created": 1738368000000, "modified": 1773850171184, "watches": [{"event": "e0e00000-0003-0003-0000-000000000000"}], "content": {"description": [":doc", [":p", {"s": "Keyboard shortcut manager. Registers global shortcuts for help dialog and Ctrl+E quick edit. Moved from kernel to userland. Note: Cmd+K (item palette) is handled by viewport-view."}]], "code": "// Keyboard Shortcuts Library\n// Registers global keyboard shortcuts, initialized by viewport:ready.\n// Capabilities obtained via require() at runtime (not captured closures).\n\nlet api = null;\n\nexport async function onViewportReady(event, _api) {\n  api = _api;\n\n  // Clean up old handler before registering new one (supports re-activation after edit)\n  cleanup();\n\n  window._userKeyboardHandler = async (e) => {\n    // Cmd/Ctrl+Shift+? - Help dialog\n    if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === '?') {\n      e.preventDefault();\n      try {\n        const helpDialog = await api.require('help-dialog');\n        helpDialog.show();\n      } catch (err) {\n        console.warn('help-dialog not available:', err.message);\n      }\n    }\n    // Ctrl+E - Edit selected item\n    if (e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey && e.key === 'e') {\n      const tag = document.activeElement?.tagName;\n      if (tag === 'INPUT' || tag === 'TEXTAREA' || document.activeElement?.isContentEditable) return;\n\n      const selMgr = await api.require('selection-manager');\n      const selectedId = selMgr.getSelection();\n      if (!selectedId) return;\n\n      e.preventDefault();\n\n      const parentId = selMgr.getSelectionParent();\n\n      try {\n        const vpMgr = await api.require('viewport-manager');\n        const rendering = vpMgr.getRendering();\n        const ctxLib = await api.require('context-menu-lib');\n        const item = await api.get(selectedId);\n        const enrichedApi = { ...api, getViews: (typeId) => rendering.getViews(typeId) };\n        const editView = await ctxLib.findEditableView(enrichedApi, item.type);\n        if (!editView) return;\n\n        if (parentId) {\n          const parent = await api.get(parentId);\n          const idx = parent.attachments.findIndex(c => c.id === selectedId);\n          if (idx >= 0) {\n            const child = parent.attachments[idx];\n            parent.attachments = [...parent.attachments];\n            parent.attachments[idx] = {\n              ...child,\n              previousView: child.view ? { ...child.view } : null,\n              view: { ...(child.view || {}), type: editView.id }\n            };\n            await api.set(parent);\n          }\n        } else {\n          const rootId = new URLSearchParams(window.location.search).get('root');\n          await vpMgr.navigate(rootId, { view: editView.id });\n        }\n      } catch (err) {\n        console.warn('Ctrl+E edit failed:', err.message);\n      }\n    }\n\n    // Ctrl+Shift+N - New child item on spatial canvas\n    if (e.ctrlKey && !e.metaKey && e.shiftKey && !e.altKey && e.key === 'N') {\n      const tag = document.activeElement?.tagName;\n      if (tag === 'INPUT' || tag === 'TEXTAREA' || document.activeElement?.isContentEditable) return;\n\n      const rootId = new URLSearchParams(window.location.search).get('root');\n      if (!rootId || !document.querySelector(`[data-container-id=\"${rootId}\"]`)) return;\n\n      e.preventDefault();\n\n      try {\n        const vpMgr = await api.require('viewport-manager');\n        const rendering = vpMgr.getRendering();\n        const typePicker = await api.require('type-picker-lib');\n        const ctxLib = await api.require('context-menu-lib');\n        const enrichedApi = {\n          ...api,\n          getViews: (typeId) => rendering.getViews(typeId),\n          createElement: window.kernel._baseCreateElement\n        };\n\n        const selectedType = await typePicker.showTypePicker(enrichedApi);\n        if (!selectedType) return;\n\n        const editView = await ctxLib.findEditableView(enrichedApi, selectedType);\n\n        const newItem = {\n          id: crypto.randomUUID(),\n          name: new Date().toISOString(),\n          type: selectedType,\n          created: Date.now(),\n          modified: Date.now(),\n          attachments: [],\n          content: {}\n        };\n        await api.set(newItem);\n\n        const attachment = { id: newItem.id };\n        if (editView) attachment.view = { type: editView.id };\n\n        const root = await api.get(rootId);\n        root.attachments = [...(root.attachments || []), attachment];\n        root.modified = Date.now();\n        await api.set(root);\n      } catch (err) {\n        console.warn('Ctrl+Shift+N failed:', err.message);\n      }\n    }\n\n    // Ctrl+Shift+A - Add existing item to spatial canvas\n    if (e.ctrlKey && !e.metaKey && e.shiftKey && !e.altKey && e.key === 'A') {\n      const tag = document.activeElement?.tagName;\n      if (tag === 'INPUT' || tag === 'TEXTAREA' || document.activeElement?.isContentEditable) return;\n\n      const rootId = new URLSearchParams(window.location.search).get('root');\n      if (!rootId || !document.querySelector(`[data-container-id=\"${rootId}\"]`)) return;\n\n      e.preventDefault();\n\n      try {\n        const modalLib = await api.require('modal-lib');\n        const searchLib = await api.require('item-search-lib');\n\n        const searchContainer = document.createElement('div');\n        const enrichedApi = { ...api, createElement: window.kernel._baseCreateElement };\n        const { close } = modalLib.showModal({\n          title: 'Add Existing Item',\n          width: '600px',\n          maxHeight: '80vh',\n          api: enrichedApi,\n          content: searchContainer\n        });\n\n        searchLib.createSearchUI(\n          searchContainer,\n          async (selectedItem) => {\n            close();\n            const root = await api.get(rootId);\n            root.attachments = [...(root.attachments || []), { id: selectedItem.id }];\n            root.modified = Date.now();\n            await api.set(root);\n          },\n          enrichedApi,\n          { placeholder: 'Search for items to add...', autoFocus: true }\n        );\n      } catch (err) {\n        console.warn('Ctrl+Shift+A failed:', err.message);\n      }\n    }\n\n    // Note: Cmd+K (item palette) is handled by viewport-view\n  };\n  document.addEventListener('keydown', window._userKeyboardHandler);\n}\n\n// Cleanup: remove old handler so new code can re-register\nexport function cleanup() {\n  if (window._userKeyboardHandler) {\n    document.removeEventListener('keydown', window._userKeyboardHandler);\n    delete window._userKeyboardHandler;\n  }\n}\n", "_symbols": {"api": {"name": "api", "line": 5, "col": 4, "endLine": 5, "endCol": 14, "kind": "variable", "scope": null}, "onViewportReady": {"name": "onViewportReady", "line": 7, "col": 7, "endLine": 161, "endCol": 1, "kind": "function", "scope": null, "signature": "(event, _api)"}, "onViewportReady.helpDialog": {"name": "helpDialog", "line": 18, "col": 14, "endLine": 18, "endCol": 59, "kind": "variable", "scope": "onViewportReady"}, "onViewportReady.tag": {"name": "tag", "line": 119, "col": 12, "endLine": 119, "endCol": 49, "kind": "variable", "scope": "onViewportReady"}, "onViewportReady.selMgr": {"name": "selMgr", "line": 29, "col": 12, "endLine": 29, "endCol": 59, "kind": "variable", "scope": "onViewportReady"}, "onViewportReady.selectedId": {"name": "selectedId", "line": 30, "col": 12, "endLine": 30, "endCol": 46, "kind": "variable", "scope": "onViewportReady"}, "onViewportReady.parentId": {"name": "parentId", "line": 35, "col": 12, "endLine": 35, "endCol": 50, "kind": "variable", "scope": "onViewportReady"}, "onViewportReady.vpMgr": {"name": "vpMgr", "line": 79, "col": 14, "endLine": 79, "endCol": 59, "kind": "variable", "scope": "onViewportReady"}, "onViewportReady.rendering": {"name": "rendering", "line": 80, "col": 14, "endLine": 80, "endCol": 46, "kind": "variable", "scope": "onViewportReady"}, "onViewportReady.ctxLib": {"name": "ctxLib", "line": 82, "col": 14, "endLine": 82, "endCol": 60, "kind": "variable", "scope": "onViewportReady"}, "onViewportReady.item": {"name": "item", "line": 41, "col": 14, "endLine": 41, "endCol": 46, "kind": "variable", "scope": "onViewportReady"}, "onViewportReady.enrichedApi": {"name": "enrichedApi", "line": 132, "col": 14, "endLine": 132, "endCol": 87, "kind": "variable", "scope": "onViewportReady"}, "enrichedApi.getViews": {"name": "getViews", "line": 85, "col": 10, "endLine": 85, "endCol": 58, "kind": "property-function", "scope": "enrichedApi", "signature": "(typeId)"}, "onViewportReady.editView": {"name": "editView", "line": 92, "col": 14, "endLine": 92, "endCol": 81, "kind": "variable", "scope": "onViewportReady"}, "onViewportReady.parent": {"name": "parent", "line": 47, "col": 16, "endLine": 47, "endCol": 48, "kind": "variable", "scope": "onViewportReady"}, "onViewportReady.idx": {"name": "idx", "line": 48, "col": 16, "endLine": 48, "endCol": 76, "kind": "variable", "scope": "onViewportReady"}, "onViewportReady.child": {"name": "child", "line": 50, "col": 18, "endLine": 50, "endCol": 49, "kind": "variable", "scope": "onViewportReady"}, "onViewportReady.previousView": {"name": "previousView", "line": 54, "col": 14, "endLine": 54, "endCol": 65, "kind": "property", "scope": "onViewportReady"}, "onViewportReady.view": {"name": "view", "line": 61, "col": 41, "endLine": 61, "endCol": 58, "kind": "property", "scope": "onViewportReady"}, "onViewportReady.view.type": {"name": "type", "line": 55, "col": 45, "endLine": 55, "endCol": 62, "kind": "property", "scope": "onViewportReady.view"}, "onViewportReady.rootId": {"name": "rootId", "line": 122, "col": 12, "endLine": 122, "endCol": 76, "kind": "variable", "scope": "onViewportReady"}, "onViewportReady.typePicker": {"name": "typePicker", "line": 81, "col": 14, "endLine": 81, "endCol": 63, "kind": "variable", "scope": "onViewportReady"}, "enrichedApi.createElement": {"name": "createElement", "line": 132, "col": 38, "endLine": 132, "endCol": 85, "kind": "property", "scope": "enrichedApi"}, "onViewportReady.selectedType": {"name": "selectedType", "line": 89, "col": 14, "endLine": 89, "endCol": 73, "kind": "variable", "scope": "onViewportReady"}, "onViewportReady.newItem": {"name": "newItem", "line": 94, "col": 14, "endLine": 102, "endCol": 9, "kind": "variable", "scope": "onViewportReady"}, "newItem.id": {"name": "id", "line": 95, "col": 10, "endLine": 95, "endCol": 33, "kind": "property", "scope": "newItem"}, "newItem.name": {"name": "name", "line": 96, "col": 10, "endLine": 96, "endCol": 40, "kind": "property", "scope": "newItem"}, "newItem.type": {"name": "type", "line": 97, "col": 10, "endLine": 97, "endCol": 28, "kind": "property", "scope": "newItem"}, "newItem.created": {"name": "created", "line": 98, "col": 10, "endLine": 98, "endCol": 29, "kind": "property", "scope": "newItem"}, "newItem.modified": {"name": "modified", "line": 99, "col": 10, "endLine": 99, "endCol": 30, "kind": "property", "scope": "newItem"}, "newItem.attachments": {"name": "attachments", "line": 100, "col": 10, "endLine": 100, "endCol": 25, "kind": "property", "scope": "newItem"}, "newItem.content": {"name": "content", "line": 101, "col": 10, "endLine": 101, "endCol": 21, "kind": "property", "scope": "newItem"}, "onViewportReady.attachment": {"name": "attachment", "line": 105, "col": 14, "endLine": 105, "endCol": 45, "kind": "variable", "scope": "onViewportReady"}, "attachment.id": {"name": "id", "line": 105, "col": 29, "endLine": 105, "endCol": 43, "kind": "property", "scope": "attachment"}, "onViewportReady.type": {"name": "type", "line": 106, "col": 42, "endLine": 106, "endCol": 59, "kind": "property", "scope": "onViewportReady"}, "onViewportReady.root": {"name": "root", "line": 145, "col": 18, "endLine": 145, "endCol": 46, "kind": "variable", "scope": "onViewportReady"}, "onViewportReady.modalLib": {"name": "modalLib", "line": 128, "col": 14, "endLine": 128, "endCol": 55, "kind": "variable", "scope": "onViewportReady"}, "onViewportReady.searchLib": {"name": "searchLib", "line": 129, "col": 14, "endLine": 129, "endCol": 62, "kind": "variable", "scope": "onViewportReady"}, "onViewportReady.searchContainer": {"name": "searchContainer", "line": 131, "col": 14, "endLine": 131, "endCol": 61, "kind": "variable", "scope": "onViewportReady"}, "onViewportReady.id": {"name": "id", "line": 146, "col": 63, "endLine": 146, "endCol": 82, "kind": "property", "scope": "onViewportReady"}, "onViewportReady.placeholder": {"name": "placeholder", "line": 151, "col": 12, "endLine": 151, "endCol": 53, "kind": "property", "scope": "onViewportReady"}, "onViewportReady.autoFocus": {"name": "autoFocus", "line": 151, "col": 55, "endLine": 151, "endCol": 70, "kind": "property", "scope": "onViewportReady"}, "cleanup": {"name": "cleanup", "line": 164, "col": 7, "endLine": 169, "endCol": 1, "kind": "function", "scope": null, "signature": "()"}}, "tags": ["a63eadd8-ec56-4163-acf2-207aa392069b"]}, "attachments": []}
+{
+  "id": "f1111111-0004-0000-0000-000000000000",
+  "type": "66666666-0000-0000-0000-000000000000",
+  "name": "keyboard-shortcuts",
+  "created": 1738368000000,
+  "modified": 1773850171184,
+  "watches": [
+    {
+      "event": "e0e00000-0003-0003-0000-000000000000"
+    }
+  ],
+  "content": {
+    "description": [
+      ":doc",
+      [
+        ":p",
+        {
+          "s": "Keyboard shortcut manager. Registers global shortcuts for help dialog and Ctrl+E quick edit. Moved from kernel to userland. Note: Cmd+K (item palette) is handled by viewport-view."
+        }
+      ]
+    ],
+    "code": "// Keyboard Shortcuts Library\n// Registers global keyboard shortcuts, initialized by viewport:ready.\n// Capabilities obtained via require() at runtime (not captured closures).\n\nlet api = null;\n\nexport async function onViewportReady(event, _api) {\n  api = _api;\n\n  // Clean up old handler before registering new one (supports re-activation after edit)\n  cleanup();\n\n  window._userKeyboardHandler = async (e) => {\n    // Cmd/Ctrl+Shift+? - Help dialog\n    if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === '?') {\n      e.preventDefault();\n      try {\n        const helpDialog = await api.require('help-dialog');\n        helpDialog.show();\n      } catch (err) {\n        console.warn('help-dialog not available:', err.message);\n      }\n    }\n    // Ctrl+E - Edit selected item\n    if (e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey && e.key === 'e') {\n      const tag = document.activeElement?.tagName;\n      if (tag === 'INPUT' || tag === 'TEXTAREA' || document.activeElement?.isContentEditable) return;\n\n      const selMgr = await api.require('selection-manager');\n      const selectedId = selMgr.getSelection();\n      if (!selectedId) return;\n\n      e.preventDefault();\n\n      const parentId = selMgr.getSelectionParent();\n\n      try {\n        const vpMgr = await api.require('viewport-manager');\n        const rendering = vpMgr.getRendering();\n        const ctxLib = await api.require('context-menu-lib');\n        const item = await api.get(selectedId);\n        const enrichedApi = { ...api, getViews: (typeId) => rendering.getViews(typeId) };\n        const editView = await ctxLib.findEditableView(enrichedApi, item.type);\n        if (!editView) return;\n\n        if (parentId) {\n          const parent = await api.get(parentId);\n          const idx = parent.attachments.findIndex(c => c.id === selectedId);\n          if (idx >= 0) {\n            const child = parent.attachments[idx];\n            parent.attachments = [...parent.attachments];\n            parent.attachments[idx] = {\n              ...child,\n              previousView: child.view ? { ...child.view } : null,\n              view: { ...(child.view || {}), type: editView.id }\n            };\n            await api.set(parent);\n          }\n        } else {\n          const rootId = new URLSearchParams(window.location.search).get('root');\n          await vpMgr.navigate(rootId, { view: editView.id });\n        }\n      } catch (err) {\n        console.warn('Ctrl+E edit failed:', err.message);\n      }\n    }\n\n    // Ctrl+Shift+N - New child item on spatial canvas\n    if (e.ctrlKey && !e.metaKey && e.shiftKey && !e.altKey && e.key === 'N') {\n      const tag = document.activeElement?.tagName;\n      if (tag === 'INPUT' || tag === 'TEXTAREA' || document.activeElement?.isContentEditable) return;\n\n      const rootId = new URLSearchParams(window.location.search).get('root');\n      if (!rootId || !document.querySelector(`[data-container-id=\"${rootId}\"]`)) return;\n\n      e.preventDefault();\n\n      try {\n        const vpMgr = await api.require('viewport-manager');\n        const rendering = vpMgr.getRendering();\n        const typePicker = await api.require('type-picker-lib');\n        const ctxLib = await api.require('context-menu-lib');\n        const enrichedApi = {\n          ...api,\n          getViews: (typeId) => rendering.getViews(typeId),\n          createElement: window.kernel._baseCreateElement\n        };\n\n        const selectedType = await typePicker.showTypePicker(enrichedApi);\n        if (!selectedType) return;\n\n        const editView = await ctxLib.findEditableView(enrichedApi, selectedType);\n\n        const newItem = {\n          id: crypto.randomUUID(),\n          name: new Date().toISOString(),\n          type: selectedType,\n          created: Date.now(),\n          modified: Date.now(),\n          attachments: [],\n          content: {}\n        };\n        await api.set(newItem);\n\n        const attachment = { id: newItem.id };\n        if (editView) attachment.view = { type: editView.id };\n\n        const root = await api.get(rootId);\n        root.attachments = [...(root.attachments || []), attachment];\n        root.modified = Date.now();\n        await api.set(root);\n      } catch (err) {\n        console.warn('Ctrl+Shift+N failed:', err.message);\n      }\n    }\n\n    // Ctrl+Shift+A - Add existing item to spatial canvas\n    if (e.ctrlKey && !e.metaKey && e.shiftKey && !e.altKey && e.key === 'A') {\n      const tag = document.activeElement?.tagName;\n      if (tag === 'INPUT' || tag === 'TEXTAREA' || document.activeElement?.isContentEditable) return;\n\n      const rootId = new URLSearchParams(window.location.search).get('root');\n      if (!rootId || !document.querySelector(`[data-container-id=\"${rootId}\"]`)) return;\n\n      e.preventDefault();\n\n      try {\n        const modalLib = await api.require('modal-lib');\n        const searchLib = await api.require('item-search-lib');\n\n        const searchContainer = document.createElement('div');\n        const enrichedApi = { ...api, createElement: window.kernel._baseCreateElement };\n        const { close } = modalLib.showModal({\n          title: 'Add Existing Item',\n          width: '600px',\n          maxHeight: '80vh',\n          api: enrichedApi,\n          content: searchContainer\n        });\n\n        searchLib.createSearchUI(\n          searchContainer,\n          async (selectedItem) => {\n            close();\n            const root = await api.get(rootId);\n            root.attachments = [...(root.attachments || []), { id: selectedItem.id }];\n            root.modified = Date.now();\n            await api.set(root);\n          },\n          enrichedApi,\n          { placeholder: 'Search for items to add...', autoFocus: true }\n        );\n      } catch (err) {\n        console.warn('Ctrl+Shift+A failed:', err.message);\n      }\n    }\n\n    // Note: Cmd+K (item palette) is handled by viewport-view\n  };\n  document.addEventListener('keydown', window._userKeyboardHandler);\n}\n\n// Cleanup: remove old handler so new code can re-register\nexport function cleanup() {\n  if (window._userKeyboardHandler) {\n    document.removeEventListener('keydown', window._userKeyboardHandler);\n    delete window._userKeyboardHandler;\n  }\n}\n",
+    "_symbols": {
+      "api": {
+        "name": "api",
+        "line": 5,
+        "col": 4,
+        "endLine": 5,
+        "endCol": 14,
+        "kind": "variable",
+        "scope": null
+      },
+      "onViewportReady": {
+        "name": "onViewportReady",
+        "line": 7,
+        "col": 7,
+        "endLine": 161,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(event, _api)"
+      },
+      "onViewportReady.helpDialog": {
+        "name": "helpDialog",
+        "line": 18,
+        "col": 14,
+        "endLine": 18,
+        "endCol": 59,
+        "kind": "variable",
+        "scope": "onViewportReady"
+      },
+      "onViewportReady.tag": {
+        "name": "tag",
+        "line": 119,
+        "col": 12,
+        "endLine": 119,
+        "endCol": 49,
+        "kind": "variable",
+        "scope": "onViewportReady"
+      },
+      "onViewportReady.selMgr": {
+        "name": "selMgr",
+        "line": 29,
+        "col": 12,
+        "endLine": 29,
+        "endCol": 59,
+        "kind": "variable",
+        "scope": "onViewportReady"
+      },
+      "onViewportReady.selectedId": {
+        "name": "selectedId",
+        "line": 30,
+        "col": 12,
+        "endLine": 30,
+        "endCol": 46,
+        "kind": "variable",
+        "scope": "onViewportReady"
+      },
+      "onViewportReady.parentId": {
+        "name": "parentId",
+        "line": 35,
+        "col": 12,
+        "endLine": 35,
+        "endCol": 50,
+        "kind": "variable",
+        "scope": "onViewportReady"
+      },
+      "onViewportReady.vpMgr": {
+        "name": "vpMgr",
+        "line": 79,
+        "col": 14,
+        "endLine": 79,
+        "endCol": 59,
+        "kind": "variable",
+        "scope": "onViewportReady"
+      },
+      "onViewportReady.rendering": {
+        "name": "rendering",
+        "line": 80,
+        "col": 14,
+        "endLine": 80,
+        "endCol": 46,
+        "kind": "variable",
+        "scope": "onViewportReady"
+      },
+      "onViewportReady.ctxLib": {
+        "name": "ctxLib",
+        "line": 82,
+        "col": 14,
+        "endLine": 82,
+        "endCol": 60,
+        "kind": "variable",
+        "scope": "onViewportReady"
+      },
+      "onViewportReady.item": {
+        "name": "item",
+        "line": 41,
+        "col": 14,
+        "endLine": 41,
+        "endCol": 46,
+        "kind": "variable",
+        "scope": "onViewportReady"
+      },
+      "onViewportReady.enrichedApi": {
+        "name": "enrichedApi",
+        "line": 132,
+        "col": 14,
+        "endLine": 132,
+        "endCol": 87,
+        "kind": "variable",
+        "scope": "onViewportReady"
+      },
+      "enrichedApi.getViews": {
+        "name": "getViews",
+        "line": 85,
+        "col": 10,
+        "endLine": 85,
+        "endCol": 58,
+        "kind": "property-function",
+        "scope": "enrichedApi",
+        "signature": "(typeId)"
+      },
+      "onViewportReady.editView": {
+        "name": "editView",
+        "line": 92,
+        "col": 14,
+        "endLine": 92,
+        "endCol": 81,
+        "kind": "variable",
+        "scope": "onViewportReady"
+      },
+      "onViewportReady.parent": {
+        "name": "parent",
+        "line": 47,
+        "col": 16,
+        "endLine": 47,
+        "endCol": 48,
+        "kind": "variable",
+        "scope": "onViewportReady"
+      },
+      "onViewportReady.idx": {
+        "name": "idx",
+        "line": 48,
+        "col": 16,
+        "endLine": 48,
+        "endCol": 76,
+        "kind": "variable",
+        "scope": "onViewportReady"
+      },
+      "onViewportReady.child": {
+        "name": "child",
+        "line": 50,
+        "col": 18,
+        "endLine": 50,
+        "endCol": 49,
+        "kind": "variable",
+        "scope": "onViewportReady"
+      },
+      "onViewportReady.previousView": {
+        "name": "previousView",
+        "line": 54,
+        "col": 14,
+        "endLine": 54,
+        "endCol": 65,
+        "kind": "property",
+        "scope": "onViewportReady"
+      },
+      "onViewportReady.view": {
+        "name": "view",
+        "line": 61,
+        "col": 41,
+        "endLine": 61,
+        "endCol": 58,
+        "kind": "property",
+        "scope": "onViewportReady"
+      },
+      "onViewportReady.view.type": {
+        "name": "type",
+        "line": 55,
+        "col": 45,
+        "endLine": 55,
+        "endCol": 62,
+        "kind": "property",
+        "scope": "onViewportReady.view"
+      },
+      "onViewportReady.rootId": {
+        "name": "rootId",
+        "line": 122,
+        "col": 12,
+        "endLine": 122,
+        "endCol": 76,
+        "kind": "variable",
+        "scope": "onViewportReady"
+      },
+      "onViewportReady.typePicker": {
+        "name": "typePicker",
+        "line": 81,
+        "col": 14,
+        "endLine": 81,
+        "endCol": 63,
+        "kind": "variable",
+        "scope": "onViewportReady"
+      },
+      "enrichedApi.createElement": {
+        "name": "createElement",
+        "line": 132,
+        "col": 38,
+        "endLine": 132,
+        "endCol": 85,
+        "kind": "property",
+        "scope": "enrichedApi"
+      },
+      "onViewportReady.selectedType": {
+        "name": "selectedType",
+        "line": 89,
+        "col": 14,
+        "endLine": 89,
+        "endCol": 73,
+        "kind": "variable",
+        "scope": "onViewportReady"
+      },
+      "onViewportReady.newItem": {
+        "name": "newItem",
+        "line": 94,
+        "col": 14,
+        "endLine": 102,
+        "endCol": 9,
+        "kind": "variable",
+        "scope": "onViewportReady"
+      },
+      "newItem.id": {
+        "name": "id",
+        "line": 95,
+        "col": 10,
+        "endLine": 95,
+        "endCol": 33,
+        "kind": "property",
+        "scope": "newItem"
+      },
+      "newItem.name": {
+        "name": "name",
+        "line": 96,
+        "col": 10,
+        "endLine": 96,
+        "endCol": 40,
+        "kind": "property",
+        "scope": "newItem"
+      },
+      "newItem.type": {
+        "name": "type",
+        "line": 97,
+        "col": 10,
+        "endLine": 97,
+        "endCol": 28,
+        "kind": "property",
+        "scope": "newItem"
+      },
+      "newItem.created": {
+        "name": "created",
+        "line": 98,
+        "col": 10,
+        "endLine": 98,
+        "endCol": 29,
+        "kind": "property",
+        "scope": "newItem"
+      },
+      "newItem.modified": {
+        "name": "modified",
+        "line": 99,
+        "col": 10,
+        "endLine": 99,
+        "endCol": 30,
+        "kind": "property",
+        "scope": "newItem"
+      },
+      "newItem.attachments": {
+        "name": "attachments",
+        "line": 100,
+        "col": 10,
+        "endLine": 100,
+        "endCol": 25,
+        "kind": "property",
+        "scope": "newItem"
+      },
+      "newItem.content": {
+        "name": "content",
+        "line": 101,
+        "col": 10,
+        "endLine": 101,
+        "endCol": 21,
+        "kind": "property",
+        "scope": "newItem"
+      },
+      "onViewportReady.attachment": {
+        "name": "attachment",
+        "line": 105,
+        "col": 14,
+        "endLine": 105,
+        "endCol": 45,
+        "kind": "variable",
+        "scope": "onViewportReady"
+      },
+      "attachment.id": {
+        "name": "id",
+        "line": 105,
+        "col": 29,
+        "endLine": 105,
+        "endCol": 43,
+        "kind": "property",
+        "scope": "attachment"
+      },
+      "onViewportReady.type": {
+        "name": "type",
+        "line": 106,
+        "col": 42,
+        "endLine": 106,
+        "endCol": 59,
+        "kind": "property",
+        "scope": "onViewportReady"
+      },
+      "onViewportReady.root": {
+        "name": "root",
+        "line": 145,
+        "col": 18,
+        "endLine": 145,
+        "endCol": 46,
+        "kind": "variable",
+        "scope": "onViewportReady"
+      },
+      "onViewportReady.modalLib": {
+        "name": "modalLib",
+        "line": 128,
+        "col": 14,
+        "endLine": 128,
+        "endCol": 55,
+        "kind": "variable",
+        "scope": "onViewportReady"
+      },
+      "onViewportReady.searchLib": {
+        "name": "searchLib",
+        "line": 129,
+        "col": 14,
+        "endLine": 129,
+        "endCol": 62,
+        "kind": "variable",
+        "scope": "onViewportReady"
+      },
+      "onViewportReady.searchContainer": {
+        "name": "searchContainer",
+        "line": 131,
+        "col": 14,
+        "endLine": 131,
+        "endCol": 61,
+        "kind": "variable",
+        "scope": "onViewportReady"
+      },
+      "onViewportReady.id": {
+        "name": "id",
+        "line": 146,
+        "col": 63,
+        "endLine": 146,
+        "endCol": 82,
+        "kind": "property",
+        "scope": "onViewportReady"
+      },
+      "onViewportReady.placeholder": {
+        "name": "placeholder",
+        "line": 151,
+        "col": 12,
+        "endLine": 151,
+        "endCol": 53,
+        "kind": "property",
+        "scope": "onViewportReady"
+      },
+      "onViewportReady.autoFocus": {
+        "name": "autoFocus",
+        "line": 151,
+        "col": 55,
+        "endLine": 151,
+        "endCol": 70,
+        "kind": "property",
+        "scope": "onViewportReady"
+      },
+      "cleanup": {
+        "name": "cleanup",
+        "line": 164,
+        "col": 7,
+        "endLine": 169,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "()"
+      }
+    },
+    "tags": [
+      "a63eadd8-ec56-4163-acf2-207aa392069b"
+    ]
+  },
+  "attachments": []
+}

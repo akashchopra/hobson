@@ -1,1 +1,235 @@
-{"id": "f1111111-0013-0000-0000-000000000000", "type": "66666666-0000-0000-0000-000000000000", "name": "pull-to-refresh", "created": 1774800000000, "modified": 1774532430163, "watches": [{"event": "e0e00000-0003-0003-0000-000000000000"}], "content": {"description": [":doc", [":p", {"s": "Pull-to-refresh gesture for mobile. Adds a pull-down gesture on #main-view that triggers a page reload. Only activates when env-mobile class is present. Correctly handles nested scroll containers."}]], "code": "// Pull-to-Refresh — mobile only\n// Adds pull-down gesture on #main-view to trigger page reload.\n// Activated by viewport:ready, gated on env-mobile class.\n\nexport async function onViewportReady(event, api) {\n  cleanup();\n  if (!document.documentElement.classList.contains('env-mobile')) return;\n\n  const mainView = document.getElementById('main-view');\n  if (!mainView) return;\n\n  const THRESHOLD = 80;\n  let startY = null;\n  let pulling = false;\n  let indicator = null;\n\n  // Check if any ancestor of target (up to mainView) is a scrollable\n  // element that has been scrolled down. If so, the user is scrolling\n  // that container back up — not pulling to refresh.\n  function hasScrolledAncestor(target) {\n    let el = target;\n    while (el && el !== mainView) {\n      if (el.scrollHeight > el.clientHeight + 1 && el.scrollTop > 0) {\n        return true;\n      }\n      el = el.parentElement;\n    }\n    return false;\n  }\n\n  function createIndicator() {\n    const el = document.createElement('div');\n    el.id = 'pull-to-refresh-indicator';\n    el.style.cssText = `\n      position: fixed; top: 0; left: 0; right: 0; z-index: 9999;\n      display: flex; align-items: center; justify-content: center;\n      height: 0; overflow: hidden;\n      background: var(--color-bg-surface-alt);\n      color: var(--color-text-secondary);\n      font-size: 14px;\n      border-bottom: 1px solid var(--color-border-light);\n      transition: none;\n    `;\n    el.textContent = '\\u2193';\n    document.body.prepend(el);\n    return el;\n  }\n\n  window._pullToRefreshHandlers = {\n    touchstart(e) {\n      if (mainView.scrollTop > 0) return;\n      if (hasScrolledAncestor(e.target)) return;\n      startY = e.touches[0].clientY;\n      pulling = false;\n      indicator = null;\n    },\n\n    touchmove(e) {\n      if (startY === null) return;\n      const dy = e.touches[0].clientY - startY;\n\n      if (dy > 10 && !pulling) {\n        pulling = true;\n        indicator = createIndicator();\n      }\n\n      if (!pulling) return;\n\n      e.preventDefault();\n\n      const distance = Math.min(dy, THRESHOLD * 2);\n      const progress = Math.min(distance / THRESHOLD, 1);\n      indicator.style.height = distance + 'px';\n\n      if (progress >= 1) {\n        indicator.textContent = '\\u2191 release to reload';\n      } else {\n        indicator.textContent = '\\u2193 pull to reload';\n      }\n    },\n\n    touchend() {\n      if (indicator) {\n        const distance = parseFloat(indicator.style.height);\n        if (distance >= THRESHOLD) {\n          indicator.textContent = '\\u27F3 reloading\\u2026';\n          indicator.style.transition = 'height 0.15s ease-out';\n          indicator.style.height = '40px';\n          setTimeout(() => location.reload(), 200);\n        } else {\n          indicator.style.transition = 'height 0.15s ease-out';\n          indicator.style.height = '0';\n          setTimeout(() => indicator?.remove(), 150);\n        }\n      }\n      startY = null;\n      pulling = false;\n    }\n  };\n\n  const h = window._pullToRefreshHandlers;\n  mainView.addEventListener('touchstart', h.touchstart, { passive: true });\n  mainView.addEventListener('touchmove', h.touchmove, { passive: false });\n  mainView.addEventListener('touchend', h.touchend, { passive: true });\n}\n\nexport function cleanup() {\n  const h = window._pullToRefreshHandlers;\n  if (h) {\n    const mainView = document.getElementById('main-view');\n    if (mainView) {\n      mainView.removeEventListener('touchstart', h.touchstart);\n      mainView.removeEventListener('touchmove', h.touchmove);\n      mainView.removeEventListener('touchend', h.touchend);\n    }\n    delete window._pullToRefreshHandlers;\n  }\n  document.getElementById('pull-to-refresh-indicator')?.remove();\n}\n", "tags": ["a63eadd8-ec56-4163-acf2-207aa392069b"], "_symbols": {"onViewportReady": {"name": "onViewportReady", "line": 5, "col": 7, "endLine": 105, "endCol": 1, "kind": "function", "scope": null, "signature": "(event, api)"}, "onViewportReady.mainView": {"name": "mainView", "line": 9, "col": 8, "endLine": 9, "endCol": 55, "kind": "variable", "scope": "onViewportReady"}, "onViewportReady.THRESHOLD": {"name": "THRESHOLD", "line": 12, "col": 8, "endLine": 12, "endCol": 22, "kind": "variable", "scope": "onViewportReady"}, "onViewportReady.startY": {"name": "startY", "line": 13, "col": 6, "endLine": 13, "endCol": 19, "kind": "variable", "scope": "onViewportReady"}, "onViewportReady.pulling": {"name": "pulling", "line": 14, "col": 6, "endLine": 14, "endCol": 21, "kind": "variable", "scope": "onViewportReady"}, "onViewportReady.indicator": {"name": "indicator", "line": 15, "col": 6, "endLine": 15, "endCol": 22, "kind": "variable", "scope": "onViewportReady"}, "onViewportReady.hasScrolledAncestor": {"name": "hasScrolledAncestor", "line": 20, "col": 2, "endLine": 29, "endCol": 3, "kind": "function", "scope": "onViewportReady", "signature": "(target)"}, "hasScrolledAncestor.el": {"name": "el", "line": 21, "col": 8, "endLine": 21, "endCol": 19, "kind": "variable", "scope": "hasScrolledAncestor"}, "onViewportReady.createIndicator": {"name": "createIndicator", "line": 31, "col": 2, "endLine": 47, "endCol": 3, "kind": "function", "scope": "onViewportReady", "signature": "()"}, "createIndicator.el": {"name": "el", "line": 32, "col": 10, "endLine": 32, "endCol": 44, "kind": "variable", "scope": "createIndicator"}, "onViewportReady.touchstart": {"name": "touchstart", "line": 50, "col": 4, "endLine": 56, "endCol": 5, "kind": "property-function", "scope": "onViewportReady", "signature": "(e)"}, "onViewportReady.touchmove": {"name": "touchmove", "line": 58, "col": 4, "endLine": 80, "endCol": 5, "kind": "property-function", "scope": "onViewportReady", "signature": "(e)"}, "onViewportReady.touchmove.dy": {"name": "dy", "line": 60, "col": 12, "endLine": 60, "endCol": 46, "kind": "variable", "scope": "onViewportReady.touchmove"}, "onViewportReady.touchmove.distance": {"name": "distance", "line": 71, "col": 12, "endLine": 71, "endCol": 50, "kind": "variable", "scope": "onViewportReady.touchmove"}, "onViewportReady.touchmove.progress": {"name": "progress", "line": 72, "col": 12, "endLine": 72, "endCol": 56, "kind": "variable", "scope": "onViewportReady.touchmove"}, "onViewportReady.touchend": {"name": "touchend", "line": 82, "col": 4, "endLine": 98, "endCol": 5, "kind": "property-function", "scope": "onViewportReady", "signature": "()"}, "onViewportReady.touchend.distance": {"name": "distance", "line": 84, "col": 14, "endLine": 84, "endCol": 59, "kind": "variable", "scope": "onViewportReady.touchend"}, "onViewportReady.h": {"name": "h", "line": 101, "col": 8, "endLine": 101, "endCol": 41, "kind": "variable", "scope": "onViewportReady"}, "onViewportReady.passive": {"name": "passive", "line": 104, "col": 54, "endLine": 104, "endCol": 67, "kind": "property", "scope": "onViewportReady"}, "cleanup": {"name": "cleanup", "line": 107, "col": 7, "endLine": 119, "endCol": 1, "kind": "function", "scope": null, "signature": "()"}, "cleanup.h": {"name": "h", "line": 108, "col": 8, "endLine": 108, "endCol": 41, "kind": "variable", "scope": "cleanup"}, "cleanup.mainView": {"name": "mainView", "line": 110, "col": 10, "endLine": 110, "endCol": 57, "kind": "variable", "scope": "cleanup"}}}, "attachments": []}
+{
+  "id": "f1111111-0013-0000-0000-000000000000",
+  "type": "66666666-0000-0000-0000-000000000000",
+  "name": "pull-to-refresh",
+  "created": 1774800000000,
+  "modified": 1774532430163,
+  "watches": [
+    {
+      "event": "e0e00000-0003-0003-0000-000000000000"
+    }
+  ],
+  "content": {
+    "description": [
+      ":doc",
+      [
+        ":p",
+        {
+          "s": "Pull-to-refresh gesture for mobile. Adds a pull-down gesture on #main-view that triggers a page reload. Only activates when env-mobile class is present. Correctly handles nested scroll containers."
+        }
+      ]
+    ],
+    "code": "// Pull-to-Refresh — mobile only\n// Adds pull-down gesture on #main-view to trigger page reload.\n// Activated by viewport:ready, gated on env-mobile class.\n\nexport async function onViewportReady(event, api) {\n  cleanup();\n  if (!document.documentElement.classList.contains('env-mobile')) return;\n\n  const mainView = document.getElementById('main-view');\n  if (!mainView) return;\n\n  const THRESHOLD = 80;\n  let startY = null;\n  let pulling = false;\n  let indicator = null;\n\n  // Check if any ancestor of target (up to mainView) is a scrollable\n  // element that has been scrolled down. If so, the user is scrolling\n  // that container back up — not pulling to refresh.\n  function hasScrolledAncestor(target) {\n    let el = target;\n    while (el && el !== mainView) {\n      if (el.scrollHeight > el.clientHeight + 1 && el.scrollTop > 0) {\n        return true;\n      }\n      el = el.parentElement;\n    }\n    return false;\n  }\n\n  function createIndicator() {\n    const el = document.createElement('div');\n    el.id = 'pull-to-refresh-indicator';\n    el.style.cssText = `\n      position: fixed; top: 0; left: 0; right: 0; z-index: 9999;\n      display: flex; align-items: center; justify-content: center;\n      height: 0; overflow: hidden;\n      background: var(--color-bg-surface-alt);\n      color: var(--color-text-secondary);\n      font-size: 14px;\n      border-bottom: 1px solid var(--color-border-light);\n      transition: none;\n    `;\n    el.textContent = '\\u2193';\n    document.body.prepend(el);\n    return el;\n  }\n\n  window._pullToRefreshHandlers = {\n    touchstart(e) {\n      if (mainView.scrollTop > 0) return;\n      if (hasScrolledAncestor(e.target)) return;\n      startY = e.touches[0].clientY;\n      pulling = false;\n      indicator = null;\n    },\n\n    touchmove(e) {\n      if (startY === null) return;\n      const dy = e.touches[0].clientY - startY;\n\n      if (dy > 10 && !pulling) {\n        pulling = true;\n        indicator = createIndicator();\n      }\n\n      if (!pulling) return;\n\n      e.preventDefault();\n\n      const distance = Math.min(dy, THRESHOLD * 2);\n      const progress = Math.min(distance / THRESHOLD, 1);\n      indicator.style.height = distance + 'px';\n\n      if (progress >= 1) {\n        indicator.textContent = '\\u2191 release to reload';\n      } else {\n        indicator.textContent = '\\u2193 pull to reload';\n      }\n    },\n\n    touchend() {\n      if (indicator) {\n        const distance = parseFloat(indicator.style.height);\n        if (distance >= THRESHOLD) {\n          indicator.textContent = '\\u27F3 reloading\\u2026';\n          indicator.style.transition = 'height 0.15s ease-out';\n          indicator.style.height = '40px';\n          setTimeout(() => location.reload(), 200);\n        } else {\n          indicator.style.transition = 'height 0.15s ease-out';\n          indicator.style.height = '0';\n          setTimeout(() => indicator?.remove(), 150);\n        }\n      }\n      startY = null;\n      pulling = false;\n    }\n  };\n\n  const h = window._pullToRefreshHandlers;\n  mainView.addEventListener('touchstart', h.touchstart, { passive: true });\n  mainView.addEventListener('touchmove', h.touchmove, { passive: false });\n  mainView.addEventListener('touchend', h.touchend, { passive: true });\n}\n\nexport function cleanup() {\n  const h = window._pullToRefreshHandlers;\n  if (h) {\n    const mainView = document.getElementById('main-view');\n    if (mainView) {\n      mainView.removeEventListener('touchstart', h.touchstart);\n      mainView.removeEventListener('touchmove', h.touchmove);\n      mainView.removeEventListener('touchend', h.touchend);\n    }\n    delete window._pullToRefreshHandlers;\n  }\n  document.getElementById('pull-to-refresh-indicator')?.remove();\n}\n",
+    "tags": [
+      "a63eadd8-ec56-4163-acf2-207aa392069b"
+    ],
+    "_symbols": {
+      "onViewportReady": {
+        "name": "onViewportReady",
+        "line": 5,
+        "col": 7,
+        "endLine": 105,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(event, api)"
+      },
+      "onViewportReady.mainView": {
+        "name": "mainView",
+        "line": 9,
+        "col": 8,
+        "endLine": 9,
+        "endCol": 55,
+        "kind": "variable",
+        "scope": "onViewportReady"
+      },
+      "onViewportReady.THRESHOLD": {
+        "name": "THRESHOLD",
+        "line": 12,
+        "col": 8,
+        "endLine": 12,
+        "endCol": 22,
+        "kind": "variable",
+        "scope": "onViewportReady"
+      },
+      "onViewportReady.startY": {
+        "name": "startY",
+        "line": 13,
+        "col": 6,
+        "endLine": 13,
+        "endCol": 19,
+        "kind": "variable",
+        "scope": "onViewportReady"
+      },
+      "onViewportReady.pulling": {
+        "name": "pulling",
+        "line": 14,
+        "col": 6,
+        "endLine": 14,
+        "endCol": 21,
+        "kind": "variable",
+        "scope": "onViewportReady"
+      },
+      "onViewportReady.indicator": {
+        "name": "indicator",
+        "line": 15,
+        "col": 6,
+        "endLine": 15,
+        "endCol": 22,
+        "kind": "variable",
+        "scope": "onViewportReady"
+      },
+      "onViewportReady.hasScrolledAncestor": {
+        "name": "hasScrolledAncestor",
+        "line": 20,
+        "col": 2,
+        "endLine": 29,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "onViewportReady",
+        "signature": "(target)"
+      },
+      "hasScrolledAncestor.el": {
+        "name": "el",
+        "line": 21,
+        "col": 8,
+        "endLine": 21,
+        "endCol": 19,
+        "kind": "variable",
+        "scope": "hasScrolledAncestor"
+      },
+      "onViewportReady.createIndicator": {
+        "name": "createIndicator",
+        "line": 31,
+        "col": 2,
+        "endLine": 47,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "onViewportReady",
+        "signature": "()"
+      },
+      "createIndicator.el": {
+        "name": "el",
+        "line": 32,
+        "col": 10,
+        "endLine": 32,
+        "endCol": 44,
+        "kind": "variable",
+        "scope": "createIndicator"
+      },
+      "onViewportReady.touchstart": {
+        "name": "touchstart",
+        "line": 50,
+        "col": 4,
+        "endLine": 56,
+        "endCol": 5,
+        "kind": "property-function",
+        "scope": "onViewportReady",
+        "signature": "(e)"
+      },
+      "onViewportReady.touchmove": {
+        "name": "touchmove",
+        "line": 58,
+        "col": 4,
+        "endLine": 80,
+        "endCol": 5,
+        "kind": "property-function",
+        "scope": "onViewportReady",
+        "signature": "(e)"
+      },
+      "onViewportReady.touchmove.dy": {
+        "name": "dy",
+        "line": 60,
+        "col": 12,
+        "endLine": 60,
+        "endCol": 46,
+        "kind": "variable",
+        "scope": "onViewportReady.touchmove"
+      },
+      "onViewportReady.touchmove.distance": {
+        "name": "distance",
+        "line": 71,
+        "col": 12,
+        "endLine": 71,
+        "endCol": 50,
+        "kind": "variable",
+        "scope": "onViewportReady.touchmove"
+      },
+      "onViewportReady.touchmove.progress": {
+        "name": "progress",
+        "line": 72,
+        "col": 12,
+        "endLine": 72,
+        "endCol": 56,
+        "kind": "variable",
+        "scope": "onViewportReady.touchmove"
+      },
+      "onViewportReady.touchend": {
+        "name": "touchend",
+        "line": 82,
+        "col": 4,
+        "endLine": 98,
+        "endCol": 5,
+        "kind": "property-function",
+        "scope": "onViewportReady",
+        "signature": "()"
+      },
+      "onViewportReady.touchend.distance": {
+        "name": "distance",
+        "line": 84,
+        "col": 14,
+        "endLine": 84,
+        "endCol": 59,
+        "kind": "variable",
+        "scope": "onViewportReady.touchend"
+      },
+      "onViewportReady.h": {
+        "name": "h",
+        "line": 101,
+        "col": 8,
+        "endLine": 101,
+        "endCol": 41,
+        "kind": "variable",
+        "scope": "onViewportReady"
+      },
+      "onViewportReady.passive": {
+        "name": "passive",
+        "line": 104,
+        "col": 54,
+        "endLine": 104,
+        "endCol": 67,
+        "kind": "property",
+        "scope": "onViewportReady"
+      },
+      "cleanup": {
+        "name": "cleanup",
+        "line": 107,
+        "col": 7,
+        "endLine": 119,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "()"
+      },
+      "cleanup.h": {
+        "name": "h",
+        "line": 108,
+        "col": 8,
+        "endLine": 108,
+        "endCol": 41,
+        "kind": "variable",
+        "scope": "cleanup"
+      },
+      "cleanup.mainView": {
+        "name": "mainView",
+        "line": 110,
+        "col": 10,
+        "endLine": 110,
+        "endCol": 57,
+        "kind": "variable",
+        "scope": "cleanup"
+      }
+    }
+  },
+  "attachments": []
+}
