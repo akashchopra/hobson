@@ -53,11 +53,15 @@ async function importFile(tauri, path, id, api) {
     const item = JSON.parse(text);
     if (!item.id || item.id !== id) return;
 
-    // Skip if file is stale or identical to IDB
+    // Skip if file is identical to IDB, or is a stale file-mirror echo
     const existing = await api.get(id).catch(() => null);
     if (existing) {
-      if (item.modified < existing.modified) return;  // stale file-mirror write
       if (JSON.stringify(existing) === JSON.stringify(item)) return;  // echo
+      // Only treat as stale if modified < IDB AND the file matches a known
+      // file-mirror write. External edits (which don't update modified) won't
+      // match, so they'll be imported even with an older timestamp.
+      const lastMirrorWrite = globalThis.__fileMirrorWrites__?.[id];
+      if (item.modified < existing.modified && item.modified === lastMirrorWrite) return;
     }
 
     await api.set(item, { silent: true });
