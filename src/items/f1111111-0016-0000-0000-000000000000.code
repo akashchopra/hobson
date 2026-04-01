@@ -1,0 +1,88 @@
+// file-watcher — Watches src/items/ for changes and imports into Hobson.
+// Companion to file-mirror for bidirectional disk ↔ IDB sync.
+// Tauri desktop only. Uses silent saves to avoid triggering file-mirror.
+
+const SELF_ID = 'f1111111-0016-0000-0000-000000000000';
+const DEBOUNCE_MS = 1000;
+
+let unwatch = null;
+let _api = null;
+let renderTimeout = null;
+const pending = new Map();
+
+export async function onKernelBootComplete({ safeMode }, api) {
+  if (safeMode) return;
+  const tauri = window.__TAURI__;
+  if (!tauri) return;
+  if (document.documentElement.classList.contains('env-mobile')) return;
+
+  const self = await api.get(SELF_ID);
+  const basePath = self.content?.path;
+  if (!basePath) {
+    console.warn('[file-watcher] No watch path configured');
+    return;
+  }
+  if (self.content?.enabled === false) {
+    console.log('[file-watcher] Disabled by config');
+    return;
+  }
+
+  _api = api;
+
+  unwatch = await tauri.fs.watch(basePath, (event) => {
+    for (const path of event.paths || []) {
+      if (!path.endsWith('.json')) continue;
+      const filename = path.split('/').pop();
+      if (filename === 'backup.json') continue;
+      const id = filename.replace('.json', '');
+
+      if (pending.has(id)) clearTimeout(pending.get(id));
+      pending.set(id, setTimeout(() => {
+        pending.delete(id);
+        importFile(tauri, path, id, api);
+      }, DEBOUNCE_MS));
+    }
+  }, { recursive: false });
+
+  console.log(`[file-watcher] Watching ${basePath}`);
+}
+
+async function importFile(tauri, path, id, api) {
+  try {
+    const text = await tauri.fs.readTextFile(path);
+    const item = JSON.parse(text);
+    if (!item.id || item.id !== id) return;
+
+    // Skip if file is stale or identical to IDB
+    const existing = await api.get(id).catch(() => null);
+    if (existing) {
+      if (item.modified < existing.modified) return;  // stale file-mirror write
+      if (JSON.stringify(existing) === JSON.stringify(item)) return;  // echo
+    }
+
+    await api.set(item, { silent: true, preserveModified: true });
+    console.log(`[file-watcher] ${item.name || id}`);
+    scheduleRender(api);
+  } catch (e) {
+    if (String(e).includes('No such file')) return;
+    console.error(`[file-watcher] Failed to import ${id}:`, e);
+  }
+}
+
+function scheduleRender(api) {
+  if (renderTimeout) clearTimeout(renderTimeout);
+  renderTimeout = setTimeout(async () => {
+    renderTimeout = null;
+    try {
+      const vp = await api.require('viewport-rendering');
+      vp.getRendering()?.renderViewport();
+    } catch (e) { /* viewport not ready */ }
+  }, 500);
+}
+
+export function cleanup() {
+  for (const t of pending.values()) clearTimeout(t);
+  pending.clear();
+  if (renderTimeout) { clearTimeout(renderTimeout); renderTimeout = null; }
+  if (unwatch) { unwatch(); unwatch = null; }
+}
