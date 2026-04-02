@@ -1,0 +1,304 @@
+// file-sync-view — View + logic for file-sync instances.
+// Provides bidirectional sync between Hobson (IDB) and disk.
+// Two mutually exclusive modes: mirror (Hobson → disk) and watch (disk → Hobson).
+
+const INSTANCE_ID = 'f1111111-0017-0001-0000-000000000000';
+const ITEM_EVENT = 'e0e00000-0001-0000-0000-000000000000';
+const ITEM_DELETED_ID = 'e0e00000-0001-0003-0000-000000000000';
+const MIRROR_DEBOUNCE_MS = 2000;
+const WATCH_DEBOUNCE_MS = 1000;
+
+// State
+let mode = null;        // 'mirror' or 'watch'
+let _api = null;
+let _tauri = null;
+let _basePath = null;
+let hob = null;
+
+// Mirror state
+let mirrorUnsub = null;
+const mirrorPending = new Map();
+
+// Watch state
+let unwatchFn = null;
+const watchPending = new Map();
+
+// ── Mirror mode ──────────────────────────────────────────────────────────
+
+function startMirror() {
+  mirrorUnsub = _api.events.on(ITEM_EVENT, (event) => {
+    const { id, item } = event.content;
+
+    if (mirrorPending.has(id)) clearTimeout(mirrorPending.get(id));
+
+    if (event.type === ITEM_DELETED_ID) {
+      removePair(id);
+      return;
+    }
+
+    mirrorPending.set(id, setTimeout(() => {
+      mirrorPending.delete(id);
+      writeItem(item);
+    }, MIRROR_DEBOUNCE_MS));
+  });
+
+  console.log(`[file-sync] Mirror mode — Hobson → ${_basePath}`);
+}
+
+function stopMirror() {
+  for (const t of mirrorPending.values()) clearTimeout(t);
+  mirrorPending.clear();
+  if (mirrorUnsub) { mirrorUnsub(); mirrorUnsub = null; }
+}
+
+async function writeItem(item) {
+  if (mode !== 'mirror') return;
+  try {
+    const json = JSON.stringify(item, null, 2);
+    await _tauri.fs.writeTextFile(`${_basePath}/${item.id}.json`, json);
+    const wrote = ['.json'];
+
+    const hasJS = !!item.content?.code;
+    const hasHob = Array.isArray(item.content?.hob);
+
+    if (hasJS || hasHob) {
+      if (hasHob && !hob) {
+        hob = await _api.require('40b00001-0000-4000-8000-000000000000');
+      }
+      const parts = [];
+      if (hasJS && hasHob) {
+        parts.push(';;; --- JavaScript ---');
+        parts.push(item.content.code);
+        parts.push('');
+        parts.push(';;; --- Hob ---');
+        parts.push(hob.prettyPrintAll(item.content.hob));
+      } else if (hasJS) {
+        parts.push(item.content.code);
+      } else {
+        parts.push(hob.prettyPrintAll(item.content.hob));
+      }
+      await _tauri.fs.writeTextFile(`${_basePath}/${item.id}.code`, parts.join('\n'));
+      wrote.push('.code');
+    }
+
+    console.log(`[file-sync] ⟹ ${item.name || item.id} (${wrote.join(' ')})`);
+  } catch (e) {
+    console.error(`[file-sync] Failed to export ${item.id}:`, e);
+  }
+}
+
+async function removePair(id) {
+  mirrorPending.delete(id);
+  try { await _tauri.fs.remove(`${_basePath}/${id}.json`); } catch (e) { /* may not exist */ }
+  try { await _tauri.fs.remove(`${_basePath}/${id}.code`); } catch (e) { /* may not exist */ }
+}
+
+// ── Watch mode ───────────────────────────────────────────────────────────
+
+const lastSeenText = new Map();  // id → file text at last read, cleared on mode switch
+
+async function startWatch() {
+  lastSeenText.clear();
+
+  unwatchFn = await _tauri.fs.watch(_basePath, (event) => {
+    // Only process file writes — ignore access/open/close events
+    // (readTextFile triggers access:open events which would cause infinite loops)
+    if (!event.type?.modify && !event.type?.create) return;
+
+    for (const path of event.paths || []) {
+      if (!path.endsWith('.json')) continue;
+      const filename = path.split('/').pop();
+      if (filename === 'backup.json') continue;
+      const id = filename.replace('.json', '');
+
+      if (watchPending.has(id)) clearTimeout(watchPending.get(id));
+      watchPending.set(id, setTimeout(() => {
+        watchPending.delete(id);
+        importFile(path, id);
+      }, WATCH_DEBOUNCE_MS));
+    }
+  }, { recursive: false });
+
+  console.log(`[file-sync] Watch mode — ${_basePath} → Hobson`);
+}
+
+function stopWatch() {
+  for (const t of watchPending.values()) clearTimeout(t);
+  watchPending.clear();
+  lastSeenText.clear();
+  if (unwatchFn) { unwatchFn(); unwatchFn = null; }
+}
+
+async function importFile(path, id) {
+  try {
+    const text = await _tauri.fs.readTextFile(path);
+
+    // Skip if file text unchanged since last read — catches phantom fs events
+    if (lastSeenText.get(id) === text) return;
+    lastSeenText.set(id, text);
+
+    const item = JSON.parse(text);
+    if (!item.id || item.id !== id) return;
+
+    // Skip if file content matches IDB (ignore modified — it gets bumped on import)
+    const existing = await _api.get(id).catch(() => null);
+    if (existing) {
+      const { modified: _a, ...existingRest } = existing;
+      const { modified: _b, ...itemRest } = item;
+      if (JSON.stringify(existingRest) === JSON.stringify(itemRest)) return;
+    }
+
+    await _api.set(item);
+    console.log(`[file-sync] ⟸ ${item.name || id}`);
+  } catch (e) {
+    if (String(e).includes('No such file')) return;
+    console.error(`[file-sync] Failed to import ${id}:`, e);
+  }
+}
+
+// ── Mode management ──────────────────────────────────────────────────────
+
+async function activate(newMode) {
+  if (newMode === 'mirror') {
+    startMirror();
+  } else {
+    await startWatch();
+  }
+  mode = newMode;
+}
+
+async function deactivate() {
+  if (mode === 'mirror') {
+    stopMirror();
+  } else if (mode === 'watch') {
+    stopWatch();
+  }
+}
+
+export async function setMode(newMode) {
+  if (newMode !== 'mirror' && newMode !== 'watch') {
+    throw new Error("Mode must be 'mirror' or 'watch'");
+  }
+  if (newMode === mode) return mode;
+
+  await deactivate();
+
+  // Switching watch → mirror: full sync to catch Hobson-side changes
+  if (newMode === 'mirror') {
+    await fullSync();
+  }
+
+  await activate(newMode);
+
+  // Persist mode
+  const self = await _api.get(INSTANCE_ID);
+  self.content.mode = newMode;
+  await _api.set(self, { silent: true });
+
+  return mode;
+}
+
+export function getMode() { return mode; }
+
+// ── Full sync ────────────────────────────────────────────────────────────
+
+export async function fullSync() {
+  if (!_api) throw new Error('file-sync not initialized');
+
+  const items = await _api.getAll();
+  let count = 0;
+  for (const item of items) {
+    await writeItem(item);
+    count++;
+  }
+  console.log(`[file-sync] Full sync complete: ${count} items`);
+  return count;
+}
+
+// ── Boot & cleanup ───────────────────────────────────────────────────────
+
+export async function onKernelBootComplete({ safeMode }, api) {
+  if (safeMode) return;
+  if (_api) return; // Already initialized
+
+  const tauri = window.__TAURI__;
+  if (!tauri) return;
+  if (document.documentElement.classList.contains('env-mobile')) return;
+
+  const self = await api.get(INSTANCE_ID);
+  const basePath = self.content?.path;
+  if (!basePath) {
+    console.warn('[file-sync] No path configured');
+    return;
+  }
+  if (self.content?.enabled === false) {
+    console.log('[file-sync] Disabled');
+    return;
+  }
+
+  _api = api;
+  _tauri = tauri;
+  _basePath = basePath;
+
+  const initialMode = self.content?.mode || 'mirror';
+  await activate(initialMode);
+
+  window.addEventListener('beforeunload', cleanup);
+}
+
+export function cleanup() {
+  deactivate();
+  window.removeEventListener('beforeunload', cleanup);
+}
+
+// ── View ─────────────────────────────────────────────────────────────────
+
+export async function render(item, api) {
+  const container = api.createElement('div', {
+    style: 'display:flex; flex-direction:column; align-items:center; justify-content:center; height:100%; gap:16px; font-family:var(--font-family);'
+  });
+
+  const label = api.createElement('div', {
+    style: 'font-size:1.1rem; color:var(--color-text-secondary);'
+  });
+
+  const btn = api.createElement('button', {
+    style: 'padding:8px 20px; cursor:pointer; font-size:0.9rem; border:1px solid var(--color-border); border-radius:var(--border-radius); background:var(--color-bg-secondary); color:var(--color-text);'
+  });
+
+  const status = api.createElement('div', {
+    style: 'font-size:0.75rem; color:var(--color-text-tertiary);'
+  });
+
+  function update() {
+    const m = mode || item.content?.mode || 'mirror';
+    if (m === 'mirror') {
+      label.textContent = 'Hobson \u2192 Disk';
+      btn.textContent = 'Switch to Watch';
+      status.textContent = 'Mirroring item changes to disk';
+    } else {
+      label.textContent = 'Disk \u2192 Hobson';
+      btn.textContent = 'Switch to Mirror';
+      status.textContent = 'Watching disk for external edits';
+    }
+  }
+
+  btn.onclick = async () => {
+    btn.disabled = true;
+    btn.textContent = 'Switching\u2026';
+    try {
+      const newMode = (mode || item.content?.mode) === 'mirror' ? 'watch' : 'mirror';
+      await setMode(newMode);
+    } catch (e) {
+      console.error('[file-sync] Mode switch failed:', e);
+    }
+    btn.disabled = false;
+    update();
+  };
+
+  update();
+  container.appendChild(label);
+  container.appendChild(btn);
+  container.appendChild(status);
+  return container;
+}

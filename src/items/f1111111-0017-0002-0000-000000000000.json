@@ -1,0 +1,583 @@
+{
+  "id": "f1111111-0017-0002-0000-000000000000",
+  "name": "file-sync-view",
+  "type": "aaaaaaaa-0000-0000-0000-000000000000",
+  "created": 1775123009419,
+  "modified": 1775123714374,
+  "watches": [
+    {
+      "event": "e0e00000-0002-0002-0000-000000000000"
+    }
+  ],
+  "content": {
+    "for_type": "f1111111-0017-0000-0000-000000000000",
+    "displayName": "File Sync",
+    "description": [
+      ":doc",
+      [
+        ":p",
+        {
+          "s": "View and controller for file-sync instances. Handles bidirectional sync between Hobson and disk, with a toggle UI for switching modes."
+        }
+      ]
+    ],
+    "capabilities": [
+      "read",
+      "write"
+    ],
+    "code": "// file-sync-view — View + logic for file-sync instances.\n// Provides bidirectional sync between Hobson (IDB) and disk.\n// Two mutually exclusive modes: mirror (Hobson → disk) and watch (disk → Hobson).\n\nconst INSTANCE_ID = 'f1111111-0017-0001-0000-000000000000';\nconst ITEM_EVENT = 'e0e00000-0001-0000-0000-000000000000';\nconst ITEM_DELETED_ID = 'e0e00000-0001-0003-0000-000000000000';\nconst MIRROR_DEBOUNCE_MS = 2000;\nconst WATCH_DEBOUNCE_MS = 1000;\n\n// State\nlet mode = null;        // 'mirror' or 'watch'\nlet _api = null;\nlet _tauri = null;\nlet _basePath = null;\nlet hob = null;\n\n// Mirror state\nlet mirrorUnsub = null;\nconst mirrorPending = new Map();\n\n// Watch state\nlet unwatchFn = null;\nconst watchPending = new Map();\n\n// ── Mirror mode ──────────────────────────────────────────────────────────\n\nfunction startMirror() {\n  mirrorUnsub = _api.events.on(ITEM_EVENT, (event) => {\n    const { id, item } = event.content;\n\n    if (mirrorPending.has(id)) clearTimeout(mirrorPending.get(id));\n\n    if (event.type === ITEM_DELETED_ID) {\n      removePair(id);\n      return;\n    }\n\n    mirrorPending.set(id, setTimeout(() => {\n      mirrorPending.delete(id);\n      writeItem(item);\n    }, MIRROR_DEBOUNCE_MS));\n  });\n\n  console.log(`[file-sync] Mirror mode — Hobson → ${_basePath}`);\n}\n\nfunction stopMirror() {\n  for (const t of mirrorPending.values()) clearTimeout(t);\n  mirrorPending.clear();\n  if (mirrorUnsub) { mirrorUnsub(); mirrorUnsub = null; }\n}\n\nasync function writeItem(item) {\n  if (mode !== 'mirror') return;\n  try {\n    const json = JSON.stringify(item, null, 2);\n    await _tauri.fs.writeTextFile(`${_basePath}/${item.id}.json`, json);\n    const wrote = ['.json'];\n\n    const hasJS = !!item.content?.code;\n    const hasHob = Array.isArray(item.content?.hob);\n\n    if (hasJS || hasHob) {\n      if (hasHob && !hob) {\n        hob = await _api.require('40b00001-0000-4000-8000-000000000000');\n      }\n      const parts = [];\n      if (hasJS && hasHob) {\n        parts.push(';;; --- JavaScript ---');\n        parts.push(item.content.code);\n        parts.push('');\n        parts.push(';;; --- Hob ---');\n        parts.push(hob.prettyPrintAll(item.content.hob));\n      } else if (hasJS) {\n        parts.push(item.content.code);\n      } else {\n        parts.push(hob.prettyPrintAll(item.content.hob));\n      }\n      await _tauri.fs.writeTextFile(`${_basePath}/${item.id}.code`, parts.join('\\n'));\n      wrote.push('.code');\n    }\n\n    console.log(`[file-sync] ⟹ ${item.name || item.id} (${wrote.join(' ')})`);\n  } catch (e) {\n    console.error(`[file-sync] Failed to export ${item.id}:`, e);\n  }\n}\n\nasync function removePair(id) {\n  mirrorPending.delete(id);\n  try { await _tauri.fs.remove(`${_basePath}/${id}.json`); } catch (e) { /* may not exist */ }\n  try { await _tauri.fs.remove(`${_basePath}/${id}.code`); } catch (e) { /* may not exist */ }\n}\n\n// ── Watch mode ───────────────────────────────────────────────────────────\n\nconst lastSeenText = new Map();  // id → file text at last read, cleared on mode switch\n\nasync function startWatch() {\n  lastSeenText.clear();\n\n  unwatchFn = await _tauri.fs.watch(_basePath, (event) => {\n    // Only process file writes — ignore access/open/close events\n    // (readTextFile triggers access:open events which would cause infinite loops)\n    if (!event.type?.modify && !event.type?.create) return;\n\n    for (const path of event.paths || []) {\n      if (!path.endsWith('.json')) continue;\n      const filename = path.split('/').pop();\n      if (filename === 'backup.json') continue;\n      const id = filename.replace('.json', '');\n\n      if (watchPending.has(id)) clearTimeout(watchPending.get(id));\n      watchPending.set(id, setTimeout(() => {\n        watchPending.delete(id);\n        importFile(path, id);\n      }, WATCH_DEBOUNCE_MS));\n    }\n  }, { recursive: false });\n\n  console.log(`[file-sync] Watch mode — ${_basePath} → Hobson`);\n}\n\nfunction stopWatch() {\n  for (const t of watchPending.values()) clearTimeout(t);\n  watchPending.clear();\n  lastSeenText.clear();\n  if (unwatchFn) { unwatchFn(); unwatchFn = null; }\n}\n\nasync function importFile(path, id) {\n  try {\n    const text = await _tauri.fs.readTextFile(path);\n\n    // Skip if file text unchanged since last read — catches phantom fs events\n    if (lastSeenText.get(id) === text) return;\n    lastSeenText.set(id, text);\n\n    const item = JSON.parse(text);\n    if (!item.id || item.id !== id) return;\n\n    // Skip if file content matches IDB (ignore modified — it gets bumped on import)\n    const existing = await _api.get(id).catch(() => null);\n    if (existing) {\n      const { modified: _a, ...existingRest } = existing;\n      const { modified: _b, ...itemRest } = item;\n      if (JSON.stringify(existingRest) === JSON.stringify(itemRest)) return;\n    }\n\n    await _api.set(item);\n    console.log(`[file-sync] ⟸ ${item.name || id}`);\n  } catch (e) {\n    if (String(e).includes('No such file')) return;\n    console.error(`[file-sync] Failed to import ${id}:`, e);\n  }\n}\n\n// ── Mode management ──────────────────────────────────────────────────────\n\nasync function activate(newMode) {\n  if (newMode === 'mirror') {\n    startMirror();\n  } else {\n    await startWatch();\n  }\n  mode = newMode;\n}\n\nasync function deactivate() {\n  if (mode === 'mirror') {\n    stopMirror();\n  } else if (mode === 'watch') {\n    stopWatch();\n  }\n}\n\nexport async function setMode(newMode) {\n  if (newMode !== 'mirror' && newMode !== 'watch') {\n    throw new Error(\"Mode must be 'mirror' or 'watch'\");\n  }\n  if (newMode === mode) return mode;\n\n  await deactivate();\n\n  // Switching watch → mirror: full sync to catch Hobson-side changes\n  if (newMode === 'mirror') {\n    await fullSync();\n  }\n\n  await activate(newMode);\n\n  // Persist mode\n  const self = await _api.get(INSTANCE_ID);\n  self.content.mode = newMode;\n  await _api.set(self, { silent: true });\n\n  return mode;\n}\n\nexport function getMode() { return mode; }\n\n// ── Full sync ────────────────────────────────────────────────────────────\n\nexport async function fullSync() {\n  if (!_api) throw new Error('file-sync not initialized');\n\n  const items = await _api.getAll();\n  let count = 0;\n  for (const item of items) {\n    await writeItem(item);\n    count++;\n  }\n  console.log(`[file-sync] Full sync complete: ${count} items`);\n  return count;\n}\n\n// ── Boot & cleanup ───────────────────────────────────────────────────────\n\nexport async function onKernelBootComplete({ safeMode }, api) {\n  if (safeMode) return;\n  if (_api) return; // Already initialized\n\n  const tauri = window.__TAURI__;\n  if (!tauri) return;\n  if (document.documentElement.classList.contains('env-mobile')) return;\n\n  const self = await api.get(INSTANCE_ID);\n  const basePath = self.content?.path;\n  if (!basePath) {\n    console.warn('[file-sync] No path configured');\n    return;\n  }\n  if (self.content?.enabled === false) {\n    console.log('[file-sync] Disabled');\n    return;\n  }\n\n  _api = api;\n  _tauri = tauri;\n  _basePath = basePath;\n\n  const initialMode = self.content?.mode || 'mirror';\n  await activate(initialMode);\n\n  window.addEventListener('beforeunload', cleanup);\n}\n\nexport function cleanup() {\n  deactivate();\n  window.removeEventListener('beforeunload', cleanup);\n}\n\n// ── View ─────────────────────────────────────────────────────────────────\n\nexport async function render(item, api) {\n  const container = api.createElement('div', {\n    style: 'display:flex; flex-direction:column; align-items:center; justify-content:center; height:100%; gap:16px; font-family:var(--font-family);'\n  });\n\n  const label = api.createElement('div', {\n    style: 'font-size:1.1rem; color:var(--color-text-secondary);'\n  });\n\n  const btn = api.createElement('button', {\n    style: 'padding:8px 20px; cursor:pointer; font-size:0.9rem; border:1px solid var(--color-border); border-radius:var(--border-radius); background:var(--color-bg-secondary); color:var(--color-text);'\n  });\n\n  const status = api.createElement('div', {\n    style: 'font-size:0.75rem; color:var(--color-text-tertiary);'\n  });\n\n  function update() {\n    const m = mode || item.content?.mode || 'mirror';\n    if (m === 'mirror') {\n      label.textContent = 'Hobson \\u2192 Disk';\n      btn.textContent = 'Switch to Watch';\n      status.textContent = 'Mirroring item changes to disk';\n    } else {\n      label.textContent = 'Disk \\u2192 Hobson';\n      btn.textContent = 'Switch to Mirror';\n      status.textContent = 'Watching disk for external edits';\n    }\n  }\n\n  btn.onclick = async () => {\n    btn.disabled = true;\n    btn.textContent = 'Switching\\u2026';\n    try {\n      const newMode = (mode || item.content?.mode) === 'mirror' ? 'watch' : 'mirror';\n      await setMode(newMode);\n    } catch (e) {\n      console.error('[file-sync] Mode switch failed:', e);\n    }\n    btn.disabled = false;\n    update();\n  };\n\n  update();\n  container.appendChild(label);\n  container.appendChild(btn);\n  container.appendChild(status);\n  return container;\n}\n",
+    "tags": [
+      "c0c0c0c0-0085-0000-0000-000000000000"
+    ],
+    "_symbols": {
+      "INSTANCE_ID": {
+        "name": "INSTANCE_ID",
+        "line": 5,
+        "col": 6,
+        "endLine": 5,
+        "endCol": 58,
+        "kind": "variable",
+        "scope": null
+      },
+      "ITEM_EVENT": {
+        "name": "ITEM_EVENT",
+        "line": 6,
+        "col": 6,
+        "endLine": 6,
+        "endCol": 57,
+        "kind": "variable",
+        "scope": null
+      },
+      "ITEM_DELETED_ID": {
+        "name": "ITEM_DELETED_ID",
+        "line": 7,
+        "col": 6,
+        "endLine": 7,
+        "endCol": 62,
+        "kind": "variable",
+        "scope": null
+      },
+      "MIRROR_DEBOUNCE_MS": {
+        "name": "MIRROR_DEBOUNCE_MS",
+        "line": 8,
+        "col": 6,
+        "endLine": 8,
+        "endCol": 31,
+        "kind": "variable",
+        "scope": null
+      },
+      "WATCH_DEBOUNCE_MS": {
+        "name": "WATCH_DEBOUNCE_MS",
+        "line": 9,
+        "col": 6,
+        "endLine": 9,
+        "endCol": 30,
+        "kind": "variable",
+        "scope": null
+      },
+      "mode": {
+        "name": "mode",
+        "line": 12,
+        "col": 4,
+        "endLine": 12,
+        "endCol": 15,
+        "kind": "variable",
+        "scope": null
+      },
+      "_api": {
+        "name": "_api",
+        "line": 13,
+        "col": 4,
+        "endLine": 13,
+        "endCol": 15,
+        "kind": "variable",
+        "scope": null
+      },
+      "_tauri": {
+        "name": "_tauri",
+        "line": 14,
+        "col": 4,
+        "endLine": 14,
+        "endCol": 17,
+        "kind": "variable",
+        "scope": null
+      },
+      "_basePath": {
+        "name": "_basePath",
+        "line": 15,
+        "col": 4,
+        "endLine": 15,
+        "endCol": 20,
+        "kind": "variable",
+        "scope": null
+      },
+      "hob": {
+        "name": "hob",
+        "line": 16,
+        "col": 4,
+        "endLine": 16,
+        "endCol": 14,
+        "kind": "variable",
+        "scope": null
+      },
+      "mirrorUnsub": {
+        "name": "mirrorUnsub",
+        "line": 19,
+        "col": 4,
+        "endLine": 19,
+        "endCol": 22,
+        "kind": "variable",
+        "scope": null
+      },
+      "mirrorPending": {
+        "name": "mirrorPending",
+        "line": 20,
+        "col": 6,
+        "endLine": 20,
+        "endCol": 31,
+        "kind": "variable",
+        "scope": null
+      },
+      "unwatchFn": {
+        "name": "unwatchFn",
+        "line": 23,
+        "col": 4,
+        "endLine": 23,
+        "endCol": 20,
+        "kind": "variable",
+        "scope": null
+      },
+      "watchPending": {
+        "name": "watchPending",
+        "line": 24,
+        "col": 6,
+        "endLine": 24,
+        "endCol": 30,
+        "kind": "variable",
+        "scope": null
+      },
+      "startMirror": {
+        "name": "startMirror",
+        "line": 28,
+        "col": 0,
+        "endLine": 46,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "()"
+      },
+      "stopMirror": {
+        "name": "stopMirror",
+        "line": 48,
+        "col": 0,
+        "endLine": 52,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "()"
+      },
+      "stopMirror.t": {
+        "name": "t",
+        "line": 49,
+        "col": 13,
+        "endLine": 49,
+        "endCol": 14,
+        "kind": "variable",
+        "scope": "stopMirror"
+      },
+      "writeItem": {
+        "name": "writeItem",
+        "line": 54,
+        "col": 0,
+        "endLine": 87,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(item)"
+      },
+      "writeItem.json": {
+        "name": "json",
+        "line": 56,
+        "col": 10,
+        "endLine": 56,
+        "endCol": 46,
+        "kind": "variable",
+        "scope": "writeItem"
+      },
+      "writeItem.wrote": {
+        "name": "wrote",
+        "line": 58,
+        "col": 10,
+        "endLine": 58,
+        "endCol": 27,
+        "kind": "variable",
+        "scope": "writeItem"
+      },
+      "writeItem.hasJS": {
+        "name": "hasJS",
+        "line": 60,
+        "col": 10,
+        "endLine": 60,
+        "endCol": 38,
+        "kind": "variable",
+        "scope": "writeItem"
+      },
+      "writeItem.hasHob": {
+        "name": "hasHob",
+        "line": 61,
+        "col": 10,
+        "endLine": 61,
+        "endCol": 51,
+        "kind": "variable",
+        "scope": "writeItem"
+      },
+      "writeItem.parts": {
+        "name": "parts",
+        "line": 67,
+        "col": 12,
+        "endLine": 67,
+        "endCol": 22,
+        "kind": "variable",
+        "scope": "writeItem"
+      },
+      "removePair": {
+        "name": "removePair",
+        "line": 89,
+        "col": 0,
+        "endLine": 93,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(id)"
+      },
+      "startWatch": {
+        "name": "startWatch",
+        "line": 97,
+        "col": 0,
+        "endLine": 114,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "()"
+      },
+      "startWatch.path": {
+        "name": "path",
+        "line": 99,
+        "col": 15,
+        "endLine": 99,
+        "endCol": 19,
+        "kind": "variable",
+        "scope": "startWatch"
+      },
+      "startWatch.filename": {
+        "name": "filename",
+        "line": 101,
+        "col": 12,
+        "endLine": 101,
+        "endCol": 44,
+        "kind": "variable",
+        "scope": "startWatch"
+      },
+      "startWatch.id": {
+        "name": "id",
+        "line": 103,
+        "col": 12,
+        "endLine": 103,
+        "endCol": 46,
+        "kind": "variable",
+        "scope": "startWatch"
+      },
+      "startWatch.recursive": {
+        "name": "recursive",
+        "line": 111,
+        "col": 7,
+        "endLine": 111,
+        "endCol": 23,
+        "kind": "property",
+        "scope": "startWatch"
+      },
+      "stopWatch": {
+        "name": "stopWatch",
+        "line": 116,
+        "col": 0,
+        "endLine": 120,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "()"
+      },
+      "stopWatch.t": {
+        "name": "t",
+        "line": 117,
+        "col": 13,
+        "endLine": 117,
+        "endCol": 14,
+        "kind": "variable",
+        "scope": "stopWatch"
+      },
+      "importFile": {
+        "name": "importFile",
+        "line": 122,
+        "col": 0,
+        "endLine": 138,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(path, id)"
+      },
+      "importFile.text": {
+        "name": "text",
+        "line": 124,
+        "col": 10,
+        "endLine": 124,
+        "endCol": 51,
+        "kind": "variable",
+        "scope": "importFile"
+      },
+      "importFile.item": {
+        "name": "item",
+        "line": 125,
+        "col": 10,
+        "endLine": 125,
+        "endCol": 33,
+        "kind": "variable",
+        "scope": "importFile"
+      },
+      "importFile.existing": {
+        "name": "existing",
+        "line": 129,
+        "col": 10,
+        "endLine": 129,
+        "endCol": 57,
+        "kind": "variable",
+        "scope": "importFile"
+      },
+      "activate": {
+        "name": "activate",
+        "line": 142,
+        "col": 0,
+        "endLine": 149,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(newMode)"
+      },
+      "deactivate": {
+        "name": "deactivate",
+        "line": 151,
+        "col": 0,
+        "endLine": 157,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "()"
+      },
+      "setMode": {
+        "name": "setMode",
+        "line": 159,
+        "col": 7,
+        "endLine": 180,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(newMode)"
+      },
+      "setMode.self": {
+        "name": "self",
+        "line": 175,
+        "col": 8,
+        "endLine": 175,
+        "endCol": 42,
+        "kind": "variable",
+        "scope": "setMode"
+      },
+      "setMode.silent": {
+        "name": "silent",
+        "line": 177,
+        "col": 25,
+        "endLine": 177,
+        "endCol": 37,
+        "kind": "property",
+        "scope": "setMode"
+      },
+      "getMode": {
+        "name": "getMode",
+        "line": 182,
+        "col": 7,
+        "endLine": 182,
+        "endCol": 42,
+        "kind": "function",
+        "scope": null,
+        "signature": "()"
+      },
+      "fullSync": {
+        "name": "fullSync",
+        "line": 186,
+        "col": 7,
+        "endLine": 197,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "()"
+      },
+      "fullSync.items": {
+        "name": "items",
+        "line": 189,
+        "col": 8,
+        "endLine": 189,
+        "endCol": 35,
+        "kind": "variable",
+        "scope": "fullSync"
+      },
+      "fullSync.count": {
+        "name": "count",
+        "line": 190,
+        "col": 6,
+        "endLine": 190,
+        "endCol": 15,
+        "kind": "variable",
+        "scope": "fullSync"
+      },
+      "fullSync.item": {
+        "name": "item",
+        "line": 191,
+        "col": 13,
+        "endLine": 191,
+        "endCol": 17,
+        "kind": "variable",
+        "scope": "fullSync"
+      },
+      "onKernelBootComplete": {
+        "name": "onKernelBootComplete",
+        "line": 201,
+        "col": 7,
+        "endLine": 228,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "({ ... }, api)"
+      },
+      "onKernelBootComplete.tauri": {
+        "name": "tauri",
+        "line": 205,
+        "col": 8,
+        "endLine": 205,
+        "endCol": 32,
+        "kind": "variable",
+        "scope": "onKernelBootComplete"
+      },
+      "onKernelBootComplete.self": {
+        "name": "self",
+        "line": 209,
+        "col": 8,
+        "endLine": 209,
+        "endCol": 41,
+        "kind": "variable",
+        "scope": "onKernelBootComplete"
+      },
+      "onKernelBootComplete.basePath": {
+        "name": "basePath",
+        "line": 210,
+        "col": 8,
+        "endLine": 210,
+        "endCol": 37,
+        "kind": "variable",
+        "scope": "onKernelBootComplete"
+      },
+      "onKernelBootComplete.initialMode": {
+        "name": "initialMode",
+        "line": 224,
+        "col": 8,
+        "endLine": 224,
+        "endCol": 52,
+        "kind": "variable",
+        "scope": "onKernelBootComplete"
+      },
+      "cleanup": {
+        "name": "cleanup",
+        "line": 230,
+        "col": 7,
+        "endLine": 233,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "()"
+      },
+      "render": {
+        "name": "render",
+        "line": 237,
+        "col": 7,
+        "endLine": 285,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(item, api)"
+      },
+      "render.container": {
+        "name": "container",
+        "line": 238,
+        "col": 8,
+        "endLine": 240,
+        "endCol": 4,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.label": {
+        "name": "label",
+        "line": 242,
+        "col": 8,
+        "endLine": 244,
+        "endCol": 4,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.btn": {
+        "name": "btn",
+        "line": 246,
+        "col": 8,
+        "endLine": 248,
+        "endCol": 4,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.status": {
+        "name": "status",
+        "line": 250,
+        "col": 8,
+        "endLine": 252,
+        "endCol": 4,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.update": {
+        "name": "update",
+        "line": 254,
+        "col": 2,
+        "endLine": 265,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "render",
+        "signature": "()"
+      },
+      "update.m": {
+        "name": "m",
+        "line": 255,
+        "col": 10,
+        "endLine": 255,
+        "endCol": 52,
+        "kind": "variable",
+        "scope": "update"
+      },
+      "render.newMode": {
+        "name": "newMode",
+        "line": 271,
+        "col": 12,
+        "endLine": 271,
+        "endCol": 84,
+        "kind": "variable",
+        "scope": "render"
+      }
+    }
+  },
+  "attachments": []
+}
