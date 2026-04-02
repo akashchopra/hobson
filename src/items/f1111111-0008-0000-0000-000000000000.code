@@ -761,11 +761,37 @@ export class RenderingSystem {
       if (!rendering._evalApiRefCount) rendering._evalApiRefCount = 0;
       rendering._evalApiRefCount++;
       rendering._hobItemApi._evalApi = api;
-      // Set _renderItemId so :self resolves in stdlib fns (get-field, transclude).
-      // Save/restore to avoid clobbering if called during a Hob view render.
-      const prevRenderItemId = rendering._hobItemApi._renderItemId;
-      if (bindings?.item?.id) {
-        rendering._hobItemApi._renderItemId = bindings.item.id;
+      // Override get-field and $ in childEnv to resolve :self to the concrete item ID.
+      // This avoids the shared _renderItemId global which is unsafe across concurrent
+      // async renders (e.g. multiple items on a canvas rendering in parallel).
+      const evalItemId = bindings?.item?.id;
+      if (evalItemId) {
+        const selfKeyword = hob.keyword('self');
+        const isSelf = (v) => v === selfKeyword;
+        const baseGetField = childEnv.lookup('get-field');
+        const scopedGetField = Object.assign(async (itemOrRef, fieldKey, tracker) => {
+          if (isSelf(itemOrRef)) {
+            return baseGetField(evalItemId, fieldKey, tracker);
+          }
+          return baseGetField(itemOrRef, fieldKey, tracker);
+        }, { _hobName: 'get-field' });
+        childEnv.define('get-field', scopedGetField);
+        childEnv.define('$', Object.assign((...args) => {
+          if (args.length === 1 && hob.isKeyword(args[0])) {
+            return scopedGetField(selfKeyword, args[0]);
+          }
+          return scopedGetField(...args);
+        }, { _hobName: '$' }));
+        // Also scope transclude's :self resolution
+        const baseTransclude = childEnv.lookup('transclude');
+        if (baseTransclude) {
+          childEnv.define('transclude', Object.assign(async (...args) => {
+            if (isSelf(args[0])) {
+              args = [evalItemId, ...args.slice(1)];
+            }
+            return baseTransclude(...args);
+          }, { _hobName: 'transclude' }));
+        }
       }
       let result;
       try {
@@ -778,7 +804,6 @@ export class RenderingSystem {
         });
         throw e;
       } finally {
-        rendering._hobItemApi._renderItemId = prevRenderItemId;
         rendering._evalApiRefCount--;
         if (rendering._evalApiRefCount === 0) {
           rendering._hobItemApi._evalApi = null;
@@ -1890,12 +1915,33 @@ export class RenderingSystem {
     const childEnv = this._hobInterp.createEnvironment();
     this._hobModule.registerViewOps(childEnv, api);
 
-    // Shadow get-field to thread per-render cross-item dep tracker
-    // (avoids shared _hobItemApi state which breaks under concurrent child renders)
-    if (api._crossItemDeps) {
-      const tracker = api._crossItemDeps;
-      const origGetField = childEnv.lookup('get-field');
-      childEnv.define('get-field', Object.assign(async (a, b) => origGetField(a, b, tracker), { _hobName: 'get-field' }));
+    // Scope :self resolution to this item — avoids the shared _renderItemId global
+    // which is unsafe across concurrent async renders.
+    const selfKeyword = this._hobModule.keyword('self');
+    const isSelf = (v) => v === selfKeyword;
+    const baseGetField = childEnv.lookup('get-field');
+    const tracker = api._crossItemDeps;
+    const scopedGetField = Object.assign(async (itemOrRef, fieldKey, _tracker) => {
+      if (isSelf(itemOrRef)) {
+        return baseGetField(item.id, fieldKey, _tracker || tracker);
+      }
+      return baseGetField(itemOrRef, fieldKey, _tracker || tracker);
+    }, { _hobName: 'get-field' });
+    childEnv.define('get-field', scopedGetField);
+    childEnv.define('$', Object.assign((...args) => {
+      if (args.length === 1 && this._hobModule.isKeyword(args[0])) {
+        return scopedGetField(selfKeyword, args[0]);
+      }
+      return scopedGetField(...args);
+    }, { _hobName: '$' }));
+    const baseTransclude = childEnv.lookup('transclude');
+    if (baseTransclude) {
+      childEnv.define('transclude', Object.assign(async (...args) => {
+        if (isSelf(args[0])) {
+          args = [item.id, ...args.slice(1)];
+        }
+        return baseTransclude(...args);
+      }, { _hobName: 'transclude' }));
     }
 
     // Parse Hob view code (cached by view.id + modified)
