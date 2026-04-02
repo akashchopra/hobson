@@ -55,12 +55,44 @@ export function render(value, options, api) {
         style: 'width: 120px; padding: 4px 8px; border: 1px solid var(--color-border); border-radius: var(--border-radius); font-size: 0.8125rem; font-family: monospace; background: var(--color-bg-surface); color: var(--color-text);'
       });
 
+      // Auto-detect type from a string value
+      const autoDetect = (raw) => {
+        if (raw === 'true') return { value: true, type: 'bool' };
+        if (raw === 'false') return { value: false, type: 'bool' };
+        if (raw === 'null' || raw === 'nil') return { value: null, type: 'null' };
+        if (raw !== '' && !isNaN(Number(raw))) return { value: Number(raw), type: '#' };
+        if (/^\[/.test(raw) || /^\{/.test(raw)) {
+          try { return { value: JSON.parse(raw), type: Array.isArray(JSON.parse(raw)) ? '[]' : '{}' }; }
+          catch { return { value: raw, type: 'Aa' }; }
+        }
+        return { value: raw, type: 'Aa' };
+      };
+
+      const detectStoredType = (v) => {
+        if (v === null || v === undefined) return 'null';
+        if (typeof v === 'boolean') return 'bool';
+        if (typeof v === 'number') return '#';
+        if (Array.isArray(v)) return '[]';
+        if (typeof v === 'object') return '{}';
+        return 'Aa';
+      };
+
+      const valueWrapper = api.createElement('span');
+      valueWrapper.style.cssText = 'flex: 1; display: flex; align-items: center; gap: 0;';
+
       const valueInput = api.createElement('input', {
         type: 'text',
-        value: fieldValue != null ? String(fieldValue) : '',
+        value: fieldValue != null ? (typeof fieldValue === 'object' ? JSON.stringify(fieldValue) : String(fieldValue)) : '',
         placeholder: 'value',
-        style: 'flex: 1; padding: 4px 8px; border: 1px solid var(--color-border); border-radius: var(--border-radius); font-size: 0.8125rem; font-family: monospace; background: var(--color-bg-surface); color: var(--color-text);'
+        style: 'flex: 1; padding: 4px 8px; border: 1px solid var(--color-border); border-radius: var(--border-radius) 0 0 var(--border-radius); font-size: 0.8125rem; font-family: monospace; background: var(--color-bg-surface); color: var(--color-text);'
       });
+
+      // Type indicator — shows auto-detected type
+      let detectedType = detectStoredType(fieldValue);
+      const typeIndicator = api.createElement('span');
+      typeIndicator.textContent = detectedType;
+      typeIndicator.title = 'Detected type';
+      typeIndicator.style.cssText = 'border: 1px solid var(--color-border); border-left: none; border-radius: 0 var(--border-radius) var(--border-radius) 0; padding: 4px 6px; font-size: 0.7em; color: var(--color-text-muted); background: var(--color-bg-surface); user-select: none;';
 
       let currentName = fieldName;
 
@@ -76,14 +108,9 @@ export function render(value, options, api) {
       });
 
       valueInput.addEventListener('input', (e) => {
-        const raw = e.target.value;
-        // Auto-detect type: number, boolean, null, or string
-        let parsed;
-        if (raw === 'true') parsed = true;
-        else if (raw === 'false') parsed = false;
-        else if (raw === 'null' || raw === 'nil') parsed = null;
-        else if (raw !== '' && !isNaN(Number(raw))) parsed = Number(raw);
-        else parsed = raw;
+        const { value: parsed, type } = autoDetect(e.target.value);
+        detectedType = type;
+        typeIndicator.textContent = type;
         edited[currentName] = parsed;
         emitChange();
       });
@@ -98,8 +125,10 @@ export function render(value, options, api) {
         row.remove();
       });
 
+      valueWrapper.appendChild(valueInput);
+      valueWrapper.appendChild(typeIndicator);
       row.appendChild(nameInput);
-      row.appendChild(valueInput);
+      row.appendChild(valueWrapper);
       row.appendChild(deleteBtn);
     } else {
       const nameEl = api.createElement('code');

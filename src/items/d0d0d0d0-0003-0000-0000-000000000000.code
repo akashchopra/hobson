@@ -638,7 +638,37 @@ async function renderInlineNode(node, parent, api, item) {
       const fieldName = textOf(children[0]);
       const isComputed = !!item?.content?.computed?.[fieldName];
       if (item && !isComputed) {
-        // Stored field — editable inline input
+        // Stored field — editable inline input with auto-detected type indicator
+        const rawVal = item.content?.[fieldName];
+
+        // Auto-detect type from a string value
+        const autoDetect = (raw) => {
+          if (raw === 'true') return { value: true, type: 'bool' };
+          if (raw === 'false') return { value: false, type: 'bool' };
+          if (raw === 'null' || raw === 'nil') return { value: null, type: 'null' };
+          if (raw !== '' && !isNaN(Number(raw))) return { value: Number(raw), type: '#' };
+          if (/^\[/.test(raw) || /^\{/.test(raw)) {
+            try { return { value: JSON.parse(raw), type: Array.isArray(JSON.parse(raw)) ? '[]' : '{}' }; }
+            catch { return { value: raw, type: 'Aa' }; }
+          }
+          return { value: raw, type: 'Aa' };
+        };
+
+        // Detect type label for a stored (already-parsed) value
+        const detectStoredType = (v) => {
+          if (v === null || v === undefined) return 'null';
+          if (typeof v === 'boolean') return 'bool';
+          if (typeof v === 'number') return '#';
+          if (Array.isArray(v)) return '[]';
+          if (typeof v === 'object') return '{}';
+          return 'Aa';
+        };
+
+        let detected = detectStoredType(rawVal);
+
+        const wrapper = api.createElement('span');
+        wrapper.style.cssText = 'display: inline-flex; align-items: baseline; gap: 0;';
+
         const input = api.createElement('input');
         input.type = 'text';
         input.className = 'field-ref field-ref-input';
@@ -646,20 +676,38 @@ async function renderInlineNode(node, parent, api, item) {
         input.setAttribute('data-provenance-node', ':field-ref');
         input.setAttribute('data-provenance-field-name', fieldName);
         input.title = fieldName;
-        const rawVal = item.content?.[fieldName];
-        input.value = rawVal != null ? String(rawVal) : '';
-        input.style.cssText = 'border: 1px solid var(--color-border); border-radius: 3px; padding: 1px 4px; background: var(--color-bg-surface-alt); font: inherit; color: inherit; margin: 0; outline: none; min-width: 2em; width: auto; cursor: text;';
+        input.value = rawVal != null ? (typeof rawVal === 'object' ? JSON.stringify(rawVal) : String(rawVal)) : '';
+        input.style.cssText = 'border: 1px solid var(--color-border); border-radius: 3px 0 0 3px; padding: 1px 4px; background: var(--color-bg-surface-alt); font: inherit; color: inherit; margin: 0; outline: none; min-width: 2em; width: auto; cursor: text;';
+
+        // Type indicator — shows auto-detected type as feedback
+        const indicator = api.createElement('span');
+        indicator.style.cssText = 'border: 1px solid var(--color-border); border-left: none; border-radius: 0 3px 3px 0; padding: 1px 3px; font-size: 0.7em; color: var(--color-text-muted); background: var(--color-bg-surface-alt); user-select: none; opacity: 0; transition: opacity 0.15s;';
+        indicator.title = 'Detected type';
+        const updateIndicator = () => {
+          indicator.textContent = detected;
+        };
+        updateIndicator();
+
+        // Show indicator on hover/focus
+        wrapper.addEventListener('mouseenter', () => { indicator.style.opacity = '1'; });
+        wrapper.addEventListener('mouseleave', () => { if (input !== input.ownerDocument.activeElement) indicator.style.opacity = '0'; });
+        input.addEventListener('focus', () => { indicator.style.opacity = '1'; });
+        input.addEventListener('blur', () => { indicator.style.opacity = '0'; });
+
         // Auto-size to content
         const autoSize = () => {
           input.style.width = Math.max(2, input.value.length + 2) + 'ch';
         };
         autoSize();
-        input.addEventListener('input', autoSize);
+        input.addEventListener('input', () => {
+          autoSize();
+          detected = autoDetect(input.value).type;
+          updateIndicator();
+        });
         input.addEventListener('blur', async () => {
-          const newVal = input.value;
+          const { value: coerced } = autoDetect(input.value);
           const oldVal = item.content?.[fieldName];
-          const coerced = oldVal != null && typeof oldVal === 'number' && !isNaN(Number(newVal)) ? Number(newVal) : newVal;
-          if (String(coerced) !== String(oldVal ?? '')) {
+          if (JSON.stringify(coerced) !== JSON.stringify(oldVal)) {
             if (!item.content) item.content = {};
             item.content[fieldName] = coerced;
             await api.update(item);
@@ -667,9 +715,11 @@ async function renderInlineNode(node, parent, api, item) {
         });
         input.addEventListener('keydown', (e) => {
           if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
-          if (e.key === 'Escape') { input.value = rawVal != null ? String(rawVal) : ''; input.blur(); }
+          if (e.key === 'Escape') { input.value = rawVal != null ? (typeof rawVal === 'object' ? JSON.stringify(rawVal) : String(rawVal)) : ''; detected = detectStoredType(rawVal); updateIndicator(); input.blur(); }
         });
-        parent.appendChild(input);
+        wrapper.appendChild(input);
+        wrapper.appendChild(indicator);
+        parent.appendChild(wrapper);
       } else {
         // Computed field or no item context — display-only span
         const span = api.createElement('span');
