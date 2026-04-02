@@ -3505,14 +3505,13 @@ export function createInterpreter(api, viewApi, eventApi) {
 
   // get-field: unified field access with computed field support
   // Checks content.computed for Hob formulas, evaluates them, falls back to static fields.
-  // Supports :self (resolves to current computed-field context or current view's item).
-  let _computedFieldSelf = null;
+  // Supports :self (resolves via scoped env overrides from renderer or computed-field eval).
   const _computingFields = new Set();
   if (api) {
     stdlib.define('get-field', Object.assign(async (itemOrRef, fieldKey, _tracker) => {
       let item, itemId;
       if (isKeyword(itemOrRef) && keywordName(itemOrRef) === 'self') {
-        itemId = _computedFieldSelf || api._renderItemId;
+        itemId = api._renderItemId;
         if (!itemId) throw new Error('get-field :self — no current item context');
         item = await api.get(itemId);
       } else if (itemOrRef && itemOrRef._hobType === 'item-ref') {
@@ -3536,16 +3535,35 @@ export function createInterpreter(api, viewApi, eventApi) {
           return { _hobType: 'computed-field-error', itemId, fieldName, message: 'Circular reference: ' + cycleKey };
         }
         _computingFields.add(cycleKey);
-        const prevSelf = _computedFieldSelf;
-        _computedFieldSelf = itemId;
         try {
           // Evaluate in a child env with rendering api if available
           let evalEnv = api._evalApi ? stdlib.extend({ api: api._evalApi }) : stdlib;
-          // Propagate tracker through recursive formula evaluation
-          if (_tracker) {
-            const innerGF = evalEnv.lookup('get-field');
-            evalEnv = evalEnv.extend({});
-            evalEnv.define('get-field', Object.assign(async (a, b) => innerGF(a, b, _tracker), { _hobName: 'get-field' }));
+          // Scope :self to this item's ID for concurrent safety — each concurrent
+          // formula evaluation gets its own closure rather than sharing _computedFieldSelf.
+          // Also propagates tracker through recursive formula evaluation.
+          evalEnv = evalEnv.extend({});
+          const outerGF = evalEnv.lookup('get-field');
+          const scopedGF = Object.assign(async (a, b, t) => {
+            if (isKeyword(a) && keywordName(a) === 'self') {
+              return outerGF(itemId, b, t || _tracker);
+            }
+            return outerGF(a, b, t || _tracker);
+          }, { _hobName: 'get-field' });
+          evalEnv.define('get-field', scopedGF);
+          evalEnv.define('$', Object.assign((...args) => {
+            if (args.length === 1 && isKeyword(args[0])) {
+              return scopedGF(keyword('self'), args[0]);
+            }
+            return scopedGF(...args);
+          }, { _hobName: '$' }));
+          const outerTransclude = evalEnv.lookup('transclude');
+          if (outerTransclude) {
+            evalEnv.define('transclude', Object.assign(async (...tArgs) => {
+              if (isKeyword(tArgs[0]) && keywordName(tArgs[0]) === 'self') {
+                tArgs = [itemId, ...tArgs.slice(1)];
+              }
+              return outerTransclude(...tArgs);
+            }, { _hobName: 'transclude' }));
           }
           // Multi-form: { forms: [...] } wrapper — evaluate sequentially, return last
           const multiForms = formula && !Array.isArray(formula) && Array.isArray(formula.forms) ? formula.forms : null;
@@ -3565,7 +3583,6 @@ export function createInterpreter(api, viewApi, eventApi) {
           }
           return { _hobType: 'computed-field-error', itemId, fieldName, message: e.message || String(e) };
         } finally {
-          _computedFieldSelf = prevSelf;
           _computingFields.delete(cycleKey);
         }
       }
@@ -3651,7 +3668,7 @@ export function createInterpreter(api, viewApi, eventApi) {
       // Resolve source item ID for attribution
       let sourceId;
       if (isKeyword(itemOrRef) && keywordName(itemOrRef) === 'self') {
-        sourceId = _computedFieldSelf || api._renderItemId;
+        sourceId = api._renderItemId;
       } else if (itemOrRef && itemOrRef._hobType === 'item-ref') {
         sourceId = itemOrRef.value;
       } else if (typeof itemOrRef === 'string') {
@@ -3702,7 +3719,7 @@ export function createInterpreter(api, viewApi, eventApi) {
           if (val && val._hobType === 'item-ref') sourceId = val.value;
           else if (typeof val === 'string') sourceId = val;
           else if (val && typeof val === 'object' && val.id) sourceId = val.id;
-          else if (isKeyword(val) && keywordName(val) === 'self') sourceId = _computedFieldSelf || api._renderItemId;
+          else if (isKeyword(val) && keywordName(val) === 'self') sourceId = api._renderItemId;
           i++;
         } else if (kw === 'symbol') {
           symbol = typeof val === 'object' && 's' in val ? val.s : String(val);
