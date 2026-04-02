@@ -138,6 +138,15 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_process::init())
         .on_page_load(|webview, _payload| {
+            // Clear orphaned state from pre-reload session
+            let pending: tauri::State<'_, PendingRequests> = webview.state();
+            let server_running: tauri::State<'_, Arc<AtomicBool>> = webview.state();
+            let pending_clone = pending.inner().clone();
+            server_running.store(false, Ordering::SeqCst);
+            tauri::async_runtime::spawn(async move {
+                pending_clone.lock().await.clear();
+            });
+
             let _ = webview.eval(r#"
                 document.addEventListener('keydown', e => {
                     // Prevent WebKitGTK from consuming Ctrl+ shortcuts
