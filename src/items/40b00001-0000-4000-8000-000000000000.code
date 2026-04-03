@@ -2294,75 +2294,109 @@ function createStdlib() {
   const env = new Environment();
 
   // --- Arithmetic ---
+  /** Sum numbers. With no args returns 0. */
   env.define('+', Object.assign((...args) => args.reduce((a, b) => a + b, 0), { _hobName: '+' }));
+  /** Subtract. One arg negates. Two+ args subtracts left to right. */
   env.define('-', Object.assign((...args) => {
     if (args.length === 0) return 0;
     if (args.length === 1) return -args[0];
     return args.reduce((a, b) => a - b);
   }, { _hobName: '-' }));
+  /** Multiply numbers. With no args returns 1. */
   env.define('*', Object.assign((...args) => args.reduce((a, b) => a * b, 1), { _hobName: '*' }));
+  /** Divide. One arg returns reciprocal. Two+ args divides left to right. */
   env.define('/', Object.assign((...args) => {
     if (args.length === 0) throw new Error('/ requires at least 1 argument');
     if (args.length === 1) return 1 / args[0];
     return args.reduce((a, b) => a / b);
   }, { _hobName: '/' }));
+  /** Remainder (modulo). */
   env.define('mod', Object.assign((a, b) => a % b, { _hobName: 'mod' }));
+  /** Minimum of args. */
   env.define('min', Object.assign((...args) => Math.min(...args), { _hobName: 'min' }));
+  /** Maximum of args. */
   env.define('max', Object.assign((...args) => Math.max(...args), { _hobName: 'max' }));
+  /** Increment by 1. */
   env.define('inc', Object.assign((n) => n + 1, { _hobName: 'inc' }));
+  /** Decrement by 1. */
   env.define('dec', Object.assign((n) => n - 1, { _hobName: 'dec' }));
+  /** Absolute value. */
   env.define('abs', Object.assign((n) => Math.abs(n), { _hobName: 'abs' }));
+  /** Round to nearest integer, or to given decimal precision. */
   env.define('round', Object.assign((n, precision) => {
     if (precision == null) return Math.round(n);
     const f = Math.pow(10, precision);
     return Math.round(n * f) / f;
   }, { _hobName: 'round' }));
+  /** Round down to nearest integer. */
   env.define('floor', Object.assign((n) => Math.floor(n), { _hobName: 'floor' }));
+  /** Round up to nearest integer. */
   env.define('ceil', Object.assign((n) => Math.ceil(n), { _hobName: 'ceil' }));
 
   // --- Comparison ---
+  /** Less than. */
   env.define('<', Object.assign((a, b) => a < b, { _hobName: '<' }));
+  /** Greater than. */
   env.define('>', Object.assign((a, b) => a > b, { _hobName: '>' }));
+  /** Less than or equal. */
   env.define('<=', Object.assign((a, b) => a <= b, { _hobName: '<=' }));
+  /** Greater than or equal. */
   env.define('>=', Object.assign((a, b) => a >= b, { _hobName: '>=' }));
+  /** Deep equality. Compares values recursively. */
   env.define('=', Object.assign((...args) => {
     if (args.length < 2) return true;
     const first = args[0];
     return args.every(a => deepEquals(a, first));
   }, { _hobName: '=' }));
+  /** Deep inequality. */
   env.define('not=', Object.assign((a, b) => !deepEquals(a, b), { _hobName: 'not=' }));
+  /** Logical negation. Returns true for false and nil. */
   env.define('not', Object.assign((a) => a === false || a === null, { _hobName: 'not' }));
 
   // --- Strings ---
+  /** Concatenate args as strings. nil becomes empty string. */
   env.define('str', Object.assign((...args) => args.map(a => {
     if (a === null) return '';
     if (isKeyword(a)) return ':' + keywordName(a);
     if (typeof a === 'string') return a;
     return prStr(a, false);
   }).join(''), { _hobName: 'str' }));
+  /** Print-string. Returns readable representation with quotes. */
   env.define('pr-str', Object.assign((...args) => args.map(a => prStr(a, true)).join(' '), { _hobName: 'pr-str' }));
+  /** Pretty-print a Hob AST as indented s-expression. */
   env.define('pretty-print', Object.assign((ast) => prettyPrint(ast, 0), { _hobName: 'pretty-print' }));
+  /** Substring. (subs s start) or (subs s start end). */
   env.define('subs', Object.assign((s, start, end) => {
     if (end !== undefined) return s.substring(start, end);
     return s.substring(start);
   }, { _hobName: 'subs' }));
+  /** Convert string to uppercase. */
   env.define('str/upper-case', Object.assign((s) => s.toUpperCase(), { _hobName: 'str/upper-case' }));
+  /** Convert string to lowercase. */
   env.define('str/lower-case', Object.assign((s) => s.toLowerCase(), { _hobName: 'str/lower-case' }));
+  /** Remove leading and trailing whitespace. */
   env.define('str/trim', Object.assign((s) => s.trim(), { _hobName: 'str/trim' }));
+  /** Split string by separator. Returns vector. */
   env.define('str/split', Object.assign((s, sep) => s.split(sep), { _hobName: 'str/split' }));
+  /** Join collection with separator. (str/join sep coll) or (str/join coll). */
   env.define('str/join', Object.assign((sep, coll) => {
     if (coll === undefined) { coll = sep; sep = ''; }
     return coll.join(sep);
   }, { _hobName: 'str/join' }));
+  /** True if string contains substring. */
   env.define('str/includes?', Object.assign((s, sub) => s.includes(sub), { _hobName: 'str/includes?' }));
+  /** Replace all occurrences of match with replacement. */
   env.define('str/replace', Object.assign((s, match, replacement) => s.split(match).join(replacement), { _hobName: 'str/replace' }));
+  /** Capitalize first character. */
   env.define('str/capitalize', Object.assign((s) => s.length === 0 ? s : s.charAt(0).toUpperCase() + s.slice(1), { _hobName: 'str/capitalize' }));
+  /** Index of substring, or nil if not found. Optional start position. */
   env.define('str/index-of', Object.assign((s, sub, from) => {
     const i = from !== undefined ? s.indexOf(sub, from) : s.indexOf(sub);
     return i === -1 ? null : i;
   }, { _hobName: 'str/index-of' }));
 
   // --- Collections ---
+  /** Number of elements in collection, string, or map. */
   env.define('count', Object.assign((coll) => {
     if (coll === null) return 0;
     if (typeof coll === 'string') return coll.length;
@@ -2371,23 +2405,27 @@ function createStdlib() {
     return 0;
   }, { _hobName: 'count' }));
 
+  /** First element of collection, or nil. */
   env.define('first', Object.assign((coll) => {
     if (coll === null) return null;
     if (Array.isArray(coll)) return coll.length > 0 ? coll[0] : null;
     return null;
   }, { _hobName: 'first' }));
 
+  /** All but first element. Returns empty vector if empty. */
   env.define('rest', Object.assign((coll) => {
     if (coll === null) return [];
     if (Array.isArray(coll)) return coll.slice(1);
     return [];
   }, { _hobName: 'rest' }));
 
+  /** Prepend element to collection. */
   env.define('cons', Object.assign((x, coll) => {
     if (coll === null) return [x];
     return [x, ...coll];
   }, { _hobName: 'cons' }));
 
+  /** Append elements to collection. For maps, adds [k v] pairs. */
   env.define('conj', Object.assign((coll, ...items) => {
     if (coll === null) return [...items];
     if (Array.isArray(coll)) return [...coll, ...items];
@@ -2403,6 +2441,7 @@ function createStdlib() {
     return coll;
   }, { _hobName: 'conj' }));
 
+  /** Concatenate collections into a single list. */
   env.define('concat', Object.assign((...colls) => {
     const result = [];
     for (const c of colls) {
@@ -2412,11 +2451,13 @@ function createStdlib() {
     return result;
   }, { _hobName: 'concat' }));
 
+  /** Element at index, or nil if out of bounds. */
   env.define('nth', Object.assign((coll, n) => {
     if (coll === null || n >= coll.length) return null;
     return coll[n];
   }, { _hobName: 'nth' }));
 
+  /** Get value by key. Works on maps, vectors, keywords. Returns default if missing. */
   env.define('get', Object.assign((coll, key, defaultVal = null) => {
     if (coll === null) return defaultVal;
     if (Array.isArray(coll)) {
@@ -2435,6 +2476,7 @@ function createStdlib() {
     return defaultVal;
   }, { _hobName: 'get' }));
 
+  /** Associate key-value pairs. Returns new collection. */
   env.define('assoc', Object.assign((coll, ...kvs) => {
     if (coll === null) coll = {};
     const result = Array.isArray(coll) ? [...coll] : { ...coll };
@@ -2450,6 +2492,7 @@ function createStdlib() {
     return result;
   }, { _hobName: 'assoc' }));
 
+  /** Remove keys from map. Returns new map. */
   env.define('dissoc', Object.assign((coll, ...keys) => {
     if (coll === null) return null;
     const result = { ...coll };
@@ -2457,6 +2500,7 @@ function createStdlib() {
     return result;
   }, { _hobName: 'dissoc' }));
 
+  /** Update value at key by applying function. */
   env.define('update', Object.assign(async (coll, key, fn, ...args) => {
     if (coll === null) coll = {};
     const result = Array.isArray(coll) ? [...coll] : { ...coll };
@@ -2471,6 +2515,7 @@ function createStdlib() {
     return result;
   }, { _hobName: 'update' }));
 
+  /** Get nested value by key path. */
   env.define('get-in', Object.assign((coll, path) => {
     let current = coll;
     for (const key of path) {
@@ -2494,6 +2539,7 @@ function createStdlib() {
     return current;
   }, { _hobName: 'get-in' }));
 
+  /** Associate value at nested key path. */
   env.define('assoc-in', Object.assign((coll, path, value) => {
     if (path.length === 0) return value;
     if (path.length === 1) {
@@ -2508,6 +2554,7 @@ function createStdlib() {
     return result;
   }, { _hobName: 'assoc-in' }));
 
+  /** Update nested value by applying function at key path. */
   env.define('update-in', Object.assign(async (coll, path, fn, ...args) => {
     if (path.length === 0) {
       let result = fn(coll, ...args);
@@ -2521,16 +2568,19 @@ function createStdlib() {
     return result;
   }, { _hobName: 'update-in' }));
 
+  /** Keys of a map. */
   env.define('keys', Object.assign((m) => {
     if (m === null) return [];
     return Object.keys(m);
   }, { _hobName: 'keys' }));
 
+  /** Values of a map. */
   env.define('vals', Object.assign((m) => {
     if (m === null) return [];
     return Object.values(m);
   }, { _hobName: 'vals' }));
 
+  /** Merge maps left to right. Later values win. */
   env.define('merge', Object.assign((...maps) => {
     const result = {};
     for (const m of maps) {
@@ -2541,6 +2591,7 @@ function createStdlib() {
     return result;
   }, { _hobName: 'merge' }));
 
+  /** Pour collection into another. Vectors concat, maps merge. */
   env.define('into', Object.assign((to, from) => {
     if (to === null) to = [];
     if (Array.isArray(to)) {
@@ -2564,6 +2615,7 @@ function createStdlib() {
     return to;
   }, { _hobName: 'into' }));
 
+  /** True if collection is nil or has no elements. */
   env.define('empty?', Object.assign((coll) => {
     if (coll === null) return true;
     if (Array.isArray(coll)) return coll.length === 0;
@@ -2572,6 +2624,7 @@ function createStdlib() {
     return true;
   }, { _hobName: 'empty?' }));
 
+  /** Coerce to sequence. nil and empty return nil. Maps become [k v] pairs. */
   env.define('seq', Object.assign((coll) => {
     if (coll === null) return null;
     if (Array.isArray(coll)) return coll.length > 0 ? coll : null;
@@ -2583,6 +2636,7 @@ function createStdlib() {
     return null;
   }, { _hobName: 'seq' }));
 
+  /** Coerce to vector. */
   env.define('vec', Object.assign((coll) => {
     if (coll === null) return [];
     if (Array.isArray(coll)) return [...coll];
@@ -2590,6 +2644,7 @@ function createStdlib() {
     return [coll];
   }, { _hobName: 'vec' }));
 
+  /** True if key exists. For vectors, checks index bounds. */
   env.define('contains?', Object.assign((coll, key) => {
     if (coll === null) return false;
     if (Array.isArray(coll)) return typeof key === 'number' && key >= 0 && key < coll.length;
@@ -2615,6 +2670,7 @@ function createStdlib() {
   }
 
   // Higher-order collection functions
+  /** Apply function to each element. Returns vector. Awaits async results. */
   env.define('map', Object.assign(async (fn, coll) => {
     if (coll === null) return [];
     fn = asFunc(fn);
@@ -2627,6 +2683,7 @@ function createStdlib() {
     return result;
   }, { _hobName: 'map' }));
 
+  /** Map then concatenate results. */
   env.define('mapcat', Object.assign(async (fn, coll) => {
     if (coll === null) return [];
     fn = asFunc(fn);
@@ -2641,6 +2698,7 @@ function createStdlib() {
     return result;
   }, { _hobName: 'mapcat' }));
 
+  /** Keep elements where predicate returns truthy. */
   env.define('filter', Object.assign(async (fn, coll) => {
     if (coll === null) return [];
     fn = asFunc(fn);
@@ -2653,6 +2711,7 @@ function createStdlib() {
     return result;
   }, { _hobName: 'filter' }));
 
+  /** Reduce collection with function. Optional initial value. */
   env.define('reduce', Object.assign(async (...args) => {
     let fn, init, coll;
     if (args.length === 2) {
@@ -2675,6 +2734,7 @@ function createStdlib() {
     return acc;
   }, { _hobName: 'reduce' }));
 
+  /** First truthy result of applying predicate to collection. */
   env.define('some', Object.assign(async (fn, coll) => {
     if (coll === null) return null;
     fn = asFunc(fn);
@@ -2686,6 +2746,7 @@ function createStdlib() {
     return null;
   }, { _hobName: 'some' }));
 
+  /** True if predicate is truthy for all elements. */
   env.define('every?', Object.assign(async (fn, coll) => {
     if (coll === null) return true;
     fn = asFunc(fn);
@@ -2697,11 +2758,13 @@ function createStdlib() {
     return true;
   }, { _hobName: 'every?' }));
 
+  /** Sort collection by natural order. */
   env.define('sort', Object.assign((coll) => {
     if (coll === null) return [];
     return [...coll].sort((a, b) => a < b ? -1 : a > b ? 1 : 0);
   }, { _hobName: 'sort' }));
 
+  /** Sort collection by key function. */
   env.define('sort-by', Object.assign(async (fn, coll) => {
     if (coll === null) return [];
     fn = asFunc(fn);
@@ -2715,11 +2778,13 @@ function createStdlib() {
     return decorated.map(d => d.item);
   }, { _hobName: 'sort-by' }));
 
+  /** Reverse collection. */
   env.define('reverse', Object.assign((coll) => {
     if (coll === null) return [];
     return [...coll].reverse();
   }, { _hobName: 'reverse' }));
 
+  /** Remove duplicates, preserving order. */
   env.define('distinct', Object.assign((coll) => {
     if (coll === null) return [];
     const seen = new Set();
@@ -2731,35 +2796,53 @@ function createStdlib() {
     return result;
   }, { _hobName: 'distinct' }));
 
+  /** First n elements of collection. */
   env.define('take', Object.assign((n, coll) => {
     if (coll === null) return [];
     return [...coll].slice(0, n);
   }, { _hobName: 'take' }));
 
   // --- Predicates ---
+  /** True if value is nil. */
   env.define('nil?', Object.assign((x) => x === null, { _hobName: 'nil?' }));
+  /** True if value is a number. */
   env.define('number?', Object.assign((x) => typeof x === 'number', { _hobName: 'number?' }));
+  /** True if value is a string (not a keyword). */
   env.define('string?', Object.assign((x) => typeof x === 'string' && !isKeyword(x), { _hobName: 'string?' }));
+  /** True if value is a keyword. */
   env.define('keyword?', Object.assign((x) => isKeyword(x), { _hobName: 'keyword?' }));
+  /** True if value is a symbol. */
   env.define('symbol?', Object.assign((x) => x && typeof x === 'object' && x._hobType === 'symbol', { _hobName: 'symbol?' }));
+  /** True if value is a list (not a vector). */
   env.define('list?', Object.assign((x) => Array.isArray(x) && !x._isHobVector, { _hobName: 'list?' }));
+  /** True if value is a vector. */
   env.define('vector?', Object.assign((x) => Array.isArray(x) && !!x._isHobVector, { _hobName: 'vector?' }));
+  /** True if value is a list or vector. */
   env.define('sequential?', Object.assign((x) => Array.isArray(x), { _hobName: 'sequential?' }));
+  /** True if value is a map. */
   env.define('map?', Object.assign((x) => x !== null && typeof x === 'object' && !Array.isArray(x) && x._hobType !== 'symbol' && x._hobType !== 'item-ref' && x._hobType !== 'atom', { _hobName: 'map?' }));
+  /** Always false (sets not implemented). */
   env.define('set?', Object.assign(() => false, { _hobName: 'set?' }));
+  /** True if value is a function. */
   env.define('fn?', Object.assign((x) => typeof x === 'function', { _hobName: 'fn?' }));
+  /** True if value is an item reference (@). */
   env.define('item-ref?', Object.assign((x) => x && typeof x === 'object' && x._hobType === 'item-ref', { _hobName: 'item-ref?' }));
+  /** True if value is a boolean. */
   env.define('boolean?', Object.assign((x) => typeof x === 'boolean', { _hobName: 'boolean?' }));
+  /** True if value is an atom. */
   env.define('atom?', Object.assign((x) => x && typeof x === 'object' && x._hobType === 'atom', { _hobName: 'atom?' }));
 
   // --- Atoms ---
+  /** Create a mutable atom with initial value. */
   env.define('atom', Object.assign((value) => {
     return { _hobType: 'atom', value };
   }, { _hobName: 'atom' }));
+  /** Get current value of an atom. */
   env.define('deref', Object.assign((atom) => {
     if (!atom || atom._hobType !== 'atom') throw new Error('deref requires an atom');
     return atom.value;
   }, { _hobName: 'deref' }));
+  /** Update atom by applying function to current value. */
   env.define('swap!', Object.assign(async (atom, fn, ...args) => {
     if (!atom || atom._hobType !== 'atom') throw new Error('swap! requires an atom');
     let newVal = fn(atom.value, ...args);
@@ -2767,6 +2850,7 @@ function createStdlib() {
     atom.value = newVal;
     return newVal;
   }, { _hobName: 'swap!' }));
+  /** Set atom to new value. */
   env.define('reset!', Object.assign((atom, value) => {
     if (!atom || atom._hobType !== 'atom') throw new Error('reset! requires an atom');
     atom.value = value;
@@ -2774,16 +2858,23 @@ function createStdlib() {
   }, { _hobName: 'reset!' }));
 
   // --- I/O ---
+  /** Log to console. */
   env.define('log', Object.assign((...args) => { console.log(...args.map(a => prStr(a, false))); return null; }, { _hobName: 'log' }));
+  /** Log warning to console. */
   env.define('log/warn', Object.assign((...args) => { console.warn(...args.map(a => prStr(a, false))); return null; }, { _hobName: 'log/warn' }));
+  /** Log error to console. */
   env.define('log/error', Object.assign((...args) => { console.error(...args.map(a => prStr(a, false))); return null; }, { _hobName: 'log/error' }));
+  /** Show browser alert dialog. */
   env.define('alert', Object.assign((msg) => { alert(prStr(msg, false)); return null; }, { _hobName: 'alert' }));
 
   // --- Date/Time ---
+  /** Current time as Unix milliseconds. */
   env.define('now', Object.assign(() => Date.now(), { _hobName: 'now' }));
+  /** Format Unix milliseconds as locale date string. */
   env.define('format-date', Object.assign((ts) => new Date(ts).toLocaleString(), { _hobName: 'format-date' }));
 
   // --- Utility ---
+  /** Type name as string: "number", "string", "keyword", "vector", "map", etc. */
   env.define('type-of', Object.assign((x) => {
     if (x === null) return 'nil';
     if (typeof x === 'boolean') return 'boolean';
@@ -2799,6 +2890,7 @@ function createStdlib() {
     return 'unknown';
   }, { _hobName: 'type-of' }));
 
+  /** Call function with args. Last arg is spread as additional arguments. */
   env.define('apply', Object.assign(async (fn, ...args) => {
     const lastArg = args[args.length - 1];
     const leading = args.slice(0, -1);
@@ -2808,8 +2900,11 @@ function createStdlib() {
     return result;
   }, { _hobName: 'apply' }));
 
+  /** Returns its argument unchanged. */
   env.define('identity', Object.assign((x) => x, { _hobName: 'identity' }));
+  /** Returns a function that always returns the given value. */
   env.define('constantly', Object.assign((x) => Object.assign(() => x, { _hobName: 'constantly' }), { _hobName: 'constantly' }));
+  /** Compose functions right to left. */
   env.define('comp', Object.assign((...fns) => {
     return Object.assign(async (...args) => {
       const reversed = [...fns].reverse();
@@ -2823,6 +2918,7 @@ function createStdlib() {
     }, { _hobName: 'comp' });
   }, { _hobName: 'comp' }));
 
+  /** Partial application. Returns function with some args pre-filled. */
   env.define('partial', Object.assign((fn, ...partialArgs) => {
     return Object.assign(async (...args) => {
       let result = fn(...partialArgs, ...args);
@@ -2832,10 +2928,15 @@ function createStdlib() {
   }, { _hobName: 'partial' }));
 
   // --- Macro helpers ---
+  /** Generate unique symbol name. */
   env.define('gensym', Object.assign((prefix) => gensym(prefix || 'G__'), { _hobName: 'gensym' }));
+  /** Create a symbol from a string. */
   env.define('symbol', Object.assign((name) => ({ _hobType: 'symbol', value: name }), { _hobName: 'symbol' }));
+  /** Create a list from arguments. */
   env.define('list', Object.assign((...args) => [...args], { _hobName: 'list' }));
+  /** Create a keyword from a string. */
   env.define('keyword', Object.assign((name) => keyword(name), { _hobName: 'keyword' }));
+  /** Extract string name from keyword, symbol, or string. */
   env.define('name', Object.assign((x) => {
     if (isKeyword(x)) return keywordName(x);
     if (x && typeof x === 'object' && x._hobType === 'symbol') return x.value;
@@ -2844,6 +2945,7 @@ function createStdlib() {
   }, { _hobName: 'name' }));
 
   // --- Concurrency ---
+  /** Parallel map. Launches all applications concurrently via Promise.all. */
   env.define('pmap', Object.assign(async (fn, coll) => {
     if (coll === null) return [];
     return await Promise.all(coll.map(item => {
@@ -2854,6 +2956,7 @@ function createStdlib() {
   }, { _hobName: 'pmap' }));
 
   // --- JS Interop ---
+  /** Call a JavaScript method. Args are converted via hobToJs. */
   env.define('invoke', Object.assign(async (obj, method, ...args) => {
     const jsArgs = args.map(a => hobToJs(a));
     const result = obj[method](...jsArgs);
@@ -2886,6 +2989,7 @@ function deepEquals(a, b) {
 function registerItemOps(env, api) {
   const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+  /** Load item by ID. Optional :select fn for reactive filtering. */
   env.define('get-item', Object.assign(async (id, ...rest) => {
     let selectorFn = null;
     for (let i = 0; i < rest.length - 1; i++) {
@@ -2906,26 +3010,31 @@ function registerItemOps(env, api) {
     return item;
   }, { _hobName: 'get-item' }));
 
+  /** Save item to storage. Triggers item:updated event. */
   env.define('set-item!', Object.assign(async (item) => {
     await api.set(hobToJs(item));
     return item;
   }, { _hobName: 'set-item!' }));
 
+  /** Delete item from storage. */
   env.define('delete-item!', Object.assign(async (id) => {
     await api.delete(id);
     return null;
   }, { _hobName: 'delete-item!' }));
 
+  /** Get all items from storage. */
   env.define('get-all', Object.assign(async () => {
     return await api.getAll();
   }, { _hobName: 'get-all' }));
 
+  /** Query items by filter map (e.g. {:name "foo"}). */
   env.define('find-items', Object.assign(async (filter) => {
     return await api.query(hobToJs(filter));
   }, { _hobName: 'find-items' }));
 
   // Resolve item references
   // @self resolves to the currently-executing code item (view or computed-field owner).
+  /** Resolve @item-ref to item. @self resolves to current item. */
   env.define('resolve-ref', Object.assign(async (ref) => {
     if (!ref || ref._hobType !== 'item-ref') return ref;
     const value = ref.value;
@@ -2947,6 +3056,7 @@ function registerItemOps(env, api) {
   // giving them the same persistent-scope semantics as JS ES modules.
   if (api.require) {
     const _hobModuleCache = new Map();
+    /** Load a library by name or GUID. Hob modules cached with staleness check. */
     env.define('require', Object.assign(async (name) => {
       // Accept item-ref objects: (require @uuid)
       if (name && name._hobType === 'item-ref') name = name.value;
@@ -2982,6 +3092,7 @@ function registerItemOps(env, api) {
   }
 
   // Fast JS-native text extraction from Active Text (avoids Hob interpreter overhead)
+  /** Extract plain text from an Active Text AST node. */
   env.define('extract-text', Object.assign((node) => {
     function walk(n) {
       if (typeof n === 'string') return n;
@@ -3004,6 +3115,7 @@ function registerItemOps(env, api) {
   const typeNameCache = new Map();
   const tagNameCache = new Map();
 
+  /** True if item matches type name or GUID. Caches type lookups. */
   env.define('type?', Object.assign(async (item, typeName) => {
     if (typeName && typeName._hobType === 'item-ref') typeName = typeName.value;
     if (!item || typeof item !== 'object') return false;
@@ -3026,6 +3138,7 @@ function registerItemOps(env, api) {
     return item.type === resolvedId;
   }, { _hobName: 'type?' }));
 
+  /** True if item has the given tag (by name or GUID). */
   env.define('tagged?', Object.assign(async (item, tagName) => {
     if (tagName && tagName._hobType === 'item-ref') tagName = tagName.value;
     if (!item || typeof item !== 'object') return false;
@@ -3046,28 +3159,33 @@ function registerItemOps(env, api) {
     return tagIds.some(id => tags.includes(id));
   }, { _hobName: 'tagged?' }));
 
+  /** True if item name contains substring (case-insensitive). */
   env.define('name?', Object.assign((item, substring) => {
     if (!item || typeof item !== 'object') return false;
     const name = item.name || '';
     return name.toLowerCase().includes(substring.toLowerCase());
   }, { _hobName: 'name?' }));
 
+  /** True if item was modified after the given timestamp. */
   env.define('modified-after?', Object.assign((item, timestamp) => {
     if (!item || typeof item !== 'object') return false;
     return (item.modified || 0) > timestamp;
   }, { _hobName: 'modified-after?' }));
 
+  /** True if item was modified before the given timestamp. */
   env.define('modified-before?', Object.assign((item, timestamp) => {
     if (!item || typeof item !== 'object') return false;
     return (item.modified || 0) < timestamp;
   }, { _hobName: 'modified-before?' }));
 
+  /** True if item has the given content field. */
   env.define('has-field?', Object.assign((item, field) => {
     if (!item || typeof item !== 'object') return false;
     const key = typeof field === 'string' && field.startsWith('\u029e') ? field.slice(1) : field;
     return item.content != null && key in item.content;
   }, { _hobName: 'has-field?' }));
 
+  /** Full-text search across item fields (case-insensitive). */
   env.define('text?', Object.assign((item, query) => {
     if (!item || typeof item !== 'object') return false;
     const c = item.content;
@@ -3099,6 +3217,7 @@ function registerViewOps(env, api) {
   if (!api._hobCleanups) api._hobCleanups = [];
 
   const _drHob = new URLSearchParams(window.location.search).has('debug-render');
+  /** Render an item as DOM. Optional view ID or options map. */
   env.define('render-item', Object.assign(async (itemId, viewIdOrOpts) => {
     if (_drHob) console.log(`[hob:render-item] START itemId=${String(itemId).slice(0,8)} opts=${typeof viewIdOrOpts}`);
     const t0 = _drHob ? performance.now() : 0;
@@ -3135,11 +3254,13 @@ function registerViewOps(env, api) {
     return dom;
   }, { _hobName: 'render-item' }));
 
+  /** Register a cleanup handler for the current view lifecycle. */
   env.define('on-cleanup!', Object.assign((handler) => {
     api._hobCleanups.push(handler);
     return null;
   }, { _hobName: 'on-cleanup!' }));
 
+  /** Add document event listener, auto-cleaned on view teardown. */
   env.define('on-document!', Object.assign((eventName, handler) => {
     const name = isKeyword(eventName) ? keywordName(eventName) : String(eventName);
     document.addEventListener(name, handler);
@@ -3148,6 +3269,7 @@ function registerViewOps(env, api) {
     return remove;
   }, { _hobName: 'on-document!' }));
 
+  /** Subscribe to Hobson event, auto-cleaned on view teardown. */
   env.define('on-event!', Object.assign((eventId, handler) => {
     const id = isKeyword(eventId) ? keywordName(eventId) : String(eventId);
     const unsub = api.events.on(id, handler);
@@ -3155,27 +3277,32 @@ function registerViewOps(env, api) {
     return unsub;
   }, { _hobName: 'on-event!' }));
 
+  /** Navigate to an item (updates URL and root). */
   env.define('navigate!', Object.assign(async (itemId) => {
     await api.navigate(itemId);
     return null;
   }, { _hobName: 'navigate!' }));
 
+  /** Clear the current item selection. */
   env.define('clear-selection!', Object.assign(async () => {
     if (api.viewport?.clearSelection) await api.viewport.clearSelection();
     return null;
   }, { _hobName: 'clear-selection!' }));
 
+  /** Force re-render of the current view. */
   env.define('rerender!', Object.assign(() => {
     api.rerenderItem();
     return null;
   }, { _hobName: 'rerender!' }));
 
+  /** Get the current view configuration object. */
   env.define('get-view-config', Object.assign(async () => {
     if (!api.getViewConfig) return null;
     const config = await api.getViewConfig();
     return config || null;
   }, { _hobName: 'get-view-config' }));
 
+  /** Merge updates into the current view configuration. */
   env.define('update-view-config!', Object.assign(async (updates) => {
     if (!api.updateViewConfig) return false;
     return await api.updateViewConfig(hobToJs(updates));
@@ -3183,26 +3310,31 @@ function registerViewOps(env, api) {
 
   // require is now in registerItemOps (stdlib) — no longer view-only
 
+  /** Search items via item-search-lib. Returns matching items. */
   env.define('search-items!', Object.assign(async (query, options) => {
     const searchLib = await api.require('item-search-lib');
     return await searchLib.searchItems(query, api, options ? hobToJs(options) : {});
   }, { _hobName: 'search-items!' }));
 
+  /** Get items tagged as starred. */
   env.define('get-starred-items!', Object.assign(async (options) => {
     const searchLib = await api.require('item-search-lib');
     return await searchLib.getStarredItems(api, options ? hobToJs(options) : {});
   }, { _hobName: 'get-starred-items!' }));
 
+  /** Render markdown string to HTML string. */
   env.define('render-markdown', Object.assign(async (text) => {
     const hobsonMarkdown = await api.require('hobson-markdown');
     return await hobsonMarkdown.render(text, api);
   }, { _hobName: 'render-markdown' }));
 
+  /** Copy text to system clipboard. */
   env.define('copy-to-clipboard!', Object.assign(async (text) => {
     await navigator.clipboard.writeText(text);
     return null;
   }, { _hobName: 'copy-to-clipboard!' }));
 
+  /** Remove an attachment. (detach! parent-id child-id) or (detach! child-id). */
   env.define('detach!', Object.assign(async (...args) => {
     if (args.length === 2) {
       await api.detach(args[0], args[1]);
@@ -3212,6 +3344,7 @@ function registerViewOps(env, api) {
     return null;
   }, { _hobName: 'detach!' }));
 
+  /** Add a child attachment to a parent item. */
   env.define('attach!', Object.assign(async (parentId, childIdOrObj) => {
     const attachment = typeof childIdOrObj === 'string' || (childIdOrObj && childIdOrObj.s)
       ? (childIdOrObj.s || childIdOrObj)
@@ -3220,6 +3353,7 @@ function registerViewOps(env, api) {
     return null;
   }, { _hobName: 'attach!' }));
 
+  /** Open an item via the container-handled open intent. */
   env.define('open-item!', Object.assign(async (event, itemIdOrObj) => {
     if (api.openItem && itemIdOrObj != null) {
       const arg = typeof itemIdOrObj === 'string'
@@ -3230,18 +3364,22 @@ function registerViewOps(env, api) {
     return null;
   }, { _hobName: 'open-item!' }));
 
+  /** Get the parent item ID in the current render context. */
   env.define('get-parent-id', Object.assign(() => {
     return api.getParentId();
   }, { _hobName: 'get-parent-id' }));
 
+  /** Get the open-in target from the current render context. */
   env.define('get-open-in', Object.assign(() => {
     return api.getOpenIn ? api.getOpenIn() : null;
   }, { _hobName: 'get-open-in' }));
 
+  /** Get the current root item ID. */
   env.define('get-current-root', Object.assign(() => {
     return api.getCurrentRoot();
   }, { _hobName: 'get-current-root' }));
 
+  /** Move attachment from one index to another. */
   env.define('reorder-attachments!', Object.assign(async (fromIndex, toIndex) => {
     const itemId = api.getCurrentItem().id;
     const fresh = await api.get(itemId);
@@ -3252,41 +3390,49 @@ function registerViewOps(env, api) {
     return null;
   }, { _hobName: 'reorder-attachments!' }));
 
+  /** Get the current item selection state. */
   env.define('get-selection!', Object.assign(async () => {
     const selectionMgr = await api.require('selection-manager');
     return selectionMgr.getSelection() || null;
   }, { _hobName: 'get-selection!' }));
 
+  /** Get all items related to the given item (parents, children, tags, refs). */
   env.define('get-related!', Object.assign(async (itemId) => {
     const relatedLib = await api.require('related-items-lib');
     await relatedLib.ensureBuilt(api);
     return await relatedLib.getRelated(itemId, api);
   }, { _hobName: 'get-related!' }));
 
+  /** Get the fully-qualified tag name for an item. */
   env.define('get-fqn!', Object.assign(async (itemId, rootId) => {
     const tagTreeBuilder = await api.require('tag-tree-builder');
     return await tagTreeBuilder.getFullyQualifiedName(itemId, api, rootId || undefined);
   }, { _hobName: 'get-fqn!' }));
 
+  /** Get items tagged with the given item, grouped by type. */
   env.define('get-tagged-with-grouped!', Object.assign(async (itemId) => {
     const relatedLib = await api.require('related-items-lib');
     await relatedLib.ensureBuilt(api);
     return relatedLib.getItemsTaggedWithGrouped(itemId);
   }, { _hobName: 'get-tagged-with-grouped!' }));
 
+  /** Check if debug mode is active. */
   env.define('get-debug-mode', Object.assign(() => {
     return window.kernel?.debugMode || false;
   }, { _hobName: 'get-debug-mode' }));
 
+  /** Enable or disable debug mode. */
   env.define('set-debug-mode!', Object.assign((value) => {
     window.kernel.debugMode = !!value;
     return null;
   }, { _hobName: 'set-debug-mode!' }));
 
+  /** Get the root item ID from the viewport. */
   env.define('get-viewport-root', Object.assign(() => {
     return api.viewport.getRoot();
   }, { _hobName: 'get-viewport-root' }));
 
+  /** Get the current viewport item ID. */
   env.define('get-viewport-id', Object.assign(() => {
     const vpMgr = window.kernel?.moduleSystem?.getCached('viewport-manager');
     return vpMgr?.getViewportId?.() || '88888888-0000-0000-0000-000000000000';
@@ -3298,6 +3444,7 @@ function registerViewOps(env, api) {
 // ============================================================
 
 function registerEventOps(env, eventApi) {
+  /** Emit a Hobson event. */
   env.define('emit!', Object.assign((event) => {
     eventApi.emit(hobToJs(event));
     return null;
@@ -3433,16 +3580,19 @@ export function createInterpreter(api, viewApi, eventApi) {
   }
 
   // hiccup->dom creates DOM from hiccup, with source attribution when debug is active
+  /** Convert hiccup data to a DOM node. */
   stdlib.define('hiccup->dom', Object.assign((hiccup) => {
     return hiccupToDOM(hiccup, _hobSourceCtx());
   }, { _hobName: 'hiccup->dom' }));
 
   // hiccup->dom+ returns [dom-node refs-map] for imperative DOM manipulation
+  /** Convert hiccup to DOM, returning [node, refs-map] for imperative access. */
   stdlib.define('hiccup->dom+', Object.assign((hiccup) => {
     return hiccupToDOMWithRefs(hiccup, _hobSourceCtx());
   }, { _hobName: 'hiccup->dom+' }));
 
   // DOM mutation ops (no API dependency — pure DOM operations)
+  /** Add event listener to DOM element. Replaces previous handler for same event. */
   stdlib.define('dom-on!', Object.assign((el, event, handler) => {
     const eventName = isKeyword(event) ? keywordName(event) : String(event);
     // Remove previous handler for this event if registered (prevents accumulation)
@@ -3456,17 +3606,20 @@ export function createInterpreter(api, viewApi, eventApi) {
     return null;
   }, { _hobName: 'dom-on!' }));
 
+  /** Set a DOM element property. */
   stdlib.define('dom-set!', Object.assign((el, prop, value) => {
     const propName = isKeyword(prop) ? keywordName(prop) : String(prop);
     el[propName] = value;
     return null;
   }, { _hobName: 'dom-set!' }));
 
+  /** Get a DOM element property. */
   stdlib.define('dom-get', Object.assign((el, prop) => {
     const propName = isKeyword(prop) ? keywordName(prop) : String(prop);
     return el[propName] ?? null;
   }, { _hobName: 'dom-get' }));
 
+  /** Replace element content with string, DOM node, or hiccup. */
   stdlib.define('dom-set-content!', Object.assign((el, content) => {
     el.innerHTML = '';
     if (content === null || content === undefined) return null;
@@ -3482,20 +3635,24 @@ export function createInterpreter(api, viewApi, eventApi) {
     return null;
   }, { _hobName: 'dom-set-content!' }));
 
+  /** Stop event propagation. */
   stdlib.define('stop-propagation!', Object.assign((e) => {
     e.stopPropagation();
     return null;
   }, { _hobName: 'stop-propagation!' }));
 
+  /** Prevent default event behavior. */
   stdlib.define('prevent-default!', Object.assign((e) => {
     e.preventDefault();
     return null;
   }, { _hobName: 'prevent-default!' }));
 
+  /** Schedule function to run after delay (ms). Returns timer ID. */
   stdlib.define('set-timeout!', Object.assign((f, ms) => {
     return setTimeout(f, ms);
   }, { _hobName: 'set-timeout!' }));
 
+  /** Cancel a scheduled timeout. */
   stdlib.define('clear-timeout!', Object.assign((id) => {
     clearTimeout(id);
     return null;
@@ -3508,6 +3665,7 @@ export function createInterpreter(api, viewApi, eventApi) {
   // Supports :self (resolves via scoped env overrides from renderer or computed-field eval).
   const _computingFields = new Set();
   if (api) {
+    /** Get item field value, evaluating computed fields if present. */
     stdlib.define('get-field', Object.assign(async (itemOrRef, fieldKey, _tracker) => {
       let item, itemId;
       if (isKeyword(itemOrRef) && keywordName(itemOrRef) === 'self') {
@@ -3590,6 +3748,7 @@ export function createInterpreter(api, viewApi, eventApi) {
     }, { _hobName: 'get-field' }));
 
     // $ — short alias for get-field, defaults to :self when given a single keyword
+    /** Shorthand for get-field. ($ :field) gets field from current item. */
     stdlib.define('$', Object.assign((...args) => {
       if (args.length === 1 && isKeyword(args[0])) {
         return getFieldFn(keyword('self'), args[0]);
@@ -3598,6 +3757,7 @@ export function createInterpreter(api, viewApi, eventApi) {
     }, { _hobName: '$' }));
 
     // Predicate: check if a value is a computed field error sentinel
+    /** True if value is a computed field error sentinel. */
     stdlib.define('computed-field-error?', Object.assign(
       (v) => v != null && v._hobType === 'computed-field-error',
       { _hobName: 'computed-field-error?' }
@@ -3605,6 +3765,7 @@ export function createInterpreter(api, viewApi, eventApi) {
 
     // resolve-field-refs: resolve {{field-name}} references in a template string using get-field
     const getFieldFn = stdlib.lookup('get-field');
+    /** Resolve {{field}} references in a template string. */
     stdlib.define('resolve-field-refs', Object.assign(async (s, itemId) => {
       if (typeof s !== 'string') return s == null ? '' : String(s);
       if (typeof itemId === 'object' && itemId?.id) itemId = itemId.id;
@@ -3639,6 +3800,7 @@ export function createInterpreter(api, viewApi, eventApi) {
     // (transclude @item-id :description :slice :first-block) — first block node only
     // (transclude @item-id)                        — embed full item via its view
     // (transclude @item-id :view @view-id)         — embed with specific view
+    /** Embed content from another item with source attribution. */
     stdlib.define('transclude', Object.assign(async (...args) => {
       // Parse args: item, field, then optional keyword args
       let itemOrRef = args[0];
@@ -3709,6 +3871,7 @@ export function createInterpreter(api, viewApi, eventApi) {
     // (transclusion-chrome value :source @item :symbol "name")       — link to symbol
     // (transclusion-chrome value :source @item :label "display")     — custom label
     // (transclusion-chrome value :source @item :symbol "n" :chrome :subtle)
+    /** Wrap a value in transclusion attribution chrome. */
     stdlib.define('transclusion-chrome', Object.assign(async (value, ...kwargs) => {
       let sourceId = null, symbol = null, label = null, chrome = 'full';
       for (let i = 0; i < kwargs.length; i++) {
@@ -3738,6 +3901,7 @@ export function createInterpreter(api, viewApi, eventApi) {
 
     // extract-symbol: extract a symbol's source code from an item
     // (extract-symbol @item-id "symbolName") → string of source code
+    /** Extract a named symbol definition from a code item. */
     stdlib.define('extract-symbol', Object.assign(async (itemOrRef, symbolName) => {
       let item;
       if (itemOrRef && itemOrRef._hobType === 'item-ref') {
@@ -3766,6 +3930,7 @@ export function createInterpreter(api, viewApi, eventApi) {
     // call-export: require an item as a module and call an exported function
     // (call-export @item-id "fnName" arg1 arg2 ...) → result of calling the export
     // Passes remaining args through to the function after Hob→JS conversion
+    /** Call an exported function from a JS code item by name. */
     stdlib.define('call-export', Object.assign(async (itemOrRef, fnName, ...args) => {
       let itemId;
       if (itemOrRef && itemOrRef._hobType === 'item-ref') {

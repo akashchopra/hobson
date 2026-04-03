@@ -13,6 +13,16 @@
       code-items
       (map (fn [it] {:id (:id it) :name (or (:name it) (subs (:id it) 0 8))}))
       (sort-by :name)))
+  (def HOB-INTERP-ID "40b00001-0000-4000-8000-000000000000")
+  (def
+    stdlib-scopes
+    {"createStdlib" "Core"
+     "registerItemOps" "Item Operations"
+     "registerViewOps" "View Operations"
+     "createInterpreter" "DOM & Fields"})
+  (def
+    stdlib-scope-order
+    ["createStdlib" "registerItemOps" "registerViewOps" "createInterpreter"])
   (def active-kinds (atom {}))
   (def active-module (atom nil))
   (def timeout-id (atom nil))
@@ -31,6 +41,14 @@
       "prop"
       (= kind "variable")
       "var"
+      (= kind "view")
+      "view"
+      (= kind "watch")
+      "watch"
+      (= kind "macro")
+      "macro"
+      (= kind "binding")
+      "let"
       :else
       kind))
   (defn kind-color [kind]
@@ -43,15 +61,41 @@
       "#06b6d4"
       (or (= kind "property") (= kind "field"))
       "#f59e0b"
+      (= kind "view")
+      "#10b981"
+      (= kind "watch")
+      "#ef4444"
+      (= kind "macro")
+      "#ec4899"
       :else
       "#6b7280"))
   (defn chip-style [active]
     (str
-      "padding: 5px 14px; font-size: 0.8125rem; border-radius: 16px; cursor: pointer; transition: all 0.15s; border: 1px solid; "
+      "padding: 5px 14px; font-size: 0.8125rem; border-radius: 16px; "
+      "cursor: pointer; transition: all 0.15s; border: 1px solid; "
       (if
         active
         "background: var(--color-primary); color: white; border-color: var(--color-primary);"
         "background: transparent; color: var(--color-text-secondary); border-color: var(--color-border);")))
+  (defn to-hob-sig [sig]
+    (if
+      (nil? sig)
+      nil
+      (->
+        sig
+        (str/replace " = ..." "")
+        (str/replace ", " " ")
+        (str/replace "..." "& "))))
+  (defn group-by-scope [syms]
+    (let [scopes (distinct (map (fn [s] (:scope s)) syms))]
+      (vec
+        (filter
+          (fn [g] (seq (:syms g)))
+          (map
+            (fn [scope]
+              {:scope scope
+               :syms (vec (filter (fn [s] (= (:scope s) scope)) syms))})
+            scopes)))))
   (def
     kinds
     [["All" nil]
@@ -59,6 +103,133 @@
      ["Classes" "class"]
      ["Methods" "method"]
      ["Properties" "property"]])
+  (defn render-sym [sym it is-hob]
+    (let [display-sig (if is-hob (to-hob-sig (:signature sym)) (:signature sym))
+]
+      [:div {}
+        [:div {:style (str
+                        "display: flex; align-items: center; gap: 8px; "
+                        "padding: 7px 14px; cursor: pointer; transition: all 0.15s; "
+                        "border-bottom: 1px solid var(--color-border-light);")
+               :on-click (fn [e]
+                           (open-item!
+                             e
+                             {:id (:id it)
+                              :view {:navigateTo {:symbol (:name sym)}}}))}
+          [:span {:style (str
+                           "font-family: monospace; font-size: 0.8125rem; "
+                           "color: var(--color-text); flex: 1; min-width: 0; "
+                           "overflow: hidden; text-overflow: ellipsis; white-space: nowrap;")}
+
+            (str (:name sym) (or display-sig ""))]
+          [:span {:style (str
+                           "font-size: 0.6875rem; padding: 1px 6px; "
+                           "border-radius: var(--border-radius); color: white; "
+                           "flex-shrink: 0; background: "
+                           (kind-color (:kind sym)))}
+
+            (kind-short (:kind sym))]
+          [:span {:style (str
+                           "font-size: 0.75rem; color: var(--color-text-secondary); "
+                           "font-family: monospace; min-width: 36px; text-align: right; "
+                           "flex-shrink: 0;")}
+
+            (str ":" (:line sym))]]
+        (when
+          (or (:description sym) (:params sym) (:returns sym))
+          [:div {:style (str
+                          "padding: 2px 14px 6px 22px; font-size: 0.75rem; "
+                          "color: var(--color-text-secondary); "
+                          "border-bottom: 1px solid var(--color-border-light); "
+                          "line-height: 1.4;")}
+
+            (when
+              (:description sym)
+              [:div {} (first (str/split (:description sym) "\n"))])
+            (when
+              (:params sym)
+              (for [p (:params sym)]
+                [:div {:style "padding-left: 8px; font-family: monospace; font-size: 0.6875rem;"}
+
+                  [:span {:style "color: var(--color-text);"} (:name p)]
+                  (when
+                    (:type p)
+                    [:span {:style "color: var(--color-text-secondary); opacity: 0.7;"}
+
+                      (str " : " (:type p))])
+                  (when (:description p) [:span {} (:description p)])]))
+            (when
+              (:returns sym)
+              [:div {:style "padding-left: 8px; font-family: monospace; font-size: 0.6875rem;"}
+
+                [:span {:style "color: var(--color-text); opacity: 0.7;"} "→ "]
+                (when
+                  (:type (:returns sym))
+                  [:span {:style "color: var(--color-text-secondary); opacity: 0.7;"}
+
+                    (:type (:returns sym))])
+                (when
+                  (:description (:returns sym))
+                  [:span {} (str " — " (:description (:returns sym)))])])])]))
+  (defn render-scope-header [label]
+    [:div {:style (str
+                    "padding: 6px 14px; font-size: 0.75rem; font-weight: 600; "
+                    "color: var(--color-text-secondary); text-transform: uppercase; "
+                    "letter-spacing: 0.05em; background: var(--color-bg-surface); "
+                    "border-bottom: 1px solid var(--color-border-light);")}
+
+      label])
+  (defn render-module-group [group is-hob]
+    (let [it (:item group)
+          matches (:matches group)
+          scope-groups (group-by-scope matches)
+          is-this-interp (and is-hob (= (:id it) HOB-INTERP-ID))
+          ordered-groups (if
+                           is-this-interp
+                           (vec
+                             (filter
+                               seq
+                               (map
+                                 (fn [scope-key]
+                                   (first
+                                     (filter
+                                       (fn [g] (= (:scope g) scope-key))
+                                       scope-groups)))
+                                 stdlib-scope-order)))
+                           (let [null-g (filter
+                                          (fn [g] (nil? (:scope g)))
+                                          scope-groups)
+                                 named-g (sort-by
+                                           :scope
+                                           (filter
+                                             (fn [g] (not (nil? (:scope g))))
+                                             scope-groups))]
+                             (concat null-g named-g)))
+          has-multiple-scopes (> (count ordered-groups) 1)]
+      [:div {:style (str
+                      "margin-bottom: 16px; background: var(--color-bg-surface-alt); "
+                      "border-radius: var(--border-radius); overflow: hidden;")}
+
+        [:div {:style (str
+                        "display: flex; align-items: center; justify-content: space-between; "
+                        "padding: 10px 14px; border-bottom: 1px solid var(--color-border-light); "
+                        "cursor: pointer; transition: background 0.15s;")
+               :on-click (fn [e] (open-item! e (:id it)))}
+          [:span {:style "font-weight: 600; font-size: 0.875rem; color: var(--color-text);"}
+
+            (or (:name it) (subs (:id it) 0 8))]
+          [:span {:style "color: var(--color-text-secondary); font-size: 0.75rem;"}
+
+            "↗"]]
+        (for [sg ordered-groups]
+          (let [scope-label (if
+                              is-this-interp
+                              (get stdlib-scopes (:scope sg))
+                              (when has-multiple-scopes (:scope sg)))
+                sorted-syms (sort-by (if is-hob :name :line) (:syms sg))]
+            [:div {}
+              (when scope-label (render-scope-header scope-label))
+              (for [sym sorted-syms] (render-sym sym it is-hob))]))]))
   (def
     [root refs]
     (hiccup->dom+
@@ -72,10 +243,17 @@
           [:input {:ref :search
                    :type "text"
                    :placeholder "Search symbols..."
-                   :style "width: 100%; padding: 12px 16px; font-size: 1rem; border: 2px solid var(--color-border); border-radius: 8px; outline: none; transition: border-color 0.2s; box-sizing: border-box;"}]]
+                   :style (str
+                            "width: 100%; padding: 12px 16px; font-size: 1rem; "
+                            "border: 2px solid var(--color-border); border-radius: 8px; "
+                            "outline: none; transition: border-color 0.2s; box-sizing: border-box;")}]]
         [:div {:style "margin-bottom: 12px;"}
           [:select {:ref :module
-                    :style "width: 100%; padding: 8px 12px; font-size: 0.875rem; border: 1px solid var(--color-border); border-radius: 8px; background: var(--color-bg-surface); color: var(--color-text); outline: none; cursor: pointer;"}
+                    :style (str
+                             "width: 100%; padding: 8px 12px; font-size: 0.875rem; "
+                             "border: 1px solid var(--color-border); border-radius: 8px; "
+                             "background: var(--color-bg-surface); color: var(--color-text); "
+                             "outline: none; cursor: pointer;")}
             [:option {:value ""} (str "All modules (" (count code-items) ")")]
             (for [mod sorted-modules]
               [:option {:value (:id mod)}
@@ -132,6 +310,7 @@
     (let [q (str/lower-case (str/trim (or (dom-get search-el :value) "")))
           mod-filter (deref active-module)
           kinds-filter (deref active-kinds)
+          is-hob (= mod-filter HOB-INTERP-ID)
           filtered-items (if
                            mod-filter
                            (filter (fn [it] (= (:id it) mod-filter)) code-items)
@@ -140,7 +319,9 @@
         (and (= q "") (nil? mod-filter))
         (dom-set-content!
           results-el
-          [:div {:style "padding: 40px; text-align: center; color: var(--color-text-secondary); font-style: italic;"}
+          [:div {:style (str
+                          "padding: 40px; text-align: center; "
+                          "color: var(--color-text-secondary); font-style: italic;")}
 
             (str
               (count code-items)
@@ -152,7 +333,19 @@
                          seq
                          (map
                            (fn [it]
-                             (let [syms (vals (get-in it [:content :_symbols]))
+                             (let [all-syms (vals
+                                              (get-in it [:content :_symbols]))
+                                   scoped-syms (if
+                                                 (and
+                                                   is-hob
+                                                   (= (:id it) HOB-INTERP-ID))
+                                                 (filter
+                                                   (fn [s]
+                                                     (get
+                                                       stdlib-scopes
+                                                       (or (:scope s) "")))
+                                                   all-syms)
+                                                 all-syms)
                                    matches (vec
                                              (filter
                                                (fn [sym]
@@ -191,25 +384,26 @@
                                                          kinds-filter
                                                          "method")
                                                        (= (:kind sym) "method")))))
-                                               syms))
-                                   sorted-matches (sort-by :line matches)]
-                               (when
-                                 (seq sorted-matches)
-                                 {:item it :matches sorted-matches})))
+                                               scoped-syms))]
+                               (when (seq matches) {:item it :matches matches})))
                            filtered-items)))
 ]
           (if
             (= 0 (count groups))
             (dom-set-content!
               results-el
-              [:div {:style "padding: 40px; text-align: center; color: var(--color-text-secondary); font-style: italic;"}
+              [:div {:style (str
+                              "padding: 40px; text-align: center; "
+                              "color: var(--color-text-secondary); font-style: italic;")}
 
                 (str "No symbols matching \"" (dom-get search-el :value) "\"")])
             (let [total (reduce + 0 (map (fn [g] (count (:matches g))) groups))]
               (dom-set-content!
                 results-el
                 [:div {}
-                  [:div {:style "margin-bottom: 15px; font-size: 0.875rem; color: var(--color-text-secondary); font-weight: 500;"}
+                  [:div {:style (str
+                                  "margin-bottom: 15px; font-size: 0.875rem; "
+                                  "color: var(--color-text-secondary); font-weight: 500;")}
 
                     (str
                       total
@@ -219,85 +413,7 @@
                       (count groups)
                       " item"
                       (if (= 1 (count groups)) "" "s"))]
-                  (for [group groups]
-                    (let [it (:item group)]
-                      [:div {:style "margin-bottom: 16px; background: var(--color-bg-surface-alt); border-radius: var(--border-radius); overflow: hidden;"}
-
-                        [:div {:style "display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; border-bottom: 1px solid var(--color-border-light); cursor: pointer; transition: background 0.15s;"
-                               :on-click (fn [e] (open-item! e (:id it)))}
-                          [:span {:style "font-weight: 600; font-size: 0.875rem; color: var(--color-text);"}
-
-                            (or (:name it) (subs (:id it) 0 8))]
-                          [:span {:style "color: var(--color-text-secondary); font-size: 0.75rem;"}
-
-                            "↗"]]
-                        (for [sym (:matches group)]
-                          [:div {}
-                            [:div {:style "display: flex; align-items: center; gap: 8px; padding: 7px 14px; cursor: pointer; transition: all 0.15s; border-bottom: 1px solid var(--color-border-light);"
-                                   :on-click (fn [e]
-                                               (open-item!
-                                                 e
-                                                 {:id (:id it)
-                                                  :view {:navigateTo {:symbol (:name
-                                                                                sym)}
-}
-}))}
-                              [:span {:style "font-family: monospace; font-size: 0.8125rem; color: var(--color-text); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"}
-
-                                (str (:name sym) (or (:signature sym) ""))]
-                              [:span {:style (str
-                                               "font-size: 0.6875rem; padding: 1px 6px; border-radius: var(--border-radius); color: white; flex-shrink: 0; background: "
-                                               (kind-color (:kind sym)))}
-
-                                (kind-short (:kind sym))]
-                              [:span {:style "font-size: 0.75rem; color: var(--color-text-secondary); font-family: monospace; min-width: 36px; text-align: right; flex-shrink: 0;"}
-
-                                (str ":" (:line sym))]]
-                            (when
-                              (or
-                                (:description sym)
-                                (:params sym)
-                                (:returns sym))
-                              [:div {:style "padding: 2px 14px 6px 22px; font-size: 0.75rem; color: var(--color-text-secondary); border-bottom: 1px solid var(--color-border-light); line-height: 1.4;"}
-
-                                (when
-                                  (:description sym)
-                                  [:div {}
-                                    (first (str/split (:description sym) "\n"))])
-                                (when
-                                  (:params sym)
-                                  (for [p (:params sym)]
-                                    [:div {:style "padding-left: 8px; font-family: monospace; font-size: 0.6875rem;"}
-
-                                      [:span {:style "color: var(--color-text);"}
-
-                                        (:name p)]
-                                      (when
-                                        (:type p)
-                                        [:span {:style "color: var(--color-text-secondary); opacity: 0.7;"}
-
-                                          (str " : " (:type p))])
-                                      (when
-                                        (:description p)
-                                        [:span {} (str (:description p))])]))
-                                (when
-                                  (:returns sym)
-                                  [:div {:style "padding-left: 8px; font-family: monospace; font-size: 0.6875rem;"}
-
-                                    [:span {:style "color: var(--color-text); opacity: 0.7;"}
-
-                                      "→ "]
-                                    (when
-                                      (:type (:returns sym))
-                                      [:span {:style "color: var(--color-text-secondary); opacity: 0.7;"}
-
-                                        (:type (:returns sym))])
-                                    (when
-                                      (:description (:returns sym))
-                                      [:span {}
-                                        (str
-                                          " — "
-                                          (:description (:returns sym)))])])])])]))])))))))
+                  (for [group groups] (render-module-group group is-hob))])))))))
   (dom-on!
     search-el
     :focus
