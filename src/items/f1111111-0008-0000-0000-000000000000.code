@@ -149,18 +149,26 @@ async function restorePreviousView(kernel, context, itemId, renderViewport) {
 
 /** Parse a stack trace to extract the source item name and line number.
  * @param {string} stack - Error stack trace string
+ * @param {function} [urlResolver] - Optional: maps a blob URL to an item name (for Tauri)
  * @returns {{itemName: string, line: number}|null}
  */
-function parseSourceLocation(stack) {
+function parseSourceLocation(stack, urlResolver = null) {
+  const SKIP = new Set(['viewport-rendering', 'kernel:core']);
   const lines = stack.split('\n');
   for (const line of lines) {
     const match = line.match(/\((.+?):(\d+):\d+\)/) ||  // Chrome
                   line.match(/@(.+?):(\d+):\d+/);        // Firefox/Safari
     if (match) {
       const [, itemName, lineNum] = match;
-      // Strip .js suffix and skip kernel frames (createElement wrapper + rendering internals)
-      const cleanName = itemName.replace(/\.js$/, '');
-      if (cleanName !== 'viewport-rendering' && cleanName !== 'kernel:core') {
+      // Strip .js suffix; resolve blob URLs before filtering (Tauri doesn't honor //# sourceURL)
+      let cleanName = itemName.replace(/\.js$/, '');
+      if (cleanName.startsWith('blob:')) {
+        if (!urlResolver) continue;
+        const resolved = urlResolver(cleanName);
+        if (!resolved) continue;
+        cleanName = resolved;
+      }
+      if (!SKIP.has(cleanName)) {
         // Subtract 1 to compensate for the "use strict"; preamble the module system prepends
         return { itemName: cleanName, line: parseInt(lineNum, 10) - 1 };
       }
@@ -555,7 +563,10 @@ export class RenderingSystem {
     const debugCtx = containerItem ? {
       containerItem, context,
       get debugMode() { return rendering.kernel.debugMode; },
-      parseSourceLocation
+      parseSourceLocation: (stack) => parseSourceLocation(
+        stack,
+        (url) => rendering.kernel.moduleSystem.getNameForBlobUrl(url)
+      )
     } : null;
     api.createElement = (tag, props, children) => createElement(tag, props, children, debugCtx);
 

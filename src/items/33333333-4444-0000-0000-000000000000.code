@@ -9,6 +9,7 @@ export class ModuleSystem {
     this.nameCache = new Map(); // name -> itemId (cached name resolution)
     this.loadingPromises = new Map(); // itemId -> Promise (tracks in-flight loads)
     this.moduleMetadata = new WeakMap(); // module object → { itemId, itemName }
+    this.blobUrlToName = new Map(); // blob URL → item name (for source attribution in Tauri)
   }
 
   /** Initialize event listeners for cache invalidation on item updates. */
@@ -129,6 +130,7 @@ export class ModuleSystem {
 
     const blob = new Blob([code], { type: "application/javascript" });
     const url = URL.createObjectURL(blob);
+    this.blobUrlToName.set(url, item.name || item.id);
 
     try {
       const module = await import(url);
@@ -236,11 +238,21 @@ export class ModuleSystem {
     return this.moduleMetadata.get(obj) || null;
   }
 
+  /** Look up the item name for a blob URL (for source attribution in environments where
+   * //# sourceURL is not honored in stack traces, e.g. Tauri).
+   * @param {string} url - A blob URL
+   * @returns {string|null} Item name, or null if not found
+   */
+  getNameForBlobUrl(url) {
+    return this.blobUrlToName.get(url) ?? null;
+  }
+
   /** Clear all module and name caches (forces fresh evaluation on next require). */
   clearCache() {
     this.moduleCache.clear();
     this.nameCache.clear();
     this.loadingPromises.clear();
+    this.blobUrlToName.clear();
   }
 }
 // [END:ModuleSystem]
