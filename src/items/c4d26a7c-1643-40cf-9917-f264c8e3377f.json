@@ -1,0 +1,696 @@
+{
+  "id": "c4d26a7c-1643-40cf-9917-f264c8e3377f",
+  "name": "reminder-scheduler",
+  "type": "66666666-0000-0000-0000-000000000000",
+  "created": 1775584579063,
+  "modified": 1775663224965,
+  "watches": [
+    {
+      "event": "e0e00000-0002-0002-0000-000000000000"
+    },
+    {
+      "event": "e0e00000-0001-0002-0000-000000000000"
+    }
+  ],
+  "content": {
+    "description": [
+      ":doc",
+      [
+        ":p",
+        {
+          "s": "Boot-time scheduler for reminder items. JS shim handles the kernel:boot-complete watch; all scheduling logic is in Hob (content.hob)."
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "On boot: scans all reminder items, evaluates each scheduling expression, and sets timers. When a timer fires: shows a Tauri notification and re-evaluates for recurring reminders."
+        }
+      ]
+    ],
+    "code": "// reminder-scheduler — JS boot shim\n// Loads and evaluates this item's Hob scheduling logic at boot time.\n// Also watches item:updated to reactively re-schedule edited reminders.\n\nconst SELF_ID = 'c4d26a7c-1643-40cf-9917-f264c8e3377f';\nconst REMINDER_TYPE = '521cb06c-2146-47f1-9375-1207bb6b5b27';\nlet _scheduleOne = null;\n\nexport async function onKernelBootComplete({ safeMode }, api) {\n  if (safeMode) return;\n  const hob = await api.require('hob-interpreter');\n  const interp = hob.createInterpreter(api);\n  await interp.macrosReady;\n  const self = await api.get(SELF_ID);\n  if (!self?.content?.hob) return;\n  for (const ast of self.content.hob) {\n    await interp.evaluate(ast);\n  }\n  _scheduleOne = await interp.eval('schedule-one!');\n}\n\nexport async function onItemUpdated({ item }, api) {\n  if (!_scheduleOne || !item || item.type !== REMINDER_TYPE) return;\n  await _scheduleOne(item);\n}\n",
+    "hob": [
+      [
+        "def",
+        "doc",
+        [
+          "dom-get",
+          [
+            "hiccup->dom",
+            {
+              "v": [
+                ":div"
+              ]
+            }
+          ],
+          ":ownerDocument"
+        ]
+      ],
+      [
+        "def",
+        "win",
+        [
+          "dom-get",
+          "doc",
+          ":defaultView"
+        ]
+      ],
+      [
+        "def",
+        "REMINDER_TYPE",
+        {
+          "s": "521cb06c-2146-47f1-9375-1207bb6b5b27"
+        }
+      ],
+      [
+        "def",
+        "timers",
+        [
+          "atom",
+          {
+            "m": []
+          }
+        ]
+      ],
+      [
+        "def",
+        "notif-counter",
+        [
+          "atom",
+          0
+        ]
+      ],
+      [
+        "def",
+        "notif-map",
+        [
+          "atom",
+          {
+            "m": []
+          }
+        ]
+      ],
+      [
+        "defn",
+        "notify!",
+        {
+          "v": [
+            "title",
+            "body",
+            "reminder-id"
+          ]
+        },
+        [
+          "let",
+          {
+            "v": [
+              "nid",
+              [
+                "swap!",
+                "notif-counter",
+                "inc"
+              ]
+            ]
+          },
+          [
+            "swap!",
+            "notif-map",
+            "assoc",
+            "nid",
+            "reminder-id"
+          ],
+          [
+            "when-let",
+            {
+              "v": [
+                "tauri",
+                [
+                  "dom-get",
+                  "win",
+                  ":__TAURI__"
+                ]
+              ]
+            },
+            [
+              "when-let",
+              {
+                "v": [
+                  "notif",
+                  [
+                    "dom-get",
+                    "tauri",
+                    ":notification"
+                  ]
+                ]
+              },
+              [
+                "invoke",
+                "notif",
+                {
+                  "s": "sendNotification"
+                },
+                {
+                  "m": [
+                    [
+                      ":id",
+                      "nid"
+                    ],
+                    [
+                      ":title",
+                      "title"
+                    ],
+                    [
+                      ":body",
+                      "body"
+                    ],
+                    [
+                      ":ongoing",
+                      true
+                    ],
+                    [
+                      ":autoCancel",
+                      false
+                    ]
+                  ]
+                }
+              ]
+            ]
+          ]
+        ]
+      ],
+      [
+        "defn",
+        "eval-schedule",
+        {
+          "v": [
+            "reminder"
+          ]
+        },
+        [
+          "let",
+          {
+            "v": [
+              "hob-ast",
+              [
+                "get-in",
+                "reminder",
+                {
+                  "v": [
+                    ":content",
+                    ":hob"
+                  ]
+                }
+              ]
+            ]
+          },
+          [
+            "when",
+            [
+              "and",
+              "hob-ast",
+              [
+                "seq",
+                "hob-ast"
+              ]
+            ],
+            [
+              "let",
+              {
+                "v": [
+                  "hob-mod",
+                  [
+                    "require",
+                    {
+                      "s": "hob-interpreter"
+                    }
+                  ],
+                  "interp",
+                  [
+                    "invoke",
+                    "hob-mod",
+                    {
+                      "s": "createInterpreter"
+                    },
+                    null
+                  ],
+                  "source",
+                  [
+                    "invoke",
+                    "hob-mod",
+                    {
+                      "s": "prettyPrintAll"
+                    },
+                    "hob-ast"
+                  ]
+                ]
+              },
+              [
+                "invoke",
+                "interp",
+                {
+                  "s": "eval"
+                },
+                "source"
+              ]
+            ]
+          ]
+        ]
+      ],
+      [
+        "defn",
+        "schedule-one!",
+        {
+          "v": [
+            "reminder"
+          ]
+        },
+        [
+          "let",
+          {
+            "v": [
+              "id",
+              [
+                "get",
+                "reminder",
+                ":id"
+              ]
+            ]
+          },
+          [
+            "when-let",
+            {
+              "v": [
+                "existing",
+                [
+                  "get",
+                  [
+                    "deref",
+                    "timers"
+                  ],
+                  "id"
+                ]
+              ]
+            },
+            [
+              "clear-timeout!",
+              "existing"
+            ],
+            [
+              "swap!",
+              "timers",
+              "dissoc",
+              "id"
+            ]
+          ],
+          [
+            "let",
+            {
+              "v": [
+                "next-time",
+                [
+                  "eval-schedule",
+                  "reminder"
+                ]
+              ]
+            },
+            [
+              "when",
+              [
+                "and",
+                [
+                  "number?",
+                  "next-time"
+                ],
+                [
+                  ">",
+                  "next-time",
+                  [
+                    "now"
+                  ]
+                ]
+              ],
+              [
+                "let",
+                {
+                  "v": [
+                    "delay",
+                    [
+                      "-",
+                      "next-time",
+                      [
+                        "now"
+                      ]
+                    ],
+                    "title",
+                    [
+                      "or",
+                      [
+                        "get-in",
+                        "reminder",
+                        {
+                          "v": [
+                            ":content",
+                            ":title"
+                          ]
+                        }
+                      ],
+                      [
+                        "get",
+                        "reminder",
+                        ":name"
+                      ],
+                      {
+                        "s": "Reminder"
+                      }
+                    ],
+                    "handle",
+                    [
+                      "set-timeout!",
+                      [
+                        "fn",
+                        {
+                          "v": []
+                        },
+                        [
+                          "swap!",
+                          "timers",
+                          "dissoc",
+                          "id"
+                        ],
+                        [
+                          "notify!",
+                          "title",
+                          {
+                            "s": ""
+                          },
+                          "id"
+                        ],
+                        [
+                          "when-let",
+                          {
+                            "v": [
+                              "fresh",
+                              [
+                                "get-item",
+                                "id"
+                              ]
+                            ]
+                          },
+                          [
+                            "schedule-one!",
+                            "fresh"
+                          ]
+                        ]
+                      ],
+                      "delay"
+                    ]
+                  ]
+                },
+                [
+                  "swap!",
+                  "timers",
+                  "assoc",
+                  "id",
+                  "handle"
+                ]
+              ]
+            ]
+          ]
+        ]
+      ],
+      [
+        "defn",
+        "cancel-one!",
+        {
+          "v": [
+            "id"
+          ]
+        },
+        [
+          "when-let",
+          {
+            "v": [
+              "handle",
+              [
+                "get",
+                [
+                  "deref",
+                  "timers"
+                ],
+                "id"
+              ]
+            ]
+          },
+          [
+            "clear-timeout!",
+            "handle"
+          ],
+          [
+            "swap!",
+            "timers",
+            "dissoc",
+            "id"
+          ]
+        ]
+      ],
+      [
+        "defn",
+        "boot-scan!",
+        {
+          "v": []
+        },
+        [
+          "let",
+          {
+            "v": [
+              "all",
+              [
+                "get-all"
+              ],
+              "reminders",
+              [
+                "filter",
+                [
+                  "fn",
+                  {
+                    "v": [
+                      "item"
+                    ]
+                  },
+                  [
+                    "=",
+                    [
+                      "get",
+                      "item",
+                      ":type"
+                    ],
+                    "REMINDER_TYPE"
+                  ]
+                ],
+                "all"
+              ]
+            ]
+          },
+          [
+            "doseq",
+            {
+              "v": [
+                "r",
+                "reminders"
+              ]
+            },
+            [
+              "schedule-one!",
+              "r"
+            ]
+          ],
+          [
+            "when-let",
+            {
+              "v": [
+                "tauri",
+                [
+                  "dom-get",
+                  "win",
+                  ":__TAURI__"
+                ]
+              ]
+            },
+            [
+              "when-let",
+              {
+                "v": [
+                  "notif",
+                  [
+                    "dom-get",
+                    "tauri",
+                    ":notification"
+                  ]
+                ]
+              },
+              [
+                "when",
+                [
+                  "dom-get",
+                  "notif",
+                  ":onAction"
+                ],
+                [
+                  "invoke",
+                  "notif",
+                  {
+                    "s": "onAction"
+                  },
+                  [
+                    "fn",
+                    {
+                      "v": [
+                        "action"
+                      ]
+                    },
+                    [
+                      "let",
+                      {
+                        "v": [
+                          "nid",
+                          [
+                            "dom-get",
+                            "action",
+                            ":id"
+                          ],
+                          "reminder-id",
+                          [
+                            "when",
+                            "nid",
+                            [
+                              "get",
+                              [
+                                "deref",
+                                "notif-map"
+                              ],
+                              "nid"
+                            ]
+                          ]
+                        ]
+                      },
+                      [
+                        "when",
+                        "reminder-id",
+                        [
+                          "dom-set!",
+                          [
+                            "dom-get",
+                            "win",
+                            ":location"
+                          ],
+                          ":search",
+                          [
+                            "str",
+                            {
+                              "s": "?root="
+                            },
+                            "reminder-id"
+                          ]
+                        ]
+                      ]
+                    ]
+                  ]
+                ]
+              ]
+            ]
+          ],
+          [
+            "invoke",
+            [
+              "dom-get",
+              "win",
+              ":console"
+            ],
+            {
+              "s": "log"
+            },
+            [
+              "str",
+              {
+                "s": "[reminder-scheduler] Scanned "
+              },
+              [
+                "count",
+                "reminders"
+              ],
+              {
+                "s": " reminder(s)"
+              }
+            ]
+          ]
+        ]
+      ],
+      [
+        "boot-scan!"
+      ]
+    ],
+    "_symbols": {
+      "doc": {
+        "name": "doc",
+        "kind": "variable",
+        "scope": null
+      },
+      "win": {
+        "name": "win",
+        "kind": "variable",
+        "scope": null
+      },
+      "REMINDER_TYPE": {
+        "name": "REMINDER_TYPE",
+        "kind": "variable",
+        "scope": null
+      },
+      "timers": {
+        "name": "timers",
+        "kind": "variable",
+        "scope": null
+      },
+      "notif-counter": {
+        "name": "notif-counter",
+        "kind": "variable",
+        "scope": null
+      },
+      "notif-map": {
+        "name": "notif-map",
+        "kind": "variable",
+        "scope": null
+      },
+      "notify!": {
+        "name": "notify!",
+        "kind": "function",
+        "scope": null,
+        "signature": "(title body reminder-id)"
+      },
+      "eval-schedule": {
+        "name": "eval-schedule",
+        "kind": "function",
+        "scope": null,
+        "signature": "(reminder)"
+      },
+      "schedule-one!": {
+        "name": "schedule-one!",
+        "kind": "function",
+        "scope": null,
+        "signature": "(reminder)"
+      },
+      "cancel-one!": {
+        "name": "cancel-one!",
+        "kind": "function",
+        "scope": null,
+        "signature": "(id)"
+      },
+      "boot-scan!": {
+        "name": "boot-scan!",
+        "kind": "function",
+        "scope": null,
+        "signature": "()"
+      }
+    }
+  },
+  "attachments": []
+}

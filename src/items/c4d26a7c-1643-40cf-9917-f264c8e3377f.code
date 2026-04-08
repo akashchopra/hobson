@@ -1,0 +1,112 @@
+;;; --- JavaScript ---
+// reminder-scheduler — JS boot shim
+// Loads and evaluates this item's Hob scheduling logic at boot time.
+// Also watches item:updated to reactively re-schedule edited reminders.
+
+const SELF_ID = 'c4d26a7c-1643-40cf-9917-f264c8e3377f';
+const REMINDER_TYPE = '521cb06c-2146-47f1-9375-1207bb6b5b27';
+let _scheduleOne = null;
+
+export async function onKernelBootComplete({ safeMode }, api) {
+  if (safeMode) return;
+  const hob = await api.require('hob-interpreter');
+  const interp = hob.createInterpreter(api);
+  await interp.macrosReady;
+  const self = await api.get(SELF_ID);
+  if (!self?.content?.hob) return;
+  for (const ast of self.content.hob) {
+    await interp.evaluate(ast);
+  }
+  _scheduleOne = await interp.eval('schedule-one!');
+}
+
+export async function onItemUpdated({ item }, api) {
+  if (!_scheduleOne || !item || item.type !== REMINDER_TYPE) return;
+  await _scheduleOne(item);
+}
+
+
+;;; --- Hob ---
+(def doc (dom-get (hiccup->dom [:div]) :ownerDocument))
+
+(def win (dom-get doc :defaultView))
+
+(def REMINDER_TYPE "521cb06c-2146-47f1-9375-1207bb6b5b27")
+
+(def timers (atom {}))
+
+(def notif-counter (atom 0))
+
+(def notif-map (atom {}))
+
+(defn notify! [title body reminder-id]
+  (let [nid (swap! notif-counter inc)]
+    (swap! notif-map assoc nid reminder-id)
+    (when-let [tauri (dom-get win :__TAURI__)]
+      (when-let [notif (dom-get tauri :notification)]
+        (invoke
+          notif
+          "sendNotification"
+          {:id nid :title title :body body :ongoing true :autoCancel false})))))
+
+(defn eval-schedule [reminder]
+  (let [hob-ast (get-in reminder [:content :hob])]
+    (when
+      (and hob-ast (seq hob-ast))
+      (let [hob-mod (require "hob-interpreter")
+            interp (invoke hob-mod "createInterpreter" nil)
+            source (invoke hob-mod "prettyPrintAll" hob-ast)]
+        (invoke interp "eval" source)))))
+
+(defn schedule-one! [reminder]
+  (let [id (get reminder :id)]
+    (when-let [existing (get (deref timers) id)]
+      (clear-timeout! existing)
+      (swap! timers dissoc id))
+    (let [next-time (eval-schedule reminder)]
+      (when
+        (and (number? next-time) (> next-time (now)))
+        (let [delay (- next-time (now))
+              title (or
+                      (get-in reminder [:content :title])
+                      (get reminder :name)
+                      "Reminder")
+              handle (set-timeout!
+                       (fn []
+                         (swap! timers dissoc id)
+                         (notify! title "" id)
+                         (when-let [fresh (get-item id)] (schedule-one! fresh)))
+                       delay)]
+          (swap! timers assoc id handle))))))
+
+(defn cancel-one! [id]
+  (when-let [handle (get (deref timers) id)]
+    (clear-timeout! handle)
+    (swap! timers dissoc id)))
+
+(defn boot-scan! []
+  (let [all (get-all)
+        reminders (filter (fn [item] (= (get item :type) REMINDER_TYPE)) all)]
+    (doseq [r reminders] (schedule-one! r))
+    (when-let [tauri (dom-get win :__TAURI__)]
+      (when-let [notif (dom-get tauri :notification)]
+        (when
+          (dom-get notif :onAction)
+          (invoke
+            notif
+            "onAction"
+            (fn [action]
+              (let [nid (dom-get action :id)
+                    reminder-id (when nid (get (deref notif-map) nid))]
+                (when
+                  reminder-id
+                  (dom-set!
+                    (dom-get win :location)
+                    :search
+                    (str "?root=" reminder-id)))))))))
+    (invoke
+      (dom-get win :console)
+      "log"
+      (str "[reminder-scheduler] Scanned " (count reminders) " reminder(s)"))))
+
+(boot-scan!)
