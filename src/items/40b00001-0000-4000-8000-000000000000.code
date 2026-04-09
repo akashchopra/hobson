@@ -1065,6 +1065,16 @@ function keywordName(val) {
   return val.slice(1);
 }
 
+/** Resolve a key against an object, with keyword-to-string fallback for JS interop. */
+function resolveKey(obj, key) {
+  if (key in obj) return key;
+  if (isKeyword(key)) {
+    const plain = keywordName(key);
+    if (plain in obj) return plain;
+  }
+  return key;
+}
+
 // ============================================================
 // Built-in special forms (never macro-expanded)
 // ============================================================
@@ -2299,7 +2309,8 @@ async function evalApply(ast, env, callStack) {
     return result;
   } catch (e) {
     if (e instanceof HobError) throw e;
-    throw hobError(e.message, null, callStack, ast);
+    const msg = e instanceof Error ? e.message : String(e);
+    throw hobError(msg, null, callStack, ast);
   } finally {
     _currentBindingName = prevBinding;
     callStack.pop();
@@ -2500,14 +2511,12 @@ function createStdlib() {
   env.define('assoc', Object.assign((coll, ...kvs) => {
     if (coll === null) coll = {};
     const result = Array.isArray(coll) ? [...coll] : { ...coll };
+    const isObj = typeof result === 'object' && !Array.isArray(result);
     for (let i = 0; i < kvs.length; i += 2) {
       const key = kvs[i];
       const val = kvs[i + 1];
-      if (Array.isArray(result) && typeof key === 'number') {
-        result[key] = val;
-      } else {
-        result[key] = val;
-      }
+      const k = isObj ? resolveKey(result, key) : key;
+      result[k] = val;
     }
     return result;
   }, { _hobName: 'assoc' }));
@@ -2524,14 +2533,12 @@ function createStdlib() {
   env.define('update', Object.assign(async (coll, key, fn, ...args) => {
     if (coll === null) coll = {};
     const result = Array.isArray(coll) ? [...coll] : { ...coll };
-    const oldVal = Array.isArray(result) ? result[key] : (result[key] ?? null);
+    const isObj = typeof result === 'object' && !Array.isArray(result);
+    const k = isObj ? resolveKey(result, key) : key;
+    const oldVal = result[k] ?? null;
     let newVal = fn(oldVal, ...args);
     if (newVal && typeof newVal.then === 'function') newVal = await newVal;
-    if (Array.isArray(result) && typeof key === 'number') {
-      result[key] = newVal;
-    } else {
-      result[key] = newVal;
-    }
+    result[k] = newVal;
     return result;
   }, { _hobName: 'update' }));
 
@@ -2562,14 +2569,14 @@ function createStdlib() {
   /** Associate value at nested key path. */
   env.define('assoc-in', Object.assign((coll, path, value) => {
     if (path.length === 0) return value;
+    const result = coll === null ? {} : (Array.isArray(coll) ? [...coll] : { ...coll });
+    const isObj = typeof result === 'object' && !Array.isArray(result);
+    const key = isObj ? resolveKey(result, path[0]) : path[0];
     if (path.length === 1) {
-      const result = coll === null ? {} : (Array.isArray(coll) ? [...coll] : { ...coll });
-      result[path[0]] = value;
+      result[key] = value;
       return result;
     }
-    const result = coll === null ? {} : (Array.isArray(coll) ? [...coll] : { ...coll });
-    const key = path[0];
-    const child = (Array.isArray(result) ? result[key] : result[key]) ?? null;
+    const child = result[key] ?? null;
     result[key] = env.lookup('assoc-in')(child, path.slice(1), value);
     return result;
   }, { _hobName: 'assoc-in' }));
@@ -2582,7 +2589,8 @@ function createStdlib() {
       return result;
     }
     const result = coll === null ? {} : (Array.isArray(coll) ? [...coll] : { ...coll });
-    const key = path[0];
+    const isObj = typeof result === 'object' && !Array.isArray(result);
+    const key = isObj ? resolveKey(result, path[0]) : path[0];
     const child = result[key] ?? null;
     result[key] = await env.lookup('update-in')(child, path.slice(1), fn, ...args);
     return result;
