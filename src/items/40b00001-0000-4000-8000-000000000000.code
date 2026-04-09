@@ -2254,6 +2254,24 @@ function topologicalBatch(pairs) {
 
 async function evalApply(ast, env, callStack) {
   const headNode = ast[0];
+
+  // Dot-method syntax: (.method target args...) => target.method(args...)
+  // Must be checked before head evaluation — .method is not in the environment.
+  if (typeof headNode === 'string' && headNode[0] === '.') {
+    const method = headNode.slice(1);
+    if (ast.length < 2) throw hobError('.method requires a target object', null, callStack, ast);
+    const target = await evaluate(ast[1], env, callStack);
+    if (target == null) throw hobError(`Cannot call .${method} on ${target}`, null, callStack, ast);
+    if (typeof target[method] !== 'function') throw hobError(`'${method}' is not a method on target`, null, callStack, ast);
+    const args = [];
+    for (let i = 2; i < ast.length; i++) {
+      args.push(await evaluate(ast[i], env, callStack));
+    }
+    let result = target[method](...args);
+    if (result && typeof result.then === 'function') result = await result;
+    return result;
+  }
+
   const headVal = await evaluate(headNode, env, callStack);
 
   // Keywords as functions: (:key map) => get(map, key)
