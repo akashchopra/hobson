@@ -1120,9 +1120,6 @@ function gensym(prefix = 'G__') {
 // Evaluator
 // ============================================================
 
-// @self support: set by createInterpreter to return the current code item's GUID.
-let _selfIdProvider = null;
-
 // Sentinel for recur
 const RECUR = Symbol('recur');
 
@@ -1142,7 +1139,8 @@ async function evaluate(ast, env, callStack) {
     if (ast[0] === '@') {
       const refName = ast.slice(1);
       if (refName === 'self') {
-        const selfId = _selfIdProvider?.();
+        const resolver = env.has('__resolve-self') ? env.lookup('__resolve-self') : null;
+        const selfId = resolver?.();
         if (!selfId) throw hobError('@self — no current item context', null, callStack, ast);
         return { _hobType: 'item-ref', value: selfId };
       }
@@ -2987,6 +2985,13 @@ function deepEquals(a, b) {
 // ============================================================
 
 function registerItemOps(env, api) {
+  // @self resolution: the evaluator looks up __resolve-self from the env chain
+  // to get the current item/view ID. This avoids a shared module-level global
+  // that would be overwritten by each createInterpreter call.
+  if (api) {
+    env.define('__resolve-self', () => api._renderViewId || api._renderItemId);
+  }
+
   const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
   /** Load item by ID. Optional :select fn for reactive filtering. */
@@ -3564,9 +3569,6 @@ const STANDARD_MACROS = `
 
 export function createInterpreter(api, viewApi, eventApi) {
   const stdlib = createStdlib();
-
-  // @self resolves to the currently-executing code item (view during render, data item in computed fields).
-  _selfIdProvider = () => api._renderViewId || api._renderItemId;
 
   // Helper: construct sourceCtx from _hobItemApi render context (set by renderHobView)
   function _hobSourceCtx() {
