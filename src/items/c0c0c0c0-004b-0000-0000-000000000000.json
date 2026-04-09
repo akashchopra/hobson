@@ -3,14 +3,14 @@
   "name": "Reminders & Notifications",
   "type": "871ae771-b9b1-4f40-8c7f-d9038bfb69c3",
   "created": 1743206400000,
-  "modified": 1774988060996,
+  "modified": 1775756671498,
   "content": {
     "description": [
       ":doc",
       [
         ":p",
         {
-          "s": "Time-based reminders on items, with native OS notifications on Android (Tauri) and desktop."
+          "s": "Time-based reminders on items, with native OS notifications on Android and desktop (both via Tauri)."
         }
       ],
       [
@@ -22,7 +22,31 @@
       [
         ":p",
         {
-          "s": "Scheduling logic lives in userland items. A thin native layer translates reminder timestamps into OS-level scheduling calls. The native layer is a dumb translator, not a scheduler — all the \"brains\" (recurrence rules, snooze, relative times) stay in items."
+          "s": "Reminders are dedicated items, attached to their target items. Any item can have reminders via the attachment relationship. Multiple reminders per item are naturally supported."
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Scheduling logic lives in userland. A userland library item wraps Tauri notification plugin calls. A boot-scan item runs on kernel:boot-complete to re-register alarms with the OS (handles reboots and process kills). The kernel has no knowledge of Tauri or notifications."
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "The native layer is a dumb translator — it receives timestamps and display text, schedules OS alarms, and shows notifications. All intelligence (recurrence, snooze, relative times) stays in userland Hob code."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Scheduling via Hob Expression"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "Each reminder item contains a Hob expression that answers one question: \"when next?\" The expression evaluates to either a timestamp (schedule it) or nil (don't schedule)."
         }
       ],
       [
@@ -34,11 +58,11 @@
             [
               ":strong",
               {
-                "s": "Items are the source of truth"
+                "s": "One-shot"
               }
             ],
             {
-              "s": " — reminder time, recurrence, and display text are fields on items (or a dedicated reminder type)"
+              "s": " — expression returns a fixed future timestamp; returns nil once dismissed."
             }
           ]
         ],
@@ -49,11 +73,11 @@
             [
               ":strong",
               {
-                "s": "Native layer does two things"
+                "s": "Recurring"
               }
             ],
             {
-              "s": " — (1) schedule a wake-up alarm at a timestamp via AlarmManager, (2) show a notification via Android's NotificationManager"
+              "s": " — expression computes the next occurrence from now (e.g., next weekday at 9am)."
             }
           ]
         ],
@@ -61,28 +85,40 @@
           ":li",
           [
             ":p",
-            [
-              ":strong",
-              {
-                "s": "Boot-scan for durability"
-              }
-            ],
             {
-              "s": " — on app startup, scan all items with future reminder times and re-register alarms with the OS. This handles device reboots (which clear Android alarms) and app updates."
+              "s": "One-shot vs recurring is a property of the expression, not a separate system concept."
             }
           ]
         ]
       ],
       [
-        ":h2",
+        ":p",
         {
-          "s": "Why Not Userland-Only Scheduling?"
+          "s": "The scheduling loop: evaluate → got a timestamp? → schedule with native layer → alarm fires → wake WebView → re-evaluate → repeat. Nil means stop."
         }
       ],
       [
         ":p",
         {
-          "s": "The obvious Hobson-native approach would be: run a timer in userland, send \"notify now\" when it fires. This works on desktop (JS timers fire normally). On Android it fails because:"
+          "s": "If the WebView can't be woken after an alarm fires (e.g., OEM battery optimization killed the process), the next occurrence won't be scheduled until the user opens the app and boot-scan runs. This is expected behavior — same degradation as device reboots."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Notification Behavior"
+        }
+      ],
+      [
+        ":p",
+        {
+          "s": "When a notification is tapped, deep-link to the reminder item (not the target). The reminder item provides dismiss/snooze/reschedule actions and navigation to the target via the attachment relationship."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Android Gotchas"
         }
       ],
       [
@@ -98,22 +134,7 @@
               }
             ],
             {
-              "s": " — setTimeout/setInterval are throttled or stopped entirely when the Activity is backgrounded. Reminders simply won't fire."
-            }
-          ]
-        ],
-        [
-          ":li",
-          [
-            ":p",
-            [
-              ":strong",
-              {
-                "s": "Foreground service doesn't help"
-              }
-            ],
-            {
-              "s": " — a foreground service keeps the process alive, but the WebView is still paused. You'd need the Rust side to run timers and wake the WebView, which is more work than using AlarmManager and less reliable."
+              "s": " — userland-only timers don't work on Android; native AlarmManager is required."
             }
           ]
         ],
@@ -128,19 +149,10 @@
               }
             ],
             {
-              "s": " — Xiaomi, Samsung, Huawei etc. aggressively kill background apps. Even foreground services are targets. Native AlarmManager has the best chance of surviving this."
+              "s": " — Xiaomi, Samsung, Huawei etc. aggressively kill background apps. Native AlarmManager has the best chance of surviving."
             }
           ]
-        ]
-      ],
-      [
-        ":h2",
-        {
-          "s": "Android Gotchas"
-        }
-      ],
-      [
-        ":ul",
+        ],
         [
           ":li",
           [
@@ -167,7 +179,7 @@
               }
             ],
             {
-              "s": " — required on Android 12+ for exact alarms. Inexact alarms can be delayed by minutes or hours. For reminders, exact alarms are needed."
+              "s": " — required on Android 12+ for exact alarms. Inexact alarms can be delayed by minutes or hours."
             }
           ]
         ],
@@ -182,7 +194,7 @@
               }
             ],
             {
-              "s": " — need a BOOT_COMPLETED receiver to re-register, or rely on boot-scan when the user next opens the app."
+              "s": " — boot-scan re-registers on next app open."
             }
           ]
         ],
@@ -215,7 +227,7 @@
           [
             ":p",
             {
-              "s": "Add a \"reminder\" field (timestamp + optional recurrence rule) to the item schema, or create a dedicated reminder type"
+              "s": "Create a reminder type with a Hob expression field for scheduling"
             }
           ]
         ],
@@ -224,7 +236,7 @@
           [
             ":p",
             {
-              "s": "Build a date/time picker field view for setting reminders"
+              "s": "Build a view for reminder items (date/time picker, expression editor, dismiss/snooze actions)"
             }
           ]
         ],
@@ -233,7 +245,7 @@
           [
             ":p",
             {
-              "s": "On save (when reminder field changes): invoke Tauri command to schedule/cancel the native alarm"
+              "s": "Build a userland library item wrapping Tauri notification plugin calls"
             }
           ]
         ],
@@ -242,7 +254,7 @@
           [
             ":p",
             {
-              "s": "On boot: scan items for active reminders, re-register with OS"
+              "s": "On reminder save: evaluate expression, invoke Tauri command to schedule/cancel the native alarm"
             }
           ]
         ],
@@ -251,7 +263,7 @@
           [
             ":p",
             {
-              "s": "When alarm fires: Tauri Rust side shows notification, optionally wakes the WebView to run any Hob-defined notification logic"
+              "s": "On boot (kernel:boot-complete): scan reminder items, evaluate expressions, re-register active alarms"
             }
           ]
         ],
@@ -260,7 +272,16 @@
           [
             ":p",
             {
-              "s": "Desktop: simpler — JS timers work, just need notification.show(). Can use the same boot-scan approach for consistency."
+              "s": "When alarm fires: native side shows notification and wakes WebView; WebView re-evaluates for next occurrence"
+            }
+          ]
+        ],
+        [
+          ":li",
+          [
+            ":p",
+            {
+              "s": "Notification tap: deep-link to reminder item via ?item=GUID"
             }
           ]
         ]
