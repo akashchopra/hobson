@@ -18,14 +18,13 @@
   (def has-schedule (and hob-ast (seq hob-ast)))
   (def hob-mod (require "hob-interpreter"))
   (def
-    schedule-display
-    (when has-schedule (invoke hob-mod "prettyPrintAll" hob-ast)))
-  (def
     next-time
     (when
       has-schedule
-      (let [interp (invoke hob-mod "createInterpreter" nil)]
-        (invoke interp "eval" schedule-display))))
+      (try
+        (let [interp (invoke hob-mod "createInterpreter" nil)]
+          (invoke interp "eval" (invoke hob-mod "prettyPrintAll" hob-ast)))
+        (catch e nil))))
   (def desc (get-in item [:content :description]))
   (def
     desc-el
@@ -54,6 +53,18 @@
       (let [a (first attachments)] (if (string? a) a (:id a)))))
   (def target-item (when target-id (get-item target-id)))
   (def picked-date (atom nil))
+  (def pending-ast (atom nil))
+  (def hob-editor-mod (require "field-view-hob-structural"))
+  (def
+    editor-el
+    (when
+      has-schedule
+      (invoke
+        hob-editor-mod
+        "render"
+        hob-ast
+        {:mode "editable" :onChange (fn [new-ast] (reset! pending-ast new-ast))}
+        api)))
   [:div {:style "max-width: 700px; margin: 0 auto; padding: 20px;"}
     name-el
     [:div {:style "margin: 16px 0; padding: 12px; background: var(--color-bg-surface); border-radius: var(--border-radius); border: 1px solid var(--color-border-light);"}
@@ -66,15 +77,6 @@
           (and (number? next-time) (> next-time (now)))
           (format-date next-time)
           (if has-schedule "Expression returned no time" "Not scheduled"))]]
-    (when
-      schedule-display
-      [:div {:style "margin: 12px 0;"}
-        [:div {:style "font-size: 0.75rem; color: var(--color-text-secondary); margin-bottom: 4px;"}
-
-          "Schedule"]
-        [:pre {:style "margin: 0; padding: 8px; background: var(--color-bg-surface-alt); border-radius: var(--border-radius); font-size: 0.8125rem; overflow-x: auto; border: 1px solid var(--color-border-light);"}
-
-          schedule-display]])
     (when
       (not has-schedule)
       [:div {:style "margin: 12px 0;"}
@@ -91,21 +93,38 @@
           [:button {:style "padding: 8px 16px; background: var(--color-primary); color: white; border: none; border-radius: var(--border-radius); cursor: pointer; font-size: 0.875rem;"
                     :on-click (fn [e]
                                 (when-let [d (deref picked-date)]
-                                  (let [ts (invoke
-                                             (dom-get win :Date)
-                                             "parse"
-                                             d)
-]
+                                  (let [ts (js/Date.parse d)]
                                     (when
                                       (and (number? ts) (> ts (now)))
                                       (let [fresh (get-item (:id item))]
                                         (set-item!
                                           (->
                                             fresh
-                                            (assoc-in [:content :hob] [ts])
+                                            (assoc-in
+                                              [:content :hob]
+                                              [["js/Date.parse" {:s d}]])
                                             (assoc :modified (now))))
                                         (rerender!))))))}
             "Set"]]])
+    (when
+      has-schedule
+      [:div {:style "margin: 12px 0;"}
+        [:div {:style "font-size: 0.75rem; color: var(--color-text-secondary); margin-bottom: 4px;"}
+
+          "Schedule"]
+        editor-el
+        [:button {:style "margin-top: 8px; padding: 6px 16px; font-size: 0.8125rem; background: var(--color-primary); color: white; border: none; border-radius: var(--border-radius); cursor: pointer;"
+                  :on-click (fn [e]
+                              (when-let [ast (deref pending-ast)]
+                                (let [fresh (get-item (:id item))]
+                                  (set-item!
+                                    (->
+                                      fresh
+                                      (assoc-in [:content :hob] ast)
+                                      (assoc :modified (now)))))
+                                (reset! pending-ast nil)
+                                (rerender!)))}
+          "Save Schedule"]])
     (when
       target-item
       [:div {:style "margin: 12px 0; padding: 8px 12px; background: var(--color-bg-surface); border-radius: var(--border-radius); cursor: pointer; border: 1px solid var(--color-border-light);"

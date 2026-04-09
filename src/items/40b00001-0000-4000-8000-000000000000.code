@@ -1153,6 +1153,28 @@ async function evaluate(ast, env, callStack) {
     if (slashIdx > 0 && slashIdx < ast.length - 1) {
       const ns = ast.slice(0, slashIdx);
       const name = ast.slice(slashIdx + 1);
+
+      // js/ prefix — resolve against globalThis (like ClojureScript's js/ interop)
+      if (ns === 'js') {
+        const isConstructor = name.endsWith('.');
+        const path = isConstructor ? name.slice(0, -1) : name;
+        const parts = path.split('.');
+        let obj = globalThis;
+        let parent = null;
+        for (const part of parts) {
+          if (obj == null) throw hobError(`Cannot access '${part}' on null in '${ast}'`, null, callStack, ast);
+          parent = obj;
+          obj = obj[part];
+          if (obj === undefined) throw hobError(`'${ast}' is not defined`, null, callStack, ast);
+        }
+        if (isConstructor) {
+          const Ctor = obj;
+          return Object.assign((...args) => new Ctor(...args), { _hobName: ast });
+        }
+        if (typeof obj === 'function') return Object.assign(obj.bind(parent), { _hobName: ast });
+        return obj;
+      }
+
       let nsVal;
       try { nsVal = env.lookup(ns); } catch (e) {
         throw hobError(`Undefined symbol '${ast}'`, null, callStack, ast);
