@@ -2,27 +2,54 @@
 // reminder-scheduler — JS boot shim
 // Loads and evaluates this item's Hob scheduling logic at boot time.
 // Also watches item:updated to reactively re-schedule edited reminders.
+//
+// evalSchedule is the single source of truth for "what time does this
+// reminder fire next?" — used by schedule-one! (in Hob) and the reminder
+// view. It reuses the scheduler's own interpreter, so scheduling helpers
+// like (every :day 21 30) defined in our .hob are in scope.
 
 const SELF_ID = 'c4d26a7c-1643-40cf-9917-f264c8e3377f';
 const REMINDER_TYPE = '521cb06c-2146-47f1-9375-1207bb6b5b27';
+let _hob = null;
+let _interp = null;
 let _scheduleOne = null;
 
 export async function onKernelBootComplete({ safeMode }, api) {
   if (safeMode) return;
-  const hob = await api.require('hob-interpreter');
-  const interp = hob.createInterpreter(api);
-  await interp.macrosReady;
+  _hob = await api.require('hob-interpreter');
+  _interp = _hob.createInterpreter(api);
+  await _interp.macrosReady;
   const self = await api.get(SELF_ID);
   if (!self?.content?.hob) return;
   for (const ast of self.content.hob) {
-    await interp.evaluate(ast);
+    await _interp.evaluate(ast);
   }
-  _scheduleOne = await interp.eval('schedule-one!');
+  _scheduleOne = await _interp.eval('schedule-one!');
+  // boot-scan! was moved out of scheduler.hob top-level so the module is
+  // safe to require as a library (no side effects on cold require). Run it
+  // explicitly here, where boot timing is owned.
+  await _interp.eval('(boot-scan!)');
 }
 
 export async function onItemUpdated({ item }, api) {
   if (!_scheduleOne || !item || item.type !== REMINDER_TYPE) return;
   await _scheduleOne(item);
+}
+
+// Evaluate a reminder's schedule expression, returning the next-fire
+// timestamp (ms since epoch) or null. Reentrant-safe: may be called
+// from within Hob code running in _interp.
+export async function evalSchedule(item) {
+  if (!_interp || !_hob) return null;
+  const ast = item?.content?.hob;
+  if (!ast || ast.length === 0) return null;
+  try {
+    const source = _hob.prettyPrintAll(ast);
+    const result = await _interp.eval(source);
+    return typeof result === 'number' ? result : null;
+  } catch (e) {
+    return null;
+  }
 }
 
 
@@ -48,21 +75,53 @@ export async function onItemUpdated({ item }, api) {
           notif
           {:id nid :title title :body body :ongoing true :autoCancel false})))))
 
-(defn eval-schedule [reminder]
-  (let [hob-ast (get-in reminder [:content :hob])]
+(def
+  day-keyword-map
+  {:sunday 0
+   :monday 1
+   :tuesday 2
+   :wednesday 3
+   :thursday 4
+   :friday 5
+   :saturday 6})
+
+(defn in? [coll x] (some (fn [y] (= y x)) coll))
+
+(defn day-nums [selector]
+  (cond
+    (= selector :day)
+    [0 1 2 3 4 5 6]
+    (= selector :weekday)
+    [1 2 3 4 5]
+    (= selector :weekend)
+    [0 6]
+    (keyword? selector)
+    [(get day-keyword-map selector)]
+    (sequential? selector)
+    (map (fn [k] (get day-keyword-map k)) selector)
+    :else
+    []))
+
+(defn every [selector hour minute]
+  (let [days (day-nums selector) target (js/Date. (now))]
+    (.setHours target hour minute 0 0)
     (when
-      (and hob-ast (seq hob-ast))
-      (let [hob-mod (require "hob-interpreter")
-            interp (.createInterpreter hob-mod nil)
-            source (.prettyPrintAll hob-mod hob-ast)]
-        (.eval interp source)))))
+      (<= (.getTime target) (now))
+      (.setDate target (+ (.getDate target) 1)))
+    (loop [i 0]
+      (when
+        (and (< i 7) (not (in? days (.getDay target))))
+        (.setDate target (+ (.getDate target) 1))
+        (recur (+ i 1))))
+    (.getTime target)))
 
 (defn schedule-one! [reminder]
   (let [id (get reminder :id)]
     (when-let [existing (get (deref timers) id)]
       (clear-timeout! existing)
       (swap! timers dissoc id))
-    (let [next-time (eval-schedule reminder)]
+    (let [sched (js-require "reminder-scheduler")
+          next-time (.evalSchedule sched reminder)]
       (when
         (and (number? next-time) (> next-time (now)))
         (let [delay (- next-time (now))
@@ -107,5 +166,3 @@ export async function onItemUpdated({ item }, api) {
     (.log
       (dom-get win :console)
       (str "[reminder-scheduler] Scanned " (count reminders) " reminder(s)"))))
-
-(boot-scan!)

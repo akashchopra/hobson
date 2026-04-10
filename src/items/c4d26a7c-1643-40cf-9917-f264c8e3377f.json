@@ -3,7 +3,7 @@
   "name": "reminder-scheduler",
   "type": "66666666-0000-0000-0000-000000000000",
   "created": 1775584579063,
-  "modified": 1775805181533,
+  "modified": 1775825723269,
   "watches": [
     {
       "event": "e0e00000-0002-0002-0000-000000000000"
@@ -28,7 +28,7 @@
         }
       ]
     ],
-    "code": "// reminder-scheduler \u2014 JS boot shim\n// Loads and evaluates this item's Hob scheduling logic at boot time.\n// Also watches item:updated to reactively re-schedule edited reminders.\n\nconst SELF_ID = 'c4d26a7c-1643-40cf-9917-f264c8e3377f';\nconst REMINDER_TYPE = '521cb06c-2146-47f1-9375-1207bb6b5b27';\nlet _scheduleOne = null;\n\nexport async function onKernelBootComplete({ safeMode }, api) {\n  if (safeMode) return;\n  const hob = await api.require('hob-interpreter');\n  const interp = hob.createInterpreter(api);\n  await interp.macrosReady;\n  const self = await api.get(SELF_ID);\n  if (!self?.content?.hob) return;\n  for (const ast of self.content.hob) {\n    await interp.evaluate(ast);\n  }\n  _scheduleOne = await interp.eval('schedule-one!');\n}\n\nexport async function onItemUpdated({ item }, api) {\n  if (!_scheduleOne || !item || item.type !== REMINDER_TYPE) return;\n  await _scheduleOne(item);\n}\n",
+    "code": "// reminder-scheduler — JS boot shim\n// Loads and evaluates this item's Hob scheduling logic at boot time.\n// Also watches item:updated to reactively re-schedule edited reminders.\n//\n// evalSchedule is the single source of truth for \"what time does this\n// reminder fire next?\" — used by schedule-one! (in Hob) and the reminder\n// view. It reuses the scheduler's own interpreter, so scheduling helpers\n// like (every :day 21 30) defined in our .hob are in scope.\n\nconst SELF_ID = 'c4d26a7c-1643-40cf-9917-f264c8e3377f';\nconst REMINDER_TYPE = '521cb06c-2146-47f1-9375-1207bb6b5b27';\nlet _hob = null;\nlet _interp = null;\nlet _scheduleOne = null;\n\nexport async function onKernelBootComplete({ safeMode }, api) {\n  if (safeMode) return;\n  _hob = await api.require('hob-interpreter');\n  _interp = _hob.createInterpreter(api);\n  await _interp.macrosReady;\n  const self = await api.get(SELF_ID);\n  if (!self?.content?.hob) return;\n  for (const ast of self.content.hob) {\n    await _interp.evaluate(ast);\n  }\n  _scheduleOne = await _interp.eval('schedule-one!');\n  // boot-scan! was moved out of scheduler.hob top-level so the module is\n  // safe to require as a library (no side effects on cold require). Run it\n  // explicitly here, where boot timing is owned.\n  await _interp.eval('(boot-scan!)');\n}\n\nexport async function onItemUpdated({ item }, api) {\n  if (!_scheduleOne || !item || item.type !== REMINDER_TYPE) return;\n  await _scheduleOne(item);\n}\n\n// Evaluate a reminder's schedule expression, returning the next-fire\n// timestamp (ms since epoch) or null. Reentrant-safe: may be called\n// from within Hob code running in _interp.\nexport async function evalSchedule(item) {\n  if (!_interp || !_hob) return null;\n  const ast = item?.content?.hob;\n  if (!ast || ast.length === 0) return null;\n  try {\n    const source = _hob.prettyPrintAll(ast);\n    const result = await _interp.eval(source);\n    return typeof result === 'number' ? result : null;\n  } catch (e) {\n    return null;\n  }\n}\n",
     "hob": [
       [
         "def",
@@ -176,71 +176,274 @@
         ]
       ],
       [
+        "def",
+        "day-keyword-map",
+        {
+          "m": [
+            [
+              ":sunday",
+              0
+            ],
+            [
+              ":monday",
+              1
+            ],
+            [
+              ":tuesday",
+              2
+            ],
+            [
+              ":wednesday",
+              3
+            ],
+            [
+              ":thursday",
+              4
+            ],
+            [
+              ":friday",
+              5
+            ],
+            [
+              ":saturday",
+              6
+            ]
+          ]
+        }
+      ],
+      [
         "defn",
-        "eval-schedule",
+        "in?",
         {
           "v": [
-            "reminder"
+            "coll",
+            "x"
+          ]
+        },
+        [
+          "some",
+          [
+            "fn",
+            {
+              "v": [
+                "y"
+              ]
+            },
+            [
+              "=",
+              "y",
+              "x"
+            ]
+          ],
+          "coll"
+        ]
+      ],
+      [
+        "defn",
+        "day-nums",
+        {
+          "v": [
+            "selector"
+          ]
+        },
+        [
+          "cond",
+          [
+            "=",
+            "selector",
+            ":day"
+          ],
+          {
+            "v": [
+              0,
+              1,
+              2,
+              3,
+              4,
+              5,
+              6
+            ]
+          },
+          [
+            "=",
+            "selector",
+            ":weekday"
+          ],
+          {
+            "v": [
+              1,
+              2,
+              3,
+              4,
+              5
+            ]
+          },
+          [
+            "=",
+            "selector",
+            ":weekend"
+          ],
+          {
+            "v": [
+              0,
+              6
+            ]
+          },
+          [
+            "keyword?",
+            "selector"
+          ],
+          {
+            "v": [
+              [
+                "get",
+                "day-keyword-map",
+                "selector"
+              ]
+            ]
+          },
+          [
+            "sequential?",
+            "selector"
+          ],
+          [
+            "map",
+            [
+              "fn",
+              {
+                "v": [
+                  "k"
+                ]
+              },
+              [
+                "get",
+                "day-keyword-map",
+                "k"
+              ]
+            ],
+            "selector"
+          ],
+          ":else",
+          {
+            "v": []
+          }
+        ]
+      ],
+      [
+        "defn",
+        "every",
+        {
+          "v": [
+            "selector",
+            "hour",
+            "minute"
           ]
         },
         [
           "let",
           {
             "v": [
-              "hob-ast",
+              "days",
               [
-                "get-in",
-                "reminder",
-                {
-                  "v": [
-                    ":content",
-                    ":hob"
-                  ]
-                }
+                "day-nums",
+                "selector"
+              ],
+              "target",
+              [
+                "js/Date.",
+                [
+                  "now"
+                ]
               ]
             ]
           },
           [
+            ".setHours",
+            "target",
+            "hour",
+            "minute",
+            0,
+            0
+          ],
+          [
             "when",
             [
-              "and",
-              "hob-ast",
+              "<=",
               [
-                "seq",
-                "hob-ast"
+                ".getTime",
+                "target"
+              ],
+              [
+                "now"
               ]
             ],
             [
-              "let",
-              {
-                "v": [
-                  "hob-mod",
-                  [
-                    "require",
-                    {
-                      "s": "hob-interpreter"
-                    }
-                  ],
-                  "interp",
-                  [
-                    ".createInterpreter",
-                    "hob-mod",
-                    null
-                  ],
-                  "source",
-                  [
-                    ".prettyPrintAll",
-                    "hob-mod",
-                    "hob-ast"
-                  ]
-                ]
-              },
+              ".setDate",
+              "target",
               [
-                ".eval",
-                "interp",
-                "source"
+                "+",
+                [
+                  ".getDate",
+                  "target"
+                ],
+                1
               ]
             ]
+          ],
+          [
+            "loop",
+            {
+              "v": [
+                "i",
+                0
+              ]
+            },
+            [
+              "when",
+              [
+                "and",
+                [
+                  "<",
+                  "i",
+                  7
+                ],
+                [
+                  "not",
+                  [
+                    "in?",
+                    "days",
+                    [
+                      ".getDay",
+                      "target"
+                    ]
+                  ]
+                ]
+              ],
+              [
+                ".setDate",
+                "target",
+                [
+                  "+",
+                  [
+                    ".getDate",
+                    "target"
+                  ],
+                  1
+                ]
+              ],
+              [
+                "recur",
+                [
+                  "+",
+                  "i",
+                  1
+                ]
+              ]
+            ]
+          ],
+          [
+            ".getTime",
+            "target"
           ]
         ]
       ],
@@ -294,9 +497,17 @@
             "let",
             {
               "v": [
+                "sched",
+                [
+                  "js-require",
+                  {
+                    "s": "reminder-scheduler"
+                  }
+                ],
                 "next-time",
                 [
-                  "eval-schedule",
+                  ".evalSchedule",
+                  "sched",
                   "reminder"
                 ]
               ]
@@ -614,9 +825,6 @@
             ]
           ]
         ]
-      ],
-      [
-        "boot-scan!"
       ]
     ],
     "_symbols": {
@@ -656,11 +864,28 @@
         "scope": null,
         "signature": "(title body reminder-id)"
       },
-      "eval-schedule": {
-        "name": "eval-schedule",
+      "day-keyword-map": {
+        "name": "day-keyword-map",
+        "kind": "variable",
+        "scope": null
+      },
+      "in?": {
+        "name": "in?",
         "kind": "function",
         "scope": null,
-        "signature": "(reminder)"
+        "signature": "(coll x)"
+      },
+      "day-nums": {
+        "name": "day-nums",
+        "kind": "function",
+        "scope": null,
+        "signature": "(selector)"
+      },
+      "every": {
+        "name": "every",
+        "kind": "function",
+        "scope": null,
+        "signature": "(selector hour minute)"
       },
       "schedule-one!": {
         "name": "schedule-one!",
