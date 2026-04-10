@@ -44,9 +44,8 @@ export async function onItemUpdated({ item }, api) {
     (swap! notif-map assoc nid reminder-id)
     (when-let [tauri (dom-get win :__TAURI__)]
       (when-let [notif (dom-get tauri :notification)]
-        (invoke
+        (.sendNotification
           notif
-          "sendNotification"
           {:id nid :title title :body body :ongoing true :autoCancel false})))))
 
 (defn eval-schedule [reminder]
@@ -54,9 +53,9 @@ export async function onItemUpdated({ item }, api) {
     (when
       (and hob-ast (seq hob-ast))
       (let [hob-mod (require "hob-interpreter")
-            interp (invoke hob-mod "createInterpreter" nil)
-            source (invoke hob-mod "prettyPrintAll" hob-ast)]
-        (invoke interp "eval" source)))))
+            interp (.createInterpreter hob-mod nil)
+            source (.prettyPrintAll hob-mod hob-ast)]
+        (.eval interp source)))))
 
 (defn schedule-one! [reminder]
   (let [id (get reminder :id)]
@@ -93,9 +92,8 @@ export async function onItemUpdated({ item }, api) {
         (when
           (dom-get notif :onAction)
           (try
-            (invoke
+            (.onAction
               notif
-              "onAction"
               (fn [action]
                 (let [nid (dom-get action :id)
                       reminder-id (when nid (get (deref notif-map) nid))]
@@ -106,9 +104,8 @@ export async function onItemUpdated({ item }, api) {
                       :search
                       (str "?root=" reminder-id))))))
             (catch e nil)))))
-    (invoke
+    (.log
       (dom-get win :console)
-      "log"
       (str "[reminder-scheduler] Scanned " (count reminders) " reminder(s)"))))
 
 (boot-scan!)
