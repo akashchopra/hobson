@@ -1,0 +1,98 @@
+
+export async function render(value, options, api) {
+  const opts = options || {};
+  const { onChange, label, placeholder } = opts;
+  const isEditable = !!onChange;
+
+  const hob = await api.require('hob-interpreter');
+
+  const wrapper = api.createElement('div', { className: 'field-view-hob-text' });
+  wrapper.style.cssText = 'display: flex; flex-direction: column; gap: 6px;';
+
+  if (label) {
+    const labelEl = api.createElement('label');
+    labelEl.textContent = label;
+    labelEl.style.cssText = 'font-weight: 500; font-size: 0.875rem; color: var(--color-text);';
+    wrapper.appendChild(labelEl);
+  }
+
+  // Render AST to source text. value should be a compact JSON AST array.
+  let initialSource = '';
+  try {
+    initialSource = hob.prettyPrintAll(value || []);
+  } catch (e) {
+    initialSource = ';; error rendering AST: ' + (e.message || String(e)) + '\n';
+  }
+
+  if (!isEditable) {
+    const pre = api.createElement('pre');
+    pre.textContent = initialSource;
+    pre.style.cssText = 'margin: 0; padding: 10px; background: var(--color-bg-surface-alt); border: 1px solid var(--color-border-light); border-radius: var(--border-radius); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.8125rem; white-space: pre-wrap; overflow-x: auto; color: var(--color-text);';
+    wrapper.appendChild(pre);
+    return wrapper;
+  }
+
+  const textarea = api.createElement('textarea');
+  textarea.value = initialSource;
+  if (placeholder) textarea.placeholder = placeholder;
+  textarea.spellcheck = false;
+  textarea.setAttribute('autocapitalize', 'off');
+  textarea.setAttribute('autocomplete', 'off');
+  textarea.setAttribute('autocorrect', 'off');
+  textarea.style.cssText = 'width: 100%; min-height: 120px; padding: 10px; background: var(--color-bg-surface); border: 1px solid var(--color-border); border-radius: var(--border-radius); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.8125rem; color: var(--color-text); resize: vertical; box-sizing: border-box;';
+  wrapper.appendChild(textarea);
+
+  // Error banner — hidden until a parse fails
+  const errorBanner = api.createElement('div');
+  errorBanner.style.cssText = 'display: none; padding: 6px 10px; background: rgba(220, 50, 50, 0.1); color: var(--color-danger); border: 1px solid var(--color-danger); border-radius: var(--border-radius); font-size: 0.75rem; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap;';
+  wrapper.appendChild(errorBanner);
+
+  function showError(msg) {
+    errorBanner.textContent = msg;
+    errorBanner.style.display = 'block';
+  }
+  function clearError() {
+    errorBanner.style.display = 'none';
+    errorBanner.textContent = '';
+  }
+
+  // Debounced parse-and-emit. HobError messages already include "at line X, col Y".
+  let debounceTimer = null;
+  textarea.addEventListener('input', () => {
+    if (debounceTimer) clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(() => {
+      debounceTimer = null;
+      try {
+        const newAst = hob.readAll(textarea.value);
+        clearError();
+        onChange(newAst);
+      } catch (e) {
+        showError(e.message || String(e));
+      }
+    }, 200);
+  });
+
+  // Toolbar — Format reformats the textarea in place.
+  const toolbar = api.createElement('div');
+  toolbar.style.cssText = 'display: flex; gap: 6px;';
+
+  const formatBtn = api.createElement('button');
+  formatBtn.type = 'button';
+  formatBtn.textContent = 'Format';
+  formatBtn.style.cssText = 'padding: 4px 10px; font-size: 0.75rem; background: var(--color-bg-surface-alt); border: 1px solid var(--color-border); border-radius: var(--border-radius); color: var(--color-text); cursor: pointer;';
+  formatBtn.addEventListener('click', () => {
+    try {
+      const ast = hob.readAll(textarea.value);
+      textarea.value = hob.prettyPrintAll(ast);
+      clearError();
+      onChange(ast);
+    } catch (e) {
+      showError(e.message || String(e));
+    }
+  });
+  toolbar.appendChild(formatBtn);
+
+  wrapper.appendChild(toolbar);
+
+  return wrapper;
+}
