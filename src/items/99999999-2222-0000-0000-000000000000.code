@@ -98,18 +98,40 @@ export async function populate(instanceId, items) {
     req.onerror = () => reject(req.error);
   });
 
-  const tx = db.transaction('items', 'readwrite');
-  const store = tx.objectStore('items');
   const prefix = `${instanceId}:`;
 
+  // Copy items
+  const itemTx = db.transaction('items', 'readwrite');
+  const itemStore = itemTx.objectStore('items');
   for (const item of items) {
-    store.put({ ...item, id: prefix + item.id });
+    itemStore.put({ ...item, id: prefix + item.id });
   }
-
   await new Promise((resolve, reject) => {
-    tx.oncomplete = resolve;
-    tx.onerror = () => reject(tx.error);
+    itemTx.oncomplete = resolve;
+    itemTx.onerror = () => reject(itemTx.error);
   });
+
+  // Copy blobs for these items (blob ID mirrors item ID)
+  const itemIds = new Set(items.map(item => item.id));
+  const allBlobs = await new Promise((resolve, reject) => {
+    const tx = db.transaction('blobs', 'readonly');
+    const req = tx.objectStore('blobs').getAll();
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+  const blobsToCopy = allBlobs.filter(entry => itemIds.has(entry.id));
+
+  if (blobsToCopy.length > 0) {
+    const blobTx = db.transaction('blobs', 'readwrite');
+    const blobStore = blobTx.objectStore('blobs');
+    for (const entry of blobsToCopy) {
+      blobStore.put({ id: prefix + entry.id, blob: entry.blob });
+    }
+    await new Promise((resolve, reject) => {
+      blobTx.oncomplete = resolve;
+      blobTx.onerror = () => reject(blobTx.error);
+    });
+  }
 
   db.close();
 }

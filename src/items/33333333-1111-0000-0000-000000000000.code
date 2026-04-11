@@ -649,6 +649,7 @@ export async function loadKernel(require, db, instanceId) {
          */
         deleteByPrefix: async (prefix) => {
           const count = await kernel.storage.deleteByPrefix(prefix);
+          await kernel.storage.deleteBlobsByPrefix(prefix);
           if (count > 0) {
             kernel.moduleSystem.clearCache();
           }
@@ -707,6 +708,23 @@ export async function loadKernel(require, db, instanceId) {
          * @returns {Promise<Array<{itemId, timestamp}>>}
          */
         getDeletedSince: (since) => kernel.storage.getDeletedSince(since),
+
+        /** Retrieve a Blob by item ID.
+         * @param {string} id - Item GUID
+         * @returns {Promise<Blob>}
+         */
+        getBlob: (id) => kernel.storage.getBlob(id),
+
+        /** Store a Blob keyed by item ID.
+         * @param {string} id - Item GUID
+         * @param {Blob} blob - The binary blob to store
+         */
+        setBlob: (id, blob) => kernel.storage.setBlob(id, blob),
+
+        /** Delete a Blob by item ID. Silent no-op if not found.
+         * @param {string} id - Item GUID
+         */
+        deleteBlob: (id) => kernel.storage.deleteBlob(id),
 
         // --- Code operations ---
 
@@ -1175,6 +1193,8 @@ export async function loadKernel(require, db, instanceId) {
 
       // Delete the item
       await this.storage.delete(itemId);
+      // Delete associated blob (silent no-op if item has no blob)
+      await this.storage.deleteBlob(itemId);
 
       // Remove from watcher index
       this.watcherIndex.delete(itemId);

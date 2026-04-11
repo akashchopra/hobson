@@ -12,22 +12,10 @@ const IMAGE_TYPE = 'd0d0d0d0-0010-0000-0000-000000000000';
 export async function fromDataUrl(api, dataUrl, opts = {}) {
   const mimeMatch = dataUrl.match(/^data:([^;]+);/);
   const mimeType = mimeMatch ? mimeMatch[1] : 'image/png';
-  const id = crypto.randomUUID();
-  const item = {
-    id,
-    name: opts.name || 'Image',
-    type: IMAGE_TYPE,
-    created: Date.now(),
-    modified: Date.now(),
-    content: {
-      data: dataUrl,
-      mimeType,
-      alt: opts.alt || undefined
-    },
-    attachments: []
-  };
-  await api.set(item);
-  return id;
+  const base64 = dataUrl.split(',')[1];
+  const bytes = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+  const blob = new Blob([bytes], { type: mimeType });
+  return fromBlob(api, blob, opts);
 }
 
 /** Create an image item from a Blob or File.
@@ -37,14 +25,23 @@ export async function fromDataUrl(api, dataUrl, opts = {}) {
  * @returns {Promise<string>} The new image item's ID
  */
 export async function fromBlob(api, blob, opts = {}) {
-  const dataUrl = await new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result);
-    reader.onerror = reject;
-    reader.readAsDataURL(blob);
-  });
+  const id = crypto.randomUUID();
   const name = opts.name || (blob.name ? blob.name.replace(/\.[^.]+$/, '') : 'Image');
-  return fromDataUrl(api, dataUrl, { ...opts, name });
+  const item = {
+    id,
+    name,
+    type: IMAGE_TYPE,
+    created: Date.now(),
+    modified: Date.now(),
+    content: {
+      mimeType: blob.type || 'image/png',
+      alt: opts.alt || undefined
+    },
+    attachments: []
+  };
+  await api.set(item);
+  await api.setBlob(id, blob);
+  return id;
 }
 
 /** Create an image item from a file path (Tauri only).
@@ -65,15 +62,8 @@ export async function fromFile(api, filePath, opts = {}) {
     bmp: 'image/bmp', ico: 'image/x-icon'
   };
   const mimeType = mimeMap[ext] || 'image/png';
-
-  // Convert Uint8Array to base64
-  let binary = '';
-  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
-  const b64 = btoa(binary);
-  const dataUrl = 'data:' + mimeType + ';base64,' + b64;
-
+  const blob = new Blob([bytes], { type: mimeType });
   const fileName = filePath.split('/').pop().split('\\').pop().replace(/\.[^.]+$/, '');
   const name = opts.name || fileName || 'Image';
-
-  return fromDataUrl(api, dataUrl, { ...opts, name });
+  return fromBlob(api, blob, { ...opts, name });
 }

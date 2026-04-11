@@ -3,7 +3,7 @@
   "name": "sync-client",
   "type": "66666666-0000-0000-0000-000000000000",
   "created": 1774589500000,
-  "modified": 1775829948110,
+  "modified": 1775936661541,
   "watches": [
     {
       "event": "e0e00000-0002-0002-0000-000000000000"
@@ -21,7 +21,7 @@
     ],
     "serverAddress": "192.168.1.73:8384",
     "lastSyncTimestamp": 1775815959602,
-    "code": "// sync-client — Runs on mobile, syncs with desktop.\n// Collects locally modified items, POSTs to desktop's sync endpoint,\n// applies the response. Triggered manually via exported sync() function.\n\nconst SELF_ID = 'f1111111-0012-0000-0000-000000000000';\n\nlet _api = null;\n\nexport async function onKernelBootComplete({ safeMode }, api) {\n  if (safeMode) return;\n  _api = api;\n  console.log('[sync-client] Ready');\n}\n\n/** Trigger a sync with the desktop server. Callable from REPL: (await api.require('sync-client')).sync() */\nexport async function sync() {\n  if (!_api) throw new Error('sync-client not initialized');\n  const api = _api;\n\n  // Read config from this item\n  const self = await api.get(SELF_ID);\n  const serverAddress = self.content?.serverAddress;\n  if (!serverAddress) throw new Error('No serverAddress configured in sync-client item');\n\n  const lastSync = self.content?.lastSyncTimestamp || 0;\n\n  // Collect locally modified items since last sync\n  const allItems = await api.getAll();\n  const changedItems = lastSync === 0\n    ? allItems  // First sync: send everything\n    : allItems.filter(item => item.modified > lastSync);\n\n  // Collect local deletions since last sync\n  const deletions = lastSync === 0 ? [] : await api.getDeletedSince(lastSync);\n\n  console.log(`[sync-client] Syncing with ${serverAddress}: sending ${changedItems.length} items + ${deletions.length} deletions (since ${lastSync === 0 ? 'initial' : new Date(lastSync).toLocaleString()})`);\n\n  const url = serverAddress.startsWith('http') ? serverAddress : `http://${serverAddress}`;\n  let accepted = 0;\n  let rejected = 0;\n  let deleted = 0;\n  let serverTime = 0;\n  let totalReceived = 0;\n  let offset = 0;\n  let hasMore = true;\n\n  while (hasMore) {\n    // Only send client items/deletions on first request\n    const payload = { since: lastSync, offset };\n    if (offset === 0) {\n      payload.items = changedItems;\n      payload.deletions = deletions;\n    } else {\n      payload.items = [];\n      payload.deletions = [];\n    }\n\n    const response = await fetch(`${url}/sync`, {\n      method: 'POST',\n      headers: { 'Content-Type': 'application/json' },\n      body: JSON.stringify(payload)\n    });\n\n    if (!response.ok) {\n      const text = await response.text();\n      throw new Error(`Sync failed (${response.status}): ${text}`);\n    }\n\n    const result = await response.json();\n    const { items: incomingItems = [], deletions: incomingDeletions = [] } = result;\n    serverTime = result.serverTime;\n    hasMore = result.hasMore;\n\n    // Apply incoming items (LWW)\n    for (const incoming of incomingItems) {\n      if (!incoming.id) { rejected++; continue; }\n      try {\n        const local = await api.get(incoming.id);\n        if (incoming.modified > local.modified) {\n          await api.set(incoming, { silent: true, preserveModified: true });\n          accepted++;\n        } else {\n          rejected++;\n        }\n      } catch {\n        await api.set(incoming, { silent: true, preserveModified: true });\n        accepted++;\n      }\n    }\n    totalReceived += incomingItems.length;\n\n    // Apply incoming deletions (first page only)\n    for (const deletion of incomingDeletions) {\n      try {\n        const local = await api.get(deletion.itemId);\n        if (local.modified < deletion.timestamp) {\n          await api.delete(deletion.itemId);\n          deleted++;\n        }\n      } catch {}\n    }\n\n    console.log(`[sync-client] Offset ${offset}: received ${incomingItems.length} items${hasMore ? ', fetching more...' : ''}`);\n    offset = result.nextOffset || (offset + incomingItems.length);\n  }\n\n  // Re-render if any items were accepted or deleted\n  if (accepted > 0 || deleted > 0) {\n    const vpRendering = await api.require('viewport-rendering');\n    vpRendering.getRendering()?.renderViewport();\n  }\n\n  // Save lastSyncTimestamp\n  const updated = await api.get(SELF_ID);\n  updated.content = updated.content || {};\n  updated.content.lastSyncTimestamp = serverTime;\n  await api.set(updated, { silent: true, preserveModified: true });\n\n  console.log(`[sync-client] Done: received ${totalReceived} items (accepted: ${accepted}, rejected: ${rejected}), ${deleted} deletions applied`);\n\n  return { sent: changedItems.length, accepted, rejected, deleted, serverTime };\n}\n",
+    "code": "// sync-client — Runs on mobile, syncs with desktop.\n// Collects locally modified items, POSTs to desktop's sync endpoint,\n// applies the response. Triggered manually via exported sync() function.\n\nconst SELF_ID = 'f1111111-0012-0000-0000-000000000000';\n\nlet _api = null;\n\nexport async function onKernelBootComplete({ safeMode }, api) {\n  if (safeMode) return;\n  _api = api;\n  console.log('[sync-client] Ready');\n}\n\n/** Attach blob data (as base64 data URL) to an item for transit, if one exists. */\nasync function attachBlob(api, item) {\n  try {\n    const blob = await api.getBlob(item.id);\n    const dataUrl = await new Promise((resolve, reject) => {\n      const reader = new FileReader();\n      reader.onload = () => resolve(reader.result);\n      reader.onerror = reject;\n      reader.readAsDataURL(blob);\n    });\n    return { ...item, _blob: dataUrl };\n  } catch {\n    return item;\n  }\n}\n\n/** Accept an incoming item: store its blob (if any) and return the clean item. */\nasync function acceptItem(api, incoming) {\n  if (!incoming._blob) return incoming;\n  const dataUrl = incoming._blob;\n  const mimeType = dataUrl.match(/^data:([^;]+);/)?.[1] || 'application/octet-stream';\n  const base64 = dataUrl.split(',')[1];\n  const bytes = Uint8Array.from(atob(base64), c => c.charCodeAt(0));\n  await api.setBlob(incoming.id, new Blob([bytes], { type: mimeType }));\n  const { _blob, ...cleanItem } = incoming;\n  return cleanItem;\n}\n\n/** Store a transit blob without modifying the item (for defensive LWW path). */\nasync function storeBlob(api, incoming) {\n  const dataUrl = incoming._blob;\n  const mimeType = dataUrl.match(/^data:([^;]+);/)?.[1] || 'application/octet-stream';\n  const base64 = dataUrl.split(',')[1];\n  const bytes = Uint8Array.from(atob(base64), c => c.charCodeAt(0));\n  await api.setBlob(incoming.id, new Blob([bytes], { type: mimeType }));\n}\n\n/** Trigger a sync with the desktop server. Callable from REPL: (await api.require('sync-client')).sync() */\nexport async function sync() {\n  if (!_api) throw new Error('sync-client not initialized');\n  const api = _api;\n\n  // Read config from this item\n  const self = await api.get(SELF_ID);\n  const serverAddress = self.content?.serverAddress;\n  if (!serverAddress) throw new Error('No serverAddress configured in sync-client item');\n\n  const lastSync = self.content?.lastSyncTimestamp || 0;\n\n  // Collect locally modified items since last sync and attach blobs\n  const allItems = await api.getAll();\n  const changedItems = lastSync === 0\n    ? allItems\n    : allItems.filter(item => item.modified > lastSync);\n  const changedItemsWithBlobs = await Promise.all(changedItems.map(item => attachBlob(api, item)));\n\n  // Collect local deletions since last sync\n  const deletions = lastSync === 0 ? [] : await api.getDeletedSince(lastSync);\n\n  console.log(`[sync-client] Syncing with ${serverAddress}: sending ${changedItemsWithBlobs.length} items + ${deletions.length} deletions (since ${lastSync === 0 ? 'initial' : new Date(lastSync).toLocaleString()})`);\n\n  const url = serverAddress.startsWith('http') ? serverAddress : `http://${serverAddress}`;\n  let accepted = 0;\n  let rejected = 0;\n  let deleted = 0;\n  let serverTime = 0;\n  let totalReceived = 0;\n  let offset = 0;\n  let hasMore = true;\n\n  while (hasMore) {\n    const payload = { since: lastSync, offset };\n    if (offset === 0) {\n      payload.items = changedItemsWithBlobs;\n      payload.deletions = deletions;\n    } else {\n      payload.items = [];\n      payload.deletions = [];\n    }\n\n    const response = await fetch(`${url}/sync`, {\n      method: 'POST',\n      headers: { 'Content-Type': 'application/json' },\n      body: JSON.stringify(payload)\n    });\n\n    if (!response.ok) {\n      const text = await response.text();\n      throw new Error(`Sync failed (${response.status}): ${text}`);\n    }\n\n    const result = await response.json();\n    const { items: incomingItems = [], deletions: incomingDeletions = [] } = result;\n    serverTime = result.serverTime;\n    hasMore = result.hasMore;\n\n    // Apply incoming items (LWW)\n    for (const incoming of incomingItems) {\n      if (!incoming.id) { rejected++; continue; }\n      try {\n        const local = await api.get(incoming.id);\n        if (incoming.modified > local.modified) {\n          const cleanItem = await acceptItem(api, incoming);\n          await api.set(cleanItem, { silent: true, preserveModified: true });\n          accepted++;\n        } else {\n          // Store the blob even if LWW rejects the item, in case we're missing it\n          if (incoming._blob) {\n            try { await api.getBlob(incoming.id); } catch { await storeBlob(api, incoming); }\n          }\n          rejected++;\n        }\n      } catch {\n        const cleanItem = await acceptItem(api, incoming);\n        await api.set(cleanItem, { silent: true, preserveModified: true });\n        accepted++;\n      }\n    }\n    totalReceived += incomingItems.length;\n\n    // Apply incoming deletions (first page only)\n    for (const deletion of incomingDeletions) {\n      try {\n        const local = await api.get(deletion.itemId);\n        if (local.modified < deletion.timestamp) {\n          await api.delete(deletion.itemId);\n          deleted++;\n        }\n      } catch {}\n    }\n\n    console.log(`[sync-client] Offset ${offset}: received ${incomingItems.length} items${hasMore ? ', fetching more...' : ''}`);\n    offset = result.nextOffset || (offset + incomingItems.length);\n  }\n\n  // Re-render if any items were accepted or deleted\n  if (accepted > 0 || deleted > 0) {\n    const vpRendering = await api.require('viewport-rendering');\n    vpRendering.getRendering()?.renderViewport();\n  }\n\n  // Save lastSyncTimestamp\n  const updated = await api.get(SELF_ID);\n  updated.content = updated.content || {};\n  updated.content.lastSyncTimestamp = serverTime;\n  await api.set(updated, { silent: true, preserveModified: true });\n\n  console.log(`[sync-client] Done: received ${totalReceived} items (accepted: ${accepted}, rejected: ${rejected}), ${deleted} deletions applied`);\n\n  return { sent: changedItemsWithBlobs.length, accepted, rejected, deleted, serverTime };\n}\n",
     "_symbols": {
       "SELF_ID": {
         "name": "SELF_ID",
@@ -51,11 +51,161 @@
         "scope": null,
         "signature": "({ ... }, api)"
       },
+      "attachBlob": {
+        "name": "attachBlob",
+        "line": 16,
+        "col": 0,
+        "endLine": 29,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(api, item)",
+        "description": "Attach blob data (as base64 data URL) to an item for transit, if one exists."
+      },
+      "attachBlob.blob": {
+        "name": "blob",
+        "line": 18,
+        "col": 10,
+        "endLine": 18,
+        "endCol": 43,
+        "kind": "variable",
+        "scope": "attachBlob"
+      },
+      "attachBlob.dataUrl": {
+        "name": "dataUrl",
+        "line": 19,
+        "col": 10,
+        "endLine": 24,
+        "endCol": 6,
+        "kind": "variable",
+        "scope": "attachBlob"
+      },
+      "attachBlob._blob": {
+        "name": "_blob",
+        "line": 25,
+        "col": 22,
+        "endLine": 25,
+        "endCol": 36,
+        "kind": "property",
+        "scope": "attachBlob"
+      },
+      "acceptItem": {
+        "name": "acceptItem",
+        "line": 32,
+        "col": 0,
+        "endLine": 41,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(api, incoming)",
+        "description": "Accept an incoming item: store its blob (if any) and return the clean item."
+      },
+      "acceptItem.dataUrl": {
+        "name": "dataUrl",
+        "line": 34,
+        "col": 8,
+        "endLine": 34,
+        "endCol": 32,
+        "kind": "variable",
+        "scope": "acceptItem"
+      },
+      "acceptItem.mimeType": {
+        "name": "mimeType",
+        "line": 35,
+        "col": 8,
+        "endLine": 35,
+        "endCol": 85,
+        "kind": "variable",
+        "scope": "acceptItem"
+      },
+      "acceptItem.base64": {
+        "name": "base64",
+        "line": 36,
+        "col": 8,
+        "endLine": 36,
+        "endCol": 38,
+        "kind": "variable",
+        "scope": "acceptItem"
+      },
+      "acceptItem.bytes": {
+        "name": "bytes",
+        "line": 37,
+        "col": 8,
+        "endLine": 37,
+        "endCol": 67,
+        "kind": "variable",
+        "scope": "acceptItem"
+      },
+      "acceptItem.type": {
+        "name": "type",
+        "line": 38,
+        "col": 53,
+        "endLine": 38,
+        "endCol": 67,
+        "kind": "property",
+        "scope": "acceptItem"
+      },
+      "storeBlob": {
+        "name": "storeBlob",
+        "line": 44,
+        "col": 0,
+        "endLine": 50,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(api, incoming)",
+        "description": "Store a transit blob without modifying the item (for defensive LWW path)."
+      },
+      "storeBlob.dataUrl": {
+        "name": "dataUrl",
+        "line": 45,
+        "col": 8,
+        "endLine": 45,
+        "endCol": 32,
+        "kind": "variable",
+        "scope": "storeBlob"
+      },
+      "storeBlob.mimeType": {
+        "name": "mimeType",
+        "line": 46,
+        "col": 8,
+        "endLine": 46,
+        "endCol": 85,
+        "kind": "variable",
+        "scope": "storeBlob"
+      },
+      "storeBlob.base64": {
+        "name": "base64",
+        "line": 47,
+        "col": 8,
+        "endLine": 47,
+        "endCol": 38,
+        "kind": "variable",
+        "scope": "storeBlob"
+      },
+      "storeBlob.bytes": {
+        "name": "bytes",
+        "line": 48,
+        "col": 8,
+        "endLine": 48,
+        "endCol": 67,
+        "kind": "variable",
+        "scope": "storeBlob"
+      },
+      "storeBlob.type": {
+        "name": "type",
+        "line": 49,
+        "col": 53,
+        "endLine": 49,
+        "endCol": 67,
+        "kind": "property",
+        "scope": "storeBlob"
+      },
       "sync": {
         "name": "sync",
-        "line": 16,
+        "line": 53,
         "col": 7,
-        "endLine": 122,
+        "endLine": 165,
         "endCol": 1,
         "kind": "function",
         "scope": null,
@@ -64,262 +214,280 @@
       },
       "sync.api": {
         "name": "api",
-        "line": 18,
+        "line": 55,
         "col": 8,
-        "endLine": 18,
+        "endLine": 55,
         "endCol": 18,
         "kind": "variable",
         "scope": "sync"
       },
       "sync.self": {
         "name": "self",
-        "line": 21,
+        "line": 58,
         "col": 8,
-        "endLine": 21,
+        "endLine": 58,
         "endCol": 37,
         "kind": "variable",
         "scope": "sync"
       },
       "sync.serverAddress": {
         "name": "serverAddress",
-        "line": 22,
+        "line": 59,
         "col": 8,
-        "endLine": 22,
+        "endLine": 59,
         "endCol": 51,
         "kind": "variable",
         "scope": "sync"
       },
       "sync.lastSync": {
         "name": "lastSync",
-        "line": 25,
+        "line": 62,
         "col": 8,
-        "endLine": 25,
+        "endLine": 62,
         "endCol": 55,
         "kind": "variable",
         "scope": "sync"
       },
       "sync.allItems": {
         "name": "allItems",
-        "line": 28,
+        "line": 65,
         "col": 8,
-        "endLine": 28,
+        "endLine": 65,
         "endCol": 37,
         "kind": "variable",
         "scope": "sync"
       },
       "sync.changedItems": {
         "name": "changedItems",
-        "line": 29,
+        "line": 66,
         "col": 8,
-        "endLine": 31,
+        "endLine": 68,
         "endCol": 55,
+        "kind": "variable",
+        "scope": "sync"
+      },
+      "sync.changedItemsWithBlobs": {
+        "name": "changedItemsWithBlobs",
+        "line": 69,
+        "col": 8,
+        "endLine": 69,
+        "endCol": 98,
         "kind": "variable",
         "scope": "sync"
       },
       "sync.deletions": {
         "name": "deletions",
-        "line": 34,
+        "line": 72,
         "col": 8,
-        "endLine": 34,
+        "endLine": 72,
         "endCol": 77,
         "kind": "variable",
         "scope": "sync"
       },
       "sync.url": {
         "name": "url",
-        "line": 38,
+        "line": 76,
         "col": 8,
-        "endLine": 38,
+        "endLine": 76,
         "endCol": 90,
         "kind": "variable",
         "scope": "sync"
       },
       "sync.accepted": {
         "name": "accepted",
-        "line": 121,
-        "col": 38,
-        "endLine": 121,
-        "endCol": 46,
+        "line": 164,
+        "col": 47,
+        "endLine": 164,
+        "endCol": 55,
         "kind": "property",
         "scope": "sync"
       },
       "sync.rejected": {
         "name": "rejected",
-        "line": 121,
-        "col": 48,
-        "endLine": 121,
-        "endCol": 56,
+        "line": 164,
+        "col": 57,
+        "endLine": 164,
+        "endCol": 65,
         "kind": "property",
         "scope": "sync"
       },
       "sync.deleted": {
         "name": "deleted",
-        "line": 121,
-        "col": 58,
-        "endLine": 121,
-        "endCol": 65,
+        "line": 164,
+        "col": 67,
+        "endLine": 164,
+        "endCol": 74,
         "kind": "property",
         "scope": "sync"
       },
       "sync.serverTime": {
         "name": "serverTime",
-        "line": 121,
-        "col": 67,
-        "endLine": 121,
-        "endCol": 77,
+        "line": 164,
+        "col": 76,
+        "endLine": 164,
+        "endCol": 86,
         "kind": "property",
         "scope": "sync"
       },
       "sync.totalReceived": {
         "name": "totalReceived",
-        "line": 43,
+        "line": 81,
         "col": 6,
-        "endLine": 43,
+        "endLine": 81,
         "endCol": 23,
         "kind": "variable",
         "scope": "sync"
       },
       "sync.offset": {
         "name": "offset",
-        "line": 44,
+        "line": 82,
         "col": 6,
-        "endLine": 44,
+        "endLine": 82,
         "endCol": 16,
         "kind": "variable",
         "scope": "sync"
       },
       "sync.hasMore": {
         "name": "hasMore",
-        "line": 45,
+        "line": 83,
         "col": 6,
-        "endLine": 45,
+        "endLine": 83,
         "endCol": 20,
         "kind": "variable",
         "scope": "sync"
       },
       "sync.payload": {
         "name": "payload",
-        "line": 49,
+        "line": 86,
         "col": 10,
-        "endLine": 49,
+        "endLine": 86,
         "endCol": 47,
         "kind": "variable",
         "scope": "sync"
       },
       "payload.since": {
         "name": "since",
-        "line": 49,
+        "line": 86,
         "col": 22,
-        "endLine": 49,
+        "endLine": 86,
         "endCol": 37,
         "kind": "property",
         "scope": "payload"
       },
       "payload.offset": {
         "name": "offset",
-        "line": 49,
+        "line": 86,
         "col": 39,
-        "endLine": 49,
+        "endLine": 86,
         "endCol": 45,
         "kind": "property",
         "scope": "payload"
       },
       "sync.response": {
         "name": "response",
-        "line": 58,
+        "line": 95,
         "col": 10,
-        "endLine": 62,
+        "endLine": 99,
         "endCol": 6,
         "kind": "variable",
         "scope": "sync"
       },
       "sync.text": {
         "name": "text",
-        "line": 65,
+        "line": 102,
         "col": 12,
-        "endLine": 65,
+        "endLine": 102,
         "endCol": 40,
         "kind": "variable",
         "scope": "sync"
       },
       "sync.result": {
         "name": "result",
-        "line": 69,
+        "line": 106,
         "col": 10,
-        "endLine": 69,
+        "endLine": 106,
         "endCol": 40,
         "kind": "variable",
         "scope": "sync"
       },
       "sync.incoming": {
         "name": "incoming",
-        "line": 75,
+        "line": 112,
         "col": 15,
-        "endLine": 75,
+        "endLine": 112,
         "endCol": 23,
         "kind": "variable",
         "scope": "sync"
       },
       "sync.local": {
         "name": "local",
-        "line": 95,
+        "line": 138,
         "col": 14,
-        "endLine": 95,
+        "endLine": 138,
         "endCol": 52,
+        "kind": "variable",
+        "scope": "sync"
+      },
+      "sync.cleanItem": {
+        "name": "cleanItem",
+        "line": 128,
+        "col": 14,
+        "endLine": 128,
+        "endCol": 57,
         "kind": "variable",
         "scope": "sync"
       },
       "sync.silent": {
         "name": "silent",
-        "line": 117,
+        "line": 160,
         "col": 27,
-        "endLine": 117,
+        "endLine": 160,
         "endCol": 39,
         "kind": "property",
         "scope": "sync"
       },
       "sync.preserveModified": {
         "name": "preserveModified",
-        "line": 117,
+        "line": 160,
         "col": 41,
-        "endLine": 117,
+        "endLine": 160,
         "endCol": 63,
         "kind": "property",
         "scope": "sync"
       },
       "sync.deletion": {
         "name": "deletion",
-        "line": 93,
+        "line": 136,
         "col": 15,
-        "endLine": 93,
+        "endLine": 136,
         "endCol": 23,
         "kind": "variable",
         "scope": "sync"
       },
       "sync.vpRendering": {
         "name": "vpRendering",
-        "line": 109,
+        "line": 152,
         "col": 10,
-        "endLine": 109,
+        "endLine": 152,
         "endCol": 63,
         "kind": "variable",
         "scope": "sync"
       },
       "sync.updated": {
         "name": "updated",
-        "line": 114,
+        "line": 157,
         "col": 8,
-        "endLine": 114,
+        "endLine": 157,
         "endCol": 40,
         "kind": "variable",
         "scope": "sync"
       },
       "sync.sent": {
         "name": "sent",
-        "line": 121,
+        "line": 164,
         "col": 11,
-        "endLine": 121,
-        "endCol": 36,
+        "endLine": 164,
+        "endCol": 45,
         "kind": "property",
         "scope": "sync"
       }

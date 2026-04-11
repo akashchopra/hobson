@@ -1,5 +1,6 @@
 // image-editor-view — Editor for image items
-// Provides file picker (Tauri dialog or input[type=file]), drag-and-drop, paste from clipboard
+// Stores image as a native Blob in the blob store (keyed by item ID).
+// content.mimeType and content.alt are the only content fields.
 
 export async function render(item, api) {
   const el = api.createElement('div', { className: 'image-editor-view' });
@@ -23,44 +24,46 @@ export async function render(item, api) {
   const preview = api.createElement('div');
   preview.style.cssText = 'display: flex; justify-content: center; align-items: center; min-height: 120px;';
 
-  function renderPreview() {
+  async function renderPreview() {
     preview.innerHTML = '';
-    const data = item.content?.data;
-    if (data) {
+    try {
+      const blob = await api.getBlob(item.id);
+      const dataUrl = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
       const img = api.createElement('img');
-      img.src = data;
+      img.src = dataUrl;
       img.alt = item.content?.alt || item.name || '';
       img.style.cssText = 'max-width: 100%; max-height: 60vh; height: auto; border-radius: var(--border-radius);';
       img.draggable = false;
       preview.appendChild(img);
+    } catch {
+      // No blob yet — preview stays empty
     }
   }
-  renderPreview();
+  await renderPreview();
 
-  // --- Drop zone (shown when no image, or as overlay) ---
+  // --- Drop zone ---
   const dropZone = api.createElement('div');
   dropZone.style.cssText = 'padding: 2em; text-align: center; border: 2px dashed var(--color-border); border-radius: var(--border-radius); color: var(--color-text-secondary); cursor: pointer; transition: border-color 0.15s, background 0.15s;';
-  dropZone.textContent = item.content?.data ? 'Drop image to replace, paste, or click to browse' : 'Drop image here, paste, or click to browse';
+  dropZone.textContent = item.content?.mimeType ? 'Drop image to replace, paste, or click to browse' : 'Drop image here, paste, or click to browse';
 
-  // --- File reading helper ---
+  // --- File loading helper ---
   async function loadFile(file) {
     if (!file || !file.type.startsWith('image/')) return;
-    const dataUrl = await new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result);
-      reader.onerror = reject;
-      reader.readAsDataURL(file);
-    });
+    await api.setBlob(item.id, file);
     item.content = item.content || {};
-    item.content.data = dataUrl;
     item.content.mimeType = file.type;
     if (!item.name || item.name === 'Untitled') item.name = file.name.replace(/\.[^.]+$/, '');
     nameInput.value = item.name;
-    renderPreview();
+    await renderPreview();
     dropZone.textContent = 'Drop image to replace, paste, or click to browse';
   }
 
-  // --- Tauri file picker or fallback ---
+  // --- Tauri file picker or browser fallback ---
   async function pickFile() {
     const tauri = window.__TAURI__;
     if (tauri) {
@@ -71,28 +74,23 @@ export async function render(item, api) {
         });
         if (result) {
           const bytes = await tauri.fs.readFile(result);
-          // Detect mime type from extension
           const ext = result.split('.').pop().toLowerCase();
           const mimeMap = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml', bmp: 'image/bmp', ico: 'image/x-icon' };
           const mimeType = mimeMap[ext] || 'image/png';
-          // Convert to base64 data URL
-          let binary = '';
-          for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
-          const b64 = btoa(binary);
+          const blob = new Blob([bytes], { type: mimeType });
+          await api.setBlob(item.id, blob);
           item.content = item.content || {};
-          item.content.data = 'data:' + mimeType + ';base64,' + b64;
           item.content.mimeType = mimeType;
           const fileName = result.split('/').pop().split('\\').pop().replace(/\.[^.]+$/, '');
           if (!item.name || item.name === 'Untitled') item.name = fileName;
           nameInput.value = item.name;
-          renderPreview();
+          await renderPreview();
           dropZone.textContent = 'Drop image to replace, paste, or click to browse';
         }
       } catch (e) {
         console.error('[image-editor] Tauri file picker error:', e);
       }
     } else {
-      // Browser fallback
       const input = document.createElement('input');
       input.type = 'file';
       input.accept = 'image/*';
@@ -103,7 +101,6 @@ export async function render(item, api) {
 
   dropZone.addEventListener('click', pickFile);
 
-  // --- Drag and drop ---
   dropZone.addEventListener('dragover', (e) => {
     e.preventDefault();
     dropZone.style.borderColor = 'var(--color-primary)';
@@ -121,7 +118,6 @@ export async function render(item, api) {
     if (file) loadFile(file);
   });
 
-  // --- Paste from clipboard ---
   el.addEventListener('paste', (e) => {
     const items = e.clipboardData?.items;
     if (!items) return;
@@ -133,7 +129,6 @@ export async function render(item, api) {
       }
     }
   });
-  // Make el focusable for paste events
   el.tabIndex = 0;
 
   // --- Action buttons ---

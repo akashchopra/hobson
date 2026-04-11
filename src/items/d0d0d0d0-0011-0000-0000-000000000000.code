@@ -1,19 +1,25 @@
 // image-view — Renders an image item
-// content.data holds a base64 data URL, content.alt holds alt text
+// Fetches the blob from the blob store by item ID, converts to data URL for display.
 
 export async function render(item, api) {
   const el = api.createElement('div', { className: 'image-view' });
   el.style.cssText = 'display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 8px;';
 
-  const data = item.content?.data;
-  if (data) {
+  try {
+    const blob = await api.getBlob(item.id);
+    const dataUrl = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
     const img = api.createElement('img');
-    img.src = data;
+    img.src = dataUrl;
     img.alt = item.content?.alt || item.name || '';
     img.style.cssText = 'max-width: 100%; height: auto; border-radius: var(--border-radius);';
     img.draggable = false;
     el.appendChild(img);
-  } else {
+  } catch {
     const placeholder = api.createElement('div');
     placeholder.style.cssText = 'padding: 2em; color: var(--color-text-secondary); text-align: center; border: 2px dashed var(--color-border); border-radius: var(--border-radius);';
     placeholder.textContent = 'No image data';

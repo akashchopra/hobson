@@ -3,7 +3,7 @@
   "name": "image-import-lib",
   "type": "66666666-0000-0000-0000-000000000000",
   "created": 1774607975531,
-  "modified": 1775756675189,
+  "modified": 1775926313512,
   "content": {
     "description": [
       ":doc",
@@ -14,7 +14,7 @@
         }
       ]
     ],
-    "code": "// image-import-lib — Creates image items from various sources\n// Used by obsidian-import, paste handlers, and the image editor\n\nconst IMAGE_TYPE = 'd0d0d0d0-0010-0000-0000-000000000000';\n\n/** Create an image item from a base64 data URL.\n * @param {Object} api - Hobson API\n * @param {string} dataUrl - Base64 data URL (data:image/png;base64,...)\n * @param {Object} [opts] - Options: name, alt\n * @returns {Promise<string>} The new image item's ID\n */\nexport async function fromDataUrl(api, dataUrl, opts = {}) {\n  const mimeMatch = dataUrl.match(/^data:([^;]+);/);\n  const mimeType = mimeMatch ? mimeMatch[1] : 'image/png';\n  const id = crypto.randomUUID();\n  const item = {\n    id,\n    name: opts.name || 'Image',\n    type: IMAGE_TYPE,\n    created: Date.now(),\n    modified: Date.now(),\n    content: {\n      data: dataUrl,\n      mimeType,\n      alt: opts.alt || undefined\n    },\n    attachments: []\n  };\n  await api.set(item);\n  return id;\n}\n\n/** Create an image item from a Blob or File.\n * @param {Object} api - Hobson API\n * @param {Blob|File} blob - Image blob\n * @param {Object} [opts] - Options: name, alt\n * @returns {Promise<string>} The new image item's ID\n */\nexport async function fromBlob(api, blob, opts = {}) {\n  const dataUrl = await new Promise((resolve, reject) => {\n    const reader = new FileReader();\n    reader.onload = () => resolve(reader.result);\n    reader.onerror = reject;\n    reader.readAsDataURL(blob);\n  });\n  const name = opts.name || (blob.name ? blob.name.replace(/\\.[^.]+$/, '') : 'Image');\n  return fromDataUrl(api, dataUrl, { ...opts, name });\n}\n\n/** Create an image item from a file path (Tauri only).\n * @param {Object} api - Hobson API\n * @param {string} filePath - Absolute file path\n * @param {Object} [opts] - Options: name, alt\n * @returns {Promise<string>} The new image item's ID\n */\nexport async function fromFile(api, filePath, opts = {}) {\n  const tauri = window.__TAURI__;\n  if (!tauri) throw new Error('fromFile requires Tauri (filesystem access)');\n\n  const bytes = await tauri.fs.readFile(filePath);\n  const ext = filePath.split('.').pop().toLowerCase();\n  const mimeMap = {\n    png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg',\n    gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml',\n    bmp: 'image/bmp', ico: 'image/x-icon'\n  };\n  const mimeType = mimeMap[ext] || 'image/png';\n\n  // Convert Uint8Array to base64\n  let binary = '';\n  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);\n  const b64 = btoa(binary);\n  const dataUrl = 'data:' + mimeType + ';base64,' + b64;\n\n  const fileName = filePath.split('/').pop().split('\\\\').pop().replace(/\\.[^.]+$/, '');\n  const name = opts.name || fileName || 'Image';\n\n  return fromDataUrl(api, dataUrl, { ...opts, name });\n}\n",
+    "code": "// image-import-lib — Creates image items from various sources\n// Used by obsidian-import, paste handlers, and the image editor\n\nconst IMAGE_TYPE = 'd0d0d0d0-0010-0000-0000-000000000000';\n\n/** Create an image item from a base64 data URL.\n * @param {Object} api - Hobson API\n * @param {string} dataUrl - Base64 data URL (data:image/png;base64,...)\n * @param {Object} [opts] - Options: name, alt\n * @returns {Promise<string>} The new image item's ID\n */\nexport async function fromDataUrl(api, dataUrl, opts = {}) {\n  const mimeMatch = dataUrl.match(/^data:([^;]+);/);\n  const mimeType = mimeMatch ? mimeMatch[1] : 'image/png';\n  const base64 = dataUrl.split(',')[1];\n  const bytes = Uint8Array.from(atob(base64), c => c.charCodeAt(0));\n  const blob = new Blob([bytes], { type: mimeType });\n  return fromBlob(api, blob, opts);\n}\n\n/** Create an image item from a Blob or File.\n * @param {Object} api - Hobson API\n * @param {Blob|File} blob - Image blob\n * @param {Object} [opts] - Options: name, alt\n * @returns {Promise<string>} The new image item's ID\n */\nexport async function fromBlob(api, blob, opts = {}) {\n  const id = crypto.randomUUID();\n  const name = opts.name || (blob.name ? blob.name.replace(/\\.[^.]+$/, '') : 'Image');\n  const item = {\n    id,\n    name,\n    type: IMAGE_TYPE,\n    created: Date.now(),\n    modified: Date.now(),\n    content: {\n      mimeType: blob.type || 'image/png',\n      alt: opts.alt || undefined\n    },\n    attachments: []\n  };\n  await api.set(item);\n  await api.setBlob(id, blob);\n  return id;\n}\n\n/** Create an image item from a file path (Tauri only).\n * @param {Object} api - Hobson API\n * @param {string} filePath - Absolute file path\n * @param {Object} [opts] - Options: name, alt\n * @returns {Promise<string>} The new image item's ID\n */\nexport async function fromFile(api, filePath, opts = {}) {\n  const tauri = window.__TAURI__;\n  if (!tauri) throw new Error('fromFile requires Tauri (filesystem access)');\n\n  const bytes = await tauri.fs.readFile(filePath);\n  const ext = filePath.split('.').pop().toLowerCase();\n  const mimeMap = {\n    png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg',\n    gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml',\n    bmp: 'image/bmp', ico: 'image/x-icon'\n  };\n  const mimeType = mimeMap[ext] || 'image/png';\n  const blob = new Blob([bytes], { type: mimeType });\n  const fileName = filePath.split('/').pop().split('\\\\').pop().replace(/\\.[^.]+$/, '');\n  const name = opts.name || fileName || 'Image';\n  return fromBlob(api, blob, { ...opts, name });\n}\n",
     "_symbols": {
       "IMAGE_TYPE": {
         "name": "IMAGE_TYPE",
@@ -29,7 +29,7 @@
         "name": "fromDataUrl",
         "line": 12,
         "col": 7,
-        "endLine": 31,
+        "endLine": 19,
         "endCol": 1,
         "kind": "function",
         "scope": null,
@@ -75,119 +75,38 @@
         "kind": "variable",
         "scope": "fromDataUrl"
       },
-      "fromDataUrl.id": {
-        "name": "id",
+      "fromDataUrl.base64": {
+        "name": "base64",
         "line": 15,
         "col": 8,
         "endLine": 15,
-        "endCol": 32,
+        "endCol": 38,
         "kind": "variable",
         "scope": "fromDataUrl"
       },
-      "fromDataUrl.item": {
-        "name": "item",
+      "fromDataUrl.bytes": {
+        "name": "bytes",
         "line": 16,
         "col": 8,
-        "endLine": 28,
-        "endCol": 3,
+        "endLine": 16,
+        "endCol": 67,
         "kind": "variable",
         "scope": "fromDataUrl"
       },
-      "item.id": {
-        "name": "id",
+      "fromDataUrl.blob": {
+        "name": "blob",
         "line": 17,
-        "col": 4,
+        "col": 8,
         "endLine": 17,
-        "endCol": 6,
-        "kind": "property",
-        "scope": "item"
-      },
-      "item.name": {
-        "name": "name",
-        "line": 18,
-        "col": 4,
-        "endLine": 18,
-        "endCol": 30,
-        "kind": "property",
-        "scope": "item"
-      },
-      "item.type": {
-        "name": "type",
-        "line": 19,
-        "col": 4,
-        "endLine": 19,
-        "endCol": 20,
-        "kind": "property",
-        "scope": "item"
-      },
-      "item.created": {
-        "name": "created",
-        "line": 20,
-        "col": 4,
-        "endLine": 20,
-        "endCol": 23,
-        "kind": "property",
-        "scope": "item"
-      },
-      "item.modified": {
-        "name": "modified",
-        "line": 21,
-        "col": 4,
-        "endLine": 21,
-        "endCol": 24,
-        "kind": "property",
-        "scope": "item"
-      },
-      "item.content": {
-        "name": "content",
-        "line": 22,
-        "col": 4,
-        "endLine": 26,
-        "endCol": 5,
-        "kind": "property",
-        "scope": "item"
-      },
-      "item.content.data": {
-        "name": "data",
-        "line": 23,
-        "col": 6,
-        "endLine": 23,
-        "endCol": 19,
-        "kind": "property",
-        "scope": "item.content"
-      },
-      "item.content.mimeType": {
-        "name": "mimeType",
-        "line": 24,
-        "col": 6,
-        "endLine": 24,
-        "endCol": 14,
-        "kind": "property",
-        "scope": "item.content"
-      },
-      "item.content.alt": {
-        "name": "alt",
-        "line": 25,
-        "col": 6,
-        "endLine": 25,
-        "endCol": 32,
-        "kind": "property",
-        "scope": "item.content"
-      },
-      "item.attachments": {
-        "name": "attachments",
-        "line": 27,
-        "col": 4,
-        "endLine": 27,
-        "endCol": 19,
-        "kind": "property",
-        "scope": "item"
+        "endCol": 52,
+        "kind": "variable",
+        "scope": "fromDataUrl"
       },
       "fromBlob": {
         "name": "fromBlob",
-        "line": 39,
+        "line": 27,
         "col": 7,
-        "endLine": 48,
+        "endLine": 45,
         "endCol": 1,
         "kind": "function",
         "scope": null,
@@ -215,29 +134,119 @@
           "description": "The new image item's ID"
         }
       },
-      "fromBlob.dataUrl": {
-        "name": "dataUrl",
-        "line": 40,
+      "fromBlob.id": {
+        "name": "id",
+        "line": 28,
         "col": 8,
-        "endLine": 45,
-        "endCol": 4,
+        "endLine": 28,
+        "endCol": 32,
         "kind": "variable",
         "scope": "fromBlob"
       },
       "fromBlob.name": {
         "name": "name",
-        "line": 47,
-        "col": 46,
-        "endLine": 47,
-        "endCol": 50,
-        "kind": "property",
+        "line": 29,
+        "col": 8,
+        "endLine": 29,
+        "endCol": 85,
+        "kind": "variable",
         "scope": "fromBlob"
+      },
+      "fromBlob.item": {
+        "name": "item",
+        "line": 30,
+        "col": 8,
+        "endLine": 41,
+        "endCol": 3,
+        "kind": "variable",
+        "scope": "fromBlob"
+      },
+      "item.id": {
+        "name": "id",
+        "line": 31,
+        "col": 4,
+        "endLine": 31,
+        "endCol": 6,
+        "kind": "property",
+        "scope": "item"
+      },
+      "item.name": {
+        "name": "name",
+        "line": 32,
+        "col": 4,
+        "endLine": 32,
+        "endCol": 8,
+        "kind": "property",
+        "scope": "item"
+      },
+      "item.type": {
+        "name": "type",
+        "line": 33,
+        "col": 4,
+        "endLine": 33,
+        "endCol": 20,
+        "kind": "property",
+        "scope": "item"
+      },
+      "item.created": {
+        "name": "created",
+        "line": 34,
+        "col": 4,
+        "endLine": 34,
+        "endCol": 23,
+        "kind": "property",
+        "scope": "item"
+      },
+      "item.modified": {
+        "name": "modified",
+        "line": 35,
+        "col": 4,
+        "endLine": 35,
+        "endCol": 24,
+        "kind": "property",
+        "scope": "item"
+      },
+      "item.content": {
+        "name": "content",
+        "line": 36,
+        "col": 4,
+        "endLine": 39,
+        "endCol": 5,
+        "kind": "property",
+        "scope": "item"
+      },
+      "item.content.mimeType": {
+        "name": "mimeType",
+        "line": 37,
+        "col": 6,
+        "endLine": 37,
+        "endCol": 40,
+        "kind": "property",
+        "scope": "item.content"
+      },
+      "item.content.alt": {
+        "name": "alt",
+        "line": 38,
+        "col": 6,
+        "endLine": 38,
+        "endCol": 32,
+        "kind": "property",
+        "scope": "item.content"
+      },
+      "item.attachments": {
+        "name": "attachments",
+        "line": 40,
+        "col": 4,
+        "endLine": 40,
+        "endCol": 19,
+        "kind": "property",
+        "scope": "item"
       },
       "fromFile": {
         "name": "fromFile",
-        "line": 56,
+        "line": 53,
         "col": 7,
-        "endLine": 79,
+        "endLine": 69,
         "endCol": 1,
         "kind": "function",
         "scope": null,
@@ -267,172 +276,145 @@
       },
       "fromFile.tauri": {
         "name": "tauri",
-        "line": 57,
+        "line": 54,
         "col": 8,
-        "endLine": 57,
+        "endLine": 54,
         "endCol": 32,
         "kind": "variable",
         "scope": "fromFile"
       },
       "fromFile.bytes": {
         "name": "bytes",
-        "line": 60,
+        "line": 57,
         "col": 8,
-        "endLine": 60,
+        "endLine": 57,
         "endCol": 49,
         "kind": "variable",
         "scope": "fromFile"
       },
       "fromFile.ext": {
         "name": "ext",
-        "line": 61,
+        "line": 58,
         "col": 8,
-        "endLine": 61,
+        "endLine": 58,
         "endCol": 53,
         "kind": "variable",
         "scope": "fromFile"
       },
       "fromFile.mimeMap": {
         "name": "mimeMap",
-        "line": 62,
+        "line": 59,
         "col": 8,
-        "endLine": 66,
+        "endLine": 63,
         "endCol": 3,
         "kind": "variable",
         "scope": "fromFile"
       },
       "mimeMap.png": {
         "name": "png",
-        "line": 63,
+        "line": 60,
         "col": 4,
-        "endLine": 63,
+        "endLine": 60,
         "endCol": 20,
         "kind": "property",
         "scope": "mimeMap"
       },
       "mimeMap.jpg": {
         "name": "jpg",
-        "line": 63,
+        "line": 60,
         "col": 22,
-        "endLine": 63,
+        "endLine": 60,
         "endCol": 39,
         "kind": "property",
         "scope": "mimeMap"
       },
       "mimeMap.jpeg": {
         "name": "jpeg",
-        "line": 63,
+        "line": 60,
         "col": 41,
-        "endLine": 63,
+        "endLine": 60,
         "endCol": 59,
         "kind": "property",
         "scope": "mimeMap"
       },
       "mimeMap.gif": {
         "name": "gif",
-        "line": 64,
+        "line": 61,
         "col": 4,
-        "endLine": 64,
+        "endLine": 61,
         "endCol": 20,
         "kind": "property",
         "scope": "mimeMap"
       },
       "mimeMap.webp": {
         "name": "webp",
-        "line": 64,
+        "line": 61,
         "col": 22,
-        "endLine": 64,
+        "endLine": 61,
         "endCol": 40,
         "kind": "property",
         "scope": "mimeMap"
       },
       "mimeMap.svg": {
         "name": "svg",
-        "line": 64,
+        "line": 61,
         "col": 42,
-        "endLine": 64,
+        "endLine": 61,
         "endCol": 62,
         "kind": "property",
         "scope": "mimeMap"
       },
       "mimeMap.bmp": {
         "name": "bmp",
-        "line": 65,
+        "line": 62,
         "col": 4,
-        "endLine": 65,
+        "endLine": 62,
         "endCol": 20,
         "kind": "property",
         "scope": "mimeMap"
       },
       "mimeMap.ico": {
         "name": "ico",
-        "line": 65,
+        "line": 62,
         "col": 22,
-        "endLine": 65,
+        "endLine": 62,
         "endCol": 41,
         "kind": "property",
         "scope": "mimeMap"
       },
       "fromFile.mimeType": {
         "name": "mimeType",
-        "line": 67,
+        "line": 64,
         "col": 8,
-        "endLine": 67,
+        "endLine": 64,
         "endCol": 46,
         "kind": "variable",
         "scope": "fromFile"
       },
-      "fromFile.binary": {
-        "name": "binary",
-        "line": 70,
-        "col": 6,
-        "endLine": 70,
-        "endCol": 17,
-        "kind": "variable",
-        "scope": "fromFile"
-      },
-      "fromFile.i": {
-        "name": "i",
-        "line": 71,
-        "col": 11,
-        "endLine": 71,
-        "endCol": 16,
-        "kind": "variable",
-        "scope": "fromFile"
-      },
-      "fromFile.b64": {
-        "name": "b64",
-        "line": 72,
+      "fromFile.blob": {
+        "name": "blob",
+        "line": 65,
         "col": 8,
-        "endLine": 72,
-        "endCol": 26,
-        "kind": "variable",
-        "scope": "fromFile"
-      },
-      "fromFile.dataUrl": {
-        "name": "dataUrl",
-        "line": 73,
-        "col": 8,
-        "endLine": 73,
-        "endCol": 55,
+        "endLine": 65,
+        "endCol": 52,
         "kind": "variable",
         "scope": "fromFile"
       },
       "fromFile.fileName": {
         "name": "fileName",
-        "line": 75,
+        "line": 66,
         "col": 8,
-        "endLine": 75,
+        "endLine": 66,
         "endCol": 86,
         "kind": "variable",
         "scope": "fromFile"
       },
       "fromFile.name": {
         "name": "name",
-        "line": 78,
-        "col": 46,
-        "endLine": 78,
-        "endCol": 50,
+        "line": 68,
+        "col": 40,
+        "endLine": 68,
+        "endCol": 44,
         "kind": "property",
         "scope": "fromFile"
       }

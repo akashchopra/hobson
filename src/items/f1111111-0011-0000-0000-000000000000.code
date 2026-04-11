@@ -36,6 +36,43 @@ function showSyncToast(message, detail) {
   setTimeout(() => { if (toast.parentNode) toast.remove(); }, 3000);
 }
 
+/** Attach blob data (as base64 data URL) to an item for transit, if one exists. */
+async function attachBlob(api, item) {
+  try {
+    const blob = await api.getBlob(item.id);
+    const dataUrl = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+    return { ...item, _blob: dataUrl };
+  } catch {
+    return item;
+  }
+}
+
+/** Accept an incoming item: store its blob (if any) and return the clean item. */
+async function acceptItem(api, incoming) {
+  if (!incoming._blob) return incoming;
+  const dataUrl = incoming._blob;
+  const mimeType = dataUrl.match(/^data:([^;]+);/)?.[1] || 'application/octet-stream';
+  const base64 = dataUrl.split(',')[1];
+  const bytes = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+  await api.setBlob(incoming.id, new Blob([bytes], { type: mimeType }));
+  const { _blob, ...cleanItem } = incoming;
+  return cleanItem;
+}
+
+/** Store a transit blob without modifying the item (for defensive LWW path). */
+async function storeBlob(api, incoming) {
+  const dataUrl = incoming._blob;
+  const mimeType = dataUrl.match(/^data:([^;]+);/)?.[1] || 'application/octet-stream';
+  const base64 = dataUrl.split(',')[1];
+  const bytes = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+  await api.setBlob(incoming.id, new Blob([bytes], { type: mimeType }));
+}
+
 export async function onHttpRequest({ method, path, body, respond }, api) {
   if (path !== '/sync') return;
 
@@ -60,7 +97,6 @@ export async function onHttpRequest({ method, path, body, respond }, api) {
       const history = await api.getHistory(incoming.id);
       const deletionRecord = history.find(e => e.deleted && e.timestamp > incoming.modified);
       if (deletionRecord) {
-        // Local deletion is newer — don't resurrect
         rejected++;
         continue;
       }
@@ -68,14 +104,19 @@ export async function onHttpRequest({ method, path, body, respond }, api) {
       try {
         const local = await api.get(incoming.id);
         if (incoming.modified > local.modified) {
-          await api.set(incoming, { silent: true, preserveModified: true });
+          const cleanItem = await acceptItem(api, incoming);
+          await api.set(cleanItem, { silent: true, preserveModified: true });
           accepted++;
         } else {
+          // Store the blob even if LWW rejects the item, in case we're missing it
+          if (incoming._blob) {
+            try { await api.getBlob(incoming.id); } catch { await storeBlob(api, incoming); }
+          }
           rejected++;
         }
       } catch {
-        // Item doesn't exist locally — accept it
-        await api.set(incoming, { silent: true, preserveModified: true });
+        const cleanItem = await acceptItem(api, incoming);
+        await api.set(cleanItem, { silent: true, preserveModified: true });
         accepted++;
       }
     }
@@ -109,16 +150,17 @@ export async function onHttpRequest({ method, path, body, respond }, api) {
       return 0;
     });
 
-    // --- Size-aware pagination ---
+    // --- Size-aware pagination (blobs included in size estimate) ---
     const offset = request.offset || 0;
     const maxBytes = request.maxBytes || 2 * 1024 * 1024; // 2MB default
     const pageItems = [];
     let estimatedSize = 0;
     let nextOffset = offset;
     for (let i = offset; i < changedItems.length; i++) {
-      const itemStr = JSON.stringify(changedItems[i]);
+      const itemWithBlob = await attachBlob(api, changedItems[i]);
+      const itemStr = JSON.stringify(itemWithBlob);
       if (pageItems.length > 0 && estimatedSize + itemStr.length > maxBytes) break;
-      pageItems.push(changedItems[i]);
+      pageItems.push(itemWithBlob);
       estimatedSize += itemStr.length;
       nextOffset = i + 1;
     }

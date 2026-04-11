@@ -337,5 +337,72 @@ export class Storage {
     }
   }
   // [END:validateTypeChain]
+
+  // --- Blob storage ---
+
+  /** Store a Blob keyed by item ID (with instance prefix).
+   * @param {string} id - Item GUID
+   * @param {Blob} blob - The binary blob to store
+   */
+  setBlob(id, blob) {
+    const actualId = this._prefixId(id);
+    return new Promise((resolve, reject) => {
+      const tx = this._db.transaction('blobs', 'readwrite');
+      const req = tx.objectStore('blobs').put({ id: actualId, blob });
+      req.onsuccess = () => resolve();
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  /** Retrieve a Blob by item ID.
+   * @param {string} id - Item GUID
+   * @returns {Promise<Blob>} The blob
+   */
+  getBlob(id) {
+    const actualId = this._prefixId(id);
+    return new Promise((resolve, reject) => {
+      const tx = this._db.transaction('blobs', 'readonly');
+      const req = tx.objectStore('blobs').get(actualId);
+      req.onsuccess = () => {
+        if (!req.result) reject(new Error(`Blob not found: ${id}`));
+        else resolve(req.result.blob);
+      };
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  /** Delete a Blob by item ID. Silent no-op if not found.
+   * @param {string} id - Item GUID
+   */
+  deleteBlob(id) {
+    const actualId = this._prefixId(id);
+    return new Promise((resolve, reject) => {
+      const tx = this._db.transaction('blobs', 'readwrite');
+      const req = tx.objectStore('blobs').delete(actualId);
+      req.onsuccess = () => resolve();
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  /** Delete all blobs whose ID starts with a prefix.
+   * @param {string} prefix - ID prefix to match
+   * @returns {Promise<number>} Number of blobs deleted
+   */
+  deleteBlobsByPrefix(prefix) {
+    return new Promise((resolve, reject) => {
+      const tx = this._db.transaction('blobs', 'readwrite');
+      const store = tx.objectStore('blobs');
+      const req = store.getAll();
+      req.onsuccess = () => {
+        const toDelete = req.result.filter(entry => entry.id.startsWith(prefix));
+        for (const entry of toDelete) {
+          store.delete(entry.id);
+        }
+        tx.oncomplete = () => resolve(toDelete.length);
+        tx.onerror = () => reject(tx.error);
+      };
+      req.onerror = () => reject(req.error);
+    });
+  }
 }
 // [END:Storage]
