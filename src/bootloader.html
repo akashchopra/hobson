@@ -131,13 +131,33 @@
           req.onerror = () => reject(req.error);
         });
 
+        const idbPutBlob = (id, blob) => new Promise((resolve, reject) => {
+          const tx = db.transaction('blobs', 'readwrite');
+          const req = tx.objectStore('blobs').put({ id, blob });
+          req.onsuccess = () => resolve();
+          req.onerror = () => reject(req.error);
+        });
+
         // Check for kernel:core (using its GUID)
         const KERNEL_CORE_ID = '33333333-1111-0000-0000-000000000000';
 
         const kernelCore = await idbGet(keyPrefix + KERNEL_CORE_ID);
 
         if (!kernelCore || !kernelCore.content?.code) {
-          showImportUI(item => idbPut({ ...item, id: keyPrefix + item.id }));
+          showImportUI(async (item) => {
+            const { _blob, ...cleanItem } = item;
+            if (_blob) {
+              try {
+                const mimeType = _blob.match(/^data:([^;]+);/)?.[1] || 'application/octet-stream';
+                const base64 = _blob.split(',')[1];
+                const bytes = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+                await idbPutBlob(keyPrefix + item.id, new Blob([bytes], { type: mimeType }));
+              } catch (e) {
+                console.warn('Failed to import blob for', item.id, e);
+              }
+            }
+            await idbPut({ ...cleanItem, id: keyPrefix + item.id });
+          });
           return;
         }
 
@@ -219,7 +239,17 @@
                   const text = await f.text();
                   const data = JSON.parse(text);
                   const items = Array.isArray(data) ? data : [data];
-                  for (const item of items) {
+                  for (const { _blob, ...item } of items) {
+                    if (_blob) {
+                      try {
+                        const mimeType = _blob.match(/^data:([^;]+);/)?.[1] || 'application/octet-stream';
+                        const base64 = _blob.split(',')[1];
+                        const bytes = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+                        await idbPutBlob(keyPrefix + item.id, new Blob([bytes], { type: mimeType }));
+                      } catch (e) {
+                        console.warn('Failed to import blob for', item.id, e);
+                      }
+                    }
                     const exists = await idbGet(keyPrefix + item.id);
                     await idbPut({ ...item, id: keyPrefix + item.id });
                     if (exists) updated++; else created++;
