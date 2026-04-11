@@ -3,7 +3,7 @@
   "name": "reminder-scheduler",
   "type": "66666666-0000-0000-0000-000000000000",
   "created": 1775584579063,
-  "modified": 1775825723269,
+  "modified": 1775911313972,
   "watches": [
     {
       "event": "e0e00000-0002-0002-0000-000000000000"
@@ -28,7 +28,7 @@
         }
       ]
     ],
-    "code": "// reminder-scheduler — JS boot shim\n// Loads and evaluates this item's Hob scheduling logic at boot time.\n// Also watches item:updated to reactively re-schedule edited reminders.\n//\n// evalSchedule is the single source of truth for \"what time does this\n// reminder fire next?\" — used by schedule-one! (in Hob) and the reminder\n// view. It reuses the scheduler's own interpreter, so scheduling helpers\n// like (every :day 21 30) defined in our .hob are in scope.\n\nconst SELF_ID = 'c4d26a7c-1643-40cf-9917-f264c8e3377f';\nconst REMINDER_TYPE = '521cb06c-2146-47f1-9375-1207bb6b5b27';\nlet _hob = null;\nlet _interp = null;\nlet _scheduleOne = null;\n\nexport async function onKernelBootComplete({ safeMode }, api) {\n  if (safeMode) return;\n  _hob = await api.require('hob-interpreter');\n  _interp = _hob.createInterpreter(api);\n  await _interp.macrosReady;\n  const self = await api.get(SELF_ID);\n  if (!self?.content?.hob) return;\n  for (const ast of self.content.hob) {\n    await _interp.evaluate(ast);\n  }\n  _scheduleOne = await _interp.eval('schedule-one!');\n  // boot-scan! was moved out of scheduler.hob top-level so the module is\n  // safe to require as a library (no side effects on cold require). Run it\n  // explicitly here, where boot timing is owned.\n  await _interp.eval('(boot-scan!)');\n}\n\nexport async function onItemUpdated({ item }, api) {\n  if (!_scheduleOne || !item || item.type !== REMINDER_TYPE) return;\n  await _scheduleOne(item);\n}\n\n// Evaluate a reminder's schedule expression, returning the next-fire\n// timestamp (ms since epoch) or null. Reentrant-safe: may be called\n// from within Hob code running in _interp.\nexport async function evalSchedule(item) {\n  if (!_interp || !_hob) return null;\n  const ast = item?.content?.hob;\n  if (!ast || ast.length === 0) return null;\n  try {\n    const source = _hob.prettyPrintAll(ast);\n    const result = await _interp.eval(source);\n    return typeof result === 'number' ? result : null;\n  } catch (e) {\n    return null;\n  }\n}\n",
+    "code": "// reminder-scheduler — JS boot shim\n// Loads and evaluates this item's Hob scheduling logic at boot time.\n// Also watches item:updated to reactively re-schedule edited reminders.\n//\n// evalSchedule is the single source of truth for \"what time does this\n// reminder fire next?\" — used by schedule-one! (in Hob) and the reminder\n// view. It reuses the scheduler's own interpreter, so scheduling helpers\n// like (every :day 21 30) defined in our .hob are in scope.\n//\n// scheduleOneFrom(item, baseTime) is used by the \"Done\" button to schedule\n// the next occurrence after a reminder's most recently scheduled time,\n// even when that time is now in the past.\n\nconst SELF_ID = 'c4d26a7c-1643-40cf-9917-f264c8e3377f';\nconst REMINDER_TYPE = '521cb06c-2146-47f1-9375-1207bb6b5b27';\nlet _hob = null;\nlet _interp = null;\nlet _scheduleOne = null;\n\nexport async function onKernelBootComplete({ safeMode }, api) {\n  if (safeMode) return;\n  _hob = await api.require('hob-interpreter');\n  _interp = _hob.createInterpreter(api);\n  await _interp.macrosReady;\n  const self = await api.get(SELF_ID);\n  if (!self?.content?.hob) return;\n  for (const ast of self.content.hob) {\n    await _interp.evaluate(ast);\n  }\n  _scheduleOne = await _interp.eval('schedule-one!');\n  await _interp.eval('(boot-scan!)');\n}\n\nexport async function onItemUpdated({ item }, api) {\n  if (!_scheduleOne || !item || item.type !== REMINDER_TYPE) return;\n  await _scheduleOne(item);\n}\n\n// Evaluate a reminder's schedule expression, returning the next-fire\n// timestamp (ms since epoch) or null. If baseTime is provided, sets\n// eval-base-time before evaluation so (every ...) uses it as the\n// reference point instead of (now). Reentrant-safe: may be called\n// from within Hob code running in _interp.\nexport async function evalSchedule(item, baseTime) {\n  if (!_interp || !_hob) return null;\n  const ast = item?.content?.hob;\n  if (!ast || ast.length === 0) return null;\n  try {\n    if (baseTime != null) {\n      await _interp.eval(`(reset! eval-base-time ${baseTime})`);\n    }\n    const source = _hob.prettyPrintAll(ast);\n    const result = await _interp.eval(source);\n    return typeof result === 'number' ? result : null;\n  } catch (e) {\n    return null;\n  } finally {\n    if (baseTime != null) {\n      await _interp.eval('(reset! eval-base-time nil)');\n    }\n  }\n}\n\n// Returns the currently scheduled OS alarm timestamp for a reminder, or null.\nexport async function getScheduledAt(itemId) {\n  if (!_interp) return null;\n  try {\n    const result = await _interp.eval(`(get (deref scheduled-at-map) \"${itemId}\")`);\n    return typeof result === 'number' ? result : null;\n  } catch (e) {\n    return null;\n  }\n}\n\n// Schedules the next occurrence of a recurring reminder, using baseTime\n// as the reference for the schedule expression. If baseTime is in the\n// past, advances forward until a future slot is found — handles \"Done\"\n// tapped after the alarm already fired. Used by the \"Done\" button.\nexport async function scheduleOneFrom(item, baseTime) {\n  if (!_interp || !_scheduleOne) return;\n  let base = baseTime;\n  const now = Date.now();\n  // Advance base until evalSchedule returns a future time.\n  // Bounded to 10 iterations (enough for any weekly recurrence pattern).\n  let iter = 0;\n  while (base != null && base <= now && iter++ < 10) {\n    const next = await evalSchedule(item, base);\n    if (next == null || next > now) break;\n    base = next;\n  }\n  try {\n    if (base != null) {\n      await _interp.eval(`(reset! eval-base-time ${base})`);\n    }\n    await _scheduleOne(item);\n  } finally {\n    await _interp.eval('(reset! eval-base-time nil)');\n  }\n}\n",
     "hob": [
       [
         "def",
@@ -64,7 +64,15 @@
       ],
       [
         "def",
-        "timers",
+        "eval-base-time",
+        [
+          "atom",
+          null
+        ]
+      ],
+      [
+        "def",
+        "scheduled-at-map",
         [
           "atom",
           {
@@ -74,105 +82,12 @@
       ],
       [
         "def",
-        "notif-counter",
-        [
-          "atom",
-          0
-        ]
-      ],
-      [
-        "def",
-        "notif-map",
+        "notif-id-to-item-id",
         [
           "atom",
           {
             "m": []
           }
-        ]
-      ],
-      [
-        "defn",
-        "notify!",
-        {
-          "v": [
-            "title",
-            "body",
-            "reminder-id"
-          ]
-        },
-        [
-          "let",
-          {
-            "v": [
-              "nid",
-              [
-                "swap!",
-                "notif-counter",
-                "inc"
-              ]
-            ]
-          },
-          [
-            "swap!",
-            "notif-map",
-            "assoc",
-            "nid",
-            "reminder-id"
-          ],
-          [
-            "when-let",
-            {
-              "v": [
-                "tauri",
-                [
-                  "dom-get",
-                  "win",
-                  ":__TAURI__"
-                ]
-              ]
-            },
-            [
-              "when-let",
-              {
-                "v": [
-                  "notif",
-                  [
-                    "dom-get",
-                    "tauri",
-                    ":notification"
-                  ]
-                ]
-              },
-              [
-                ".sendNotification",
-                "notif",
-                {
-                  "m": [
-                    [
-                      ":id",
-                      "nid"
-                    ],
-                    [
-                      ":title",
-                      "title"
-                    ],
-                    [
-                      ":body",
-                      "body"
-                    ],
-                    [
-                      ":ongoing",
-                      true
-                    ],
-                    [
-                      ":autoCancel",
-                      false
-                    ]
-                  ]
-                }
-              ]
-            ]
-          ]
         ]
       ],
       [
@@ -331,6 +246,25 @@
       ],
       [
         "defn",
+        "notif-id-for",
+        {
+          "v": [
+            "item-id"
+          ]
+        },
+        [
+          "js/parseInt",
+          [
+            ".substring",
+            "item-id",
+            0,
+            7
+          ],
+          16
+        ]
+      ],
+      [
+        "defn",
         "every",
         {
           "v": [
@@ -348,12 +282,21 @@
                 "day-nums",
                 "selector"
               ],
-              "target",
+              "base",
               [
-                "js/Date.",
+                "or",
+                [
+                  "deref",
+                  "eval-base-time"
+                ],
                 [
                   "now"
                 ]
+              ],
+              "target",
+              [
+                "js/Date.",
+                "base"
               ]
             ]
           },
@@ -373,9 +316,7 @@
                 ".getTime",
                 "target"
               ],
-              [
-                "now"
-              ]
+              "base"
             ],
             [
               ".setDate",
@@ -464,154 +405,223 @@
                 "get",
                 "reminder",
                 ":id"
+              ],
+              "sched",
+              [
+                "js-require",
+                {
+                  "s": "reminder-scheduler"
+                }
+              ],
+              "nid",
+              [
+                "notif-id-for",
+                "id"
+              ],
+              "next-time",
+              [
+                ".evalSchedule",
+                "sched",
+                "reminder"
               ]
             ]
           },
           [
-            "when-let",
-            {
-              "v": [
-                "existing",
-                [
-                  "get",
+            "try",
+            [
+              "when-let",
+              {
+                "v": [
+                  "tauri",
                   [
-                    "deref",
-                    "timers"
-                  ],
-                  "id"
-                ]
-              ]
-            },
-            [
-              "clear-timeout!",
-              "existing"
-            ],
-            [
-              "swap!",
-              "timers",
-              "dissoc",
-              "id"
-            ]
-          ],
-          [
-            "let",
-            {
-              "v": [
-                "sched",
-                [
-                  "js-require",
-                  {
-                    "s": "reminder-scheduler"
-                  }
-                ],
-                "next-time",
-                [
-                  ".evalSchedule",
-                  "sched",
-                  "reminder"
-                ]
-              ]
-            },
-            [
-              "when",
-              [
-                "and",
-                [
-                  "number?",
-                  "next-time"
-                ],
-                [
-                  ">",
-                  "next-time",
-                  [
-                    "now"
+                    "dom-get",
+                    "win",
+                    ":__TAURI__"
                   ]
                 ]
-              ],
+              },
               [
-                "let",
+                "when-let",
                 {
                   "v": [
-                    "delay",
+                    "notif",
                     [
-                      "-",
-                      "next-time",
-                      [
-                        "now"
-                      ]
-                    ],
-                    "title",
-                    [
-                      "or",
-                      [
-                        "get-in",
-                        "reminder",
-                        {
-                          "v": [
-                            ":content",
-                            ":title"
-                          ]
-                        }
-                      ],
-                      [
-                        "get",
-                        "reminder",
-                        ":name"
-                      ],
-                      {
-                        "s": "Reminder"
-                      }
-                    ],
-                    "handle",
-                    [
-                      "set-timeout!",
-                      [
-                        "fn",
-                        {
-                          "v": []
-                        },
-                        [
-                          "swap!",
-                          "timers",
-                          "dissoc",
-                          "id"
-                        ],
-                        [
-                          "notify!",
-                          "title",
-                          {
-                            "s": ""
-                          },
-                          "id"
-                        ],
-                        [
-                          "when-let",
-                          {
-                            "v": [
-                              "fresh",
-                              [
-                                "get-item",
-                                "id"
-                              ]
-                            ]
-                          },
-                          [
-                            "schedule-one!",
-                            "fresh"
-                          ]
-                        ]
-                      ],
-                      "delay"
+                      "dom-get",
+                      "tauri",
+                      ":notification"
                     ]
                   ]
                 },
                 [
-                  "swap!",
-                  "timers",
-                  "assoc",
-                  "id",
-                  "handle"
+                  ".cancel",
+                  "notif",
+                  {
+                    "v": [
+                      "nid"
+                    ]
+                  }
                 ]
+              ]
+            ],
+            [
+              "catch",
+              "e",
+              null
+            ]
+          ],
+          [
+            "swap!",
+            "scheduled-at-map",
+            "dissoc",
+            "id"
+          ],
+          [
+            "swap!",
+            "notif-id-to-item-id",
+            "dissoc",
+            "nid"
+          ],
+          [
+            "when",
+            [
+              "and",
+              [
+                "number?",
+                "next-time"
+              ],
+              [
+                ">",
+                "next-time",
+                [
+                  "now"
+                ]
+              ]
+            ],
+            [
+              "let",
+              {
+                "v": [
+                  "title",
+                  [
+                    "or",
+                    [
+                      "get-in",
+                      "reminder",
+                      {
+                        "v": [
+                          ":content",
+                          ":title"
+                        ]
+                      }
+                    ],
+                    [
+                      "get",
+                      "reminder",
+                      ":name"
+                    ],
+                    {
+                      "s": "Reminder"
+                    }
+                  ]
+                ]
+              },
+              [
+                "when-let",
+                {
+                  "v": [
+                    "tauri",
+                    [
+                      "dom-get",
+                      "win",
+                      ":__TAURI__"
+                    ]
+                  ]
+                },
+                [
+                  "when-let",
+                  {
+                    "v": [
+                      "notif",
+                      [
+                        "dom-get",
+                        "tauri",
+                        ":notification"
+                      ]
+                    ]
+                  },
+                  [
+                    ".batch",
+                    "notif",
+                    {
+                      "v": [
+                        {
+                          "m": [
+                            [
+                              ":id",
+                              "nid"
+                            ],
+                            [
+                              ":title",
+                              "title"
+                            ],
+                            [
+                              ":body",
+                              {
+                                "s": ""
+                              }
+                            ],
+                            [
+                              ":schedule",
+                              {
+                                "m": [
+                                  [
+                                    ":at",
+                                    {
+                                      "m": [
+                                        [
+                                          ":date",
+                                          [
+                                            ".toISOString",
+                                            [
+                                              "js/Date.",
+                                              "next-time"
+                                            ]
+                                          ]
+                                        ],
+                                        [
+                                          ":repeating",
+                                          false
+                                        ],
+                                        [
+                                          ":allowWhileIdle",
+                                          true
+                                        ]
+                                      ]
+                                    }
+                                  ]
+                                ]
+                              }
+                            ]
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                ]
+              ],
+              [
+                "swap!",
+                "scheduled-at-map",
+                "assoc",
+                "id",
+                "next-time"
+              ],
+              [
+                "swap!",
+                "notif-id-to-item-id",
+                "assoc",
+                "nid",
+                "id"
               ]
             ]
           ]
@@ -626,29 +636,70 @@
           ]
         },
         [
-          "when-let",
+          "let",
           {
             "v": [
-              "handle",
+              "nid",
               [
-                "get",
-                [
-                  "deref",
-                  "timers"
-                ],
+                "notif-id-for",
                 "id"
               ]
             ]
           },
           [
-            "clear-timeout!",
-            "handle"
+            "try",
+            [
+              "when-let",
+              {
+                "v": [
+                  "tauri",
+                  [
+                    "dom-get",
+                    "win",
+                    ":__TAURI__"
+                  ]
+                ]
+              },
+              [
+                "when-let",
+                {
+                  "v": [
+                    "notif",
+                    [
+                      "dom-get",
+                      "tauri",
+                      ":notification"
+                    ]
+                  ]
+                },
+                [
+                  ".cancel",
+                  "notif",
+                  {
+                    "v": [
+                      "nid"
+                    ]
+                  }
+                ]
+              ]
+            ],
+            [
+              "catch",
+              "e",
+              null
+            ]
           ],
           [
             "swap!",
-            "timers",
+            "scheduled-at-map",
             "dissoc",
             "id"
+          ],
+          [
+            "swap!",
+            "notif-id-to-item-id",
+            "dissoc",
+            "nid"
           ]
         ]
       ],
@@ -691,19 +742,6 @@
             ]
           },
           [
-            "doseq",
-            {
-              "v": [
-                "r",
-                "reminders"
-              ]
-            },
-            [
-              "schedule-one!",
-              "r"
-            ]
-          ],
-          [
             "when-let",
             {
               "v": [
@@ -727,6 +765,164 @@
                   ]
                 ]
               },
+              [
+                "let",
+                {
+                  "v": [
+                    "pending-list",
+                    [
+                      "try",
+                      [
+                        ".pending",
+                        "notif"
+                      ],
+                      [
+                        "catch",
+                        "e",
+                        {
+                          "v": []
+                        }
+                      ]
+                    ],
+                    "pending-map",
+                    [
+                      "reduce",
+                      [
+                        "fn",
+                        {
+                          "v": [
+                            "m",
+                            "p"
+                          ]
+                        },
+                        [
+                          "assoc",
+                          "m",
+                          [
+                            "dom-get",
+                            "p",
+                            ":id"
+                          ],
+                          "p"
+                        ]
+                      ],
+                      {
+                        "m": []
+                      },
+                      [
+                        "or",
+                        "pending-list",
+                        {
+                          "v": []
+                        }
+                      ]
+                    ]
+                  ]
+                },
+                [
+                  "doseq",
+                  {
+                    "v": [
+                      "r",
+                      "reminders"
+                    ]
+                  },
+                  [
+                    "let",
+                    {
+                      "v": [
+                        "id",
+                        [
+                          "get",
+                          "r",
+                          ":id"
+                        ],
+                        "nid",
+                        [
+                          "notif-id-for",
+                          "id"
+                        ],
+                        "p",
+                        [
+                          "get",
+                          "pending-map",
+                          "nid"
+                        ]
+                      ]
+                    },
+                    [
+                      "when",
+                      "p",
+                      [
+                        "let",
+                        {
+                          "v": [
+                            "sched",
+                            [
+                              "dom-get",
+                              "p",
+                              ":schedule"
+                            ],
+                            "at",
+                            [
+                              "when",
+                              "sched",
+                              [
+                                "dom-get",
+                                "sched",
+                                ":at"
+                              ]
+                            ],
+                            "date-str",
+                            [
+                              "when",
+                              "at",
+                              [
+                                "dom-get",
+                                "at",
+                                ":date"
+                              ]
+                            ],
+                            "ts",
+                            [
+                              "when",
+                              "date-str",
+                              [
+                                ".getTime",
+                                [
+                                  "js/Date.",
+                                  "date-str"
+                                ]
+                              ]
+                            ]
+                          ]
+                        },
+                        [
+                          "when",
+                          [
+                            "number?",
+                            "ts"
+                          ],
+                          [
+                            "swap!",
+                            "scheduled-at-map",
+                            "assoc",
+                            "id",
+                            "ts"
+                          ],
+                          [
+                            "swap!",
+                            "notif-id-to-item-id",
+                            "assoc",
+                            "nid",
+                            "id"
+                          ]
+                        ]
+                      ]
+                    ]
+                  ]
+                ]
+              ],
               [
                 "when",
                 [
@@ -764,7 +960,7 @@
                                 "get",
                                 [
                                   "deref",
-                                  "notif-map"
+                                  "notif-id-to-item-id"
                                 ],
                                 "nid"
                               ]
@@ -843,26 +1039,20 @@
         "kind": "variable",
         "scope": null
       },
-      "timers": {
-        "name": "timers",
+      "eval-base-time": {
+        "name": "eval-base-time",
         "kind": "variable",
         "scope": null
       },
-      "notif-counter": {
-        "name": "notif-counter",
+      "scheduled-at-map": {
+        "name": "scheduled-at-map",
         "kind": "variable",
         "scope": null
       },
-      "notif-map": {
-        "name": "notif-map",
+      "notif-id-to-item-id": {
+        "name": "notif-id-to-item-id",
         "kind": "variable",
         "scope": null
-      },
-      "notify!": {
-        "name": "notify!",
-        "kind": "function",
-        "scope": null,
-        "signature": "(title body reminder-id)"
       },
       "day-keyword-map": {
         "name": "day-keyword-map",
@@ -880,6 +1070,12 @@
         "kind": "function",
         "scope": null,
         "signature": "(selector)"
+      },
+      "notif-id-for": {
+        "name": "notif-id-for",
+        "kind": "function",
+        "scope": null,
+        "signature": "(item-id)"
       },
       "every": {
         "name": "every",

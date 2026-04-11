@@ -19,6 +19,10 @@
   (def
     next-time
     (when has-schedule (try (.evalSchedule sched item) (catch e nil))))
+  (def
+    scheduled-at
+    (when has-schedule (try (.getScheduledAt sched (:id item)) (catch e nil))))
+  (def display-time (or scheduled-at next-time))
   (def desc (get-in item [:content :description]))
   (def
     desc-el
@@ -66,8 +70,8 @@
         "Next"]
       [:div {:style "font-size: 1.125rem; font-weight: 500;"}
         (if
-          (and (number? next-time) (> next-time (now)))
-          (format-date next-time)
+          (and (number? display-time) (> display-time (now)))
+          (format-date display-time)
           (if has-schedule "Expression returned no time" "Not scheduled"))]]
     (when
       (not has-schedule)
@@ -129,9 +133,16 @@
     (when desc-el desc-el)
     (when
       has-schedule
-      [:div {:style "margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--color-border-light);"}
+      [:div {:style "margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--color-border-light); display: flex; gap: 8px;"}
 
-        [:button {:style "padding: 8px 16px; background: var(--color-danger); color: white; border: none; border-radius: var(--border-radius); cursor: pointer; font-size: 0.875rem;"
+        [:button {:style "padding: 8px 20px; background: var(--color-primary); color: white; border: none; border-radius: var(--border-radius); cursor: pointer; font-size: 0.875rem;"
+                  :on-click (fn [e]
+                              (let [base-time (.getScheduledAt sched (:id item))
+                                    fresh (get-item (:id item))]
+                                (.scheduleOneFrom sched fresh base-time)
+                                (rerender!)))}
+          "Done"]
+        [:button {:style "padding: 8px 16px; background: var(--color-bg-surface); color: var(--color-text-secondary); border: 1px solid var(--color-border); border-radius: var(--border-radius); cursor: pointer; font-size: 0.875rem;"
                   :on-click (fn [e]
                               (let [fresh (get-item (:id item))]
                                 (set-item!

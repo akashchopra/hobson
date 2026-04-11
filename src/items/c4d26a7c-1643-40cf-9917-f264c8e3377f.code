@@ -7,6 +7,10 @@
 // reminder fire next?" — used by schedule-one! (in Hob) and the reminder
 // view. It reuses the scheduler's own interpreter, so scheduling helpers
 // like (every :day 21 30) defined in our .hob are in scope.
+//
+// scheduleOneFrom(item, baseTime) is used by the "Done" button to schedule
+// the next occurrence after a reminder's most recently scheduled time,
+// even when that time is now in the past.
 
 const SELF_ID = 'c4d26a7c-1643-40cf-9917-f264c8e3377f';
 const REMINDER_TYPE = '521cb06c-2146-47f1-9375-1207bb6b5b27';
@@ -25,9 +29,6 @@ export async function onKernelBootComplete({ safeMode }, api) {
     await _interp.evaluate(ast);
   }
   _scheduleOne = await _interp.eval('schedule-one!');
-  // boot-scan! was moved out of scheduler.hob top-level so the module is
-  // safe to require as a library (no side effects on cold require). Run it
-  // explicitly here, where boot timing is owned.
   await _interp.eval('(boot-scan!)');
 }
 
@@ -37,18 +38,64 @@ export async function onItemUpdated({ item }, api) {
 }
 
 // Evaluate a reminder's schedule expression, returning the next-fire
-// timestamp (ms since epoch) or null. Reentrant-safe: may be called
+// timestamp (ms since epoch) or null. If baseTime is provided, sets
+// eval-base-time before evaluation so (every ...) uses it as the
+// reference point instead of (now). Reentrant-safe: may be called
 // from within Hob code running in _interp.
-export async function evalSchedule(item) {
+export async function evalSchedule(item, baseTime) {
   if (!_interp || !_hob) return null;
   const ast = item?.content?.hob;
   if (!ast || ast.length === 0) return null;
   try {
+    if (baseTime != null) {
+      await _interp.eval(`(reset! eval-base-time ${baseTime})`);
+    }
     const source = _hob.prettyPrintAll(ast);
     const result = await _interp.eval(source);
     return typeof result === 'number' ? result : null;
   } catch (e) {
     return null;
+  } finally {
+    if (baseTime != null) {
+      await _interp.eval('(reset! eval-base-time nil)');
+    }
+  }
+}
+
+// Returns the currently scheduled OS alarm timestamp for a reminder, or null.
+export async function getScheduledAt(itemId) {
+  if (!_interp) return null;
+  try {
+    const result = await _interp.eval(`(get (deref scheduled-at-map) "${itemId}")`);
+    return typeof result === 'number' ? result : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+// Schedules the next occurrence of a recurring reminder, using baseTime
+// as the reference for the schedule expression. If baseTime is in the
+// past, advances forward until a future slot is found — handles "Done"
+// tapped after the alarm already fired. Used by the "Done" button.
+export async function scheduleOneFrom(item, baseTime) {
+  if (!_interp || !_scheduleOne) return;
+  let base = baseTime;
+  const now = Date.now();
+  // Advance base until evalSchedule returns a future time.
+  // Bounded to 10 iterations (enough for any weekly recurrence pattern).
+  let iter = 0;
+  while (base != null && base <= now && iter++ < 10) {
+    const next = await evalSchedule(item, base);
+    if (next == null || next > now) break;
+    base = next;
+  }
+  try {
+    if (base != null) {
+      await _interp.eval(`(reset! eval-base-time ${base})`);
+    }
+    await _scheduleOne(item);
+  } finally {
+    await _interp.eval('(reset! eval-base-time nil)');
   }
 }
 
@@ -60,20 +107,11 @@ export async function evalSchedule(item) {
 
 (def REMINDER_TYPE "521cb06c-2146-47f1-9375-1207bb6b5b27")
 
-(def timers (atom {}))
+(def eval-base-time (atom nil))
 
-(def notif-counter (atom 0))
+(def scheduled-at-map (atom {}))
 
-(def notif-map (atom {}))
-
-(defn notify! [title body reminder-id]
-  (let [nid (swap! notif-counter inc)]
-    (swap! notif-map assoc nid reminder-id)
-    (when-let [tauri (dom-get win :__TAURI__)]
-      (when-let [notif (dom-get tauri :notification)]
-        (.sendNotification
-          notif
-          {:id nid :title title :body body :ongoing true :autoCancel false})))))
+(def notif-id-to-item-id (atom {}))
 
 (def
   day-keyword-map
@@ -102,12 +140,14 @@ export async function evalSchedule(item) {
     :else
     []))
 
+(defn notif-id-for [item-id] (js/parseInt (.substring item-id 0 7) 16))
+
 (defn every [selector hour minute]
-  (let [days (day-nums selector) target (js/Date. (now))]
+  (let [days (day-nums selector)
+        base (or (deref eval-base-time) (now))
+        target (js/Date. base)]
     (.setHours target hour minute 0 0)
-    (when
-      (<= (.getTime target) (now))
-      (.setDate target (+ (.getDate target) 1)))
+    (when (<= (.getTime target) base) (.setDate target (+ (.getDate target) 1)))
     (loop [i 0]
       (when
         (and (< i 7) (not (in? days (.getDay target))))
@@ -116,38 +156,69 @@ export async function evalSchedule(item) {
     (.getTime target)))
 
 (defn schedule-one! [reminder]
-  (let [id (get reminder :id)]
-    (when-let [existing (get (deref timers) id)]
-      (clear-timeout! existing)
-      (swap! timers dissoc id))
-    (let [sched (js-require "reminder-scheduler")
-          next-time (.evalSchedule sched reminder)]
-      (when
-        (and (number? next-time) (> next-time (now)))
-        (let [delay (- next-time (now))
-              title (or
-                      (get-in reminder [:content :title])
-                      (get reminder :name)
-                      "Reminder")
-              handle (set-timeout!
-                       (fn []
-                         (swap! timers dissoc id)
-                         (notify! title "" id)
-                         (when-let [fresh (get-item id)] (schedule-one! fresh)))
-                       delay)]
-          (swap! timers assoc id handle))))))
+  (let [id (get reminder :id)
+        sched (js-require "reminder-scheduler")
+        nid (notif-id-for id)
+        next-time (.evalSchedule sched reminder)]
+    (try
+      (when-let [tauri (dom-get win :__TAURI__)]
+        (when-let [notif (dom-get tauri :notification)] (.cancel notif [nid])))
+      (catch e nil))
+    (swap! scheduled-at-map dissoc id)
+    (swap! notif-id-to-item-id dissoc nid)
+    (when
+      (and (number? next-time) (> next-time (now)))
+      (let [title (or
+                    (get-in reminder [:content :title])
+                    (get reminder :name)
+                    "Reminder")
+]
+        (when-let [tauri (dom-get win :__TAURI__)]
+          (when-let [notif (dom-get tauri :notification)]
+            (.batch
+              notif
+              [{:id nid
+                 :title title
+                 :body ""
+                 :schedule {:at {:date (.toISOString (js/Date. next-time))
+                                 :repeating false
+                                 :allowWhileIdle true}}
+}
+])))
+        (swap! scheduled-at-map assoc id next-time)
+        (swap! notif-id-to-item-id assoc nid id)))))
 
 (defn cancel-one! [id]
-  (when-let [handle (get (deref timers) id)]
-    (clear-timeout! handle)
-    (swap! timers dissoc id)))
+  (let [nid (notif-id-for id)]
+    (try
+      (when-let [tauri (dom-get win :__TAURI__)]
+        (when-let [notif (dom-get tauri :notification)] (.cancel notif [nid])))
+      (catch e nil))
+    (swap! scheduled-at-map dissoc id)
+    (swap! notif-id-to-item-id dissoc nid)))
 
 (defn boot-scan! []
   (let [all (get-all)
         reminders (filter (fn [item] (= (get item :type) REMINDER_TYPE)) all)]
-    (doseq [r reminders] (schedule-one! r))
     (when-let [tauri (dom-get win :__TAURI__)]
       (when-let [notif (dom-get tauri :notification)]
+        (let [pending-list (try (.pending notif) (catch e []))
+              pending-map (reduce
+                            (fn [m p] (assoc m (dom-get p :id) p))
+                            {}
+                            (or pending-list []))]
+          (doseq [r reminders]
+            (let [id (get r :id) nid (notif-id-for id) p (get pending-map nid)]
+              (when
+                p
+                (let [sched (dom-get p :schedule)
+                      at (when sched (dom-get sched :at))
+                      date-str (when at (dom-get at :date))
+                      ts (when date-str (.getTime (js/Date. date-str)))]
+                  (when
+                    (number? ts)
+                    (swap! scheduled-at-map assoc id ts)
+                    (swap! notif-id-to-item-id assoc nid id)))))))
         (when
           (dom-get notif :onAction)
           (try
@@ -155,7 +226,9 @@ export async function evalSchedule(item) {
               notif
               (fn [action]
                 (let [nid (dom-get action :id)
-                      reminder-id (when nid (get (deref notif-map) nid))]
+                      reminder-id (when
+                                    nid
+                                    (get (deref notif-id-to-item-id) nid))]
                   (when
                     reminder-id
                     (dom-set!

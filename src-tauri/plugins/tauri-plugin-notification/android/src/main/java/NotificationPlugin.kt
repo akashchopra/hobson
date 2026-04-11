@@ -143,6 +143,17 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
   fun batch(invoke: Invoke) {
     val args = invoke.parseArgs(BatchArgs::class.java)
 
+    // Populate sourceJson on each notification so appendNotifications can persist
+    // valid JSON, enabling pending() and LocalNotificationRestoreReceiver to work.
+    try {
+      val rawJson = org.json.JSONObject(invoke.getRawArgs()).getJSONArray("notifications")
+      args.notifications.forEachIndexed { i, notification ->
+        if (i < rawJson.length()) {
+          notification.sourceJson = rawJson.getJSONObject(i).toString()
+        }
+      }
+    } catch (_: Exception) {}
+
     val ids = manager.schedule(args.notifications)
     notificationStorage.appendNotifications(args.notifications)
 
