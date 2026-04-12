@@ -5,6 +5,7 @@
 const INSTANCE_ID = 'f1111111-0017-0001-0000-000000000000';
 const ITEM_EVENT = 'e0e00000-0001-0000-0000-000000000000';
 const ITEM_DELETED_ID = 'e0e00000-0001-0003-0000-000000000000';
+const BINARY_ASSET_TYPE_ID = '602cd3c2-333b-43fd-94f4-9ab08eeb2ca8';
 const MIRROR_DEBOUNCE_MS = 2000;
 const WATCH_DEBOUNCE_MS = 1000;
 
@@ -22,6 +23,17 @@ const mirrorPending = new Map();
 // Watch state
 let unwatchFn = null;
 const watchPending = new Map();
+
+// ── Blob helpers ─────────────────────────────────────────────────────────
+
+function blobToDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
 
 // ── Mirror mode ──────────────────────────────────────────────────────────
 
@@ -51,12 +63,26 @@ function stopMirror() {
   if (mirrorUnsub) { mirrorUnsub(); mirrorUnsub = null; }
 }
 
-async function writeItem(item) {
+async function writeItem(item, isBinaryAsset = null) {
   if (mode !== 'mirror') return;
   try {
-    const json = JSON.stringify(item, null, 2);
+    if (isBinaryAsset === null) {
+      isBinaryAsset = await _api.typeChainIncludes(item.type, BINARY_ASSET_TYPE_ID);
+    }
+    let exportItem = item;
+    if (isBinaryAsset) {
+      try {
+        const blob = await _api.getBlob(item.id);
+        exportItem = { ...item, _blob: await blobToDataUrl(blob) };
+      } catch (e) {
+        console.warn(`[file-sync] Blob missing for binary-asset ${item.id}:`, e);
+      }
+    }
+
+    const json = JSON.stringify(exportItem, null, 2);
     await _tauri.fs.writeTextFile(`${_basePath}/${item.id}.json`, json);
     const wrote = ['.json'];
+    if (exportItem._blob) wrote.push('+blob');
 
     const hasJS = !!item.content?.code;
     const hasHob = Array.isArray(item.content?.hob);
@@ -140,16 +166,28 @@ async function importFile(path, id) {
     const item = JSON.parse(text);
     if (!item.id || item.id !== id) return;
 
-    // Skip if file content matches IDB (ignore modified — it gets bumped on import)
+    // Extract blob before comparison — blob store is separate from item JSON
+    const { _blob, ...itemWithoutBlob } = item;
+    if (_blob) {
+      try {
+        const mimeType = _blob.match(/^data:([^;]+);/)?.[1] || 'application/octet-stream';
+        const bytes = Uint8Array.from(atob(_blob.split(',')[1]), c => c.charCodeAt(0));
+        await _api.setBlob(id, new Blob([bytes], { type: mimeType }));
+      } catch (e) {
+        console.warn(`[file-sync] Failed to import blob for ${id}:`, e);
+      }
+    }
+
+    // Skip if item content matches IDB (ignore modified — it gets bumped on import)
     const existing = await _api.get(id).catch(() => null);
     if (existing) {
       const { modified: _a, ...existingRest } = existing;
-      const { modified: _b, ...itemRest } = item;
+      const { modified: _b, ...itemRest } = itemWithoutBlob;
       if (JSON.stringify(existingRest) === JSON.stringify(itemRest)) return;
     }
 
-    await _api.set(item);
-    console.log(`[file-sync] ⟸ ${item.name || id}`);
+    await _api.set(itemWithoutBlob);
+    console.log(`[file-sync] ⟸ ${itemWithoutBlob.name || id}`);
   } catch (e) {
     if (String(e).includes('No such file')) return;
     console.error(`[file-sync] Failed to import ${id}:`, e);
@@ -206,9 +244,13 @@ export async function fullSync() {
   if (!_api) throw new Error('file-sync not initialized');
 
   const items = await _api.getAll();
+  const typeCache = new Map();
   let count = 0;
   for (const item of items) {
-    await writeItem(item);
+    if (!typeCache.has(item.type)) {
+      typeCache.set(item.type, await _api.typeChainIncludes(item.type, BINARY_ASSET_TYPE_ID));
+    }
+    await writeItem(item, typeCache.get(item.type));
     count++;
   }
   console.log(`[file-sync] Full sync complete: ${count} items`);
