@@ -7,16 +7,16 @@
     (:p
       "On desktop: horizontal tab bar at the top. Available as an "
       "alternative to the spatial canvas via Change View."))
-  (def tab-lib (require "tab-state-lib"))
   (def attachments (or (:attachments item) []))
   (def specs (map (fn [a] (if (string? a) {:id a} a)) attachments))
   (def
     active-id
-    (let [stored ((:get-active-tab tab-lib) (:id item))]
+    (let [stored (get-in item [:content :activeTab])]
       (if
         (and stored (some (fn [s] (= (:id s) stored)) specs))
         stored
         (when (seq specs) (:id (first specs))))))
+  (def active-spec (first (filter (fn [s] (= (:id s) active-id)) specs)))
   (def
     tab-info
     (for [spec (seq specs)]
@@ -27,7 +27,14 @@
                     (fn [it] [(:name it) (get-in it [:content :title])]))]
         {:id id
          :name (or (:name child) (get-in child [:content :title]) (subs id 0 8))})))
-  (get-item (:id item) :select (fn [it] (map :id (or (:attachments it) []))))
+  (get-item
+    (:id item)
+    :select
+    (fn [it]
+      [(get-in it [:content :activeTab])
+       (map
+          (fn [a] [(:id a) (get-in a [:view :type])])
+          (or (:attachments it) []))]))
   (def
     open-item-handler
     (fn [item-id-or-att]
@@ -37,18 +44,17 @@
                      item-id-or-att)
             fresh (get-item (:id item))
             fresh-children (or (:attachments fresh) [])
-            existing (some (fn [c] (= (:id c) att-id)) fresh-children)]
-        (when
-          (not existing)
-          (set-item!
-            (assoc
-              fresh
-              :attachments
-              (conj fresh-children {:id att-id})
-              :modified
-              (now))))
-        ((:set-active-tab! tab-lib) (:id item) att-id)
-        (rerender!))))
+            existing (some (fn [c] (= (:id c) att-id)) fresh-children)
+            with-att (if
+                       (not existing)
+                       (assoc
+                         fresh
+                         :attachments
+                         (conj fresh-children {:id att-id})
+                         :modified
+                         (now))
+                       fresh)]
+        (set-item! (assoc-in with-att [:content :activeTab] att-id)))))
   (def touch-x (atom 0))
   (def touch-y (atom 0))
   (def tracking (atom false))
@@ -99,7 +105,7 @@
                             (:name child)
                             (get-in child [:content :title])
                             (subs id 0 8))}))
-          cur-active (let [stored ((:get-active-tab tab-lib) (:id item))]
+          cur-active (let [stored (get-in fresh [:content :activeTab])]
                        (if
                          (and
                            stored
@@ -130,11 +136,15 @@
 
                               [:span {:style "flex:1; cursor:pointer;"
                                       :on-click (fn [_]
-                                                  ((:set-active-tab! tab-lib)
-                                                    (:id item)
-                                                    (:id tab))
-                                                  (invoke overlay "remove")
-                                                  (rerender!))}
+                                                  (let [fresh2 (get-item
+                                                                 (:id item))
+]
+                                                    (set-item!
+                                                      (assoc-in
+                                                        fresh2
+                                                        [:content :activeTab]
+                                                        (:id tab))))
+                                                  (invoke overlay "remove"))}
                                 (:name tab)]
                               [:button {:style "background:none; border:none; color:var(--color-text-tertiary); font-size:1.125rem; cursor:pointer; padding:4px 8px; min-height:44px; -webkit-tap-highlight-color:transparent;"
                                         :on-click (fn [_]
@@ -231,10 +241,12 @@
                               "var(--color-text-secondary);"))}
 
               [:span {:on-click (fn [_]
-                                  ((:set-active-tab! tab-lib)
-                                    (:id item)
-                                    (:id tab))
-                                  (rerender!))}
+                                  (let [fresh (get-item (:id item))]
+                                    (set-item!
+                                      (assoc-in
+                                        fresh
+                                        [:content :activeTab]
+                                        (:id tab)))))}
 
                 (:name tab)]
               [:button {:style "background:none; border:none; color:var(--color-text-tertiary); font-size:0.75rem; cursor:pointer; padding:2px 4px; margin-left:6px; border-radius:3px; line-height:1;"
@@ -277,6 +289,9 @@
       (if
         active-id
         [:render-child {:item active-id
+                        :view (when
+                                (get-in active-spec [:view :type])
+                                (:view active-spec))
                         :open-item open-item-handler
                         :style "flex:1; min-height:0; display:flex; flex-direction:column;"}]
         [:div {:style "padding:40px; text-align:center; color:var(--color-text-secondary); flex:1; display:flex; align-items:center; justify-content:center;"}
