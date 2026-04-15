@@ -2131,12 +2131,22 @@ function handleNavKey(e, ctx) {
       applyMutation(state, itemNames, api, statusBar, () => deleteSelected(state));
     }
   } else if (e.key === 'v' && (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && state.onChange) {
-    // Paste: insert clipboard forms as siblings after selection
+    // Paste: replace hole, or insert as siblings after selection
     if (_clipboard !== null && _clipboard.length > 0) {
       applyMutation(state, itemNames, api, statusBar, () => {
         let refId = node.id;
         let lastPasted = null;
-        for (const compact of _clipboard) {
+        const [first, ...rest] = _clipboard;
+        const firstPasted = inflateSubtree(first, state);
+        if (node.type === 'hole') {
+          // Replace the hole with the first pasted form
+          replaceNode(state, node.id, firstPasted);
+        } else {
+          insertAfter(state, refId, firstPasted);
+        }
+        refId = firstPasted.id;
+        lastPasted = firstPasted;
+        for (const compact of rest) {
           const pasted = inflateSubtree(compact, state);
           insertAfter(state, refId, pasted);
           refId = pasted.id;
