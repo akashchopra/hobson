@@ -957,6 +957,7 @@ function rerender(state, itemNames, api, statusBar) {
   if (state.selectedId != null && !state.nodeMap.has(state.selectedId)) {
     state.selectedId = root.children[0]?.id || null;
   }
+  state.selectionAnchorId = null;
   state.expansionStack = [];
 
   updateSelectionVisual(state);
@@ -1107,6 +1108,31 @@ function deleteSelected(state) {
   }
 }
 
+// --- Range selection helpers (top-level forms only) ---
+
+function getSelectedRange(state) {
+  const root = state.nodeMap.get(0);
+  const focusIdx = root.children.findIndex(c => c.id === state.selectedId);
+  if (focusIdx === -1) return null;
+  if (state.selectionAnchorId == null) return { lo: focusIdx, hi: focusIdx };
+  const anchorIdx = root.children.findIndex(c => c.id === state.selectionAnchorId);
+  if (anchorIdx === -1) return { lo: focusIdx, hi: focusIdx };
+  return { lo: Math.min(anchorIdx, focusIdx), hi: Math.max(anchorIdx, focusIdx) };
+}
+
+function deleteRange(state) {
+  const root = state.nodeMap.get(0);
+  const range = getSelectedRange(state);
+  if (!range) return;
+  // Prevent deleting all top-level forms
+  if (range.hi - range.lo + 1 >= root.children.length) return;
+  const removed = root.children.splice(range.lo, range.hi - range.lo + 1);
+  removed.forEach(n => removeFromMaps(n, state));
+  state.selectionAnchorId = null;
+  const newIdx = Math.min(range.lo, root.children.length - 1);
+  state.selectedId = root.children[newIdx].id;
+}
+
 // --- AST manipulation helpers ---
 
 let _nextId = 1;  // will be set from inflateAll result
@@ -1225,15 +1251,28 @@ function resolveToken(buffer) {
 // --- Selection System ---
 
 function updateSelectionVisual(state) {
-  // Remove previous selection
-  const prevSelected = state.editorEl?.querySelector('.hob-selected');
-  if (prevSelected) prevSelected.classList.remove('hob-selected');
-  const prevAncestors = state.editorEl?.querySelectorAll('.hob-ancestor');
-  if (prevAncestors) prevAncestors.forEach(el => el.classList.remove('hob-ancestor'));
+  // Remove previous selection (may be multiple elements in range mode)
+  state.editorEl?.querySelectorAll('.hob-selected').forEach(el => el.classList.remove('hob-selected'));
+  state.editorEl?.querySelectorAll('.hob-ancestor').forEach(el => el.classList.remove('hob-ancestor'));
 
   if (state.selectedId == null) return;
 
-  // Add selection to current
+  if (state.selectionAnchorId != null) {
+    // Range selection: highlight all root-level nodes in the range
+    const root = state.nodeMap.get(0);
+    const range = getSelectedRange(state);
+    if (!range) return;
+    for (let i = range.lo; i <= range.hi; i++) {
+      const el = state.domMap.get(root.children[i].id);
+      if (el) el.classList.add('hob-selected');
+    }
+    // Scroll focus end into view
+    const focusEl = state.domMap.get(state.selectedId);
+    if (focusEl) focusEl.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    return;
+  }
+
+  // Single selection
   const el = state.domMap.get(state.selectedId);
   if (!el) return;
   el.classList.add('hob-selected');
@@ -1287,6 +1326,15 @@ function updateStatusBar(state, statusBar) {
     modeEl.className = 'hob-mode hob-mode-view';
   }
 
+  // Range selection: show count instead of breadcrumbs
+  if (state.selectionAnchorId != null) {
+    const range = getSelectedRange(state);
+    const count = range ? range.hi - range.lo + 1 : 1;
+    breadcrumbsEl.textContent = count + ' forms selected';
+    nodeInfoEl.textContent = '';
+    return;
+  }
+
   // Build breadcrumb chain
   const chain = [];
   let current = node;
@@ -1310,6 +1358,7 @@ function updateStatusBar(state, statusBar) {
     crumb.addEventListener('click', (e) => {
       e.stopPropagation();
       state.selectedId = crumbNodeId;
+      state.selectionAnchorId = null;
       state.expansionStack = [];
       updateSelectionVisual(state);
       updateStatusBar(state, statusBar);
@@ -1742,12 +1791,14 @@ function handleNavKey(e, ctx) {
     // Go to parent (shallower)
     if (parent && parent.type !== 'root') {
       state.selectedId = parent.id;
+      state.selectionAnchorId = null;
       state.expansionStack = [];
     }
   } else if (e.key === 'ArrowRight' && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey) {
     // Enter container (deeper)
     if (node.children && node.children.length > 0) {
       state.selectedId = node.children[0].id;
+      state.selectionAnchorId = null;
       state.expansionStack = [];
     }
   } else if (e.key === 'ArrowUp' && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
@@ -1756,9 +1807,11 @@ function handleNavKey(e, ctx) {
       const idx = parent.children.indexOf(node);
       if (idx > 0) {
         state.selectedId = parent.children[idx - 1].id;
+        state.selectionAnchorId = null;
         state.expansionStack = [];
       } else if (parent.type !== 'root') {
         state.selectedId = parent.id;
+        state.selectionAnchorId = null;
         state.expansionStack = [];
       }
     }
@@ -1770,6 +1823,7 @@ function handleNavKey(e, ctx) {
       const idx = curParent.children.indexOf(cur);
       if (idx < curParent.children.length - 1) {
         state.selectedId = curParent.children[idx + 1].id;
+        state.selectionAnchorId = null;
         state.expansionStack = [];
         break;
       }
@@ -1780,12 +1834,14 @@ function handleNavKey(e, ctx) {
     // First sibling
     if (parent && parent.children && parent.children.length > 0) {
       state.selectedId = parent.children[0].id;
+      state.selectionAnchorId = null;
       state.expansionStack = [];
     }
   } else if (e.key === 'End' && !e.ctrlKey && !e.metaKey) {
     // Last sibling
     if (parent && parent.children && parent.children.length > 0) {
       state.selectedId = parent.children[parent.children.length - 1].id;
+      state.selectionAnchorId = null;
       state.expansionStack = [];
     }
   } else if (e.key === 'ArrowUp' && (e.ctrlKey || e.metaKey) && !e.shiftKey) {
@@ -1798,6 +1854,7 @@ function handleNavKey(e, ctx) {
     }
     if (cur.id !== node.id) {
       state.selectedId = cur.id;
+      state.selectionAnchorId = null;
       state.expansionStack = [];
     }
   } else if (e.key === 'ArrowLeft' && (e.ctrlKey || e.metaKey)) {
@@ -1812,6 +1869,7 @@ function handleNavKey(e, ctx) {
     const idx = root.children.indexOf(cur);
     if (idx > 0) {
       state.selectedId = root.children[idx - 1].id;
+      state.selectionAnchorId = null;
       state.expansionStack = [];
     }
   } else if (e.key === 'ArrowRight' && (e.ctrlKey || e.metaKey)) {
@@ -1826,28 +1884,52 @@ function handleNavKey(e, ctx) {
     const idx = root.children.indexOf(cur);
     if (idx < root.children.length - 1) {
       state.selectedId = root.children[idx + 1].id;
+      state.selectionAnchorId = null;
       state.expansionStack = [];
     }
   } else if (e.key === 'ArrowUp' && e.shiftKey && !e.ctrlKey && !e.metaKey) {
-    // Expand selection: push current, select parent
-    if (parent && parent.type !== 'root') {
+    if (parent && parent.type === 'root') {
+      // Extend range upward among top-level forms
+      const idx = parent.children.indexOf(node);
+      if (idx > 0) {
+        if (state.selectionAnchorId == null) state.selectionAnchorId = state.selectedId;
+        state.selectedId = parent.children[idx - 1].id;
+        state.expansionStack = [];
+      }
+    } else if (parent && parent.type !== 'root') {
+      // Expand selection: push current, select parent
       state.expansionStack.push(state.selectedId);
       state.selectedId = parent.id;
     }
   } else if (e.key === 'ArrowDown' && e.shiftKey && !e.ctrlKey && !e.metaKey) {
-    // Contract selection: pop from stack
-    if (state.expansionStack.length > 0) {
+    if (parent && parent.type === 'root') {
+      // Extend range downward among top-level forms
+      const idx = parent.children.indexOf(node);
+      if (idx < parent.children.length - 1) {
+        if (state.selectionAnchorId == null) state.selectionAnchorId = state.selectedId;
+        state.selectedId = parent.children[idx + 1].id;
+        state.expansionStack = [];
+      }
+    } else if (state.expansionStack.length > 0) {
+      // Contract selection: pop from stack
       state.selectedId = state.expansionStack.pop();
     }
   } else if (e.key === 'Escape') {
-    // Select parent, or clear if at root level
-    if (parent && parent.type !== 'root') {
+    // Select parent, or clear range/selection if at root level
+    if (state.selectionAnchorId != null) {
+      // Collapse range to focus end
+      state.selectionAnchorId = null;
+    } else if (parent && parent.type !== 'root') {
       state.selectedId = parent.id;
       state.expansionStack = [];
     }
   } else if ((e.key === 'Backspace' || e.key === 'Delete') && state.onChange) {
-    // Delete selected node (editable mode only)
-    applyMutation(state, itemNames, api, statusBar, () => deleteSelected(state));
+    // Delete selected node (or range of top-level forms)
+    if (state.selectionAnchorId != null) {
+      applyMutation(state, itemNames, api, statusBar, () => deleteRange(state));
+    } else {
+      applyMutation(state, itemNames, api, statusBar, () => deleteSelected(state));
+    }
   } else if (e.key === 'z' && (e.ctrlKey || e.metaKey) && !e.shiftKey && state.onChange) {
     // Undo
     undo(state, itemNames, api, statusBar);
@@ -2023,21 +2105,45 @@ function handleNavKey(e, ctx) {
       }
     }
   } else if (e.key === 'c' && (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey) {
-    // Copy: store compact JSON, write s-expression to system clipboard
-    _clipboard = deflate(node);
-    navigator.clipboard?.writeText(nodeToSexp(node));
+    // Copy: store array of compact forms, write s-expressions to system clipboard
+    if (state.selectionAnchorId != null) {
+      const root = state.nodeMap.get(0);
+      const range = getSelectedRange(state);
+      const nodes = root.children.slice(range.lo, range.hi + 1);
+      _clipboard = nodes.map(deflate);
+      navigator.clipboard?.writeText(nodes.map(nodeToSexp).join('\n\n'));
+    } else {
+      _clipboard = [deflate(node)];
+      navigator.clipboard?.writeText(nodeToSexp(node));
+    }
   } else if (e.key === 'x' && (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && state.onChange) {
     // Cut: copy then delete
-    _clipboard = deflate(node);
-    navigator.clipboard?.writeText(nodeToSexp(node));
-    applyMutation(state, itemNames, api, statusBar, () => deleteSelected(state));
+    if (state.selectionAnchorId != null) {
+      const root = state.nodeMap.get(0);
+      const range = getSelectedRange(state);
+      const nodes = root.children.slice(range.lo, range.hi + 1);
+      _clipboard = nodes.map(deflate);
+      navigator.clipboard?.writeText(nodes.map(nodeToSexp).join('\n\n'));
+      applyMutation(state, itemNames, api, statusBar, () => deleteRange(state));
+    } else {
+      _clipboard = [deflate(node)];
+      navigator.clipboard?.writeText(nodeToSexp(node));
+      applyMutation(state, itemNames, api, statusBar, () => deleteSelected(state));
+    }
   } else if (e.key === 'v' && (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && state.onChange) {
-    // Paste: insert internal clipboard as sibling after selection
-    if (_clipboard !== null) {
-      const pasted = inflateSubtree(_clipboard, state);
+    // Paste: insert clipboard forms as siblings after selection
+    if (_clipboard !== null && _clipboard.length > 0) {
       applyMutation(state, itemNames, api, statusBar, () => {
-        insertAfter(state, node.id, pasted);
-        state.selectedId = pasted.id;
+        let refId = node.id;
+        let lastPasted = null;
+        for (const compact of _clipboard) {
+          const pasted = inflateSubtree(compact, state);
+          insertAfter(state, refId, pasted);
+          refId = pasted.id;
+          lastPasted = pasted;
+        }
+        if (lastPasted) state.selectedId = lastPasted.id;
+        state.selectionAnchorId = null;
       });
     } else { handled = false; }
   } else if (e.key === ';' && !e.ctrlKey && !e.metaKey && !e.altKey && state.onChange) {
@@ -2524,6 +2630,7 @@ function handleClick(e, ctx) {
   // Now handle the click target (re-check in case node was removed)
   if (!state.nodeMap.has(id)) return;
   state.selectedId = id;
+  state.selectionAnchorId = null;
   state.expansionStack = [];
   updateSelectionVisual(state);
   updateStatusBar(state, statusBar);
@@ -2547,6 +2654,7 @@ function handleDoubleClick(e, ctx) {
   if (node.type === 'doc') {
     // Doc node → enter prose editing
     state.selectedId = node.id;
+    state.selectionAnchorId = null;
     state.expansionStack = [];
     updateSelectionVisual(state);
     enterDocEditing(state, node.id, itemNames, api, statusBar);
@@ -2751,6 +2859,7 @@ export async function render(value, options, api) {
   // Build state
   const state = {
     selectedId: root.children[0]?.id || null,
+    selectionAnchorId: null,
     expansionStack: [],
     nodeMap,
     parentMap,
