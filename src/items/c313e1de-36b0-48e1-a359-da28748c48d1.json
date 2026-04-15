@@ -1,0 +1,1316 @@
+{
+  "id": "c313e1de-36b0-48e1-a359-da28748c48d1",
+  "name": "sailing-light-lib",
+  "type": "66666666-0000-0000-0000-000000000000",
+  "created": 1776183134460,
+  "modified": 1776257800566,
+  "attachments": [],
+  "content": {
+    "code": "const totalLength = 10, bowLength = 2;\nconst mainHullLength = totalLength - bowLength;\nconst hullWidth = 2.5, hullHeight = 1.0, mastHeight = 8;\nconst sternEndX = -mainHullLength / 2 + bowLength / 2 + 0.05;\nconst mastheadX = mainHullLength / 2 - 1;\n\nexport const port = { x: 5, y: 1, z: -1.25 };\nexport const starboard = { x: 5, y: 1, z: 1.25 };\nexport const stern = { x: sternEndX, y: 1, z: 0 };\nexport const mast1 = { x: mastheadX, y: hullHeight + mastHeight - 0.5, z: 0};\nexport const mast2 = { x: mastheadX, y: hullHeight + mastHeight, z: 0};\nexport const foreMast = { x: mastheadX + 3,  y: hullHeight + 2, z: 0};\nexport const aftMast = { x: mastheadX - 4, y: hullHeight + 4, z: 0};\nexport const foreMastHigh = { x: mastheadX + 3,  y: hullHeight + 3, z: 0};\nexport const aftMastLow = { x: mastheadX - 4, y: hullHeight + 2, z: 0};\nexport const cabin1 = { x: mastheadX - 2, y: hullHeight + 2.5, z: 0};\nexport const cabin2 = { x: mastheadX - 2, y: hullHeight + 3.0, z: 0};\nexport const cabin3 = { x: mastheadX - 2, y: hullHeight + 3.5, z: 0};\n\nexport const portSector = { min: -112.5, max: 1 };\nexport const starboardSector = { min: -1, max: 112.5 };\nexport const sternSector = { min: 112.5, max: -112.5 };\nexport const forwardSector = { min: -112.5, max: 112.5 };\nexport const allRound = { min: -180.0, max: 180.0 };\n\nexport const portLight =      { name: 'port',      color: 'red', position: port,        label: 'Port',      sector: portSector };\nexport const starboardLight = { name: 'starboard', color: 'green', position: starboard, label: 'Starboard', sector: starboardSector };\nexport const sternLight =     { name: 'stern',     color: 'white', position: stern,     label: 'Stern',     sector: sternSector };\n\nexport async function render(api, boat, lights) {\n  const { THREE, OrbitControls } = await api.require('three-js-lib');\n\n  boat = boat || \"sailing\";\n  lights = lights || [ portLight, starboardLight, sternLight ];\n  //alert(JSON.stringify(lights));\n  const container = document.createElement('div');\n  container.style.cssText = 'width:100%;height:500px;position:relative;background:#1a1a1a;border-radius:var(--border-radius-lg);overflow:hidden;';\n\n  const resetBtn = document.createElement('button');\n  resetBtn.textContent = 'Reset view';\n  resetBtn.style.cssText = 'position:absolute;top:12px;right:12px;z-index:10;padding:6px 12px;background:#222;color:#fff;border:0.5px solid #555;border-radius:6px;font-size:13px;cursor:pointer;';\n  container.appendChild(resetBtn);\n\n  const threeContainer = document.createElement('div');\n  threeContainer.style.cssText = 'width:100%;height:100%;';\n  container.appendChild(threeContainer);\n\n  const scene = new THREE.Scene();\n  scene.background = new THREE.Color(0x1a1a1a);\n\n  const initW = threeContainer.clientWidth || 800;\n  const initH = threeContainer.clientHeight || 600;\n  const camera = new THREE.PerspectiveCamera(45, initW / initH, 0.1, 1000);\n  camera.position.set(40, 15, 15);\n\n  const renderer = new THREE.WebGLRenderer({ antialias: true });\n  renderer.setSize(initW, initH, false);\n  renderer.domElement.style.cssText = 'display:block;width:100%;height:100%;'; \n  renderer.shadowMap.enabled = true;\n  threeContainer.appendChild(renderer.domElement);\n\n  scene.add(new THREE.AmbientLight(0x404040, 1.5));\n  const dir = new THREE.DirectionalLight(0xffffff, 1.5);\n  dir.position.set(-5, 15, 10);\n  dir.castShadow = true;\n  scene.add(dir);\n\n  const water = new THREE.Mesh(\n    new THREE.PlaneGeometry(100, 100),\n    new THREE.MeshBasicMaterial({ color: 0x003366, transparent: true, opacity: 0.6 })\n  );\n  water.rotation.x = -Math.PI / 2;\n  scene.add(water);\n\n  const controls = new OrbitControls(camera, renderer.domElement);\n  controls.enableDamping = true;\n  controls.dampingFactor = 0.05;\n  controls.target.set(0, 0, 0);\n\n  const boatGroup = new THREE.Group();\n  scene.add(boatGroup);\n\n  const lightMap = {};\n\n  function buildHull() {\n    const hull = new THREE.Mesh(\n      new THREE.BoxGeometry(mainHullLength, hullHeight, hullWidth),\n      new THREE.MeshStandardMaterial({ color: 0xdddddd })\n    );\n    hull.position.set(bowLength / 2, hullHeight / 2, 0);\n    boatGroup.add(hull);\n\n    const bowGeometry = new THREE.BoxGeometry(bowLength, hullHeight, hullWidth);\n    bowGeometry.translate(bowLength / 2, 0, 0);\n    const pos = bowGeometry.attributes.position;\n    for (let i = 0; i < pos.count; i++) {\n      pos.setZ(i, pos.getZ(i) * (1 - pos.getX(i) / bowLength));\n    }\n    pos.needsUpdate = true;\n    bowGeometry.computeVertexNormals();\n    const bow = new THREE.Mesh(bowGeometry, new THREE.MeshStandardMaterial({ color: 0xdddddd }));\n    bow.position.set((mainHullLength + bowLength) / 2, hullHeight / 2, 0);\n    boatGroup.add(bow);\n  }\n\n  function addSector(cfg) {\n    const s = THREE.MathUtils.degToRad(cfg.sector.min);\n    const e = THREE.MathUtils.degToRad(cfg.sector.max);\n    let delta = e - s;\n    if (delta < 0) delta += Math.PI * 2;\n\n    const segments = 32;\n    const vertices = [0, 0, 0];\n    const indices = [];\n    for (let i = 0; i <= segments; i++) {\n      const angle = s + delta * (i / segments);\n      vertices.push(Math.cos(angle) * 20, 0, Math.sin(angle) * 20);\n      if (i < segments) indices.push(0, i + 1, i + 2);\n    }\n\n    const geometry = new THREE.BufferGeometry();\n    geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));\n    geometry.setIndex(indices);\n    geometry.computeVertexNormals();\n\n    const sector = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({\n      color: cfg.color, transparent: true, opacity: 0.15,\n      side: THREE.DoubleSide, depthWrite: false\n    }));\n    sector.position.set(cfg.position.x, cfg.position.y + 0.05, cfg.position.z);\n    boatGroup.add(sector);\n    return sector;\n  }\n\n  function addLight(cfg) {\n    //alert(JSON.stringify(cfg));\n    const mesh = new THREE.Mesh(\n      new THREE.SphereGeometry(0.2, 16, 16),\n      new THREE.MeshStandardMaterial({ color: cfg.color, emissive: cfg.color, emissiveIntensity: 3.0, roughness: 0.1 })\n    );\n    mesh.position.set(cfg.position.x, cfg.position.y, cfg.position.z);\n    mesh.add(new THREE.PointLight(cfg.color, 2, 15));\n    boatGroup.add(mesh);\n\n    const canvas = document.createElement('canvas');\n    canvas.width = 256; canvas.height = 64;\n    if (cfg.label) {\n      const ctx = canvas.getContext('2d');\n      ctx.fillStyle = 'rgba(0,0,0,0.5)';\n      ctx.fillRect(0, 0, 256, 64);\n      ctx.font = 'bold 28px Arial';\n      ctx.fillStyle = 'white';\n      ctx.textAlign = 'center';\n      ctx.fillText(cfg.label, 128, 42);\n    }\n    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(canvas) }));\n    sprite.scale.set(3, 0.75, 1);\n    sprite.position.set(cfg.position.x, cfg.position.y + 1.5, cfg.position.z);\n    boatGroup.add(sprite);\n\n    lightMap[cfg.name] = { mesh, sprite, min: cfg.sector.min, max: cfg.sector.max, sector: addSector(cfg) };\n  }\n\n  function getBearingFromBoat() {\n    const boatPos = new THREE.Vector3();\n    boatGroup.getWorldPosition(boatPos);\n    const dir = camera.position.clone().sub(boatPos);\n    dir.y = 0;\n    dir.normalize();\n    const forward = new THREE.Vector3(1, 0, 0).applyQuaternion(boatGroup.quaternion);\n    forward.y = 0;\n    forward.normalize();\n    return Math.atan2(forward.x * dir.z - forward.z * dir.x, forward.x * dir.x + forward.z * dir.z) * (180 / Math.PI);\n  }\n\n  function updateVisibility() {\n    const b = getBearingFromBoat();\n    for (const l of Object.values(lightMap)) {\n      const vis = l.min < l.max ? (b >= l.min && b <= l.max) : (b <= l.max || b >= l.min);\n      l.mesh.visible = vis;\n      l.sprite.visible = vis;\n      l.sector.visible = vis;\n    }\n  }\n\n  buildHull();\n  if (boat === 'sailing') {\n    const mast = new THREE.Mesh(\n      new THREE.CylinderGeometry(0.1, 0.1, mastHeight, 8),\n      new THREE.MeshStandardMaterial({ color: 0x888888 })\n    );\n    mast.position.set(mastheadX, hullHeight + mastHeight / 2, 0);\n    boatGroup.add(mast);\n  } else {\n    const cabinLen = mainHullLength * 0.3;\n    const cabin = new THREE.Mesh(\n      new THREE.BoxGeometry(cabinLen, 1.5, hullWidth * 0.7),\n      new THREE.MeshStandardMaterial({ color: 0xeeeeee })\n    );\n    cabin.position.set(mainHullLength / 4 - cabinLen, hullHeight + 0.75, 0);\n    boatGroup.add(cabin);\n  }\n  lights.forEach(cfg => addLight(cfg));\n\n  const resizeObserver = new ResizeObserver(entries => {\n    for (const entry of entries) {                    \n          const { width, height } = entry.contentRect;                                                        \n          if (height === 0) return;                   \n          camera.aspect = width / height;\n          camera.updateProjectionMatrix();\n          renderer.setSize(width, height, false);\n    }\n  });\n  resizeObserver.observe(threeContainer);\n\n  let everMounted = false;\n  function animate() {\n    const inDoc = document.contains(renderer.domElement);\n    if (everMounted && !inDoc) {\n      renderer.dispose();\n      resizeObserver.disconnect();\n      return;\n    }\n    if (inDoc) everMounted = true;\n    requestAnimationFrame(animate);\n    controls.update();\n    updateVisibility();\n    renderer.render(scene, camera);\n  }\n  animate();\n\n  resetBtn.onclick = () => {\n    camera.position.set(40, 15, 15);\n    controls.target.set(0, 0, 0);\n    controls.update();\n  };\n\n  return container;\n}",
+    "_symbols": {
+      "totalLength": {
+        "name": "totalLength",
+        "line": 1,
+        "col": 6,
+        "endLine": 1,
+        "endCol": 22,
+        "kind": "variable",
+        "scope": null
+      },
+      "bowLength": {
+        "name": "bowLength",
+        "line": 1,
+        "col": 24,
+        "endLine": 1,
+        "endCol": 37,
+        "kind": "variable",
+        "scope": null
+      },
+      "mainHullLength": {
+        "name": "mainHullLength",
+        "line": 2,
+        "col": 6,
+        "endLine": 2,
+        "endCol": 46,
+        "kind": "variable",
+        "scope": null
+      },
+      "hullWidth": {
+        "name": "hullWidth",
+        "line": 3,
+        "col": 6,
+        "endLine": 3,
+        "endCol": 21,
+        "kind": "variable",
+        "scope": null
+      },
+      "hullHeight": {
+        "name": "hullHeight",
+        "line": 3,
+        "col": 23,
+        "endLine": 3,
+        "endCol": 39,
+        "kind": "variable",
+        "scope": null
+      },
+      "mastHeight": {
+        "name": "mastHeight",
+        "line": 3,
+        "col": 41,
+        "endLine": 3,
+        "endCol": 55,
+        "kind": "variable",
+        "scope": null
+      },
+      "sternEndX": {
+        "name": "sternEndX",
+        "line": 4,
+        "col": 6,
+        "endLine": 4,
+        "endCol": 60,
+        "kind": "variable",
+        "scope": null
+      },
+      "mastheadX": {
+        "name": "mastheadX",
+        "line": 5,
+        "col": 6,
+        "endLine": 5,
+        "endCol": 40,
+        "kind": "variable",
+        "scope": null
+      },
+      "port": {
+        "name": "port",
+        "line": 7,
+        "col": 13,
+        "endLine": 7,
+        "endCol": 44,
+        "kind": "variable",
+        "scope": null
+      },
+      "port.x": {
+        "name": "x",
+        "line": 7,
+        "col": 22,
+        "endLine": 7,
+        "endCol": 26,
+        "kind": "property",
+        "scope": "port"
+      },
+      "port.y": {
+        "name": "y",
+        "line": 7,
+        "col": 28,
+        "endLine": 7,
+        "endCol": 32,
+        "kind": "property",
+        "scope": "port"
+      },
+      "port.z": {
+        "name": "z",
+        "line": 7,
+        "col": 34,
+        "endLine": 7,
+        "endCol": 42,
+        "kind": "property",
+        "scope": "port"
+      },
+      "starboard": {
+        "name": "starboard",
+        "line": 8,
+        "col": 13,
+        "endLine": 8,
+        "endCol": 48,
+        "kind": "variable",
+        "scope": null
+      },
+      "starboard.x": {
+        "name": "x",
+        "line": 8,
+        "col": 27,
+        "endLine": 8,
+        "endCol": 31,
+        "kind": "property",
+        "scope": "starboard"
+      },
+      "starboard.y": {
+        "name": "y",
+        "line": 8,
+        "col": 33,
+        "endLine": 8,
+        "endCol": 37,
+        "kind": "property",
+        "scope": "starboard"
+      },
+      "starboard.z": {
+        "name": "z",
+        "line": 8,
+        "col": 39,
+        "endLine": 8,
+        "endCol": 46,
+        "kind": "property",
+        "scope": "starboard"
+      },
+      "stern": {
+        "name": "stern",
+        "line": 9,
+        "col": 13,
+        "endLine": 9,
+        "endCol": 49,
+        "kind": "variable",
+        "scope": null
+      },
+      "stern.x": {
+        "name": "x",
+        "line": 9,
+        "col": 23,
+        "endLine": 9,
+        "endCol": 35,
+        "kind": "property",
+        "scope": "stern"
+      },
+      "stern.y": {
+        "name": "y",
+        "line": 9,
+        "col": 37,
+        "endLine": 9,
+        "endCol": 41,
+        "kind": "property",
+        "scope": "stern"
+      },
+      "stern.z": {
+        "name": "z",
+        "line": 9,
+        "col": 43,
+        "endLine": 9,
+        "endCol": 47,
+        "kind": "property",
+        "scope": "stern"
+      },
+      "mast1": {
+        "name": "mast1",
+        "line": 10,
+        "col": 13,
+        "endLine": 10,
+        "endCol": 76,
+        "kind": "variable",
+        "scope": null
+      },
+      "mast1.x": {
+        "name": "x",
+        "line": 10,
+        "col": 23,
+        "endLine": 10,
+        "endCol": 35,
+        "kind": "property",
+        "scope": "mast1"
+      },
+      "mast1.y": {
+        "name": "y",
+        "line": 10,
+        "col": 37,
+        "endLine": 10,
+        "endCol": 69,
+        "kind": "property",
+        "scope": "mast1"
+      },
+      "mast1.z": {
+        "name": "z",
+        "line": 10,
+        "col": 71,
+        "endLine": 10,
+        "endCol": 75,
+        "kind": "property",
+        "scope": "mast1"
+      },
+      "mast2": {
+        "name": "mast2",
+        "line": 11,
+        "col": 13,
+        "endLine": 11,
+        "endCol": 70,
+        "kind": "variable",
+        "scope": null
+      },
+      "mast2.x": {
+        "name": "x",
+        "line": 11,
+        "col": 23,
+        "endLine": 11,
+        "endCol": 35,
+        "kind": "property",
+        "scope": "mast2"
+      },
+      "mast2.y": {
+        "name": "y",
+        "line": 11,
+        "col": 37,
+        "endLine": 11,
+        "endCol": 63,
+        "kind": "property",
+        "scope": "mast2"
+      },
+      "mast2.z": {
+        "name": "z",
+        "line": 11,
+        "col": 65,
+        "endLine": 11,
+        "endCol": 69,
+        "kind": "property",
+        "scope": "mast2"
+      },
+      "foreMast": {
+        "name": "foreMast",
+        "line": 12,
+        "col": 13,
+        "endLine": 12,
+        "endCol": 69,
+        "kind": "variable",
+        "scope": null
+      },
+      "foreMast.x": {
+        "name": "x",
+        "line": 12,
+        "col": 26,
+        "endLine": 12,
+        "endCol": 42,
+        "kind": "property",
+        "scope": "foreMast"
+      },
+      "foreMast.y": {
+        "name": "y",
+        "line": 12,
+        "col": 45,
+        "endLine": 12,
+        "endCol": 62,
+        "kind": "property",
+        "scope": "foreMast"
+      },
+      "foreMast.z": {
+        "name": "z",
+        "line": 12,
+        "col": 64,
+        "endLine": 12,
+        "endCol": 68,
+        "kind": "property",
+        "scope": "foreMast"
+      },
+      "aftMast": {
+        "name": "aftMast",
+        "line": 13,
+        "col": 13,
+        "endLine": 13,
+        "endCol": 67,
+        "kind": "variable",
+        "scope": null
+      },
+      "aftMast.x": {
+        "name": "x",
+        "line": 13,
+        "col": 25,
+        "endLine": 13,
+        "endCol": 41,
+        "kind": "property",
+        "scope": "aftMast"
+      },
+      "aftMast.y": {
+        "name": "y",
+        "line": 13,
+        "col": 43,
+        "endLine": 13,
+        "endCol": 60,
+        "kind": "property",
+        "scope": "aftMast"
+      },
+      "aftMast.z": {
+        "name": "z",
+        "line": 13,
+        "col": 62,
+        "endLine": 13,
+        "endCol": 66,
+        "kind": "property",
+        "scope": "aftMast"
+      },
+      "foreMastHigh": {
+        "name": "foreMastHigh",
+        "line": 14,
+        "col": 13,
+        "endLine": 14,
+        "endCol": 73,
+        "kind": "variable",
+        "scope": null
+      },
+      "foreMastHigh.x": {
+        "name": "x",
+        "line": 14,
+        "col": 30,
+        "endLine": 14,
+        "endCol": 46,
+        "kind": "property",
+        "scope": "foreMastHigh"
+      },
+      "foreMastHigh.y": {
+        "name": "y",
+        "line": 14,
+        "col": 49,
+        "endLine": 14,
+        "endCol": 66,
+        "kind": "property",
+        "scope": "foreMastHigh"
+      },
+      "foreMastHigh.z": {
+        "name": "z",
+        "line": 14,
+        "col": 68,
+        "endLine": 14,
+        "endCol": 72,
+        "kind": "property",
+        "scope": "foreMastHigh"
+      },
+      "aftMastLow": {
+        "name": "aftMastLow",
+        "line": 15,
+        "col": 13,
+        "endLine": 15,
+        "endCol": 70,
+        "kind": "variable",
+        "scope": null
+      },
+      "aftMastLow.x": {
+        "name": "x",
+        "line": 15,
+        "col": 28,
+        "endLine": 15,
+        "endCol": 44,
+        "kind": "property",
+        "scope": "aftMastLow"
+      },
+      "aftMastLow.y": {
+        "name": "y",
+        "line": 15,
+        "col": 46,
+        "endLine": 15,
+        "endCol": 63,
+        "kind": "property",
+        "scope": "aftMastLow"
+      },
+      "aftMastLow.z": {
+        "name": "z",
+        "line": 15,
+        "col": 65,
+        "endLine": 15,
+        "endCol": 69,
+        "kind": "property",
+        "scope": "aftMastLow"
+      },
+      "cabin1": {
+        "name": "cabin1",
+        "line": 16,
+        "col": 13,
+        "endLine": 16,
+        "endCol": 68,
+        "kind": "variable",
+        "scope": null
+      },
+      "cabin1.x": {
+        "name": "x",
+        "line": 16,
+        "col": 24,
+        "endLine": 16,
+        "endCol": 40,
+        "kind": "property",
+        "scope": "cabin1"
+      },
+      "cabin1.y": {
+        "name": "y",
+        "line": 16,
+        "col": 42,
+        "endLine": 16,
+        "endCol": 61,
+        "kind": "property",
+        "scope": "cabin1"
+      },
+      "cabin1.z": {
+        "name": "z",
+        "line": 16,
+        "col": 63,
+        "endLine": 16,
+        "endCol": 67,
+        "kind": "property",
+        "scope": "cabin1"
+      },
+      "cabin2": {
+        "name": "cabin2",
+        "line": 17,
+        "col": 13,
+        "endLine": 17,
+        "endCol": 68,
+        "kind": "variable",
+        "scope": null
+      },
+      "cabin2.x": {
+        "name": "x",
+        "line": 17,
+        "col": 24,
+        "endLine": 17,
+        "endCol": 40,
+        "kind": "property",
+        "scope": "cabin2"
+      },
+      "cabin2.y": {
+        "name": "y",
+        "line": 17,
+        "col": 42,
+        "endLine": 17,
+        "endCol": 61,
+        "kind": "property",
+        "scope": "cabin2"
+      },
+      "cabin2.z": {
+        "name": "z",
+        "line": 17,
+        "col": 63,
+        "endLine": 17,
+        "endCol": 67,
+        "kind": "property",
+        "scope": "cabin2"
+      },
+      "cabin3": {
+        "name": "cabin3",
+        "line": 18,
+        "col": 13,
+        "endLine": 18,
+        "endCol": 68,
+        "kind": "variable",
+        "scope": null
+      },
+      "cabin3.x": {
+        "name": "x",
+        "line": 18,
+        "col": 24,
+        "endLine": 18,
+        "endCol": 40,
+        "kind": "property",
+        "scope": "cabin3"
+      },
+      "cabin3.y": {
+        "name": "y",
+        "line": 18,
+        "col": 42,
+        "endLine": 18,
+        "endCol": 61,
+        "kind": "property",
+        "scope": "cabin3"
+      },
+      "cabin3.z": {
+        "name": "z",
+        "line": 18,
+        "col": 63,
+        "endLine": 18,
+        "endCol": 67,
+        "kind": "property",
+        "scope": "cabin3"
+      },
+      "portSector": {
+        "name": "portSector",
+        "line": 20,
+        "col": 13,
+        "endLine": 20,
+        "endCol": 49,
+        "kind": "variable",
+        "scope": null
+      },
+      "portSector.min": {
+        "name": "min",
+        "line": 20,
+        "col": 28,
+        "endLine": 20,
+        "endCol": 39,
+        "kind": "property",
+        "scope": "portSector"
+      },
+      "portSector.max": {
+        "name": "max",
+        "line": 20,
+        "col": 41,
+        "endLine": 20,
+        "endCol": 47,
+        "kind": "property",
+        "scope": "portSector"
+      },
+      "starboardSector": {
+        "name": "starboardSector",
+        "line": 21,
+        "col": 13,
+        "endLine": 21,
+        "endCol": 54,
+        "kind": "variable",
+        "scope": null
+      },
+      "starboardSector.min": {
+        "name": "min",
+        "line": 21,
+        "col": 33,
+        "endLine": 21,
+        "endCol": 40,
+        "kind": "property",
+        "scope": "starboardSector"
+      },
+      "starboardSector.max": {
+        "name": "max",
+        "line": 21,
+        "col": 42,
+        "endLine": 21,
+        "endCol": 52,
+        "kind": "property",
+        "scope": "starboardSector"
+      },
+      "sternSector": {
+        "name": "sternSector",
+        "line": 22,
+        "col": 13,
+        "endLine": 22,
+        "endCol": 54,
+        "kind": "variable",
+        "scope": null
+      },
+      "sternSector.min": {
+        "name": "min",
+        "line": 22,
+        "col": 29,
+        "endLine": 22,
+        "endCol": 39,
+        "kind": "property",
+        "scope": "sternSector"
+      },
+      "sternSector.max": {
+        "name": "max",
+        "line": 22,
+        "col": 41,
+        "endLine": 22,
+        "endCol": 52,
+        "kind": "property",
+        "scope": "sternSector"
+      },
+      "forwardSector": {
+        "name": "forwardSector",
+        "line": 23,
+        "col": 13,
+        "endLine": 23,
+        "endCol": 56,
+        "kind": "variable",
+        "scope": null
+      },
+      "forwardSector.min": {
+        "name": "min",
+        "line": 23,
+        "col": 31,
+        "endLine": 23,
+        "endCol": 42,
+        "kind": "property",
+        "scope": "forwardSector"
+      },
+      "forwardSector.max": {
+        "name": "max",
+        "line": 23,
+        "col": 44,
+        "endLine": 23,
+        "endCol": 54,
+        "kind": "property",
+        "scope": "forwardSector"
+      },
+      "allRound": {
+        "name": "allRound",
+        "line": 24,
+        "col": 13,
+        "endLine": 24,
+        "endCol": 51,
+        "kind": "variable",
+        "scope": null
+      },
+      "allRound.min": {
+        "name": "min",
+        "line": 24,
+        "col": 26,
+        "endLine": 24,
+        "endCol": 37,
+        "kind": "property",
+        "scope": "allRound"
+      },
+      "allRound.max": {
+        "name": "max",
+        "line": 24,
+        "col": 39,
+        "endLine": 24,
+        "endCol": 49,
+        "kind": "property",
+        "scope": "allRound"
+      },
+      "portLight": {
+        "name": "portLight",
+        "line": 26,
+        "col": 13,
+        "endLine": 26,
+        "endCol": 128,
+        "kind": "variable",
+        "scope": null
+      },
+      "portLight.name": {
+        "name": "name",
+        "line": 26,
+        "col": 32,
+        "endLine": 26,
+        "endCol": 44,
+        "kind": "property",
+        "scope": "portLight"
+      },
+      "portLight.color": {
+        "name": "color",
+        "line": 26,
+        "col": 51,
+        "endLine": 26,
+        "endCol": 63,
+        "kind": "property",
+        "scope": "portLight"
+      },
+      "portLight.position": {
+        "name": "position",
+        "line": 26,
+        "col": 65,
+        "endLine": 26,
+        "endCol": 79,
+        "kind": "property",
+        "scope": "portLight"
+      },
+      "portLight.label": {
+        "name": "label",
+        "line": 26,
+        "col": 88,
+        "endLine": 26,
+        "endCol": 101,
+        "kind": "property",
+        "scope": "portLight"
+      },
+      "portLight.sector": {
+        "name": "sector",
+        "line": 26,
+        "col": 108,
+        "endLine": 26,
+        "endCol": 126,
+        "kind": "property",
+        "scope": "portLight"
+      },
+      "starboardLight": {
+        "name": "starboardLight",
+        "line": 27,
+        "col": 13,
+        "endLine": 27,
+        "endCol": 133,
+        "kind": "variable",
+        "scope": null
+      },
+      "starboardLight.name": {
+        "name": "name",
+        "line": 27,
+        "col": 32,
+        "endLine": 27,
+        "endCol": 49,
+        "kind": "property",
+        "scope": "starboardLight"
+      },
+      "starboardLight.color": {
+        "name": "color",
+        "line": 27,
+        "col": 51,
+        "endLine": 27,
+        "endCol": 65,
+        "kind": "property",
+        "scope": "starboardLight"
+      },
+      "starboardLight.position": {
+        "name": "position",
+        "line": 27,
+        "col": 67,
+        "endLine": 27,
+        "endCol": 86,
+        "kind": "property",
+        "scope": "starboardLight"
+      },
+      "starboardLight.label": {
+        "name": "label",
+        "line": 27,
+        "col": 88,
+        "endLine": 27,
+        "endCol": 106,
+        "kind": "property",
+        "scope": "starboardLight"
+      },
+      "starboardLight.sector": {
+        "name": "sector",
+        "line": 27,
+        "col": 108,
+        "endLine": 27,
+        "endCol": 131,
+        "kind": "property",
+        "scope": "starboardLight"
+      },
+      "sternLight": {
+        "name": "sternLight",
+        "line": 28,
+        "col": 13,
+        "endLine": 28,
+        "endCol": 129,
+        "kind": "variable",
+        "scope": null
+      },
+      "sternLight.name": {
+        "name": "name",
+        "line": 28,
+        "col": 32,
+        "endLine": 28,
+        "endCol": 45,
+        "kind": "property",
+        "scope": "sternLight"
+      },
+      "sternLight.color": {
+        "name": "color",
+        "line": 28,
+        "col": 51,
+        "endLine": 28,
+        "endCol": 65,
+        "kind": "property",
+        "scope": "sternLight"
+      },
+      "sternLight.position": {
+        "name": "position",
+        "line": 28,
+        "col": 67,
+        "endLine": 28,
+        "endCol": 82,
+        "kind": "property",
+        "scope": "sternLight"
+      },
+      "sternLight.label": {
+        "name": "label",
+        "line": 28,
+        "col": 88,
+        "endLine": 28,
+        "endCol": 102,
+        "kind": "property",
+        "scope": "sternLight"
+      },
+      "sternLight.sector": {
+        "name": "sector",
+        "line": 28,
+        "col": 108,
+        "endLine": 28,
+        "endCol": 127,
+        "kind": "property",
+        "scope": "sternLight"
+      },
+      "render": {
+        "name": "render",
+        "line": 30,
+        "col": 7,
+        "endLine": 239,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(api, boat, lights)"
+      },
+      "render.container": {
+        "name": "container",
+        "line": 36,
+        "col": 8,
+        "endLine": 36,
+        "endCol": 49,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.resetBtn": {
+        "name": "resetBtn",
+        "line": 39,
+        "col": 8,
+        "endLine": 39,
+        "endCol": 51,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.threeContainer": {
+        "name": "threeContainer",
+        "line": 44,
+        "col": 8,
+        "endLine": 44,
+        "endCol": 54,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.scene": {
+        "name": "scene",
+        "line": 48,
+        "col": 8,
+        "endLine": 48,
+        "endCol": 33,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.initW": {
+        "name": "initW",
+        "line": 51,
+        "col": 8,
+        "endLine": 51,
+        "endCol": 49,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.initH": {
+        "name": "initH",
+        "line": 52,
+        "col": 8,
+        "endLine": 52,
+        "endCol": 50,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.camera": {
+        "name": "camera",
+        "line": 53,
+        "col": 8,
+        "endLine": 53,
+        "endCol": 74,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.renderer": {
+        "name": "renderer",
+        "line": 56,
+        "col": 8,
+        "endLine": 56,
+        "endCol": 63,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.dir": {
+        "name": "dir",
+        "line": 63,
+        "col": 8,
+        "endLine": 63,
+        "endCol": 55,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.water": {
+        "name": "water",
+        "line": 68,
+        "col": 8,
+        "endLine": 71,
+        "endCol": 3,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.controls": {
+        "name": "controls",
+        "line": 75,
+        "col": 8,
+        "endLine": 75,
+        "endCol": 65,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.boatGroup": {
+        "name": "boatGroup",
+        "line": 80,
+        "col": 8,
+        "endLine": 80,
+        "endCol": 37,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.lightMap": {
+        "name": "lightMap",
+        "line": 83,
+        "col": 8,
+        "endLine": 83,
+        "endCol": 21,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.buildHull": {
+        "name": "buildHull",
+        "line": 85,
+        "col": 2,
+        "endLine": 104,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "render",
+        "signature": "()"
+      },
+      "buildHull.hull": {
+        "name": "hull",
+        "line": 86,
+        "col": 10,
+        "endLine": 89,
+        "endCol": 5,
+        "kind": "variable",
+        "scope": "buildHull"
+      },
+      "buildHull.bowGeometry": {
+        "name": "bowGeometry",
+        "line": 93,
+        "col": 10,
+        "endLine": 93,
+        "endCol": 79,
+        "kind": "variable",
+        "scope": "buildHull"
+      },
+      "buildHull.pos": {
+        "name": "pos",
+        "line": 95,
+        "col": 10,
+        "endLine": 95,
+        "endCol": 47,
+        "kind": "variable",
+        "scope": "buildHull"
+      },
+      "buildHull.i": {
+        "name": "i",
+        "line": 96,
+        "col": 13,
+        "endLine": 96,
+        "endCol": 18,
+        "kind": "variable",
+        "scope": "buildHull"
+      },
+      "buildHull.bow": {
+        "name": "bow",
+        "line": 101,
+        "col": 10,
+        "endLine": 101,
+        "endCol": 96,
+        "kind": "variable",
+        "scope": "buildHull"
+      },
+      "render.addSector": {
+        "name": "addSector",
+        "line": 106,
+        "col": 2,
+        "endLine": 133,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "render",
+        "signature": "(cfg)"
+      },
+      "addSector.s": {
+        "name": "s",
+        "line": 107,
+        "col": 10,
+        "endLine": 107,
+        "endCol": 54,
+        "kind": "variable",
+        "scope": "addSector"
+      },
+      "addSector.e": {
+        "name": "e",
+        "line": 108,
+        "col": 10,
+        "endLine": 108,
+        "endCol": 54,
+        "kind": "variable",
+        "scope": "addSector"
+      },
+      "addSector.delta": {
+        "name": "delta",
+        "line": 109,
+        "col": 8,
+        "endLine": 109,
+        "endCol": 21,
+        "kind": "variable",
+        "scope": "addSector"
+      },
+      "addSector.segments": {
+        "name": "segments",
+        "line": 112,
+        "col": 10,
+        "endLine": 112,
+        "endCol": 23,
+        "kind": "variable",
+        "scope": "addSector"
+      },
+      "addSector.vertices": {
+        "name": "vertices",
+        "line": 113,
+        "col": 10,
+        "endLine": 113,
+        "endCol": 30,
+        "kind": "variable",
+        "scope": "addSector"
+      },
+      "addSector.indices": {
+        "name": "indices",
+        "line": 114,
+        "col": 10,
+        "endLine": 114,
+        "endCol": 22,
+        "kind": "variable",
+        "scope": "addSector"
+      },
+      "addSector.i": {
+        "name": "i",
+        "line": 115,
+        "col": 13,
+        "endLine": 115,
+        "endCol": 18,
+        "kind": "variable",
+        "scope": "addSector"
+      },
+      "addSector.angle": {
+        "name": "angle",
+        "line": 116,
+        "col": 12,
+        "endLine": 116,
+        "endCol": 46,
+        "kind": "variable",
+        "scope": "addSector"
+      },
+      "addSector.geometry": {
+        "name": "geometry",
+        "line": 121,
+        "col": 10,
+        "endLine": 121,
+        "endCol": 47,
+        "kind": "variable",
+        "scope": "addSector"
+      },
+      "addSector.sector": {
+        "name": "sector",
+        "line": 126,
+        "col": 10,
+        "endLine": 129,
+        "endCol": 7,
+        "kind": "variable",
+        "scope": "addSector"
+      },
+      "render.addLight": {
+        "name": "addLight",
+        "line": 135,
+        "col": 2,
+        "endLine": 162,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "render",
+        "signature": "(cfg)"
+      },
+      "addLight.mesh": {
+        "name": "mesh",
+        "line": 161,
+        "col": 27,
+        "endLine": 161,
+        "endCol": 31,
+        "kind": "property",
+        "scope": "addLight"
+      },
+      "addLight.canvas": {
+        "name": "canvas",
+        "line": 145,
+        "col": 10,
+        "endLine": 145,
+        "endCol": 51,
+        "kind": "variable",
+        "scope": "addLight"
+      },
+      "addLight.ctx": {
+        "name": "ctx",
+        "line": 148,
+        "col": 12,
+        "endLine": 148,
+        "endCol": 41,
+        "kind": "variable",
+        "scope": "addLight"
+      },
+      "addLight.sprite": {
+        "name": "sprite",
+        "line": 161,
+        "col": 33,
+        "endLine": 161,
+        "endCol": 39,
+        "kind": "property",
+        "scope": "addLight"
+      },
+      "addLight.min": {
+        "name": "min",
+        "line": 161,
+        "col": 41,
+        "endLine": 161,
+        "endCol": 60,
+        "kind": "property",
+        "scope": "addLight"
+      },
+      "addLight.max": {
+        "name": "max",
+        "line": 161,
+        "col": 62,
+        "endLine": 161,
+        "endCol": 81,
+        "kind": "property",
+        "scope": "addLight"
+      },
+      "addLight.sector": {
+        "name": "sector",
+        "line": 161,
+        "col": 83,
+        "endLine": 161,
+        "endCol": 105,
+        "kind": "property",
+        "scope": "addLight"
+      },
+      "render.getBearingFromBoat": {
+        "name": "getBearingFromBoat",
+        "line": 164,
+        "col": 2,
+        "endLine": 174,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "render",
+        "signature": "()"
+      },
+      "getBearingFromBoat.boatPos": {
+        "name": "boatPos",
+        "line": 165,
+        "col": 10,
+        "endLine": 165,
+        "endCol": 39,
+        "kind": "variable",
+        "scope": "getBearingFromBoat"
+      },
+      "getBearingFromBoat.dir": {
+        "name": "dir",
+        "line": 167,
+        "col": 10,
+        "endLine": 167,
+        "endCol": 52,
+        "kind": "variable",
+        "scope": "getBearingFromBoat"
+      },
+      "getBearingFromBoat.forward": {
+        "name": "forward",
+        "line": 170,
+        "col": 10,
+        "endLine": 170,
+        "endCol": 84,
+        "kind": "variable",
+        "scope": "getBearingFromBoat"
+      },
+      "render.updateVisibility": {
+        "name": "updateVisibility",
+        "line": 176,
+        "col": 2,
+        "endLine": 184,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "render",
+        "signature": "()"
+      },
+      "updateVisibility.b": {
+        "name": "b",
+        "line": 177,
+        "col": 10,
+        "endLine": 177,
+        "endCol": 34,
+        "kind": "variable",
+        "scope": "updateVisibility"
+      },
+      "updateVisibility.l": {
+        "name": "l",
+        "line": 178,
+        "col": 15,
+        "endLine": 178,
+        "endCol": 16,
+        "kind": "variable",
+        "scope": "updateVisibility"
+      },
+      "updateVisibility.vis": {
+        "name": "vis",
+        "line": 179,
+        "col": 12,
+        "endLine": 179,
+        "endCol": 89,
+        "kind": "variable",
+        "scope": "updateVisibility"
+      },
+      "render.mast": {
+        "name": "mast",
+        "line": 188,
+        "col": 10,
+        "endLine": 191,
+        "endCol": 5,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.cabinLen": {
+        "name": "cabinLen",
+        "line": 195,
+        "col": 10,
+        "endLine": 195,
+        "endCol": 41,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.cabin": {
+        "name": "cabin",
+        "line": 196,
+        "col": 10,
+        "endLine": 199,
+        "endCol": 5,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.resizeObserver": {
+        "name": "resizeObserver",
+        "line": 205,
+        "col": 8,
+        "endLine": 213,
+        "endCol": 4,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.everMounted": {
+        "name": "everMounted",
+        "line": 216,
+        "col": 6,
+        "endLine": 216,
+        "endCol": 25,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.animate": {
+        "name": "animate",
+        "line": 217,
+        "col": 2,
+        "endLine": 229,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "render",
+        "signature": "()"
+      },
+      "animate.inDoc": {
+        "name": "inDoc",
+        "line": 218,
+        "col": 10,
+        "endLine": 218,
+        "endCol": 56,
+        "kind": "variable",
+        "scope": "animate"
+      }
+    },
+    "description": [
+      ":doc",
+      [
+        ":p",
+        {
+          "s": "Library for rendering 3d images of sailing vessels and their lighting."
+        }
+      ]
+    ]
+  }
+}

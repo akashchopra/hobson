@@ -1,0 +1,239 @@
+const totalLength = 10, bowLength = 2;
+const mainHullLength = totalLength - bowLength;
+const hullWidth = 2.5, hullHeight = 1.0, mastHeight = 8;
+const sternEndX = -mainHullLength / 2 + bowLength / 2 + 0.05;
+const mastheadX = mainHullLength / 2 - 1;
+
+export const port = { x: 5, y: 1, z: -1.25 };
+export const starboard = { x: 5, y: 1, z: 1.25 };
+export const stern = { x: sternEndX, y: 1, z: 0 };
+export const mast1 = { x: mastheadX, y: hullHeight + mastHeight - 0.5, z: 0};
+export const mast2 = { x: mastheadX, y: hullHeight + mastHeight, z: 0};
+export const foreMast = { x: mastheadX + 3,  y: hullHeight + 2, z: 0};
+export const aftMast = { x: mastheadX - 4, y: hullHeight + 4, z: 0};
+export const foreMastHigh = { x: mastheadX + 3,  y: hullHeight + 3, z: 0};
+export const aftMastLow = { x: mastheadX - 4, y: hullHeight + 2, z: 0};
+export const cabin1 = { x: mastheadX - 2, y: hullHeight + 2.5, z: 0};
+export const cabin2 = { x: mastheadX - 2, y: hullHeight + 3.0, z: 0};
+export const cabin3 = { x: mastheadX - 2, y: hullHeight + 3.5, z: 0};
+
+export const portSector = { min: -112.5, max: 1 };
+export const starboardSector = { min: -1, max: 112.5 };
+export const sternSector = { min: 112.5, max: -112.5 };
+export const forwardSector = { min: -112.5, max: 112.5 };
+export const allRound = { min: -180.0, max: 180.0 };
+
+export const portLight =      { name: 'port',      color: 'red', position: port,        label: 'Port',      sector: portSector };
+export const starboardLight = { name: 'starboard', color: 'green', position: starboard, label: 'Starboard', sector: starboardSector };
+export const sternLight =     { name: 'stern',     color: 'white', position: stern,     label: 'Stern',     sector: sternSector };
+
+export async function render(api, boat, lights) {
+  const { THREE, OrbitControls } = await api.require('three-js-lib');
+
+  boat = boat || "sailing";
+  lights = lights || [ portLight, starboardLight, sternLight ];
+  //alert(JSON.stringify(lights));
+  const container = document.createElement('div');
+  container.style.cssText = 'width:100%;height:500px;position:relative;background:#1a1a1a;border-radius:var(--border-radius-lg);overflow:hidden;';
+
+  const resetBtn = document.createElement('button');
+  resetBtn.textContent = 'Reset view';
+  resetBtn.style.cssText = 'position:absolute;top:12px;right:12px;z-index:10;padding:6px 12px;background:#222;color:#fff;border:0.5px solid #555;border-radius:6px;font-size:13px;cursor:pointer;';
+  container.appendChild(resetBtn);
+
+  const threeContainer = document.createElement('div');
+  threeContainer.style.cssText = 'width:100%;height:100%;';
+  container.appendChild(threeContainer);
+
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x1a1a1a);
+
+  const initW = threeContainer.clientWidth || 800;
+  const initH = threeContainer.clientHeight || 600;
+  const camera = new THREE.PerspectiveCamera(45, initW / initH, 0.1, 1000);
+  camera.position.set(40, 15, 15);
+
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setSize(initW, initH, false);
+  renderer.domElement.style.cssText = 'display:block;width:100%;height:100%;'; 
+  renderer.shadowMap.enabled = true;
+  threeContainer.appendChild(renderer.domElement);
+
+  scene.add(new THREE.AmbientLight(0x404040, 1.5));
+  const dir = new THREE.DirectionalLight(0xffffff, 1.5);
+  dir.position.set(-5, 15, 10);
+  dir.castShadow = true;
+  scene.add(dir);
+
+  const water = new THREE.Mesh(
+    new THREE.PlaneGeometry(100, 100),
+    new THREE.MeshBasicMaterial({ color: 0x003366, transparent: true, opacity: 0.6 })
+  );
+  water.rotation.x = -Math.PI / 2;
+  scene.add(water);
+
+  const controls = new OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true;
+  controls.dampingFactor = 0.05;
+  controls.target.set(0, 0, 0);
+
+  const boatGroup = new THREE.Group();
+  scene.add(boatGroup);
+
+  const lightMap = {};
+
+  function buildHull() {
+    const hull = new THREE.Mesh(
+      new THREE.BoxGeometry(mainHullLength, hullHeight, hullWidth),
+      new THREE.MeshStandardMaterial({ color: 0xdddddd })
+    );
+    hull.position.set(bowLength / 2, hullHeight / 2, 0);
+    boatGroup.add(hull);
+
+    const bowGeometry = new THREE.BoxGeometry(bowLength, hullHeight, hullWidth);
+    bowGeometry.translate(bowLength / 2, 0, 0);
+    const pos = bowGeometry.attributes.position;
+    for (let i = 0; i < pos.count; i++) {
+      pos.setZ(i, pos.getZ(i) * (1 - pos.getX(i) / bowLength));
+    }
+    pos.needsUpdate = true;
+    bowGeometry.computeVertexNormals();
+    const bow = new THREE.Mesh(bowGeometry, new THREE.MeshStandardMaterial({ color: 0xdddddd }));
+    bow.position.set((mainHullLength + bowLength) / 2, hullHeight / 2, 0);
+    boatGroup.add(bow);
+  }
+
+  function addSector(cfg) {
+    const s = THREE.MathUtils.degToRad(cfg.sector.min);
+    const e = THREE.MathUtils.degToRad(cfg.sector.max);
+    let delta = e - s;
+    if (delta < 0) delta += Math.PI * 2;
+
+    const segments = 32;
+    const vertices = [0, 0, 0];
+    const indices = [];
+    for (let i = 0; i <= segments; i++) {
+      const angle = s + delta * (i / segments);
+      vertices.push(Math.cos(angle) * 20, 0, Math.sin(angle) * 20);
+      if (i < segments) indices.push(0, i + 1, i + 2);
+    }
+
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+    geometry.setIndex(indices);
+    geometry.computeVertexNormals();
+
+    const sector = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({
+      color: cfg.color, transparent: true, opacity: 0.15,
+      side: THREE.DoubleSide, depthWrite: false
+    }));
+    sector.position.set(cfg.position.x, cfg.position.y + 0.05, cfg.position.z);
+    boatGroup.add(sector);
+    return sector;
+  }
+
+  function addLight(cfg) {
+    //alert(JSON.stringify(cfg));
+    const mesh = new THREE.Mesh(
+      new THREE.SphereGeometry(0.2, 16, 16),
+      new THREE.MeshStandardMaterial({ color: cfg.color, emissive: cfg.color, emissiveIntensity: 3.0, roughness: 0.1 })
+    );
+    mesh.position.set(cfg.position.x, cfg.position.y, cfg.position.z);
+    mesh.add(new THREE.PointLight(cfg.color, 2, 15));
+    boatGroup.add(mesh);
+
+    const canvas = document.createElement('canvas');
+    canvas.width = 256; canvas.height = 64;
+    if (cfg.label) {
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = 'rgba(0,0,0,0.5)';
+      ctx.fillRect(0, 0, 256, 64);
+      ctx.font = 'bold 28px Arial';
+      ctx.fillStyle = 'white';
+      ctx.textAlign = 'center';
+      ctx.fillText(cfg.label, 128, 42);
+    }
+    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(canvas) }));
+    sprite.scale.set(3, 0.75, 1);
+    sprite.position.set(cfg.position.x, cfg.position.y + 1.5, cfg.position.z);
+    boatGroup.add(sprite);
+
+    lightMap[cfg.name] = { mesh, sprite, min: cfg.sector.min, max: cfg.sector.max, sector: addSector(cfg) };
+  }
+
+  function getBearingFromBoat() {
+    const boatPos = new THREE.Vector3();
+    boatGroup.getWorldPosition(boatPos);
+    const dir = camera.position.clone().sub(boatPos);
+    dir.y = 0;
+    dir.normalize();
+    const forward = new THREE.Vector3(1, 0, 0).applyQuaternion(boatGroup.quaternion);
+    forward.y = 0;
+    forward.normalize();
+    return Math.atan2(forward.x * dir.z - forward.z * dir.x, forward.x * dir.x + forward.z * dir.z) * (180 / Math.PI);
+  }
+
+  function updateVisibility() {
+    const b = getBearingFromBoat();
+    for (const l of Object.values(lightMap)) {
+      const vis = l.min < l.max ? (b >= l.min && b <= l.max) : (b <= l.max || b >= l.min);
+      l.mesh.visible = vis;
+      l.sprite.visible = vis;
+      l.sector.visible = vis;
+    }
+  }
+
+  buildHull();
+  if (boat === 'sailing') {
+    const mast = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.1, 0.1, mastHeight, 8),
+      new THREE.MeshStandardMaterial({ color: 0x888888 })
+    );
+    mast.position.set(mastheadX, hullHeight + mastHeight / 2, 0);
+    boatGroup.add(mast);
+  } else {
+    const cabinLen = mainHullLength * 0.3;
+    const cabin = new THREE.Mesh(
+      new THREE.BoxGeometry(cabinLen, 1.5, hullWidth * 0.7),
+      new THREE.MeshStandardMaterial({ color: 0xeeeeee })
+    );
+    cabin.position.set(mainHullLength / 4 - cabinLen, hullHeight + 0.75, 0);
+    boatGroup.add(cabin);
+  }
+  lights.forEach(cfg => addLight(cfg));
+
+  const resizeObserver = new ResizeObserver(entries => {
+    for (const entry of entries) {                    
+          const { width, height } = entry.contentRect;                                                        
+          if (height === 0) return;                   
+          camera.aspect = width / height;
+          camera.updateProjectionMatrix();
+          renderer.setSize(width, height, false);
+    }
+  });
+  resizeObserver.observe(threeContainer);
+
+  let everMounted = false;
+  function animate() {
+    const inDoc = document.contains(renderer.domElement);
+    if (everMounted && !inDoc) {
+      renderer.dispose();
+      resizeObserver.disconnect();
+      return;
+    }
+    if (inDoc) everMounted = true;
+    requestAnimationFrame(animate);
+    controls.update();
+    updateVisibility();
+    renderer.render(scene, camera);
+  }
+  animate();
+
+  resetBtn.onclick = () => {
+    camera.position.set(40, 15, 15);
+    controls.target.set(0, 0, 0);
+    controls.update();
+  };
+
+  return container;
+}
