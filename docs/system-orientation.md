@@ -30,22 +30,13 @@ See System Layers (`c0c0c0c0-0091`).
 
 ## Active Text (Document Format)
 
-Active Text is a JSON AST format used in `content.description`. It replaces plain markdown strings. The AST uses tagged arrays: `[":doc", [":p", {"s": "text"}], [":h2", {"s": "heading"}], ...]`. Block nodes include `:p`, `:h1`–`:h6`, `:ul`/`:ol`/`:li`, `:blockquote`, `:code-block`, `:table`, `:hr`, `:eval` (embedded Hob expressions). Inline nodes include `:strong`, `:em`, `:code`, `:s` (strikethrough), `:mark` (highlight), `:item-ref`, `:transclusion`, `:field-ref`, `:link`.
-
-The Active Text editor supports contenteditable editing with per-block granularity, markdown shortcuts for block creation, `@` autocomplete for item references, `@@` for transclusions, `\{\{` (remove escaping, only there to keep github pages happy) for field references, inline formatting via keyboard shortcuts, and click-to-edit popovers for links and references.
-
-**Rendering:** The `doc-renderer` library converts AST to DOM. Read-only rendering is handled by `field-view-doc-readonly`, editable by `field-view-doc-editable`.
+Active Text is a JSON AST used in `content.description` — see the **active-text** skill for the full node schema. Rendered read-only by `field-view-doc-readonly` (`d0d0d0d0-0006`), edited by `field-view-doc-editable` (`d0d0d0d0-0007`).
 
 **Detailed docs:** Transclusion (`c0c0c0c0-0035`)
 
 ## Views & Rendering
 
-A **view** is a code item that renders an item to DOM. Views receive `(item, api)` and return a DOM element. The system resolves which view to use via: explicit override (context menu "Change View") → type-definition's `content.default_view` → `generic-view` fallback.
-
-**Three ways to write views:**
-1. **Declarative view-specs** — JSON config consumed by `generic-view`. Specify field names, field-view types, and layout. No code required.
-2. **JS views** — Full ES module with `render(item, api)`. Maximum flexibility.
-3. **Hob views** — Written in the Hob language. Use morphdom for efficient DOM diffing. Preferred for new views.
+A **view** is a code item that renders an item to DOM. Views receive `(item, api)` and return a DOM element. The system resolves which view to use via: explicit override (context menu "Change View") → type-definition's `content.default_view` → `generic-view` fallback. See the **hob-views**, **js-views**, and **generic-views** skills for how to write each kind.
 
 **Field views** are sub-views that render a single field (text input, checkbox, markdown, code editor, etc.). View-specs compose field-views into layouts.
 
@@ -93,7 +84,7 @@ Hob is a Lisp dialect designed for Hobson. Code is stored as JSON AST in `conten
 
 **Element Inspector** — Click any UI element to see which item and view rendered it, the full render chain, and jump to source code. Activated via `?debug` URL parameter.
 
-**Testing** — Built-in test runner with assertion library. Tests run inside nested instances for full isolation (isolated storage via ID prefixing, isolated DOM via iframe, automatic cleanup). 315 tests across 13 test suites covering the Hob interpreter, kernel modules, and rendering.
+**Testing** — Built-in test runner with assertion library. Tests run inside nested instances for full isolation. See the **test-runner** skill.
 
 **Detailed docs:** REPL (`c0c0c0c0-0008`), Testing (`c0c0c0c0-0036`), Code Execution & Sandboxing (`c0c0c0c0-0028`)
 **Code:** `test-lib` (`7e570001`), `test-suite` type (`7e570002`), `system-browser` (`3a36e7d0`), `symbol-browser` (`ac0ac0ac-0008`), `element-inspector` (`eeee0000-0000-0000-0000-000000000010`)
@@ -112,7 +103,7 @@ Hob is a Lisp dialect designed for Hobson. Code is stored as JSON AST in `conten
 
 **Nested instances** — Complete isolated Hobson environments via `?instance=<id>`. Storage isolation through ID prefixing in IndexedDB. DOM isolation via iframes. Used for testing and sandboxed experimentation. Cascade delete prevents orphaned data.
 
-**App pages & widgets** — Grid-based pages for composing interactive UIs from widget items (buttons, sliders, radio groups). Support shared state (`pageContext`) for inter-widget communication. Used for the Theme Editor and nested instance creation tool.
+**App pages & widgets** — Grid-based pages composing widget items on a CSS grid with shared `pageContext` state. See the **app-pages** skill.
 
 **Code execution** — Code items evaluated as ES modules via `import()` with blob URLs. Strict mode. `require(name)` loads by name or GUID with caching and circular dependency detection.
 

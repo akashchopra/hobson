@@ -40,17 +40,19 @@ async function _importVault(api, tauri, opts) {
   // --- Clean up previous import ---
   // Also remove old flat tags from prior imports (they weren't tagged with OBSIDIAN_TAG,
   // but their description contains the importer signature string)
-  const allItems = await api.getAll();
-  const previousImport = allItems.filter(it =>
-    it.content?.tags?.includes(OBSIDIAN_TAG) ||
-    JSON.stringify(it.content?.description || '').includes('Imported from Obsidian tag')
-  );
-  if (previousImport.length > 0) {
-    log(`Removing ${previousImport.length} items from previous import...`);
-    for (const item of previousImport) {
-      await api.delete(item.id);
+  if (opts.cleanUp && confirm("This will delete all existing items tagged 'obsidian'!")) {     
+    const allItems = await api.getAll();
+    const previousImport = allItems.filter(it =>
+      it.content?.tags?.includes(OBSIDIAN_TAG) ||
+      JSON.stringify(it.content?.description || '').includes('Imported from Obsidian tag')
+    );
+    if (previousImport.length > 0) {
+      log(`Removing ${previousImport.length} items from previous import...`);
+      for (const item of previousImport) {
+        await api.delete(item.id);
+      }
+      log('Cleanup complete');
     }
-    log('Cleanup complete');
   }
 
   // --- Phase 1: Scan all files ---
@@ -151,9 +153,6 @@ async function _importVault(api, tauri, opts) {
         if (key === 'aliases' || key === 'cssclass') continue; // Obsidian-specific, skip
         content[key] = value;
       }
-
-      // Store source path for reference
-      content.sourcePath = file.relativePath;
 
       const item = {
         id: guid,

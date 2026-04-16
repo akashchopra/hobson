@@ -16,6 +16,20 @@ Detailed documentation lives in the item system. Key items for deep dives:
 
 Documentation items follow the `c0c0c0c0-XXXX-0000-0000-000000000000` GUID pattern. The system orientation doc links to all of them by topic.
 
+## Skills
+
+Task-specific reference guides live in `.claude/skills/`. Load the relevant skill before working on that area.
+
+| Skill | When to use |
+|-------|-------------|
+| `hob-views` | Writing or modifying Hob view items |
+| `js-views` | Writing or modifying JS view items |
+| `generic-views` | Writing view-specs for generic-view |
+| `app-pages` | Working with app-page items or widgets |
+| `test-runner` | Writing or running test suites |
+| `reminders` | Working with reminder items or scheduling |
+| `binary-assets` | Working with binary-asset subtypes or blob storage |
+| `active-text` | Reading or constructing Active Text (`content.description`) |
 
 ## Development Commands
 
