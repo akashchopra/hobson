@@ -29,15 +29,17 @@ export const portLight =      { name: 'port',      color: 'red', position: port,
 export const starboardLight = { name: 'starboard', color: 'green', position: starboard, label: 'Starboard', sector: starboardSector };
 export const sternLight =     { name: 'stern',     color: 'white', position: stern,     label: 'Stern',     sector: sternSector };
 
-export async function render(api, boat, statesMap) {
+export async function render(api, boat, statesMap, options = {}) {
   const { THREE, OrbitControls } = await api.require('three-js-lib');
 
   boat = boat || "sailing";
   statesMap = statesMap || {};
   const stateNames = Object.keys(statesMap);
+  const initState = (options.initialState && statesMap[options.initialState]) ? options.initialState : stateNames[0];
 
   const container = document.createElement('div');
   container.style.cssText = 'width:100%;height:500px;position:relative;background:#1a1a1a;border-radius:var(--border-radius-lg);overflow:hidden;';
+  container.setAttribute('data-morphdom-skip', '1');
 
   const resetBtn = document.createElement('button');
   resetBtn.textContent = 'Reset view';
@@ -52,6 +54,8 @@ export async function render(api, boat, statesMap) {
     opt.textContent = name;
     stateSelect.appendChild(opt);
   });
+  stateSelect.value = initState;
+  if (options.locked) stateSelect.style.display = 'none';
   container.appendChild(stateSelect);
 
   const showBoatLabel = document.createElement('label');
@@ -242,11 +246,12 @@ export async function render(api, boat, statesMap) {
     cabin.position.set(mainHullLength / 4 - cabinLen, hullHeight + 0.75, 0);
     hullGroup.add(cabin);
   }
-  (statesMap[stateNames[0]] || []).forEach(cfg => addLight(cfg));
+  (statesMap[initState] || []).forEach(cfg => addLight(cfg));
 
   stateSelect.onchange = () => {
     clearLights();
     (statesMap[stateSelect.value] || []).forEach(cfg => addLight(cfg));
+    if (options.onChange) options.onChange(stateSelect.value);
   };
 
   showBoatCheckbox.onchange = () => {

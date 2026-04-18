@@ -1,0 +1,43 @@
+export async function render(item, api) {
+  const container = api.createElement('div');
+  container.style.cssText = 'padding: 16px;';
+
+  const heading = api.createElement('h2');
+  heading.textContent = item.name;
+  heading.style.cssText = 'margin: 0 0 16px 0;';
+  container.appendChild(heading);
+
+  const lightStates = item.content?.['light-states'];
+  if (lightStates && typeof lightStates === 'object' && !Array.isArray(lightStates) && Object.keys(lightStates).length > 0) {
+    const lib = await api.require('sailing-light-lib');
+    const boat = item.content?.['boat'] || 'sailing';
+    const initialState = item.content?.['_selected-state'] || null;
+
+    const onChange = (newState) => {
+      api.get(item.id).then(fresh => {
+        return api.set({
+          ...fresh,
+          content: { ...fresh.content, '_selected-state': newState },
+          modified: Date.now()
+        });
+      }).catch(console.error);
+    };
+
+    const lightsEl = await lib.render(api, boat, lightStates, { initialState, onChange });
+    container.appendChild(lightsEl);
+  }
+
+  const desc = item.content?.description;
+  if (desc) {
+    const docMod = await api.require('field-view-doc-readonly');
+    const docEl = await docMod.render(desc, { item }, api);
+    if (docEl) {
+      const descWrapper = api.createElement('div');
+      descWrapper.style.cssText = 'margin-top: 16px;';
+      descWrapper.appendChild(docEl);
+      container.appendChild(descWrapper);
+    }
+  }
+
+  return container;
+}

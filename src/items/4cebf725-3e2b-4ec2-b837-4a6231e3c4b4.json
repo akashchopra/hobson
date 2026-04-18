@@ -3,7 +3,7 @@
   "name": "flash-card-deck-view",
   "type": "aaaaaaaa-0000-0000-0000-000000000000",
   "created": 1776414915331,
-  "modified": 1776459927234,
+  "modified": 1776524830319,
   "content": {
     "for_type": "6ace828f-d7b3-4b14-ab66-8181aa98f238",
     "displayName": "Flash Card Deck",
@@ -16,18 +16,10 @@
       [
         ":p",
         {
-          "s": "Quiz view for flash-card-deck items. Renders a random card from the filtered item set, with Reveal/Next controls."
+          "s": "Quiz view for flash-card-deck items. Renders a random (item, state) pair from the filtered set using a Hob question renderer stored on the deck."
         }
       ]
     ],
-    "_symbols": {
-      "render": {
-        "name": "render",
-        "kind": "function",
-        "scope": null,
-        "signature": "(item api)"
-      }
-    },
     "hob": [
       [
         "defn",
@@ -54,7 +46,21 @@
         ],
         [
           "def",
-          "q-field",
+          "state-field",
+          [
+            "get-in",
+            "item",
+            {
+              "v": [
+                ":content",
+                ":state-field"
+              ]
+            }
+          ]
+        ],
+        [
+          "def",
+          "q-ast",
           [
             "get-in",
             "item",
@@ -96,6 +102,20 @@
         ],
         [
           "def",
+          "current-state",
+          [
+            "get-in",
+            "item",
+            {
+              "v": [
+                ":content",
+                ":_current-state"
+              ]
+            }
+          ]
+        ],
+        [
+          "def",
           "is-revealed",
           [
             "get-in",
@@ -130,7 +150,7 @@
         ],
         [
           "def",
-          "deck-items",
+          "tagged-items",
           [
             "filter",
             [
@@ -141,49 +161,35 @@
                 ]
               },
               [
-                "and",
+                "some",
                 [
-                  "some",
-                  [
-                    "fn",
-                    {
-                      "v": [
-                        "t"
-                      ]
-                    },
-                    [
-                      "=",
-                      "t",
-                      "filter-tag"
+                  "fn",
+                  {
+                    "v": [
+                      "t"
                     ]
-                  ],
+                  },
                   [
-                    "or",
-                    [
-                      "get-in",
-                      "it",
-                      {
-                        "v": [
-                          ":content",
-                          ":tags"
-                        ]
-                      }
-                    ],
-                    {
-                      "v": []
-                    }
+                    "=",
+                    "t",
+                    "filter-tag"
                   ]
                 ],
                 [
-                  "not",
+                  "or",
                   [
-                    "nil?",
-                    [
-                      "get-field",
-                      "it",
-                      "q-field"
-                    ]
-                  ]
+                    "get-in",
+                    "it",
+                    {
+                      "v": [
+                        ":content",
+                        ":tags"
+                      ]
+                    }
+                  ],
+                  {
+                    "v": []
+                  }
                 ]
               ]
             ],
@@ -193,11 +199,133 @@
           ]
         ],
         [
+          "def",
+          "pool",
+          [
+            "reduce",
+            [
+              "fn",
+              {
+                "v": [
+                  "acc",
+                  "it"
+                ]
+              },
+              [
+                "if",
+                "state-field",
+                [
+                  "let",
+                  {
+                    "v": [
+                      "states",
+                      [
+                        ".resolveField",
+                        "fc-lib",
+                        "it",
+                        "state-field"
+                      ],
+                      "ks",
+                      [
+                        "when",
+                        [
+                          "and",
+                          "states",
+                          [
+                            "not",
+                            [
+                              "nil?",
+                              "states"
+                            ]
+                          ]
+                        ],
+                        [
+                          "js/Object.keys",
+                          "states"
+                        ]
+                      ]
+                    ]
+                  },
+                  [
+                    "if",
+                    [
+                      "and",
+                      "ks",
+                      [
+                        "seq",
+                        "ks"
+                      ]
+                    ],
+                    [
+                      "reduce",
+                      [
+                        "fn",
+                        {
+                          "v": [
+                            "a",
+                            "k"
+                          ]
+                        },
+                        [
+                          "conj",
+                          "a",
+                          {
+                            "m": [
+                              [
+                                ":itemId",
+                                [
+                                  ":id",
+                                  "it"
+                                ]
+                              ],
+                              [
+                                ":state",
+                                "k"
+                              ]
+                            ]
+                          }
+                        ]
+                      ],
+                      "acc",
+                      "ks"
+                    ],
+                    "acc"
+                  ]
+                ],
+                [
+                  "conj",
+                  "acc",
+                  {
+                    "m": [
+                      [
+                        ":itemId",
+                        [
+                          ":id",
+                          "it"
+                        ]
+                      ],
+                      [
+                        ":state",
+                        null
+                      ]
+                    ]
+                  }
+                ]
+              ]
+            ],
+            {
+              "v": []
+            },
+            "tagged-items"
+          ]
+        ],
+        [
           "defn",
           "save-card!",
           {
             "v": [
               "card-id",
+              "state-val",
               "revealed"
             ]
           },
@@ -235,6 +363,16 @@
                   {
                     "v": [
                       ":content",
+                      ":_current-state"
+                    ]
+                  },
+                  "state-val"
+                ],
+                [
+                  "assoc-in",
+                  {
+                    "v": [
+                      ":content",
                       ":_revealed"
                     ]
                   },
@@ -253,38 +391,54 @@
         ],
         [
           "def",
-          "stored-item",
+          "stored-pair",
           [
-            "when",
-            "current-card-id",
+            "some",
             [
-              "get-item",
-              "current-card-id"
-            ]
+              "fn",
+              {
+                "v": [
+                  "p"
+                ]
+              },
+              [
+                "when",
+                [
+                  "and",
+                  [
+                    "=",
+                    [
+                      ":itemId",
+                      "p"
+                    ],
+                    "current-card-id"
+                  ],
+                  [
+                    "=",
+                    [
+                      ":state",
+                      "p"
+                    ],
+                    "current-state"
+                  ]
+                ],
+                "p"
+              ]
+            ],
+            "pool"
           ]
         ],
         [
           "def",
           "needs-new-card?",
           [
-            "or",
-            [
-              "nil?",
-              "stored-item"
-            ],
-            [
-              "nil?",
-              [
-                "get-field",
-                "stored-item",
-                "q-field"
-              ]
-            ]
+            "nil?",
+            "stored-pair"
           ]
         ],
         [
           "def",
-          "current-item",
+          "current-pair",
           [
             "if",
             "needs-new-card?",
@@ -292,7 +446,7 @@
               "when",
               [
                 "seq",
-                "deck-items"
+                "pool"
               ],
               [
                 "let",
@@ -301,7 +455,7 @@
                     "n",
                     [
                       "count",
-                      "deck-items"
+                      "pool"
                     ],
                     "idx",
                     [
@@ -318,26 +472,30 @@
                 },
                 [
                   "nth",
-                  "deck-items",
+                  "pool",
                   "idx"
                 ]
               ]
             ],
-            "stored-item"
+            "stored-pair"
           ]
         ],
         [
           "when",
           [
             "and",
-            "current-item",
+            "current-pair",
             "needs-new-card?"
           ],
           [
             "save-card!",
             [
-              ":id",
-              "current-item"
+              ":itemId",
+              "current-pair"
+            ],
+            [
+              ":state",
+              "current-pair"
             ],
             false
           ]
@@ -352,7 +510,7 @@
             "when",
             [
               "seq",
-              "deck-items"
+              "pool"
             ],
             [
               "let",
@@ -365,24 +523,41 @@
                       "fn",
                       {
                         "v": [
-                          "it"
+                          "p"
                         ]
                       },
                       [
-                        "not=",
+                        "not",
                         [
-                          ":id",
-                          "it"
-                        ],
-                        [
-                          ":id",
-                          "current-item"
+                          "and",
+                          [
+                            "=",
+                            [
+                              ":itemId",
+                              "p"
+                            ],
+                            [
+                              ":itemId",
+                              "current-pair"
+                            ]
+                          ],
+                          [
+                            "=",
+                            [
+                              ":state",
+                              "p"
+                            ],
+                            [
+                              ":state",
+                              "current-pair"
+                            ]
+                          ]
                         ]
                       ]
                     ],
-                    "deck-items"
+                    "pool"
                   ],
-                  "pool",
+                  "candidates",
                   [
                     "if",
                     [
@@ -390,12 +565,12 @@
                       "others"
                     ],
                     "others",
-                    "deck-items"
+                    "pool"
                   ],
                   "n",
                   [
                     "count",
-                    "pool"
+                    "candidates"
                   ],
                   "idx",
                   [
@@ -407,20 +582,41 @@
                       ],
                       "n"
                     ]
+                  ],
+                  "next-pair",
+                  [
+                    "nth",
+                    "candidates",
+                    "idx"
                   ]
                 ]
               },
               [
                 "save-card!",
                 [
-                  ":id",
-                  [
-                    "nth",
-                    "pool",
-                    "idx"
-                  ]
+                  ":itemId",
+                  "next-pair"
+                ],
+                [
+                  ":state",
+                  "next-pair"
                 ],
                 false
+              ]
+            ]
+          ]
+        ],
+        [
+          "def",
+          "current-item",
+          [
+            "when",
+            "current-pair",
+            [
+              "get-item",
+              [
+                ":itemId",
+                "current-pair"
               ]
             ]
           ]
@@ -604,16 +800,93 @@
         ],
         [
           "def",
-          "s-divider",
-          {
-            "s": "border: none; border-top: 1px solid var(--color-border); margin: 16px 0;"
-          }
+          "answer-val",
+          [
+            "when",
+            [
+              "and",
+              "current-item",
+              "a-field"
+            ],
+            [
+              ".resolveField",
+              "fc-lib",
+              "current-item",
+              "a-field"
+            ]
+          ]
+        ],
+        [
+          "def",
+          "q-id",
+          [
+            "str",
+            {
+              "s": "fc-q-"
+            },
+            [
+              "or",
+              [
+                ":itemId",
+                "current-pair"
+              ],
+              {
+                "s": "none"
+              }
+            ],
+            {
+              "s": "||"
+            },
+            [
+              "or",
+              [
+                ":state",
+                "current-pair"
+              ],
+              {
+                "s": ""
+              }
+            ]
+          ]
+        ],
+        [
+          "def",
+          "a-id",
+          [
+            "str",
+            {
+              "s": "fc-a-"
+            },
+            [
+              "or",
+              [
+                ":itemId",
+                "current-pair"
+              ],
+              {
+                "s": "none"
+              }
+            ],
+            {
+              "s": "||"
+            },
+            [
+              "or",
+              [
+                ":state",
+                "current-pair"
+              ],
+              {
+                "s": ""
+              }
+            ]
+          ]
         ],
         [
           "if",
           [
             "nil?",
-            "current-item"
+            "current-pair"
           ],
           {
             "v": [
@@ -662,16 +935,7 @@
                     "m": [
                       [
                         ":id",
-                        [
-                          "str",
-                          {
-                            "s": "fc-q-"
-                          },
-                          [
-                            ":id",
-                            "current-item"
-                          ]
-                        ]
+                        "q-id"
                       ],
                       [
                         ":style",
@@ -680,11 +944,29 @@
                     ]
                   },
                   [
-                    "render-field",
+                    "when",
                     [
-                      "get-field",
+                      "and",
+                      [
+                        "sequential?",
+                        "q-ast"
+                      ],
+                      [
+                        "seq",
+                        "q-ast"
+                      ],
+                      "current-item"
+                    ],
+                    [
+                      ".renderQuestion",
+                      "fc-lib",
+                      "api",
+                      "q-ast",
                       "current-item",
-                      "q-field"
+                      [
+                        ":state",
+                        "current-pair"
+                      ]
                     ]
                   ]
                 ]
@@ -702,16 +984,7 @@
                         "m": [
                           [
                             ":id",
-                            [
-                              "str",
-                              {
-                                "s": "fc-a-"
-                              },
-                              [
-                                ":id",
-                                "current-item"
-                              ]
-                            ]
+                            "a-id"
                           ],
                           [
                             ":style",
@@ -737,11 +1010,37 @@
                             },
                             [
                               "render-field",
+                              "answer-val"
+                            ],
+                            [
+                              "when",
                               [
-                                "get-field",
-                                "current-item",
-                                "a-field"
-                              ]
+                                "and",
+                                "state-field",
+                                "current-state"
+                              ],
+                              {
+                                "v": [
+                                  ":span",
+                                  {
+                                    "m": [
+                                      [
+                                        ":style",
+                                        {
+                                          "s": "color: var(--color-text-secondary);"
+                                        }
+                                      ]
+                                    ]
+                                  },
+                                  [
+                                    "str",
+                                    {
+                                      "s": " — "
+                                    },
+                                    "current-state"
+                                  ]
+                                ]
+                              }
                             ],
                             {
                               "v": [
@@ -767,8 +1066,8 @@
                                           "open-item!",
                                           "e",
                                           [
-                                            ":id",
-                                            "current-item"
+                                            ":itemId",
+                                            "current-pair"
                                           ]
                                         ]
                                       ]
@@ -861,12 +1160,24 @@
                                             ":_current-card"
                                           ]
                                         }
+                                      ],
+                                      "cs",
+                                      [
+                                        "get-in",
+                                        "fresh",
+                                        {
+                                          "v": [
+                                            ":content",
+                                            ":_current-state"
+                                          ]
+                                        }
                                       ]
                                     ]
                                   },
                                   [
                                     "save-card!",
                                     "cid",
+                                    "cs",
                                     true
                                   ]
                                 ]
@@ -926,7 +1237,15 @@
           }
         ]
       ]
-    ]
+    ],
+    "_symbols": {
+      "render": {
+        "name": "render",
+        "kind": "function",
+        "scope": null,
+        "signature": "(item api)"
+      }
+    }
   },
   "attachments": []
 }
