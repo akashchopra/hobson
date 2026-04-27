@@ -25,6 +25,8 @@ It allows all notification related features.
 - `allow-delete-channel`
 - `allow-create-channel`
 - `allow-permission-state`
+- `allow-can-schedule-exact-alarms`
+- `allow-request-schedule-exact-alarm`
 
 ## Permission Table
 
@@ -57,6 +59,32 @@ Enables the batch command without any pre-configured scope.
 <td>
 
 Denies the batch command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`notification:allow-can-schedule-exact-alarms`
+
+</td>
+<td>
+
+Enables the can_schedule_exact_alarms command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`notification:deny-can-schedule-exact-alarms`
+
+</td>
+<td>
+
+Denies the can_schedule_exact_alarms command without any pre-configured scope.
 
 </td>
 </tr>
@@ -421,6 +449,32 @@ Enables the request_permission command without any pre-configured scope.
 <td>
 
 Denies the request_permission command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`notification:allow-request-schedule-exact-alarm`
+
+</td>
+<td>
+
+Enables the request_schedule_exact_alarm command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`notification:deny-request-schedule-exact-alarm`
+
+</td>
+<td>
+
+Denies the request_schedule_exact_alarm command without any pre-configured scope.
 
 </td>
 </tr>

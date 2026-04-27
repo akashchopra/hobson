@@ -29,6 +29,7 @@ export async function onKernelBootComplete({ safeMode }, api) {
     await _interp.evaluate(ast);
   }
   _scheduleOne = await _interp.eval('schedule-one!');
+  await checkExactAlarmPermission(api);
   await _interp.eval('(boot-scan!)');
 }
 
@@ -99,6 +100,25 @@ export async function scheduleOneFrom(item, baseTime) {
   }
 }
 
+
+// Checks whether exact alarms are available on Android 12+.
+// If not, opens the system settings screen so the user can grant
+// SCHEDULE_EXACT_ALARM — needed for reminders to fire on time.
+// Only prompts if at least one reminder with an active schedule exists.
+async function checkExactAlarmPermission(api) {
+  try {
+    const notif = window.__TAURI__?.notification;
+    if (!notif?.canScheduleExactAlarms) return;
+    const { value } = await notif.canScheduleExactAlarms();
+    if (value) return;
+    const items = await api.getAll();
+    const hasScheduled = items.some(
+      it => it.type === REMINDER_TYPE && it.content?.hob?.length > 0
+    );
+    if (!hasScheduled) return;
+    await notif.requestScheduleExactAlarm();
+  } catch (_) {}
+}
 
 ;;; --- Hob ---
 (def doc (dom-get (hiccup->dom [:div]) :ownerDocument))
