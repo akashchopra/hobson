@@ -79,6 +79,17 @@ async fn http_response(
 }
 
 #[tauri::command]
+async fn consume_pending_share(app: AppHandle) -> Result<Option<String>, String> {
+    let path = app.path().app_cache_dir().map_err(|e| e.to_string())?.join("pending_share.txt");
+    if !path.exists() {
+        return Ok(None);
+    }
+    let url = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    std::fs::remove_file(&path).map_err(|e| e.to_string())?;
+    Ok(Some(url.trim().to_string()))
+}
+
+#[tauri::command]
 async fn start_http_server(app: AppHandle, port: u16) -> Result<String, String> {
     let running: tauri::State<'_, Arc<AtomicBool>> = app.state();
     if running.swap(true, Ordering::SeqCst) {
@@ -127,7 +138,7 @@ pub fn run() {
     tauri::Builder::default()
         .manage(pending)
         .manage(server_running)
-        .invoke_handler(tauri::generate_handler![start_http_server, http_response])
+        .invoke_handler(tauri::generate_handler![start_http_server, http_response, consume_pending_share])
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_http::init())

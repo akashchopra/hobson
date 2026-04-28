@@ -1,0 +1,195 @@
+{
+  "id": "866f36de-7b7c-4b1d-b861-f82b40f550b7",
+  "name": "web-clipper",
+  "type": "66666666-0000-0000-0000-000000000000",
+  "created": 1777334400000,
+  "modified": 1777371532118,
+  "watches": [
+    {
+      "event": "e0e00000-0003-0003-0000-000000000000"
+    }
+  ],
+  "content": {
+    "code": "// web-clipper — handles Android share intents (ACTION_SEND / text/plain)\n//\n// Two paths to receiving a URL:\n//   Already running: Kotlin injects window.__pendingShareUrl via evaluateJavascript and\n//                    dispatches 'hobson-check-share'. No file read needed.\n//   Cold launch: Kotlin wrote pending_share.txt to cacheDir before Hobson started;\n//                consume_pending_share() reads and deletes it on boot.\n\nlet api = null;\n\nexport async function onViewportReady(_payload, _api) {\n  api = _api;\n\n  if (!window.__TAURI__) return;\n\n  await checkPendingShare();\n  window.addEventListener('hobson-check-share', onCheckShare);\n}\n\nasync function onCheckShare() {\n  const url = window.__pendingShareUrl;\n  if (url) {\n    delete window.__pendingShareUrl;\n    await showShareDialog(url);\n    return;\n  }\n  await checkPendingShare();\n}\n\nasync function checkPendingShare() {\n  try {\n    const url = await window.__TAURI__.core.invoke('consume_pending_share');\n    if (url) await showShareDialog(url);\n  } catch (e) {\n    console.error('[web-clipper] consume_pending_share failed:', e);\n  }\n}\n\nasync function showShareDialog(url) {\n  const modalLib = await api.require('modal-lib');\n  const searchLib = await api.require('item-search-lib');\n\n  const container = document.createElement('div');\n\n  const urlDisplay = document.createElement('div');\n  urlDisplay.style.cssText = 'padding: 8px 12px; margin-bottom: 12px; background: var(--color-bg-surface); border: 1px solid var(--color-border-light); border-radius: var(--border-radius); font-size: 0.8125rem; color: var(--color-text-secondary); word-break: break-all;';\n  urlDisplay.textContent = url;\n  container.appendChild(urlDisplay);\n\n  const searchArea = document.createElement('div');\n  container.appendChild(searchArea);\n\n  const { close } = modalLib.showModal({\n    title: 'Save URL to...',\n    width: '600px',\n    maxHeight: '80vh',\n    api,\n    content: container\n  });\n\n  searchLib.createSearchUI(\n    searchArea,\n    async (selectedItem) => {\n      close();\n      await appendUrlToItem(selectedItem.id, url);\n    },\n    api,\n    { placeholder: 'Search for an item...', autoFocus: true }\n  );\n}\n\nasync function appendUrlToItem(itemId, url) {\n  const item = await api.get(itemId);\n  if (!item.content) item.content = {};\n\n  const linkParagraph = [':p', [':link', { s: url }, { s: url }]];\n\n  if (Array.isArray(item.content.description) && item.content.description[0] === ':doc') {\n    item.content.description = [...item.content.description, linkParagraph];\n  } else {\n    item.content.description = [':doc', [':p', { s: '' }], linkParagraph];\n  }\n\n  item.modified = Date.now();\n  await api.set(item);\n}\n\nexport function cleanup() {\n  window.removeEventListener('hobson-check-share', onCheckShare);\n}\n",
+    "_symbols": {
+      "api": {
+        "name": "api",
+        "line": 9,
+        "col": 4,
+        "endLine": 9,
+        "endCol": 14,
+        "kind": "variable",
+        "scope": null
+      },
+      "onViewportReady": {
+        "name": "onViewportReady",
+        "line": 11,
+        "col": 7,
+        "endLine": 18,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(_payload, _api)"
+      },
+      "onCheckShare": {
+        "name": "onCheckShare",
+        "line": 20,
+        "col": 0,
+        "endLine": 28,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "()"
+      },
+      "onCheckShare.url": {
+        "name": "url",
+        "line": 21,
+        "col": 8,
+        "endLine": 21,
+        "endCol": 38,
+        "kind": "variable",
+        "scope": "onCheckShare"
+      },
+      "checkPendingShare": {
+        "name": "checkPendingShare",
+        "line": 30,
+        "col": 0,
+        "endLine": 37,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "()"
+      },
+      "checkPendingShare.url": {
+        "name": "url",
+        "line": 32,
+        "col": 10,
+        "endLine": 32,
+        "endCol": 75,
+        "kind": "variable",
+        "scope": "checkPendingShare"
+      },
+      "showShareDialog": {
+        "name": "showShareDialog",
+        "line": 39,
+        "col": 0,
+        "endLine": 70,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(url)"
+      },
+      "showShareDialog.modalLib": {
+        "name": "modalLib",
+        "line": 40,
+        "col": 8,
+        "endLine": 40,
+        "endCol": 49,
+        "kind": "variable",
+        "scope": "showShareDialog"
+      },
+      "showShareDialog.searchLib": {
+        "name": "searchLib",
+        "line": 41,
+        "col": 8,
+        "endLine": 41,
+        "endCol": 56,
+        "kind": "variable",
+        "scope": "showShareDialog"
+      },
+      "showShareDialog.container": {
+        "name": "container",
+        "line": 43,
+        "col": 8,
+        "endLine": 43,
+        "endCol": 49,
+        "kind": "variable",
+        "scope": "showShareDialog"
+      },
+      "showShareDialog.urlDisplay": {
+        "name": "urlDisplay",
+        "line": 45,
+        "col": 8,
+        "endLine": 45,
+        "endCol": 50,
+        "kind": "variable",
+        "scope": "showShareDialog"
+      },
+      "showShareDialog.searchArea": {
+        "name": "searchArea",
+        "line": 50,
+        "col": 8,
+        "endLine": 50,
+        "endCol": 50,
+        "kind": "variable",
+        "scope": "showShareDialog"
+      },
+      "showShareDialog.placeholder": {
+        "name": "placeholder",
+        "line": 68,
+        "col": 6,
+        "endLine": 68,
+        "endCol": 42,
+        "kind": "property",
+        "scope": "showShareDialog"
+      },
+      "showShareDialog.autoFocus": {
+        "name": "autoFocus",
+        "line": 68,
+        "col": 44,
+        "endLine": 68,
+        "endCol": 59,
+        "kind": "property",
+        "scope": "showShareDialog"
+      },
+      "appendUrlToItem": {
+        "name": "appendUrlToItem",
+        "line": 72,
+        "col": 0,
+        "endLine": 86,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(itemId, url)"
+      },
+      "appendUrlToItem.item": {
+        "name": "item",
+        "line": 73,
+        "col": 8,
+        "endLine": 73,
+        "endCol": 36,
+        "kind": "variable",
+        "scope": "appendUrlToItem"
+      },
+      "appendUrlToItem.linkParagraph": {
+        "name": "linkParagraph",
+        "line": 76,
+        "col": 8,
+        "endLine": 76,
+        "endCol": 65,
+        "kind": "variable",
+        "scope": "appendUrlToItem"
+      },
+      "appendUrlToItem.s": {
+        "name": "s",
+        "line": 81,
+        "col": 49,
+        "endLine": 81,
+        "endCol": 54,
+        "kind": "property",
+        "scope": "appendUrlToItem"
+      },
+      "cleanup": {
+        "name": "cleanup",
+        "line": 88,
+        "col": 7,
+        "endLine": 90,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "()"
+      }
+    }
+  },
+  "attachments": []
+}

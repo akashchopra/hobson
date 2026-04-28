@@ -1,0 +1,90 @@
+// web-clipper — handles Android share intents (ACTION_SEND / text/plain)
+//
+// Two paths to receiving a URL:
+//   Already running: Kotlin injects window.__pendingShareUrl via evaluateJavascript and
+//                    dispatches 'hobson-check-share'. No file read needed.
+//   Cold launch: Kotlin wrote pending_share.txt to cacheDir before Hobson started;
+//                consume_pending_share() reads and deletes it on boot.
+
+let api = null;
+
+export async function onViewportReady(_payload, _api) {
+  api = _api;
+
+  if (!window.__TAURI__) return;
+
+  await checkPendingShare();
+  window.addEventListener('hobson-check-share', onCheckShare);
+}
+
+async function onCheckShare() {
+  const url = window.__pendingShareUrl;
+  if (url) {
+    delete window.__pendingShareUrl;
+    await showShareDialog(url);
+    return;
+  }
+  await checkPendingShare();
+}
+
+async function checkPendingShare() {
+  try {
+    const url = await window.__TAURI__.core.invoke('consume_pending_share');
+    if (url) await showShareDialog(url);
+  } catch (e) {
+    console.error('[web-clipper] consume_pending_share failed:', e);
+  }
+}
+
+async function showShareDialog(url) {
+  const modalLib = await api.require('modal-lib');
+  const searchLib = await api.require('item-search-lib');
+
+  const container = document.createElement('div');
+
+  const urlDisplay = document.createElement('div');
+  urlDisplay.style.cssText = 'padding: 8px 12px; margin-bottom: 12px; background: var(--color-bg-surface); border: 1px solid var(--color-border-light); border-radius: var(--border-radius); font-size: 0.8125rem; color: var(--color-text-secondary); word-break: break-all;';
+  urlDisplay.textContent = url;
+  container.appendChild(urlDisplay);
+
+  const searchArea = document.createElement('div');
+  container.appendChild(searchArea);
+
+  const { close } = modalLib.showModal({
+    title: 'Save URL to...',
+    width: '600px',
+    maxHeight: '80vh',
+    api,
+    content: container
+  });
+
+  searchLib.createSearchUI(
+    searchArea,
+    async (selectedItem) => {
+      close();
+      await appendUrlToItem(selectedItem.id, url);
+    },
+    api,
+    { placeholder: 'Search for an item...', autoFocus: true }
+  );
+}
+
+async function appendUrlToItem(itemId, url) {
+  const item = await api.get(itemId);
+  if (!item.content) item.content = {};
+
+  const linkParagraph = [':p', [':link', { s: url }, { s: url }]];
+
+  if (Array.isArray(item.content.description) && item.content.description[0] === ':doc') {
+    item.content.description = [...item.content.description, linkParagraph];
+  } else {
+    item.content.description = [':doc', [':p', { s: '' }], linkParagraph];
+  }
+
+  item.modified = Date.now();
+  await api.set(item);
+}
+
+export function cleanup() {
+  window.removeEventListener('hobson-check-share', onCheckShare);
+}
