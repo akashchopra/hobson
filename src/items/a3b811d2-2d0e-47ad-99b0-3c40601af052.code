@@ -1,0 +1,98 @@
+(defn render [item api]
+  (def text-atom (atom ""))
+  (def working-atom (atom false))
+  (def error-atom (atom nil))
+  (defn parse-fm [text]
+    (let [norm (str/replace text "\\r\n" "\n") trimmed (str/trim norm)]
+      (if
+        (and (>= (count trimmed) 4) (= (subs trimmed 0 4) "---\n"))
+        (let [after-open (subs trimmed 4)
+              parts (str/split after-open "\n---\n")]
+          (if
+            (>= (count parts) 2)
+            (let [fm-lines (filter
+                             (fn [l] (str/includes? l ": "))
+                             (str/split (first parts) "\n"))
+                  fm-map (reduce
+                           (fn [acc line]
+                             (let [kv (str/split line ": ")
+                                   k (str/trim (first kv))
+                                   v (str/trim (str/join ": " (rest kv)))]
+                               (if (not= k "") (assoc acc k v) acc)))
+                           {}
+                           fm-lines)
+                  body (str/trim (str/join "\n---\n" (rest parts)))]
+              {:title (get fm-map "title")
+               :source (get fm-map "source")
+               :body body})
+            {:title nil :source nil :body trimmed}))
+        {:title nil :source nil :body trimmed})))
+  (defn clean-title [s]
+    (let [t (str/trim (or s ""))]
+      (if
+        (= t "")
+        "Untitled Web Clip"
+        (if
+          (and
+            (>= (count t) 2)
+            (= (subs t 0 1) "\"")
+            (= (subs t (dec (count t)) (count t)) "\""))
+          (subs t 1 (dec (count t)))
+          t))))
+  [:div {:style "max-width: 700px; margin: 0 auto; padding: 20px;"}
+    [:h2 {:style "margin: 0 0 16px 0; font-size: 1.25rem; font-weight: 600;"}
+      "Create Note from Markdown"]
+    [:textarea {:style "width: 100%; height: 300px; padding: 8px 12px; font-family: var(--font-mono); font-size: 0.8125rem; border: 1px solid var(--color-border); border-radius: var(--border-radius); background: var(--color-bg-surface); color: var(--color-text); resize: vertical; box-sizing: border-box;"
+                :placeholder "Paste markdown here..."
+                :value (deref text-atom)
+                :on-input (fn [e]
+                            (reset!
+                              text-atom
+                              (dom-get (dom-get e :target) :value)))}]
+    (when
+      (deref error-atom)
+      [:div {:style "margin-top: 8px; font-size: 0.8125rem; color: #c0392b;"}
+        (deref error-atom)])
+    [:button {:style "margin-top: 12px; padding: 8px 20px; background: var(--color-primary); color: white; border: none; border-radius: var(--border-radius); cursor: pointer; font-size: 0.9375rem;"
+              :disabled (deref working-atom)
+              :on-click (fn [e]
+                          (let [raw (str/trim (deref text-atom))]
+                            (when
+                              (not= raw "")
+                              (reset! working-atom true)
+                              (reset! error-atom nil)
+                              (try
+                                (let [md-lib (js-require
+                                               "markdown-to-active-text")
+                                      parsed (parse-fm raw)
+                                      title (clean-title (:title parsed))
+                                      source (:source parsed)
+                                      body (:body parsed)
+                                      ast (.convert md-lib body)
+                                      final-ast (if
+                                                  source
+                                                  (concat
+                                                    [":doc"
+                                                     [":p"
+                                                       [":link"
+                                                         {:s source}
+                                                         {:s source}]]]
+                                                    (rest ast))
+                                                  ast)
+                                      note-id (js/crypto.randomUUID)]
+                                  (set-item!
+                                    {:id note-id
+                                     :name title
+                                     :type "871ae771-b9b1-4f40-8c7f-d9038bfb69c3"
+                                     :created (now)
+                                     :modified (now)
+                                     :content {:description final-ast}
+                                     :attachments []})
+                                  (open-item! e note-id))
+                                (catch
+                                  err
+                                  (reset!
+                                    error-atom
+                                    (str "Error: " (dom-get err :message)))
+                                  (reset! working-atom false))))))}
+      (if (deref working-atom) "Creating..." "Create Note")]])
