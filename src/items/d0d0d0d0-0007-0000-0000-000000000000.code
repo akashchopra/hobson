@@ -1911,24 +1911,36 @@ export async function render(value, options, api) {
   function handleBeforeInput(e, blockEl, path) {
     if (!editor.contains(blockEl)) return;
     const _tr = e.getTargetRanges ? e.getTargetRanges() : [];
-    // Android IME may unwrap a non-editable island as insertCompositionText
-    // instead of deleteContentBackward.  Detect by checking saved selection.
-    if (e.inputType === 'insertCompositionText' && _savedSel && _savedSel.collapsed) {
-      const _compTarget = getNonEditableNodeBefore(blockEl);
-      if (_compTarget && e.data != null && _compTarget.textContent.includes(e.data)) {
+    // Android IME may use insertCompositionText to represent backspace/edit operations
+    // near non-editable islands. Two cases:
+    if (e.inputType === 'insertCompositionText' && e.data != null) {
+      // Case A: composition text IS a non-editable node's content — cursor right before it.
+      if (_savedSel && _savedSel.collapsed) {
+        const _compTarget = getNonEditableNodeBefore(blockEl);
+        if (_compTarget && _compTarget.textContent.includes(e.data)) {
+          e.preventDefault();
+          removeNonEditableNode(_compTarget, blockEl, path);
+          return;
+        }
+      }
+      // Case B: composition text contains ￼ (Android's OBJ placeholder for a checkbox).
+      // Without interception the browser inserts OBJ as literal text, corrupting the block.
+      if (e.data.includes('￼') && blockEl.querySelector('.doc-checkbox')) {
         e.preventDefault();
-        removeNonEditableNode(_compTarget, blockEl, path);
+        const cleanText = e.data.replace(/￼/g, '').replace(/​/g, '');
+        pushUndo();
+        const block = getBlock(path);
+        const checkbox = block.slice(1).find(n => Array.isArray(n) && n[0] === ':checkbox');
+        const newContent = cleanText ? [{ s: cleanText }] : [{ s: '' }];
+        if (checkbox) newContent.unshift(checkbox);
+        setBlock(path, [block[0], ...newContent]);
+        renderAllBlocks();
+        emitChange();
+        const cleanChars = e.data.replace(/​/g, '').replace(/￼/g, '').length;
+        requestAnimationFrame(() => focusBlockAtOffset(path, 1 + cleanChars));
         return;
       }
     }
-    // Backspace right after a checkbox → remove the checkbox
-    // (beforeinput handles this because mobile keydown may fire as 'Unidentified')
-    if (e.inputType === 'deleteContentBackward' && isCursorRightAfterCheckbox(blockEl)) {
-      e.preventDefault();
-      removeCheckboxFromBlock(path);
-      return;
-    }
-
     // Delete with non-collapsed selection — Android IME selects content before
     // firing deleteContentBackward.  Two cases:
     //   (a) selection is ZWS-only text adjacent to a non-editable island
@@ -1952,6 +1964,12 @@ export async function render(value, options, api) {
             if (isNonEditableIsland(prev)) {
               e.preventDefault();
               removeNonEditableNode(prev, blockEl, path);
+              return;
+            }
+            // ZWS-only selection right after a checkbox \u2192 treat as checkbox backspace
+            if (prev?.nodeType === 1 && prev.classList?.contains('doc-checkbox')) {
+              e.preventDefault();
+              removeCheckboxFromBlock(path);
               return;
             }
           }
@@ -1996,15 +2014,13 @@ export async function render(value, options, api) {
       }
     }
 
-    // Backspace/delete adjacent to a non-editable inline node (collapsed cursor).
-    if (e.inputType === 'deleteContentBackward') {
-      const target = getNonEditableNodeBefore(blockEl);
-      if (target) { e.preventDefault(); removeNonEditableNode(target, blockEl, path); return; }
-    }
+    // Forward-delete adjacent to a non-editable inline node (collapsed cursor).
     if (e.inputType === 'deleteContentForward') {
       const target = getNonEditableNodeAfter(blockEl);
       if (target) { e.preventDefault(); removeNonEditableNode(target, blockEl, path); return; }
     }
+    // All collapsed-cursor backspace cases (mobile path — keydown fires Unidentified).
+    if (e.inputType === 'deleteContentBackward') { handleBackspace(e, blockEl, path); return; }
 
     // Space-triggered markdown shortcuts — uses beforeinput instead of keydown
     // because mobile virtual keyboards don't reliably fire keydown for space.
@@ -2116,61 +2132,7 @@ export async function render(value, options, api) {
       if (listCtx) { handleListEnter(blockEl, path, listCtx); return; }
       splitBlock(blockEl, path);
     } else if (e.key === 'Backspace' && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
-      if (isCursorRightAfterCheckbox(blockEl)) {
-        e.preventDefault();
-        removeCheckboxFromBlock(path);
-        return;
-      }
-      if (isCursorAtStart(blockEl)) {
-        const listCtx = getListContext(path);
-        if (listCtx && listCtx.pIdx === 0) {
-          e.preventDefault();
-          handleListBackspace(blockEl, path, listCtx);
-          return;
-        }
-        const block = getBlock(path);
-        const blockTag = tagOf(block);
-        const childIdx = path[path.length - 1];
-
-        if (childIdx > 0) {
-          const prevPath = [...path.slice(0, -1), childIdx - 1];
-          const prevBlock = getBlock(prevPath);
-          if (isLeafBlock(tagOf(prevBlock))) {
-            // Merge with previous editable sibling
-            e.preventDefault();
-            mergeWithPrevious(blockEl, path);
-          } else if (tagOf(prevBlock) === ':ul' || tagOf(prevBlock) === ':ol') {
-            // Merge into last leaf block of preceding list's last :li
-            e.preventDefault();
-            mergeIntoPrecedingList(blockEl, path, prevPath, prevBlock);
-          } else if (!isEditableBlock(prevBlock)) {
-            // Delete previous non-editable block (hr, eval, code-block)
-            e.preventDefault();
-            pushUndo();
-            const parent = getParent(path);
-            parent.splice(childIdx, 1); // remove previous block (childIdx = prevBlock's AST position + 1)
-            renderAllBlocks();
-            emitChange();
-            requestAnimationFrame(() => focusBlock([childIdx - 1], 0));
-          }
-        } else if (path.length === 1 && blockTag && blockTag !== ':p' && isLeafBlock(blockTag)) {
-          // Top-level heading → convert to paragraph
-          e.preventDefault();
-          pushUndo();
-          block[0] = ':p';
-          renderAllBlocks();
-          emitChange();
-          requestAnimationFrame(() => focusBlock(path, 0));
-        }
-      } else {
-        // Not at block start — check if cursor is adjacent to a non-editable inline node
-        const target = getNonEditableNodeBefore(blockEl);
-        if (target) {
-          e.preventDefault();
-          removeNonEditableNode(target, blockEl, path);
-          return;
-        }
-      }
+      handleBackspace(e, blockEl, path);
     } else if (e.key === 'Delete' && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
       if (isCursorAtEnd(blockEl)) {
         const listCtx = getListContext(path);
@@ -2604,6 +2566,58 @@ export async function render(value, options, api) {
       liIdx: liPath[liPath.length - 1],
       liPath, listPath, li, list, listTag
     };
+  }
+
+  function handleBackspace(e, blockEl, path) {
+    if (isCursorRightAfterCheckbox(blockEl)) {
+      e.preventDefault();
+      removeCheckboxFromBlock(path);
+      return;
+    }
+    if (isCursorAtStart(blockEl)) {
+      const listCtx = getListContext(path);
+      if (listCtx && listCtx.pIdx === 0) {
+        e.preventDefault();
+        handleListBackspace(blockEl, path, listCtx);
+        return;
+      }
+      const block = getBlock(path);
+      const blockTag = tagOf(block);
+      const childIdx = path[path.length - 1];
+
+      if (childIdx > 0) {
+        const prevPath = [...path.slice(0, -1), childIdx - 1];
+        const prevBlock = getBlock(prevPath);
+        if (isLeafBlock(tagOf(prevBlock))) {
+          e.preventDefault();
+          mergeWithPrevious(blockEl, path);
+        } else if (tagOf(prevBlock) === ':ul' || tagOf(prevBlock) === ':ol') {
+          e.preventDefault();
+          mergeIntoPrecedingList(blockEl, path, prevPath, prevBlock);
+        } else if (!isEditableBlock(prevBlock)) {
+          e.preventDefault();
+          pushUndo();
+          const parent = getParent(path);
+          parent.splice(childIdx, 1);
+          renderAllBlocks();
+          emitChange();
+          requestAnimationFrame(() => focusBlock([childIdx - 1], 0));
+        }
+      } else if (path.length === 1 && blockTag && blockTag !== ':p' && isLeafBlock(blockTag)) {
+        e.preventDefault();
+        pushUndo();
+        block[0] = ':p';
+        renderAllBlocks();
+        emitChange();
+        requestAnimationFrame(() => focusBlock(path, 0));
+      }
+    } else {
+      const target = getNonEditableNodeBefore(blockEl);
+      if (target) {
+        e.preventDefault();
+        removeNonEditableNode(target, blockEl, path);
+      }
+    }
   }
 
   function handleListEnter(blockEl, path, ctx) {
