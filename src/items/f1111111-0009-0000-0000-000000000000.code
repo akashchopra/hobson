@@ -1,0 +1,69 @@
+// recent-items-tracker
+// Subscribes to selection and navigation events to maintain a persisted recent-items list.
+
+const SELECTION_CHANGED = 'e0e00000-0003-0001-0000-000000000000';
+const ROOT_CHANGED      = 'e0e00000-0003-0002-0000-000000000000';
+const STORE_ID          = 'd0d0d0d0-0032-0000-0000-000000000000';
+const MAX_RECENT        = 20;
+
+// System items that should never appear in recent history
+const SYSTEM_IDS = new Set([
+  '7ac3cf17-2c10-454a-bc06-24db64e440c4', // item-search
+  '88888888-0000-0000-0000-000000000000', // viewport-desktop
+  '88888888-0001-0000-0000-000000000000', // viewport-mobile
+  'd0d0d0d0-0032-0000-0000-000000000000', // recent-items-store (self)
+]);
+
+let api = null;
+let saveTimer = null;
+const pending = [];
+
+export async function onKernelBootComplete({ safeMode }, _api) {
+  if (safeMode) return;
+  api = _api;
+
+  api.events.on(SELECTION_CHANGED, (event) => {
+    const id = event.content?.current?.itemId;
+    if (id) record(id);
+  });
+
+  api.events.on(ROOT_CHANGED, (event) => {
+    const id = event.content?.rootId;
+    if (id) record(id);
+  });
+}
+
+function record(itemId) {
+  if (SYSTEM_IDS.has(itemId)) return;
+  if (!pending.includes(itemId)) pending.unshift(itemId);
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(flush, 500);
+}
+
+async function flush() {
+  if (!api || pending.length === 0) return;
+  try {
+    const store = await api.get(STORE_ID);
+    let ids = store.content?.recentIds || [];
+    for (const id of pending.splice(0)) {
+      ids = [id, ...ids.filter(r => r !== id)];
+    }
+    store.content = { ...store.content, recentIds: ids.slice(0, MAX_RECENT) };
+    store.modified = Date.now();
+    await api.set(store);
+  } catch (err) {
+    console.warn('[recent-items-tracker] save failed:', err);
+  }
+}
+
+export async function getRecentItems(_api) {
+  try {
+    const store = await _api.get(STORE_ID);
+    const ids = store.content?.recentIds || [];
+    const items = await Promise.all(ids.map(id => _api.get(id).catch(() => null)));
+    return items.filter(Boolean);
+  } catch (err) {
+    console.warn('[recent-items-tracker] getRecentItems failed:', err);
+    return [];
+  }
+}

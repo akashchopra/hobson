@@ -37,16 +37,28 @@ export async function show(_api) {
     cachedSearchItemId = searchItems[0].id;
   }
 
-  // Pre-fetch starred items so the first render has data immediately.
+  // Pre-fetch starred and recent items so the first render has data immediately.
   // (Deferring to the Hob view's do-search side-effect doesn't work: set-item!
   // fires before the render instance is registered, so the re-render is lost.)
   const searchItem = await api.get(cachedSearchItemId);
   const searchLib = await api.require('item-search-lib');
-  const starred = await searchLib.getStarredItems(api);
-  const starredAtts = starred.map(s => ({ id: s.id }));
+  const recentTracker = await api.require('recent-items-tracker');
 
-  searchItem.content = { ...searchItem.content, currentQuery: '' };
-  searchItem.attachments = starredAtts;
+  const [starred, recent] = await Promise.all([
+    searchLib.getStarredItems(api),
+    recentTracker.getRecentItems(api),
+  ]);
+
+  const starredIdSet = new Set(starred.map(s => s.id));
+  const filteredRecent = recent.filter(r => !starredIdSet.has(r.id));
+
+  searchItem.content = {
+    ...searchItem.content,
+    currentQuery: '',
+    starredIds: starred.map(s => s.id),
+    recentIds: filteredRecent.map(r => r.id),
+  };
+  searchItem.attachments = [];
   searchItem.modified = Date.now();
   await api.set(searchItem);
 

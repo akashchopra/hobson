@@ -3,13 +3,21 @@
   (def currentQuery (get-in search [:content :currentQuery]))
   (def target-container (get-in search [:content :target_container]))
   (def attachments (or (:attachments search) []))
+  (def starred-ids (or (get-in search [:content :starredIds]) []))
+  (def recent-ids (or (get-in search [:content :recentIds]) []))
   (def default-view-id "d4e5f6a7-b8c9-4d0e-a1b2-c3d4e5f6a7b8")
-  (def is-starred (or (nil? currentQuery) (= currentQuery "")))
+  (def is-default (or (nil? currentQuery) (= currentQuery "")))
+  (defn render-group [ids]
+    (for [id ids]
+      [:render-child {:item id
+                      :view default-view-id
+                      :open-in (or target-container (get-parent-id))
+                      :data-sort-key id}]))
   (defn do-search [query]
     (let [options (if target-container {:targetContainer target-container} {})
           matches (if
                     (or (nil? query) (= query ""))
-                    (get-starred-items! options)
+                    []
                     (search-items! query options))
           new-atts (vec (map (fn [m] {:id (:id m)}) matches))]
       (set-item!
@@ -18,7 +26,6 @@
           (assoc :attachments new-atts)
           (assoc-in [:content :currentQuery] query)
           (assoc :modified (now))))))
-  (when (nil? currentQuery) (do-search ""))
   [:div.item-search-view {:style "width: 100%; max-width: 800px; margin: 0 auto; padding: 20px; box-sizing: border-box;"}
 
     [:div {:style "margin-bottom: 20px; padding-bottom: 15px; border-bottom: 2px solid var(--color-border-light);"}
@@ -36,28 +43,40 @@
                                (= (:key e) "Enter")
                                (do-search (:value (:target e)))))}]]
     (if
-      (and (not (nil? currentQuery)) (empty? attachments))
-      (if
-        is-starred
-        [:div {:style "padding: 40px; text-align: center; color: var(--color-border-dark); font-style: italic;"}
+      is-default
+      [:div
+        (when
+          (seq recent-ids)
+          [:details {:open true :style "margin-bottom: 12px;"}
+            [:summary {:style "font-size: 0.875rem; color: var(--color-text-secondary); font-weight: 500; cursor: pointer; padding: 4px 0; margin-bottom: 8px;"}
 
-          "Type to search, press Enter"]
+              "Recent"]
+            (render-group recent-ids)])
+        (when
+          (seq starred-ids)
+          [:details {:open true :style "margin-bottom: 12px;"}
+            [:summary {:style "font-size: 0.875rem; color: var(--color-text-secondary); font-weight: 500; cursor: pointer; list-style: none; padding: 4px 0; margin-bottom: 8px;"}
+
+              "★ Starred"]
+            (render-group starred-ids)])
+        (when
+          (and (empty? starred-ids) (empty? recent-ids))
+          [:div {:style "padding: 40px; text-align: center; color: var(--color-border-dark); font-style: italic;"}
+
+            "Type to search, press Enter"])]
+      (if
+        (empty? attachments)
         [:div {:style "text-align: center; padding: 40px;"}
           [:div {:style "color: var(--color-text-secondary);"}
-            (str "No items found matching \"" currentQuery "\"")]])
-      (when
-        (seq attachments)
+            (str "No items found matching \"" currentQuery "\"")]]
         [:div
           [:div {:style "margin-bottom: 15px; font-size: 0.875rem; color: var(--color-text-secondary); font-weight: 500;"}
 
-            (if
-              is-starred
-              "★ Starred"
-              (str
-                "Found "
-                (count attachments)
-                " item"
-                (if (= (count attachments) 1) "" "s")))]
+            (str
+              "Found "
+              (count attachments)
+              " item"
+              (if (= (count attachments) 1) "" "s"))]
           (for [att attachments]
             (let [child-id (if (map? att) (:id att) att)
                   view-id (or (get-in att [:view :type]) default-view-id)]

@@ -1,0 +1,202 @@
+{
+  "id": "f1111111-0009-0000-0000-000000000000",
+  "type": "66666666-0000-0000-0000-000000000000",
+  "name": "recent-items-tracker",
+  "created": 1777334400000,
+  "modified": 1777475778874,
+  "watches": [
+    {
+      "event": "e0e00000-0002-0002-0000-000000000000"
+    }
+  ],
+  "content": {
+    "code": "// recent-items-tracker\n// Subscribes to selection and navigation events to maintain a persisted recent-items list.\n\nconst SELECTION_CHANGED = 'e0e00000-0003-0001-0000-000000000000';\nconst ROOT_CHANGED      = 'e0e00000-0003-0002-0000-000000000000';\nconst STORE_ID          = 'd0d0d0d0-0032-0000-0000-000000000000';\nconst MAX_RECENT        = 20;\n\n// System items that should never appear in recent history\nconst SYSTEM_IDS = new Set([\n  '7ac3cf17-2c10-454a-bc06-24db64e440c4', // item-search\n  '88888888-0000-0000-0000-000000000000', // viewport-desktop\n  '88888888-0001-0000-0000-000000000000', // viewport-mobile\n  'd0d0d0d0-0032-0000-0000-000000000000', // recent-items-store (self)\n]);\n\nlet api = null;\nlet saveTimer = null;\nconst pending = [];\n\nexport async function onKernelBootComplete({ safeMode }, _api) {\n  if (safeMode) return;\n  api = _api;\n\n  api.events.on(SELECTION_CHANGED, (event) => {\n    const id = event.content?.current?.itemId;\n    if (id) record(id);\n  });\n\n  api.events.on(ROOT_CHANGED, (event) => {\n    const id = event.content?.rootId;\n    if (id) record(id);\n  });\n}\n\nfunction record(itemId) {\n  if (SYSTEM_IDS.has(itemId)) return;\n  if (!pending.includes(itemId)) pending.unshift(itemId);\n  clearTimeout(saveTimer);\n  saveTimer = setTimeout(flush, 500);\n}\n\nasync function flush() {\n  if (!api || pending.length === 0) return;\n  try {\n    const store = await api.get(STORE_ID);\n    let ids = store.content?.recentIds || [];\n    for (const id of pending.splice(0)) {\n      ids = [id, ...ids.filter(r => r !== id)];\n    }\n    store.content = { ...store.content, recentIds: ids.slice(0, MAX_RECENT) };\n    store.modified = Date.now();\n    await api.set(store);\n  } catch (err) {\n    console.warn('[recent-items-tracker] save failed:', err);\n  }\n}\n\nexport async function getRecentItems(_api) {\n  try {\n    const store = await _api.get(STORE_ID);\n    const ids = store.content?.recentIds || [];\n    const items = await Promise.all(ids.map(id => _api.get(id).catch(() => null)));\n    return items.filter(Boolean);\n  } catch (err) {\n    console.warn('[recent-items-tracker] getRecentItems failed:', err);\n    return [];\n  }\n}\n",
+    "_symbols": {
+      "SELECTION_CHANGED": {
+        "name": "SELECTION_CHANGED",
+        "line": 4,
+        "col": 6,
+        "endLine": 4,
+        "endCol": 64,
+        "kind": "variable",
+        "scope": null
+      },
+      "ROOT_CHANGED": {
+        "name": "ROOT_CHANGED",
+        "line": 5,
+        "col": 6,
+        "endLine": 5,
+        "endCol": 64,
+        "kind": "variable",
+        "scope": null
+      },
+      "STORE_ID": {
+        "name": "STORE_ID",
+        "line": 6,
+        "col": 6,
+        "endLine": 6,
+        "endCol": 64,
+        "kind": "variable",
+        "scope": null
+      },
+      "MAX_RECENT": {
+        "name": "MAX_RECENT",
+        "line": 7,
+        "col": 6,
+        "endLine": 7,
+        "endCol": 28,
+        "kind": "variable",
+        "scope": null
+      },
+      "SYSTEM_IDS": {
+        "name": "SYSTEM_IDS",
+        "line": 10,
+        "col": 6,
+        "endLine": 15,
+        "endCol": 2,
+        "kind": "variable",
+        "scope": null
+      },
+      "api": {
+        "name": "api",
+        "line": 17,
+        "col": 4,
+        "endLine": 17,
+        "endCol": 14,
+        "kind": "variable",
+        "scope": null
+      },
+      "saveTimer": {
+        "name": "saveTimer",
+        "line": 18,
+        "col": 4,
+        "endLine": 18,
+        "endCol": 20,
+        "kind": "variable",
+        "scope": null
+      },
+      "pending": {
+        "name": "pending",
+        "line": 19,
+        "col": 6,
+        "endLine": 19,
+        "endCol": 18,
+        "kind": "variable",
+        "scope": null
+      },
+      "onKernelBootComplete": {
+        "name": "onKernelBootComplete",
+        "line": 21,
+        "col": 7,
+        "endLine": 34,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "({ ... }, _api)"
+      },
+      "onKernelBootComplete.id": {
+        "name": "id",
+        "line": 31,
+        "col": 10,
+        "endLine": 31,
+        "endCol": 36,
+        "kind": "variable",
+        "scope": "onKernelBootComplete"
+      },
+      "record": {
+        "name": "record",
+        "line": 36,
+        "col": 0,
+        "endLine": 41,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(itemId)"
+      },
+      "flush": {
+        "name": "flush",
+        "line": 43,
+        "col": 0,
+        "endLine": 57,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "()"
+      },
+      "flush.store": {
+        "name": "store",
+        "line": 46,
+        "col": 10,
+        "endLine": 46,
+        "endCol": 41,
+        "kind": "variable",
+        "scope": "flush"
+      },
+      "flush.ids": {
+        "name": "ids",
+        "line": 47,
+        "col": 8,
+        "endLine": 47,
+        "endCol": 44,
+        "kind": "variable",
+        "scope": "flush"
+      },
+      "flush.id": {
+        "name": "id",
+        "line": 48,
+        "col": 15,
+        "endLine": 48,
+        "endCol": 17,
+        "kind": "variable",
+        "scope": "flush"
+      },
+      "flush.recentIds": {
+        "name": "recentIds",
+        "line": 51,
+        "col": 40,
+        "endLine": 51,
+        "endCol": 75,
+        "kind": "property",
+        "scope": "flush"
+      },
+      "getRecentItems": {
+        "name": "getRecentItems",
+        "line": 59,
+        "col": 7,
+        "endLine": 69,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(_api)"
+      },
+      "getRecentItems.store": {
+        "name": "store",
+        "line": 61,
+        "col": 10,
+        "endLine": 61,
+        "endCol": 42,
+        "kind": "variable",
+        "scope": "getRecentItems"
+      },
+      "getRecentItems.ids": {
+        "name": "ids",
+        "line": 62,
+        "col": 10,
+        "endLine": 62,
+        "endCol": 46,
+        "kind": "variable",
+        "scope": "getRecentItems"
+      },
+      "getRecentItems.items": {
+        "name": "items",
+        "line": 63,
+        "col": 10,
+        "endLine": 63,
+        "endCol": 82,
+        "kind": "variable",
+        "scope": "getRecentItems"
+      }
+    }
+  },
+  "attachments": []
+}
