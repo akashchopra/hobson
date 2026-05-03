@@ -1,0 +1,53 @@
+(defn render [item api]
+  (def positions (or (get-in item [:content :positions]) []))
+  (defn type-label [t]
+    (if
+      (= t "conventional_gilt")
+      "Conventional Gilt"
+      (if
+        (= t "index_linked_gilt")
+        "Index-Linked Gilt"
+        (if (= t "etf") "ETF" (or t "Unknown")))))
+  (defn fmt-price [p] (if (= p nil) "—" (str "£" (.toFixed p 3))))
+  (defn fmt-value [v] (if (= v nil) "—" (str "£" (.toFixed v 2))))
+  (def
+    s-th
+    "text-align: left; padding: 8px 12px; border-bottom: 2px solid var(--color-border); font-weight: 600;")
+  (def
+    s-th-r
+    "text-align: right; padding: 8px 12px; border-bottom: 2px solid var(--color-border); font-weight: 600;")
+  (def s-td "padding: 8px 12px; border-bottom: 1px solid var(--color-border);")
+  (def
+    s-td-r
+    "padding: 8px 12px; border-bottom: 1px solid var(--color-border); text-align: right; font-variant-numeric: tabular-nums;")
+  (def total (get-field :self :total-value))
+  [:div {:style "padding: 20px; max-width: 900px;"}
+    [:h2 {:style "margin: 0 0 20px;"} (:name item)]
+    (if
+      (empty? positions)
+      [:p {:style "color: var(--color-text-secondary);"} "No positions."]
+      [:div {}
+        [:table {:style "width: 100%; border-collapse: collapse;"}
+          [:thead {}
+            [:tr {}
+              [:th {:style s-th} "Instrument"]
+              [:th {:style s-th} "Type"]
+              [:th {:style s-th-r} "Units"]
+              [:th {:style s-th-r} "Price"]
+              [:th {:style s-th-r} "Value"]]]
+          [:tbody {}
+            (for [pos (seq positions)]
+              (let [inst-id (:instrument-id pos)
+                    price (get-field inst-id :last-price)
+                    units (:units pos)
+                    value (when (and price units) (* price units))]
+                [:tr {}
+                  [:td {:style s-td} (or (get-field inst-id :name) "Unknown")]
+                  [:td {:style s-td}
+                    (type-label (get-field inst-id :instrument-type))]
+                  [:td {:style s-td-r} (str units)]
+                  [:td {:style s-td-r} (fmt-price price)]
+                  [:td {:style s-td-r} (fmt-value value)]]))]]
+        [:div {:style "text-align: right; padding: 12px; font-weight: 600; border-top: 2px solid var(--color-border);"}
+
+          (str "Total: " (fmt-value total))]])])

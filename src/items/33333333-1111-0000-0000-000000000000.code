@@ -1273,6 +1273,26 @@ export async function loadKernel(require, db, instanceId) {
       const exists = await this.storage.exists(item.id);
       const previous = exists ? await this.storage.get(item.id) : null;
 
+      if (!exists && item.type) {
+        const templateFields = {};
+        let typeId = item.type;
+        const seen = new Set();
+        while (typeId && !seen.has(typeId)) {
+          seen.add(typeId);
+          const typeDef = await this.storage.get(typeId);
+          if (!typeDef) break;
+          if (typeDef.template) {
+            for (const [k, v] of Object.entries(typeDef.template)) {
+              if (!(k in templateFields)) templateFields[k] = v;
+            }
+          }
+          typeId = typeDef.extends ?? null;
+        }
+        if (Object.keys(templateFields).length > 0) {
+          item = { ...item, content: { ...templateFields, ...(item.content || {}) } };
+        }
+      }
+
       // Capture previous state in history before overwriting
       if (previous) {
         await this.storage.writeHistory(item.id, previous.modified, previous, false);
