@@ -1,0 +1,61 @@
+// Item: market-data
+// ID: 6073171a-05a6-4467-979e-6442db58c39c
+// Type: 66666666-0000-0000-0000-000000000000
+//
+// Fetches instrument prices from external sources.
+// dividenddata.co.uk for gilts; Yahoo Finance for ETFs.
+
+const INSTRUMENT_TYPE_ID = '60ccdb32-566d-480b-8dae-ef1e4a5cdecc';
+
+function parseDividenddataPrice(html) {
+  const match = html.match(/Dirty Price[\s\S]*?(?:£|&pound;)([\d.]+)/);
+  if (!match) throw new Error('Dirty price not found in page');
+  return parseFloat(match[1]);
+}
+
+function parseYahooPrice(data) {
+  const meta = data?.chart?.result?.[0]?.meta;
+  const price = meta?.regularMarketPrice;
+  if (price == null) throw new Error('Price not found in Yahoo Finance response');
+  const currency = meta?.currency;
+  return (currency === 'GBp' || currency === 'GBX') ? price / 100 : price;
+}
+
+async function fetchPrice(instrument) {
+  const type = instrument.content['instrument-type'];
+  const sourceId = instrument.content['source-id'];
+  const tauriFetch = window.__TAURI__.http.fetch;
+
+  if (type === 'conventional_gilt' || type === 'index_linked_gilt') {
+    const url = `https://www.dividenddata.co.uk/gilts.py?ticker=${encodeURIComponent(sourceId)}`;
+    const response = await tauriFetch(url);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    return parseDividenddataPrice(await response.text());
+  } else if (type === 'etf') {
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sourceId)}`;
+    const response = await tauriFetch(url);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    return parseYahooPrice(await response.json());
+  }
+  throw new Error(`Unknown instrument-type: ${type}`);
+}
+
+export async function fetchAllPrices(api) {
+  const allInstruments = await api.query({ type: INSTRUMENT_TYPE_ID });
+  const instruments = allInstruments.filter(i => i.content['instrument-type'] !== 'cash');
+  const date = new Date().toISOString().slice(0, 10);
+  const results = [];
+  for (const instrument of instruments) {
+    try {
+      const price = await fetchPrice(instrument);
+      instrument.content['last-price'] = price;
+      instrument.content['last-price-date'] = date;
+      instrument.modified = Date.now();
+      await api.update(instrument);
+      results.push({ id: instrument.id, name: instrument.name, price, status: 'ok' });
+    } catch (err) {
+      results.push({ id: instrument.id, name: instrument.name, error: err?.message ?? String(err), status: 'error' });
+    }
+  }
+  return results;
+}

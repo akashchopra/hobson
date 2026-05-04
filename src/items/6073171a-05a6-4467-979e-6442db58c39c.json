@@ -1,0 +1,359 @@
+{
+  "id": "6073171a-05a6-4467-979e-6442db58c39c",
+  "name": "market-data",
+  "type": "66666666-0000-0000-0000-000000000000",
+  "created": 1746057600000,
+  "modified": 1777904173143,
+  "content": {
+    "description": [
+      ":doc",
+      [
+        ":p",
+        {
+          "s": "Fetches current prices for all "
+        },
+        [
+          ":item-ref",
+          {
+            "s": "60ccdb32-566d-480b-8dae-ef1e4a5cdecc"
+          },
+          {
+            "s": "instrument"
+          }
+        ],
+        {
+          "s": " items and writes back "
+        },
+        [
+          ":code",
+          {
+            "s": "last-price"
+          }
+        ],
+        {
+          "s": " and "
+        },
+        [
+          ":code",
+          {
+            "s": "last-price-date"
+          }
+        ],
+        {
+          "s": ". Uses dividenddata.co.uk for gilts and Yahoo Finance for ETFs. All requests go via "
+        },
+        [
+          ":code",
+          {
+            "s": "window.__TAURI__.http.fetch"
+          }
+        ],
+        {
+          "s": " to bypass CORS."
+        }
+      ],
+      [
+        ":h2",
+        {
+          "s": "Exports"
+        }
+      ],
+      [
+        ":ul",
+        [
+          ":li",
+          [
+            ":p",
+            [
+              ":code",
+              {
+                "s": "fetchAllPrices(api)"
+              }
+            ],
+            {
+              "s": " — queries all instrument items, fetches a price for each, updates "
+            },
+            [
+              ":code",
+              {
+                "s": "last-price"
+              }
+            ],
+            {
+              "s": " and "
+            },
+            [
+              ":code",
+              {
+                "s": "last-price-date"
+              }
+            ],
+            {
+              "s": ". Returns an array of "
+            },
+            [
+              ":code",
+              {
+                "s": "{ id, name, price, status }"
+              }
+            ],
+            {
+              "s": " (status is "
+            },
+            [
+              ":code",
+              {
+                "s": "'ok'"
+              }
+            ],
+            {
+              "s": " or "
+            },
+            [
+              ":code",
+              {
+                "s": "'error'"
+              }
+            ],
+            {
+              "s": "; errors include an "
+            },
+            [
+              ":code",
+              {
+                "s": "error"
+              }
+            ],
+            {
+              "s": " field with the message)."
+            }
+          ]
+        ]
+      ]
+    ],
+    "code": "// Item: market-data\n// ID: 6073171a-05a6-4467-979e-6442db58c39c\n// Type: 66666666-0000-0000-0000-000000000000\n//\n// Fetches instrument prices from external sources.\n// dividenddata.co.uk for gilts; Yahoo Finance for ETFs.\n\nconst INSTRUMENT_TYPE_ID = '60ccdb32-566d-480b-8dae-ef1e4a5cdecc';\n\nfunction parseDividenddataPrice(html) {\n  const match = html.match(/Dirty Price[\\s\\S]*?(?:£|&pound;)([\\d.]+)/);\n  if (!match) throw new Error('Dirty price not found in page');\n  return parseFloat(match[1]);\n}\n\nfunction parseYahooPrice(data) {\n  const meta = data?.chart?.result?.[0]?.meta;\n  const price = meta?.regularMarketPrice;\n  if (price == null) throw new Error('Price not found in Yahoo Finance response');\n  const currency = meta?.currency;\n  return (currency === 'GBp' || currency === 'GBX') ? price / 100 : price;\n}\n\nasync function fetchPrice(instrument) {\n  const type = instrument.content['instrument-type'];\n  const sourceId = instrument.content['source-id'];\n  const tauriFetch = window.__TAURI__.http.fetch;\n\n  if (type === 'conventional_gilt' || type === 'index_linked_gilt') {\n    const url = `https://www.dividenddata.co.uk/gilts.py?ticker=${encodeURIComponent(sourceId)}`;\n    const response = await tauriFetch(url);\n    if (!response.ok) throw new Error(`HTTP ${response.status}`);\n    return parseDividenddataPrice(await response.text());\n  } else if (type === 'etf') {\n    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sourceId)}`;\n    const response = await tauriFetch(url);\n    if (!response.ok) throw new Error(`HTTP ${response.status}`);\n    return parseYahooPrice(await response.json());\n  }\n  throw new Error(`Unknown instrument-type: ${type}`);\n}\n\nexport async function fetchAllPrices(api) {\n  const allInstruments = await api.query({ type: INSTRUMENT_TYPE_ID });\n  const instruments = allInstruments.filter(i => i.content['instrument-type'] !== 'cash');\n  const date = new Date().toISOString().slice(0, 10);\n  const results = [];\n  for (const instrument of instruments) {\n    try {\n      const price = await fetchPrice(instrument);\n      instrument.content['last-price'] = price;\n      instrument.content['last-price-date'] = date;\n      instrument.modified = Date.now();\n      await api.update(instrument);\n      results.push({ id: instrument.id, name: instrument.name, price, status: 'ok' });\n    } catch (err) {\n      results.push({ id: instrument.id, name: instrument.name, error: err?.message ?? String(err), status: 'error' });\n    }\n  }\n  return results;\n}\n",
+    "_symbols": {
+      "INSTRUMENT_TYPE_ID": {
+        "name": "INSTRUMENT_TYPE_ID",
+        "line": 8,
+        "col": 6,
+        "endLine": 8,
+        "endCol": 65,
+        "kind": "variable",
+        "scope": null
+      },
+      "parseDividenddataPrice": {
+        "name": "parseDividenddataPrice",
+        "line": 10,
+        "col": 0,
+        "endLine": 14,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(html)"
+      },
+      "parseDividenddataPrice.match": {
+        "name": "match",
+        "line": 11,
+        "col": 8,
+        "endLine": 11,
+        "endCol": 70,
+        "kind": "variable",
+        "scope": "parseDividenddataPrice"
+      },
+      "parseYahooPrice": {
+        "name": "parseYahooPrice",
+        "line": 16,
+        "col": 0,
+        "endLine": 22,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(data)"
+      },
+      "parseYahooPrice.meta": {
+        "name": "meta",
+        "line": 17,
+        "col": 8,
+        "endLine": 17,
+        "endCol": 45,
+        "kind": "variable",
+        "scope": "parseYahooPrice"
+      },
+      "parseYahooPrice.price": {
+        "name": "price",
+        "line": 18,
+        "col": 8,
+        "endLine": 18,
+        "endCol": 40,
+        "kind": "variable",
+        "scope": "parseYahooPrice"
+      },
+      "parseYahooPrice.currency": {
+        "name": "currency",
+        "line": 20,
+        "col": 8,
+        "endLine": 20,
+        "endCol": 33,
+        "kind": "variable",
+        "scope": "parseYahooPrice"
+      },
+      "fetchPrice": {
+        "name": "fetchPrice",
+        "line": 24,
+        "col": 0,
+        "endLine": 41,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(instrument)"
+      },
+      "fetchPrice.type": {
+        "name": "type",
+        "line": 25,
+        "col": 8,
+        "endLine": 25,
+        "endCol": 52,
+        "kind": "variable",
+        "scope": "fetchPrice"
+      },
+      "fetchPrice.sourceId": {
+        "name": "sourceId",
+        "line": 26,
+        "col": 8,
+        "endLine": 26,
+        "endCol": 50,
+        "kind": "variable",
+        "scope": "fetchPrice"
+      },
+      "fetchPrice.tauriFetch": {
+        "name": "tauriFetch",
+        "line": 27,
+        "col": 8,
+        "endLine": 27,
+        "endCol": 48,
+        "kind": "variable",
+        "scope": "fetchPrice"
+      },
+      "fetchPrice.url": {
+        "name": "url",
+        "line": 35,
+        "col": 10,
+        "endLine": 35,
+        "endCol": 99,
+        "kind": "variable",
+        "scope": "fetchPrice"
+      },
+      "fetchPrice.response": {
+        "name": "response",
+        "line": 36,
+        "col": 10,
+        "endLine": 36,
+        "endCol": 42,
+        "kind": "variable",
+        "scope": "fetchPrice"
+      },
+      "fetchAllPrices": {
+        "name": "fetchAllPrices",
+        "line": 43,
+        "col": 7,
+        "endLine": 61,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(api)"
+      },
+      "fetchAllPrices.allInstruments": {
+        "name": "allInstruments",
+        "line": 44,
+        "col": 8,
+        "endLine": 44,
+        "endCol": 70,
+        "kind": "variable",
+        "scope": "fetchAllPrices"
+      },
+      "fetchAllPrices.instruments": {
+        "name": "instruments",
+        "line": 45,
+        "col": 8,
+        "endLine": 45,
+        "endCol": 89,
+        "kind": "variable",
+        "scope": "fetchAllPrices"
+      },
+      "fetchAllPrices.date": {
+        "name": "date",
+        "line": 46,
+        "col": 8,
+        "endLine": 46,
+        "endCol": 52,
+        "kind": "variable",
+        "scope": "fetchAllPrices"
+      },
+      "fetchAllPrices.results": {
+        "name": "results",
+        "line": 47,
+        "col": 8,
+        "endLine": 47,
+        "endCol": 20,
+        "kind": "variable",
+        "scope": "fetchAllPrices"
+      },
+      "fetchAllPrices.instrument": {
+        "name": "instrument",
+        "line": 48,
+        "col": 13,
+        "endLine": 48,
+        "endCol": 23,
+        "kind": "variable",
+        "scope": "fetchAllPrices"
+      },
+      "fetchAllPrices.price": {
+        "name": "price",
+        "line": 55,
+        "col": 63,
+        "endLine": 55,
+        "endCol": 68,
+        "kind": "property",
+        "scope": "fetchAllPrices"
+      },
+      "fetchAllPrices.id": {
+        "name": "id",
+        "line": 57,
+        "col": 21,
+        "endLine": 57,
+        "endCol": 38,
+        "kind": "property",
+        "scope": "fetchAllPrices"
+      },
+      "fetchAllPrices.name": {
+        "name": "name",
+        "line": 57,
+        "col": 40,
+        "endLine": 57,
+        "endCol": 61,
+        "kind": "property",
+        "scope": "fetchAllPrices"
+      },
+      "fetchAllPrices.status": {
+        "name": "status",
+        "line": 57,
+        "col": 99,
+        "endLine": 57,
+        "endCol": 114,
+        "kind": "property",
+        "scope": "fetchAllPrices"
+      },
+      "fetchAllPrices.error": {
+        "name": "error",
+        "line": 57,
+        "col": 63,
+        "endLine": 57,
+        "endCol": 97,
+        "kind": "property",
+        "scope": "fetchAllPrices"
+      }
+    }
+  },
+  "attachments": []
+}
