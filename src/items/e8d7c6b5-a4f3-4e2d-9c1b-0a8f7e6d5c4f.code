@@ -1,9 +1,10 @@
 
-export function render(value, options, api) {
+export async function render(value, options, api) {
   const { mode, onChange, label, exclude, getCurrentValue } = options;
   const isEditable = mode === 'editable' && onChange;
   const content = value || {};
   const excludeSet = new Set(exclude || []);
+  const guidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
   // Extract static fields (everything not excluded)
   const staticFields = {};
@@ -43,9 +44,11 @@ export function render(value, options, api) {
     onChange(merged);
   }
 
-  function createRow(fieldName, fieldValue) {
+  async function createRow(fieldName, fieldValue) {
     const row = api.createElement('div', { className: 'static-field-row' });
     row.style.cssText = 'display: flex; align-items: center; gap: 8px;';
+
+    const isGuid = typeof fieldValue === 'string' && guidPattern.test(fieldValue);
 
     if (isEditable) {
       const nameInput = api.createElement('input', {
@@ -54,45 +57,6 @@ export function render(value, options, api) {
         placeholder: 'field name',
         style: 'width: 120px; padding: 4px 8px; border: 1px solid var(--color-border); border-radius: var(--border-radius); font-size: 0.8125rem; font-family: monospace; background: var(--color-bg-surface); color: var(--color-text);'
       });
-
-      // Auto-detect type from a string value
-      const autoDetect = (raw) => {
-        if (raw === 'true') return { value: true, type: 'bool' };
-        if (raw === 'false') return { value: false, type: 'bool' };
-        if (raw === 'null' || raw === 'nil') return { value: null, type: 'null' };
-        if (raw !== '' && !isNaN(Number(raw))) return { value: Number(raw), type: '#' };
-        if (/^\[/.test(raw) || /^\{/.test(raw)) {
-          try { return { value: JSON.parse(raw), type: Array.isArray(JSON.parse(raw)) ? '[]' : '{}' }; }
-          catch { return { value: raw, type: 'Aa' }; }
-        }
-        return { value: raw, type: 'Aa' };
-      };
-
-      const detectStoredType = (v) => {
-        if (v === null || v === undefined) return 'null';
-        if (typeof v === 'boolean') return 'bool';
-        if (typeof v === 'number') return '#';
-        if (Array.isArray(v)) return '[]';
-        if (typeof v === 'object') return '{}';
-        return 'Aa';
-      };
-
-      const valueWrapper = api.createElement('span');
-      valueWrapper.style.cssText = 'flex: 1; display: flex; align-items: center; gap: 0;';
-
-      const valueInput = api.createElement('input', {
-        type: 'text',
-        value: fieldValue != null ? (typeof fieldValue === 'object' ? JSON.stringify(fieldValue) : String(fieldValue)) : '',
-        placeholder: 'value',
-        style: 'flex: 1; padding: 4px 8px; border: 1px solid var(--color-border); border-radius: var(--border-radius) 0 0 var(--border-radius); font-size: 0.8125rem; font-family: monospace; background: var(--color-bg-surface); color: var(--color-text);'
-      });
-
-      // Type indicator — shows auto-detected type
-      let detectedType = detectStoredType(fieldValue);
-      const typeIndicator = api.createElement('span');
-      typeIndicator.textContent = detectedType;
-      typeIndicator.title = 'Detected type';
-      typeIndicator.style.cssText = 'border: 1px solid var(--color-border); border-left: none; border-radius: 0 var(--border-radius) var(--border-radius) 0; padding: 4px 6px; font-size: 0.7em; color: var(--color-text-muted); background: var(--color-bg-surface); user-select: none;';
 
       let currentName = fieldName;
 
@@ -107,14 +71,6 @@ export function render(value, options, api) {
         }
       });
 
-      valueInput.addEventListener('input', (e) => {
-        const { value: parsed, type } = autoDetect(e.target.value);
-        detectedType = type;
-        typeIndicator.textContent = type;
-        edited[currentName] = parsed;
-        emitChange();
-      });
-
       const deleteBtn = api.createElement('button');
       deleteBtn.textContent = '×';
       deleteBtn.title = 'Remove field';
@@ -125,40 +81,107 @@ export function render(value, options, api) {
         row.remove();
       });
 
-      valueWrapper.appendChild(valueInput);
-      valueWrapper.appendChild(typeIndicator);
-      row.appendChild(nameInput);
-      row.appendChild(valueWrapper);
-      row.appendChild(deleteBtn);
+      if (isGuid) {
+        const itemRefView = await api.require('field-view-item-ref');
+        const itemRefEl = await itemRefView.render(fieldValue, {
+          mode: 'editable',
+          onChange: (v) => { edited[currentName] = v; emitChange(); },
+        }, api);
+        itemRefEl.style.flex = '1';
+        row.appendChild(nameInput);
+        row.appendChild(itemRefEl);
+        row.appendChild(deleteBtn);
+      } else {
+        // Auto-detect type from a string value
+        const autoDetect = (raw) => {
+          if (raw === 'true') return { value: true, type: 'bool' };
+          if (raw === 'false') return { value: false, type: 'bool' };
+          if (raw === 'null' || raw === 'nil') return { value: null, type: 'null' };
+          if (raw !== '' && !isNaN(Number(raw))) return { value: Number(raw), type: '#' };
+          if (/^\[/.test(raw) || /^\{/.test(raw)) {
+            try { return { value: JSON.parse(raw), type: Array.isArray(JSON.parse(raw)) ? '[]' : '{}' }; }
+            catch { return { value: raw, type: 'Aa' }; }
+          }
+          return { value: raw, type: 'Aa' };
+        };
+
+        const detectStoredType = (v) => {
+          if (v === null || v === undefined) return 'null';
+          if (typeof v === 'boolean') return 'bool';
+          if (typeof v === 'number') return '#';
+          if (Array.isArray(v)) return '[]';
+          if (typeof v === 'object') return '{}';
+          return 'Aa';
+        };
+
+        const valueWrapper = api.createElement('span');
+        valueWrapper.style.cssText = 'flex: 1; display: flex; align-items: center; gap: 0;';
+
+        const valueInput = api.createElement('input', {
+          type: 'text',
+          value: fieldValue != null ? (typeof fieldValue === 'object' ? JSON.stringify(fieldValue) : String(fieldValue)) : '',
+          placeholder: 'value',
+          style: 'flex: 1; padding: 4px 8px; border: 1px solid var(--color-border); border-radius: var(--border-radius) 0 0 var(--border-radius); font-size: 0.8125rem; font-family: monospace; background: var(--color-bg-surface); color: var(--color-text);'
+        });
+
+        // Type indicator — shows auto-detected type
+        let detectedType = detectStoredType(fieldValue);
+        const typeIndicator = api.createElement('span');
+        typeIndicator.textContent = detectedType;
+        typeIndicator.title = 'Detected type';
+        typeIndicator.style.cssText = 'border: 1px solid var(--color-border); border-left: none; border-radius: 0 var(--border-radius) var(--border-radius) 0; padding: 4px 6px; font-size: 0.7em; color: var(--color-text-muted); background: var(--color-bg-surface); user-select: none;';
+
+        valueInput.addEventListener('input', (e) => {
+          const { value: parsed, type } = autoDetect(e.target.value);
+          detectedType = type;
+          typeIndicator.textContent = type;
+          edited[currentName] = parsed;
+          emitChange();
+        });
+
+        valueWrapper.appendChild(valueInput);
+        valueWrapper.appendChild(typeIndicator);
+        row.appendChild(nameInput);
+        row.appendChild(valueWrapper);
+        row.appendChild(deleteBtn);
+      }
     } else {
+      // Readonly
       const nameEl = api.createElement('code');
       nameEl.textContent = fieldName;
       nameEl.style.cssText = 'font-size: 0.8125rem; color: var(--color-text); font-weight: 500; min-width: 120px;';
-      const valueEl = api.createElement('span');
-      valueEl.textContent = fieldValue != null ? String(fieldValue) : '';
-      valueEl.style.cssText = 'font-size: 0.8125rem; color: var(--color-text); font-family: monospace;';
       row.appendChild(nameEl);
-      row.appendChild(valueEl);
+
+      if (isGuid) {
+        const itemRefView = await api.require('field-view-item-ref');
+        const itemRefEl = await itemRefView.render(fieldValue, { mode: 'readonly' }, api);
+        row.appendChild(itemRefEl);
+      } else {
+        const valueEl = api.createElement('span');
+        valueEl.textContent = fieldValue != null ? String(fieldValue) : '';
+        valueEl.style.cssText = 'font-size: 0.8125rem; color: var(--color-text); font-family: monospace;';
+        row.appendChild(valueEl);
+      }
     }
 
     return row;
   }
 
   for (const [fieldName, fieldValue] of entries) {
-    wrapper.appendChild(createRow(fieldName, fieldValue));
+    wrapper.appendChild(await createRow(fieldName, fieldValue));
   }
 
   if (isEditable) {
     const addBtn = api.createElement('button');
     addBtn.textContent = '+ Add field';
     addBtn.style.cssText = 'align-self: flex-start; padding: 4px 12px; background: var(--color-bg-surface-alt); border: 1px dashed var(--color-border); border-radius: var(--border-radius); color: var(--color-text-muted); cursor: pointer; font-size: 0.8125rem;';
-    addBtn.addEventListener('click', () => {
+    addBtn.addEventListener('click', async () => {
       let i = 1;
       let name = 'field-' + i;
       while (edited[name] || excludeSet.has(name)) { i++; name = 'field-' + i; }
       edited[name] = '';
       emitChange();
-      const row = createRow(name, '');
+      const row = await createRow(name, '');
       wrapper.insertBefore(row, addBtn);
       row.querySelector('input').focus();
       row.querySelector('input').select();

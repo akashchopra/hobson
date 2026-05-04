@@ -2,6 +2,7 @@
 // Readonly field summary: shows static fields and computed fields with provenance
 export async function render(value, options, api) {
   const { exclude, item } = options;
+  const guidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
   // Load prStr for displaying non-primitive values
   let prStr = String;
@@ -49,9 +50,16 @@ export async function render(value, options, api) {
     sep.style.cssText = 'color: var(--color-text-muted); margin: 0 6px;';
     row.appendChild(sep);
 
-    const valEl = api.createElement('span');
-    valEl.textContent = prStr(staticFields[k]);
-    row.appendChild(valEl);
+    const v = staticFields[k];
+    if (typeof v === 'string' && guidPattern.test(v)) {
+      const itemRefView = await api.require('field-view-item-ref');
+      const itemRefEl = await itemRefView.render(v, { mode: 'readonly' }, api);
+      row.appendChild(itemRefEl);
+    } else {
+      const valEl = api.createElement('span');
+      valEl.textContent = prStr(v);
+      row.appendChild(valEl);
+    }
 
     wrapper.appendChild(row);
   }
