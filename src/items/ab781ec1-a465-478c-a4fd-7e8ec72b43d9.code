@@ -18,7 +18,7 @@ export async function render(value, options, api) {
     wrapper.appendChild(labelEl);
   }
 
-  const fieldViewName = 'field-view-' + (itemSpec.field_view || 'json');
+  const fieldViewName = 'field-view-' + (itemSpec.field_view || inferFieldView(currentArr));
   let fieldView;
   try {
     fieldView = await api.require(fieldViewName);
@@ -138,6 +138,29 @@ export async function render(value, options, api) {
   }
 
   return wrapper;
+}
+
+function inferFieldView(arr) {
+  if (arr.length === 0) return 'text';
+  const guidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const types = arr.map(v => {
+    if (v === null || v === undefined) return 'null';
+    if (typeof v === 'boolean') return 'boolean';
+    if (typeof v === 'number') return 'number';
+    if (Array.isArray(v)) return 'array';
+    if (typeof v === 'object') return 'object';
+    if (guidPattern.test(v)) return 'guid';
+    return 'string';
+  });
+  if (new Set(types).size !== 1) return 'text';
+  switch (types[0]) {
+    case 'guid':    return 'item-ref';
+    case 'number':  return 'number';
+    case 'boolean': return 'checkbox';
+    case 'array':   return 'array';
+    case 'object':  return 'object';
+    default:        return 'text';
+  }
 }
 
 function getDefaultForSpec(spec) {
