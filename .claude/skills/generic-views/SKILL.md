@@ -69,6 +69,10 @@ Fields are rendered top-to-bottom in the order they appear in `ui_hints`.
 | `startCollapsed` | `boolean` \| `"ifEmpty"` | Initial open state when collapsible. |
 | `placeholder` | string | Placeholder text passed to the field view. |
 | `dividerAfter` | boolean | Render an `<hr>` after this field. |
+| `options` | `string[]` \| `{value,label}[]` | **`dropdown` only.** The list of choices. |
+| `fields` | `{ [key]: { field_view, label?, ...hints } }` | **`object` only.** Per-key schema. When present: iterates schema keys (not object keys), shows static labels, suppresses rename/add/delete controls. |
+| `itemSpec` | `{ field_view, ...hints }` | **`array` only.** The field view config applied to each array element. |
+| `defaultItem` | any | **`array` only.** Value inserted when "+ Add Item" is clicked. Inferred from `itemSpec.field_view` if omitted (`""` for text, `0` for number, `false` for checkbox, etc.). |
 
 ## Available Field Views
 
@@ -89,6 +93,9 @@ Reference as the `field_view` value (the part after `field-view-`):
 | `tags` | Tag picker (array of GUIDs) |
 | `item-ref` | Single item reference picker |
 | `timestamp` | Date/time display and picker |
+| `dropdown` | Native `<select>` for enum fields — requires `options` hint |
+| `object` | Object sub-editor — type-inferred, or schema-driven via `fields` hint |
+| `array` | Array sub-editor — requires `itemSpec` hint |
 | `json` | Raw JSON fallback |
 | `heading` | Editable `<h1>`/`<h2>` etc. |
 | `markdown` | Markdown renderer (readonly) |

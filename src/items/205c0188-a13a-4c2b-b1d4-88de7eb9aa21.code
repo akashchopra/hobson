@@ -1,6 +1,6 @@
 
 export async function render(value, options, api) {
-  const { mode, onChange, label, indent = 0 } = options;
+  const { mode, onChange, label, indent = 0, fields } = options;
   const obj = value || {};
   const isEditable = mode === 'editable' && onChange;
 
@@ -17,20 +17,20 @@ export async function render(value, options, api) {
   const propsContainer = api.createElement('div');
   propsContainer.style.cssText = 'display: flex; flex-direction: column; gap: 12px; padding-left: ' + (indent > 0 ? '16px' : '0') + '; border-left: ' + (indent > 0 ? '2px solid var(--color-border)' : 'none') + ';';
 
-  // Helper to update a property
   const updateProp = (key, newValue) => {
-    const updated = { ...obj, [key]: newValue };
+    // Read live object value if available — stale obj causes earlier field edits to
+    // be lost when a second field is edited (e.g. instrument-id wiped by units edit).
+    const current = options.getCurrentValue ? (options.getCurrentValue() || obj) : obj;
+    const updated = { ...current, [key]: newValue };
     onChange(updated);
   };
 
-  // Helper to delete a property
   const deleteProp = (key) => {
     const updated = { ...obj };
     delete updated[key];
     onChange(updated);
   };
 
-  // Helper to rename a property
   const renameProp = (oldKey, newKey) => {
     if (oldKey === newKey || !newKey) return;
     const updated = {};
@@ -44,28 +44,26 @@ export async function render(value, options, api) {
     onChange(updated);
   };
 
-  // Helper to render _ prefixed fields as collapsed JSON textarea
   const renderInternalField = (key, val) => {
     const container = api.createElement('div');
     container.style.cssText = 'display: flex; flex-direction: column; gap: 4px;';
-    
+
     const jsonStr = JSON.stringify(val, null, 2);
     const lineCount = jsonStr.split('\n').length;
     const isLarge = lineCount > 10;
-    
-    // Collapsible header for large internal fields
+
     if (isLarge) {
       const summary = api.createElement('div');
       summary.style.cssText = 'font-size: 0.75rem; color: var(--color-text-tertiary); cursor: pointer; user-select: none;';
       const keyCount = typeof val === 'object' && val !== null ? Object.keys(val).length : 0;
       summary.textContent = '(internal, ' + keyCount + ' entries, click to expand)';
       container.appendChild(summary);
-      
+
       const textarea = api.createElement('textarea');
       textarea.value = jsonStr;
       textarea.style.cssText = 'display: none; width: 100%; min-height: 150px; max-height: 400px; font-family: monospace; font-size: 0.75rem; padding: 8px; border: 1px solid var(--color-border); border-radius: var(--border-radius); resize: vertical; background: var(--color-bg-surface-alt);';
       if (!isEditable) textarea.readOnly = true;
-      
+
       if (isEditable) {
         const errorEl = api.createElement('div');
         errorEl.style.cssText = 'display: none; color: var(--color-danger); font-size: 0.75rem;';
@@ -83,23 +81,22 @@ export async function render(value, options, api) {
         };
         container.appendChild(errorEl);
       }
-      
+
       container.appendChild(textarea);
-      
+
       summary.onclick = () => {
         const isHidden = textarea.style.display === 'none';
         textarea.style.display = isHidden ? 'block' : 'none';
-        summary.textContent = isHidden 
+        summary.textContent = isHidden
           ? '(internal, ' + keyCount + ' entries, click to collapse)'
           : '(internal, ' + keyCount + ' entries, click to expand)';
       };
     } else {
-      // Small internal field - show directly as textarea
       const textarea = api.createElement('textarea');
       textarea.value = jsonStr;
       textarea.style.cssText = 'width: 100%; min-height: 60px; font-family: monospace; font-size: 0.75rem; padding: 8px; border: 1px solid var(--color-border); border-radius: var(--border-radius); resize: vertical; background: var(--color-bg-surface-alt);';
       if (!isEditable) textarea.readOnly = true;
-      
+
       if (isEditable) {
         const errorEl = api.createElement('div');
         errorEl.style.cssText = 'color: var(--color-danger); font-size: 0.75rem; min-height: 16px;';
@@ -120,23 +117,30 @@ export async function render(value, options, api) {
         container.appendChild(textarea);
       }
     }
-    
+
     return container;
   };
 
-  // Render each property
-  const keys = Object.keys(obj);
+  // When a fields schema is provided, iterate over schema keys (shows all defined fields
+  // even if missing from obj, and ignores unknown keys in obj). Without a schema,
+  // iterate over the actual object keys with type inference.
+  const keys = fields ? Object.keys(fields) : Object.keys(obj);
+
   for (const key of keys) {
     const val = obj[key];
     const propRow = api.createElement('div', { class: 'field-object-prop' });
     propRow.style.cssText = 'display: flex; flex-direction: column; gap: 4px;';
 
-    // Property header with key name and delete button
     const propHeader = api.createElement('div');
     propHeader.style.cssText = 'display: flex; align-items: center; gap: 8px;';
 
-    if (isEditable) {
-      // Editable key name
+    if (fields) {
+      // Schema-driven: show display label, no rename or delete controls
+      const keyLabel = api.createElement('span');
+      keyLabel.textContent = fields[key].label || key;
+      keyLabel.style.cssText = 'font-weight: 500; font-size: 0.8125rem; color: var(--color-text-secondary);';
+      propHeader.appendChild(keyLabel);
+    } else if (isEditable) {
       const keyInput = api.createElement('input', { type: 'text' });
       keyInput.value = key;
       keyInput.style.cssText = 'font-weight: 500; font-size: 0.8125rem; color: var(--color-text-secondary); background: transparent; border: 1px solid transparent; border-radius: 3px; padding: 2px 4px; width: auto; min-width: 80px;';
@@ -144,9 +148,8 @@ export async function render(value, options, api) {
       keyInput.onkeydown = (e) => { if (e.key === 'Enter') keyInput.blur(); };
       propHeader.appendChild(keyInput);
 
-      // Delete button
       const deleteBtn = api.createElement('button');
-      deleteBtn.textContent = '\u00d7';
+      deleteBtn.textContent = '×';
       deleteBtn.style.cssText = 'background: none; border: none; color: var(--color-text-tertiary); cursor: pointer; font-size: 1rem; padding: 0 4px; line-height: 1;';
       deleteBtn.onclick = async () => {
         const modalLib = await api.require('modal-lib');
@@ -172,71 +175,76 @@ export async function render(value, options, api) {
 
     propRow.appendChild(propHeader);
 
-    // Handle _ prefixed fields specially - render as JSON textarea
-    if (key.startsWith('_')) {
+    // _ prefix treatment only applies in type-inference mode
+    if (!fields && key.startsWith('_')) {
       const fieldEl = renderInternalField(key, val);
       propRow.appendChild(fieldEl);
       propsContainer.appendChild(propRow);
       continue;
     }
 
-    // Render value based on type
-    const valType = Array.isArray(val) ? 'array' : typeof val;
     let fieldEl;
-
     try {
-      if (valType === 'string') {
-        // Check if it looks like a GUID (item reference)
-        const guidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-        if (guidPattern.test(val)) {
-          const fieldView = await api.require('field-view-item-ref');
+      if (fields && fields[key]) {
+        const spec = fields[key];
+        const fieldViewName = 'field-view-' + (spec.field_view || 'json');
+        const fv = await api.require(fieldViewName);
+        fieldEl = await fv.render(val, {
+          ...spec,
+          mode,
+          onChange: isEditable ? (v) => updateProp(key, v) : null,
+          label: null,
+        }, api);
+      } else {
+        const valType = Array.isArray(val) ? 'array' : typeof val;
+        if (valType === 'string') {
+          const guidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+          if (guidPattern.test(val)) {
+            const fieldView = await api.require('field-view-item-ref');
+            fieldEl = await fieldView.render(val, {
+              mode,
+              onChange: isEditable ? (v) => updateProp(key, v) : null
+            }, api);
+          } else if (val.length > 100 || val.includes('\n')) {
+            const fieldView = await api.require('field-view-textarea');
+            fieldEl = await fieldView.render(val, {
+              mode,
+              onChange: isEditable ? (v) => updateProp(key, v) : null
+            }, api);
+          } else {
+            const fieldView = await api.require('field-view-text');
+            fieldEl = await fieldView.render(val, {
+              mode,
+              onChange: isEditable ? (v) => updateProp(key, v) : null
+            }, api);
+          }
+        } else if (valType === 'number') {
+          const fieldView = await api.require('field-view-number');
           fieldEl = await fieldView.render(val, {
             mode,
             onChange: isEditable ? (v) => updateProp(key, v) : null
           }, api);
-        } else if (val.length > 100 || val.includes('\n')) {
-          // Use textarea for long strings or strings with newlines
-          const fieldView = await api.require('field-view-textarea');
+        } else if (valType === 'boolean') {
+          const fieldView = await api.require('field-view-checkbox');
           fieldEl = await fieldView.render(val, {
             mode,
             onChange: isEditable ? (v) => updateProp(key, v) : null
+          }, api);
+        } else if (valType === 'object' && val !== null) {
+          fieldEl = await render(val, {
+            mode,
+            onChange: isEditable ? (v) => updateProp(key, v) : null,
+            indent: indent + 1
           }, api);
         } else {
-          const fieldView = await api.require('field-view-text');
+          const fieldView = await api.require('field-view-json');
           fieldEl = await fieldView.render(val, {
             mode,
             onChange: isEditable ? (v) => updateProp(key, v) : null
           }, api);
         }
-      } else if (valType === 'number') {
-        const fieldView = await api.require('field-view-number');
-        fieldEl = await fieldView.render(val, {
-          mode,
-          onChange: isEditable ? (v) => updateProp(key, v) : null
-        }, api);
-      } else if (valType === 'boolean') {
-        const fieldView = await api.require('field-view-checkbox');
-        fieldEl = await fieldView.render(val, {
-          mode,
-          onChange: isEditable ? (v) => updateProp(key, v) : null
-        }, api);
-      } else if (valType === 'object' && val !== null) {
-        // Recursively render nested objects
-        fieldEl = await render(val, {
-          mode,
-          onChange: isEditable ? (v) => updateProp(key, v) : null,
-          indent: indent + 1
-        }, api);
-      } else {
-        // Arrays and other types: fall back to JSON
-        const fieldView = await api.require('field-view-json');
-        fieldEl = await fieldView.render(val, {
-          mode,
-          onChange: isEditable ? (v) => updateProp(key, v) : null
-        }, api);
       }
     } catch (e) {
-      // Fallback if field view not found
       fieldEl = api.createElement('span');
       fieldEl.textContent = JSON.stringify(val);
       fieldEl.style.cssText = 'font-family: monospace; font-size: 0.8125rem;';
@@ -248,8 +256,7 @@ export async function render(value, options, api) {
 
   wrapper.appendChild(propsContainer);
 
-  // Add property button (only in editable mode)
-  if (isEditable) {
+  if (!fields && isEditable) {
     const addRow = api.createElement('div');
     addRow.style.cssText = 'margin-top: 8px;';
 
@@ -257,7 +264,6 @@ export async function render(value, options, api) {
     addBtn.textContent = '+ Add Property';
     addBtn.style.cssText = 'padding: 4px 12px; font-size: 0.75rem; cursor: pointer; background: var(--color-bg-surface-alt); border: 1px solid var(--color-border-light); border-radius: var(--border-radius); color: var(--color-text-secondary);';
     addBtn.onclick = () => {
-      // Generate unique key name
       let newKey = 'newProperty';
       let i = 1;
       while (obj.hasOwnProperty(newKey)) {
@@ -269,7 +275,6 @@ export async function render(value, options, api) {
     wrapper.appendChild(addRow);
   }
 
-  // Show empty state
   if (keys.length === 0 && !isEditable) {
     const emptyEl = api.createElement('div');
     emptyEl.textContent = '(empty object)';

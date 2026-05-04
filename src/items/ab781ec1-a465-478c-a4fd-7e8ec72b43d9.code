@@ -1,0 +1,151 @@
+
+export async function render(value, options, api) {
+  const { mode, onChange, label, itemSpec = {}, defaultItem } = options;
+  const isEditable = mode === 'editable' && onChange;
+
+  // Internal mutable state — always authoritative. getCurrent() was insufficient
+  // because generic-view buffers edits without re-rendering, so add/delete/reorder
+  // must use this local copy rather than trying to read back from the parent.
+  let currentArr = Array.isArray(value) ? [...value] : [];
+
+  const wrapper = api.createElement('div', { className: 'field-array' });
+  wrapper.style.cssText = 'display: flex; flex-direction: column; gap: 4px;';
+
+  if (label) {
+    const labelEl = api.createElement('div');
+    labelEl.textContent = label;
+    labelEl.style.cssText = 'font-weight: 500; font-size: 0.875rem; color: var(--color-text); margin-bottom: 4px;';
+    wrapper.appendChild(labelEl);
+  }
+
+  const fieldViewName = 'field-view-' + (itemSpec.field_view || 'json');
+  let fieldView;
+  try {
+    fieldView = await api.require(fieldViewName);
+  } catch (e) {
+    fieldView = await api.require('field-view-json');
+  }
+
+  const itemsContainer = api.createElement('div');
+  itemsContainer.style.cssText = 'display: flex; flex-direction: column; gap: 8px;';
+
+  const btnStyle = 'padding: 3px 7px; font-size: 0.75rem; cursor: pointer; background: var(--color-bg-hover); border: 1px solid var(--color-border-light); border-radius: var(--border-radius); line-height: 1.4;';
+
+  // Value mutation: update state only — no DOM re-render, so focus is preserved
+  // while typing in text/number sub-fields.
+  const mutateValue = (newArr) => {
+    currentArr = newArr;
+    onChange(newArr);
+  };
+
+  // Structural mutation: update state AND re-render the items DOM.
+  const mutateStructure = async (newArr) => {
+    currentArr = newArr;
+    onChange(newArr);
+    await renderItems();
+  };
+
+  const renderItems = async () => {
+    while (itemsContainer.firstChild) itemsContainer.removeChild(itemsContainer.firstChild);
+
+    if (currentArr.length === 0 && !isEditable) {
+      const emptyEl = api.createElement('div');
+      emptyEl.textContent = '(empty)';
+      emptyEl.style.cssText = 'color: var(--color-text-tertiary); font-style: italic; font-size: 0.8125rem; padding: 8px;';
+      itemsContainer.appendChild(emptyEl);
+      return;
+    }
+
+    for (let i = 0; i < currentArr.length; i++) {
+      const itemWrapper = api.createElement('div');
+      itemWrapper.style.cssText = 'display: flex; gap: 8px; align-items: flex-start;';
+
+      const fieldEl = await fieldView.render(currentArr[i], {
+        ...itemSpec,
+        mode,
+        onChange: isEditable ? (newVal) => {
+          const newArr = [...currentArr];
+          newArr[i] = newVal;
+          mutateValue(newArr);
+        } : null,
+        getCurrentValue: isEditable ? () => currentArr[i] : undefined,
+        label: null,
+      }, api);
+
+      fieldEl.style.flex = '1';
+      itemWrapper.appendChild(fieldEl);
+
+      if (isEditable) {
+        const controls = api.createElement('div');
+        controls.style.cssText = 'display: flex; flex-direction: column; gap: 2px; flex-shrink: 0; padding-top: 2px;';
+
+        const upBtn = api.createElement('button');
+        upBtn.textContent = '↑';
+        upBtn.title = 'Move up';
+        upBtn.style.cssText = btnStyle + (i === 0 ? ' opacity: 0.3;' : '');
+        upBtn.disabled = i === 0;
+        upBtn.onclick = () => {
+          const newArr = [...currentArr];
+          [newArr[i - 1], newArr[i]] = [newArr[i], newArr[i - 1]];
+          mutateStructure(newArr);
+        };
+
+        const downBtn = api.createElement('button');
+        downBtn.textContent = '↓';
+        downBtn.title = 'Move down';
+        downBtn.style.cssText = btnStyle + (i === currentArr.length - 1 ? ' opacity: 0.3;' : '');
+        downBtn.disabled = i === currentArr.length - 1;
+        downBtn.onclick = () => {
+          const newArr = [...currentArr];
+          [newArr[i], newArr[i + 1]] = [newArr[i + 1], newArr[i]];
+          mutateStructure(newArr);
+        };
+
+        const delBtn = api.createElement('button');
+        delBtn.textContent = '×';
+        delBtn.title = 'Remove';
+        delBtn.style.cssText = btnStyle + ' color: var(--color-text-secondary);';
+        delBtn.onclick = () => {
+          mutateStructure(currentArr.filter((_, j) => j !== i));
+        };
+
+        controls.appendChild(upBtn);
+        controls.appendChild(downBtn);
+        controls.appendChild(delBtn);
+        itemWrapper.appendChild(controls);
+      }
+
+      itemsContainer.appendChild(itemWrapper);
+    }
+  };
+
+  await renderItems();
+  wrapper.appendChild(itemsContainer);
+
+  if (isEditable) {
+    const addBtn = api.createElement('button');
+    addBtn.textContent = '+ Add Item';
+    addBtn.style.cssText = 'margin-top: 4px; padding: 4px 12px; font-size: 0.75rem; cursor: pointer; background: var(--color-bg-surface-alt); border: 1px solid var(--color-border-light); border-radius: var(--border-radius); color: var(--color-text-secondary);';
+    addBtn.onclick = () => {
+      const base = defaultItem !== undefined ? defaultItem : getDefaultForSpec(itemSpec);
+      // Deep-copy objects so each new item gets its own reference
+      const newItem = (base !== null && typeof base === 'object')
+        ? JSON.parse(JSON.stringify(base))
+        : base;
+      mutateStructure([...currentArr, newItem]);
+    };
+    wrapper.appendChild(addBtn);
+  }
+
+  return wrapper;
+}
+
+function getDefaultForSpec(spec) {
+  switch (spec.field_view) {
+    case 'number': return 0;
+    case 'checkbox': return false;
+    case 'object': return {};
+    case 'array': return [];
+    default: return '';
+  }
+}

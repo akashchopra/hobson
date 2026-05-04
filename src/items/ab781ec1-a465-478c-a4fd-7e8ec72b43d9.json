@@ -1,0 +1,252 @@
+{
+  "id": "ab781ec1-a465-478c-a4fd-7e8ec72b43d9",
+  "name": "field-view-array",
+  "type": "cccccccc-0000-0000-0000-000000000000",
+  "created": 1778000000000,
+  "modified": 1777878674319,
+  "content": {
+    "description": [
+      ":doc",
+      [
+        ":p",
+        {
+          "s": "Renders an array as a list of items, each edited with a specified field view. Accepts `itemSpec` (same shape as a ui_hints entry, e.g. `{field_view: \"text\"}`) and optional `defaultItem` (value inserted on Add). In editable mode shows up/down reorder buttons and a remove button per item. Falls back to field-view-json if the specified view cannot be loaded."
+        }
+      ]
+    ],
+    "code": "\nexport async function render(value, options, api) {\n  const { mode, onChange, label, itemSpec = {}, defaultItem } = options;\n  const isEditable = mode === 'editable' && onChange;\n\n  // Internal mutable state — always authoritative. getCurrent() was insufficient\n  // because generic-view buffers edits without re-rendering, so add/delete/reorder\n  // must use this local copy rather than trying to read back from the parent.\n  let currentArr = Array.isArray(value) ? [...value] : [];\n\n  const wrapper = api.createElement('div', { className: 'field-array' });\n  wrapper.style.cssText = 'display: flex; flex-direction: column; gap: 4px;';\n\n  if (label) {\n    const labelEl = api.createElement('div');\n    labelEl.textContent = label;\n    labelEl.style.cssText = 'font-weight: 500; font-size: 0.875rem; color: var(--color-text); margin-bottom: 4px;';\n    wrapper.appendChild(labelEl);\n  }\n\n  const fieldViewName = 'field-view-' + (itemSpec.field_view || 'json');\n  let fieldView;\n  try {\n    fieldView = await api.require(fieldViewName);\n  } catch (e) {\n    fieldView = await api.require('field-view-json');\n  }\n\n  const itemsContainer = api.createElement('div');\n  itemsContainer.style.cssText = 'display: flex; flex-direction: column; gap: 8px;';\n\n  const btnStyle = 'padding: 3px 7px; font-size: 0.75rem; cursor: pointer; background: var(--color-bg-hover); border: 1px solid var(--color-border-light); border-radius: var(--border-radius); line-height: 1.4;';\n\n  // Value mutation: update state only — no DOM re-render, so focus is preserved\n  // while typing in text/number sub-fields.\n  const mutateValue = (newArr) => {\n    currentArr = newArr;\n    onChange(newArr);\n  };\n\n  // Structural mutation: update state AND re-render the items DOM.\n  const mutateStructure = async (newArr) => {\n    currentArr = newArr;\n    onChange(newArr);\n    await renderItems();\n  };\n\n  const renderItems = async () => {\n    while (itemsContainer.firstChild) itemsContainer.removeChild(itemsContainer.firstChild);\n\n    if (currentArr.length === 0 && !isEditable) {\n      const emptyEl = api.createElement('div');\n      emptyEl.textContent = '(empty)';\n      emptyEl.style.cssText = 'color: var(--color-text-tertiary); font-style: italic; font-size: 0.8125rem; padding: 8px;';\n      itemsContainer.appendChild(emptyEl);\n      return;\n    }\n\n    for (let i = 0; i < currentArr.length; i++) {\n      const itemWrapper = api.createElement('div');\n      itemWrapper.style.cssText = 'display: flex; gap: 8px; align-items: flex-start;';\n\n      const fieldEl = await fieldView.render(currentArr[i], {\n        ...itemSpec,\n        mode,\n        onChange: isEditable ? (newVal) => {\n          const newArr = [...currentArr];\n          newArr[i] = newVal;\n          mutateValue(newArr);\n        } : null,\n        getCurrentValue: isEditable ? () => currentArr[i] : undefined,\n        label: null,\n      }, api);\n\n      fieldEl.style.flex = '1';\n      itemWrapper.appendChild(fieldEl);\n\n      if (isEditable) {\n        const controls = api.createElement('div');\n        controls.style.cssText = 'display: flex; flex-direction: column; gap: 2px; flex-shrink: 0; padding-top: 2px;';\n\n        const upBtn = api.createElement('button');\n        upBtn.textContent = '↑';\n        upBtn.title = 'Move up';\n        upBtn.style.cssText = btnStyle + (i === 0 ? ' opacity: 0.3;' : '');\n        upBtn.disabled = i === 0;\n        upBtn.onclick = () => {\n          const newArr = [...currentArr];\n          [newArr[i - 1], newArr[i]] = [newArr[i], newArr[i - 1]];\n          mutateStructure(newArr);\n        };\n\n        const downBtn = api.createElement('button');\n        downBtn.textContent = '↓';\n        downBtn.title = 'Move down';\n        downBtn.style.cssText = btnStyle + (i === currentArr.length - 1 ? ' opacity: 0.3;' : '');\n        downBtn.disabled = i === currentArr.length - 1;\n        downBtn.onclick = () => {\n          const newArr = [...currentArr];\n          [newArr[i], newArr[i + 1]] = [newArr[i + 1], newArr[i]];\n          mutateStructure(newArr);\n        };\n\n        const delBtn = api.createElement('button');\n        delBtn.textContent = '×';\n        delBtn.title = 'Remove';\n        delBtn.style.cssText = btnStyle + ' color: var(--color-text-secondary);';\n        delBtn.onclick = () => {\n          mutateStructure(currentArr.filter((_, j) => j !== i));\n        };\n\n        controls.appendChild(upBtn);\n        controls.appendChild(downBtn);\n        controls.appendChild(delBtn);\n        itemWrapper.appendChild(controls);\n      }\n\n      itemsContainer.appendChild(itemWrapper);\n    }\n  };\n\n  await renderItems();\n  wrapper.appendChild(itemsContainer);\n\n  if (isEditable) {\n    const addBtn = api.createElement('button');\n    addBtn.textContent = '+ Add Item';\n    addBtn.style.cssText = 'margin-top: 4px; padding: 4px 12px; font-size: 0.75rem; cursor: pointer; background: var(--color-bg-surface-alt); border: 1px solid var(--color-border-light); border-radius: var(--border-radius); color: var(--color-text-secondary);';\n    addBtn.onclick = () => {\n      const base = defaultItem !== undefined ? defaultItem : getDefaultForSpec(itemSpec);\n      // Deep-copy objects so each new item gets its own reference\n      const newItem = (base !== null && typeof base === 'object')\n        ? JSON.parse(JSON.stringify(base))\n        : base;\n      mutateStructure([...currentArr, newItem]);\n    };\n    wrapper.appendChild(addBtn);\n  }\n\n  return wrapper;\n}\n\nfunction getDefaultForSpec(spec) {\n  switch (spec.field_view) {\n    case 'number': return 0;\n    case 'checkbox': return false;\n    case 'object': return {};\n    case 'array': return [];\n    default: return '';\n  }\n}\n",
+    "_symbols": {
+      "render": {
+        "name": "render",
+        "line": 2,
+        "col": 7,
+        "endLine": 141,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(value, options, api)"
+      },
+      "render.isEditable": {
+        "name": "isEditable",
+        "line": 4,
+        "col": 8,
+        "endLine": 4,
+        "endCol": 52,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.currentArr": {
+        "name": "currentArr",
+        "line": 9,
+        "col": 6,
+        "endLine": 9,
+        "endCol": 57,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.wrapper": {
+        "name": "wrapper",
+        "line": 11,
+        "col": 8,
+        "endLine": 11,
+        "endCol": 72,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.labelEl": {
+        "name": "labelEl",
+        "line": 15,
+        "col": 10,
+        "endLine": 15,
+        "endCol": 44,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.fieldViewName": {
+        "name": "fieldViewName",
+        "line": 21,
+        "col": 8,
+        "endLine": 21,
+        "endCol": 71,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.fieldView": {
+        "name": "fieldView",
+        "line": 22,
+        "col": 6,
+        "endLine": 22,
+        "endCol": 15,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.itemsContainer": {
+        "name": "itemsContainer",
+        "line": 29,
+        "col": 8,
+        "endLine": 29,
+        "endCol": 49,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.btnStyle": {
+        "name": "btnStyle",
+        "line": 32,
+        "col": 8,
+        "endLine": 32,
+        "endCol": 210,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.mutateValue": {
+        "name": "mutateValue",
+        "line": 36,
+        "col": 8,
+        "endLine": 39,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "render",
+        "signature": "(newArr)"
+      },
+      "render.mutateStructure": {
+        "name": "mutateStructure",
+        "line": 42,
+        "col": 8,
+        "endLine": 46,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "render",
+        "signature": "(newArr)"
+      },
+      "render.renderItems": {
+        "name": "renderItems",
+        "line": 48,
+        "col": 8,
+        "endLine": 120,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "render",
+        "signature": "()"
+      },
+      "renderItems.emptyEl": {
+        "name": "emptyEl",
+        "line": 52,
+        "col": 12,
+        "endLine": 52,
+        "endCol": 46,
+        "kind": "variable",
+        "scope": "renderItems"
+      },
+      "renderItems.i": {
+        "name": "i",
+        "line": 59,
+        "col": 13,
+        "endLine": 59,
+        "endCol": 18,
+        "kind": "variable",
+        "scope": "renderItems"
+      },
+      "renderItems.itemWrapper": {
+        "name": "itemWrapper",
+        "line": 60,
+        "col": 12,
+        "endLine": 60,
+        "endCol": 50,
+        "kind": "variable",
+        "scope": "renderItems"
+      },
+      "renderItems.fieldEl": {
+        "name": "fieldEl",
+        "line": 63,
+        "col": 12,
+        "endLine": 73,
+        "endCol": 13,
+        "kind": "variable",
+        "scope": "renderItems"
+      },
+      "renderItems.controls": {
+        "name": "controls",
+        "line": 79,
+        "col": 14,
+        "endLine": 79,
+        "endCol": 49,
+        "kind": "variable",
+        "scope": "renderItems"
+      },
+      "renderItems.upBtn": {
+        "name": "upBtn",
+        "line": 82,
+        "col": 14,
+        "endLine": 82,
+        "endCol": 49,
+        "kind": "variable",
+        "scope": "renderItems"
+      },
+      "renderItems.newArr": {
+        "name": "newArr",
+        "line": 99,
+        "col": 16,
+        "endLine": 99,
+        "endCol": 40,
+        "kind": "variable",
+        "scope": "renderItems"
+      },
+      "renderItems.downBtn": {
+        "name": "downBtn",
+        "line": 93,
+        "col": 14,
+        "endLine": 93,
+        "endCol": 51,
+        "kind": "variable",
+        "scope": "renderItems"
+      },
+      "renderItems.delBtn": {
+        "name": "delBtn",
+        "line": 104,
+        "col": 14,
+        "endLine": 104,
+        "endCol": 50,
+        "kind": "variable",
+        "scope": "renderItems"
+      },
+      "render.addBtn": {
+        "name": "addBtn",
+        "line": 126,
+        "col": 10,
+        "endLine": 126,
+        "endCol": 46,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.base": {
+        "name": "base",
+        "line": 130,
+        "col": 12,
+        "endLine": 130,
+        "endCol": 88,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.newItem": {
+        "name": "newItem",
+        "line": 132,
+        "col": 12,
+        "endLine": 134,
+        "endCol": 14,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "getDefaultForSpec": {
+        "name": "getDefaultForSpec",
+        "line": 143,
+        "col": 0,
+        "endLine": 151,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(spec)"
+      }
+    }
+  },
+  "attachments": []
+}
