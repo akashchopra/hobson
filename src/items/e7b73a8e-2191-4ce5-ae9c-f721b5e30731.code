@@ -44,9 +44,13 @@ export async function render(value, options, api) {
   // JSON AST support: if value is a compact JSON AST array, pretty-print to s-expressions.
   // Uses the canonical pretty-printer from the Hob evaluator module.
   let code = value || '';
+  let isJsonObject = false;
   if (Array.isArray(value)) {
     const hob = await api.require('40b00001-0000-4000-8000-000000000000');
     code = hob.prettyPrintAll(value);
+  } else if (value !== null && typeof value === 'object') {
+    code = JSON.stringify(value, null, 2);
+    isJsonObject = true;
   }
 
   const wrapper = api.createElement('div', { className: 'field-code-editable' });
@@ -194,7 +198,11 @@ export async function render(value, options, api) {
   // Call onChange on edits
   if (onChange) {
     cm.on('change', () => {
-      onChange(cm.getValue());
+      if (isJsonObject) {
+        try { onChange(JSON.parse(cm.getValue())); } catch (e) { /* invalid JSON */ }
+      } else {
+        onChange(cm.getValue());
+      }
     });
   }
 
