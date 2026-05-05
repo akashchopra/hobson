@@ -74,12 +74,15 @@
 (defn build-header-row [cols]
   (concat [:tr] (map (fn [col] [:th (:header col)]) cols)))
 
+(defn row-get [row field]
+  (if (:id row) (get-field row field) (get row field)))
+
 (defn build-data-row [item cols]
   (concat
     [:tr]
     (map
       (fn [col]
-        (let [val (get-field item (:field col))]
+        (let [val (row-get item (:field col))]
           [:td (render-cell val item col)]))
       cols)))
 
@@ -91,7 +94,7 @@
       (map
         (fn [col]
           (let [total-spec (:total col)
-                vals (map (fn [item] (get-field item (:field col))) items)]
+                vals (map (fn [item] (row-get item (:field col))) items)]
             [:td
               (cond
                 (nil? total-spec)
@@ -108,10 +111,16 @@
                 "")]))
         cols))))
 
+(defn build-align-node [cols]
+  (when (some :align cols)
+    (concat [:align] (map (fn [col] (or (:align col) "")) cols))))
+
 (defn item-table [items & col-specs]
   (let [cols (map resolve-col col-specs)
+        align-node (build-align-node cols)
         totals-row (build-totals-row cols items)]
     [:table
+      (when align-node align-node)
       [:thead (build-header-row cols)]
       (concat [:tbody] (map (fn [item] (build-data-row item cols)) items))
       (when totals-row [:tfoot totals-row])]))
