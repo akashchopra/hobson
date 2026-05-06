@@ -8,6 +8,10 @@ const SPECIAL_FORMS = new Set([
 ]);
 const BINDING_FORMS = new Set(['let', 'loop', 'binding', 'for', 'doseq']); 
 
+// --- Curly-infix operator whitelist (mirrors hob-interpreter) ---
+const INFIX_OPS = new Set(['+', '-', '*', '/', '%', 'mod', 'rem',
+  '>', '<', '>=', '<=', '=', '!=', 'not=']);
+
 // --- Internal clipboard (shared across editor instances in the same session) ---
 let _clipboard = null;  // compact JSON AST subtree
 
@@ -271,7 +275,20 @@ function deflate(node) {
     case 'string': return { s: node.value };
     case 'hole': return null;
     case 'doc': return node.value;
-    case 'list': return node.children.filter(c => c.type !== 'hole').map(deflate);
+    case 'list': {
+      const kids = node.children.filter(c => c.type !== 'hole');
+      // Normalize natural-infix-order curly lists: {a op b op c} stored as [a,op,b,op,c] → [op,a,b,c]
+      if (node._curlyList && kids.length >= 3
+          && kids[1].type === 'symbol' && INFIX_OPS.has(kids[1].value)) {
+        const opNode = kids[1];
+        const uniform = kids.every((k, i) => i % 2 === 0 || (k.type === 'symbol' && k.value === opNode.value));
+        if (uniform) {
+          const operands = kids.filter((_, i) => i % 2 === 0);
+          return [deflate(opNode), ...operands.map(deflate)];
+        }
+      }
+      return kids.map(deflate);
+    }
     case 'vector': return { v: node.children.filter(c => c.type !== 'hole').map(deflate) };
     case 'map': {
       const pairs = [];
@@ -380,6 +397,15 @@ function parseSexp(text) {
         skipWS();
       }
       if (pos < text.length) pos++; // skip }
+      if (items.length === 1) return items[0];
+      const isInfix =
+        (items.length >= 3 && typeof items[1] === 'string' && !items[1].startsWith(':') && !items[1].startsWith('@') && INFIX_OPS.has(items[1])) ||
+        (items.length === 2 && typeof items[0] === 'string' && !items[0].startsWith(':') && !items[0].startsWith('@') && INFIX_OPS.has(items[0]));
+      if (isInfix) {
+        if (items.length === 2) return [items[0], items[1]];
+        const op = items[1];
+        return [op, ...items.filter((_, i) => i % 2 === 0)];
+      }
       const pairs = [];
       for (let i = 0; i < items.length; i += 2) {
         pairs.push([items[i], i + 1 < items.length ? items[i + 1] : null]);
@@ -621,7 +647,100 @@ function collapsedSummary(node) {
   return '(' + headText + ' …)';
 }
 
+function isInfixList(node) {
+  return node.type === 'list'
+    && node.children.length >= 2
+    && node.children[0].type === 'symbol'
+    && INFIX_OPS.has(node.children[0].value);
+}
+
+function infixDelim(text) {
+  const s = document.createElement('span');
+  s.className = 'hob-infix-delim';
+  s.textContent = text;
+  return s;
+}
+
+function renderInfixList(node, state, itemNames, api, indent) {
+  const span = document.createElement('span');
+  span.className = 'hob-list';
+  span.setAttribute('data-node-id', node.id);
+  state.domMap.set(node.id, span);
+
+  // Not yet a proper infix list (empty or op not yet committed) — show {} with children as-is
+  if (!isInfixList(node)) {
+    span.appendChild(infixDelim('{'));
+    for (let i = 0; i < node.children.length; i++) {
+      if (i > 0) span.appendChild(ws(node.children[i - 1].id));
+      span.appendChild(renderNode(node.children[i], state, itemNames, api, indent + 1));
+    }
+    span.appendChild(infixDelim('}'));
+    return span;
+  }
+
+  const op = node.children[0];
+  const operands = node.children.slice(1);
+
+  const fw = flatWidth(node);
+
+  if (fw <= MAX_LINE) {
+    span.appendChild(infixDelim('{'));
+    if (operands.length === 1) {
+      // Unary: { - x }
+      span.appendChild(renderNode(op, state, itemNames, api, indent + 1));
+      span.appendChild(ws(op.id));
+      span.appendChild(renderNode(operands[0], state, itemNames, api, indent + 1));
+    } else {
+      // Binary / n-ary: { a op b op c }
+      for (let i = 0; i < operands.length; i++) {
+        if (i > 0) {
+          // Operator between operands: render first occurrence as the real node,
+          // subsequent as visual-only ghosts
+          const s = document.createElement('span');
+          s.className = 'hob-symbol';
+          s.textContent = ' ' + op.value + ' ';
+          if (i === 1) {
+            // First (and often only) separator: register op in domMap so it's selectable
+            s.setAttribute('data-node-id', op.id);
+            state.domMap.set(op.id, s);
+          }
+          span.appendChild(s);
+        }
+        span.appendChild(renderNode(operands[i], state, itemNames, api, indent + 1));
+      }
+    }
+    span.appendChild(infixDelim('}'));
+  } else {
+    // Multi-line: { operand1\n  op operand2\n  op operand3 }
+    const childIndent = indent + 1;
+    span.appendChild(infixDelim('{'));
+    if (operands.length === 1) {
+      span.appendChild(renderNode(op, state, itemNames, api, childIndent));
+      span.appendChild(ws(op.id));
+      span.appendChild(renderNode(operands[0], state, itemNames, api, childIndent));
+    } else {
+      span.appendChild(renderNode(operands[0], state, itemNames, api, childIndent));
+      for (let i = 1; i < operands.length; i++) {
+        span.appendChild(newline(childIndent, operands[i - 1].id));
+        const s = document.createElement('span');
+        s.className = 'hob-symbol';
+        s.textContent = op.value + ' ';
+        if (i === 1) { s.setAttribute('data-node-id', op.id); state.domMap.set(op.id, s); }
+        span.appendChild(s);
+        span.appendChild(renderNode(operands[i], state, itemNames, api, childIndent));
+      }
+    }
+    const lastOperand = operands[operands.length - 1];
+    span.appendChild(newline(indent, lastOperand.id));
+    span.appendChild(infixDelim('}'));
+  }
+
+  return span;
+}
+
 function renderList(node, state, itemNames, api, indent) {
+  if (isInfixList(node) || node._curlyList) return renderInfixList(node, state, itemNames, api, indent);
+
   const span = document.createElement('span');
   span.className = 'hob-list';
   span.setAttribute('data-node-id', node.id);
@@ -1296,7 +1415,7 @@ function nodeLabel(node) {
   if (node.type === 'list' && node.children.length > 0 && node.children[0].type === 'symbol') {
     return '(' + node.children[0].value + ')';
   }
-  if (node.type === 'list') return '()';
+  if (node.type === 'list') return (node._curlyList || isInfixList(node)) ? '{}' : '()';
   if (node.type === 'vector') return '[]';
   if (node.type === 'map') return '{}';
   return leafText(node);
@@ -1470,6 +1589,13 @@ function commitToken(state, itemNames, api, statusBar) {
   const newNode = makeNode(state, resolved.type, resolved);
   pushUndo(state);
   replaceNode(state, state.inputHoleId, newNode);
+  // If this is the first child of a {}-created list and it's a keyword, convert to map
+  const parent = state.parentMap.get(newNode.id);
+  if (parent && parent._curlyList && newNode.type === 'keyword'
+      && parent.children[0] === newNode) {
+    parent.type = 'map';
+    delete parent._curlyList;
+  }
   notifyChange(state);
   return newNode;
 }
@@ -1993,9 +2119,10 @@ function handleNavKey(e, ctx) {
     } else { handled = false; }
   } else if ((e.key === '(' || e.key === '[' || e.key === '{') && state.onChange) {
     // Create container with inner hole, insert after selected
-    const containerType = e.key === '(' ? 'list' : e.key === '[' ? 'vector' : 'map';
+    const containerType = e.key === '[' ? 'vector' : 'list';
     const innerHole = makeNode(state, 'hole', {});
     const container = makeNode(state, containerType, { children: [innerHole] });
+    if (e.key === '{') container._curlyList = true;
     state.parentMap.set(innerHole.id, container);
     applyMutation(state, itemNames, api, statusBar, () => insertAfter(state, node.id, container));
     enterInputMode(state, innerHole.id);
@@ -2290,9 +2417,10 @@ function handleInputKey(e, ctx) {
       const newNode = commitToken(state, itemNames, api, statusBar);
       afterId = newNode.id;
     }
-    const containerType = e.key === '(' ? 'list' : e.key === '[' ? 'vector' : 'map';
+    const containerType = e.key === '[' ? 'vector' : 'list';
     const innerHole = makeNode(state, 'hole', {});
     const container = makeNode(state, containerType, { children: [innerHole] });
+    if (e.key === '{') container._curlyList = true;
     state.parentMap.set(innerHole.id, container);
     // If we committed, insert container as sibling after committed node
     // If buffer was empty, replace the hole with the container
@@ -2324,11 +2452,13 @@ function handleInputKey(e, ctx) {
     }
     // Walk up to find matching container
     const targetType = e.key === ')' ? 'list' : e.key === ']' ? 'vector' : 'map';
+    const targetCurly = e.key === '}';
     let cur = state.nodeMap.get(state.selectedId);
     let found = null;
     while (cur) {
       cur = state.parentMap.get(cur.id);
       if (cur && cur.type === targetType) { found = cur; break; }
+      if (targetCurly && cur && (cur._curlyList || isInfixList(cur))) { found = cur; break; }
       if (cur && cur.type === 'root') break;
     }
     exitToNav(state, found ? found.id : state.selectedId);

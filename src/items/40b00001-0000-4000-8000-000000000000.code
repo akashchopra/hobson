@@ -238,6 +238,9 @@ function tokenize(source) {
 // Parser
 // ============================================================
 
+const INFIX_OPS = new Set(['+', '-', '*', '/', '%', 'mod', 'rem',
+  '>', '<', '>=', '<=', '=', '!=', 'not=']);
+
 function createParser(tokens) {
   let pos = 0;
 
@@ -337,18 +340,57 @@ function createParser(tokens) {
 
   function parseMap() {
     const open = next(); // consume {
-    const entries = [];
-    while (peek() && peek().type !== TOKEN.RBRACE) {
-      const key = parseExpr();
-      if (!peek() || peek().type === TOKEN.RBRACE) {
-        throw hobError('Map literal must have an even number of forms', { line: key.line, col: key.col });
-      }
-      const val = parseExpr();
-      entries.push([key, val]);
+
+    // Empty {} → empty map
+    if (peek() && peek().type === TOKEN.RBRACE) {
+      next();
+      return { type: 'map', entries: [], line: open.line, col: open.col };
     }
-    if (!peek()) throw hobError('Unterminated map — expected }', { line: open.line, col: open.col });
+
+    // Collect all forms, then decide map vs curly-infix
+    const forms = [];
+    while (peek() && peek().type !== TOKEN.RBRACE) {
+      forms.push(parseExpr());
+    }
+    if (!peek()) throw hobError('Unterminated expression — expected }', { line: open.line, col: open.col });
     next(); // consume }
-    return { type: 'map', entries, line: open.line, col: open.col };
+
+    // Single form: {x} → x
+    if (forms.length === 1) return forms[0];
+
+    // Curly-infix if second token is a known operator (binary/n-ary),
+    // or first token is a known operator with exactly two forms (unary).
+    const isInfix =
+      (forms.length >= 3 && forms[1].type === 'symbol' && INFIX_OPS.has(forms[1].value)) ||
+      (forms.length === 2 && forms[0].type === 'symbol' && INFIX_OPS.has(forms[0].value));
+
+    if (!isInfix) {
+      if (forms.length % 2 !== 0) {
+        throw hobError('Map literal must have an even number of forms', forms[forms.length - 1]);
+      }
+      const entries = [];
+      for (let i = 0; i < forms.length; i += 2) entries.push([forms[i], forms[i + 1]]);
+      return { type: 'map', entries, line: open.line, col: open.col };
+    }
+
+    // Unary: {- x} → (- x)
+    if (forms.length === 2) {
+      return { type: 'list', elements: forms, line: open.line, col: open.col };
+    }
+
+    // Validate uniform operator at every odd position
+    const op = forms[1];
+    for (let i = 3; i < forms.length; i += 2) {
+      if (forms[i].type !== 'symbol' || forms[i].value !== op.value) {
+        throw hobError(
+          `Mixed infix operators — use nested {} for precedence, e.g. {{a + b} * c}`,
+          forms[i]
+        );
+      }
+    }
+
+    const operands = forms.filter((_, i) => i % 2 === 0);
+    return { type: 'list', elements: [op, ...operands], line: open.line, col: open.col };
   }
 
   function parseAnonFn() {

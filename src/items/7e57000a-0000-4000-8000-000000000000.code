@@ -174,6 +174,51 @@ export async function run(api) {
     assert(caught, 'Should throw on empty input');
   }
 
+  // --- Curly-infix ---
+
+  function readsInfixBinary() {
+    const ast = hob.read('{a + b}');
+    assert(Array.isArray(ast), 'Should be a list');
+    assertEquals(ast[0], '+');
+    assertEquals(ast[1], 'a');
+    assertEquals(ast[2], 'b');
+  }
+
+  function readsInfixChained() {
+    const ast = hob.read('{a + b + c}');
+    assert(Array.isArray(ast), 'Should be a list');
+    assertEquals(ast[0], '+');
+    assertEquals(ast.length, 4);
+    assertEquals(ast[3], 'c');
+  }
+
+  function readsInfixNested() {
+    const ast = hob.read('{{a + b} * c}');
+    assert(Array.isArray(ast), 'Should be a list');
+    assertEquals(ast[0], '*');
+    assert(Array.isArray(ast[1]), 'First operand should be a list');
+    assertEquals(ast[1][0], '+');
+    assertEquals(ast[2], 'c');
+  }
+
+  function readsInfixUnary() {
+    const ast = hob.read('{- x}');
+    assert(Array.isArray(ast), 'Should be a list');
+    assertEquals(ast[0], '-');
+    assertEquals(ast[1], 'x');
+  }
+
+  function readsInfixSingleton() {
+    const ast = hob.read('{x}');
+    assertEquals(ast, 'x');
+  }
+
+  function errorOnMixedInfixOps() {
+    let caught = false;
+    try { hob.read('{a + b * c}'); } catch (e) { caught = true; assert(e.message.includes('Mixed infix'), 'Should mention mixed operators'); }
+    assert(caught, 'Should throw on mixed infix operators');
+  }
+
   // --- Run all tests ---
 
   test('reads integer', readsInteger);
@@ -201,6 +246,12 @@ export async function run(api) {
   test('error on set literal', errorOnSetLiteral);
   test('error on odd map forms', errorOnOddMapForms);
   test('error on empty input', errorOnEmptyInput);
+  test('reads infix binary', readsInfixBinary);
+  test('reads infix chained', readsInfixChained);
+  test('reads infix nested', readsInfixNested);
+  test('reads infix unary', readsInfixUnary);
+  test('reads infix singleton', readsInfixSingleton);
+  test('error on mixed infix operators', errorOnMixedInfixOps);
 
   return getResults();
 }

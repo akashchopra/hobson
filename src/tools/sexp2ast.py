@@ -52,7 +52,7 @@ class Reader:
         elif c == '[':
             return self._read_vector()
         elif c == '{':
-            return self._read_map()
+            return self._read_map_or_infix()
         elif c == '"':
             return self._read_string()
         elif c == '@':
@@ -84,19 +84,61 @@ class Reader:
                 return {"v": items}
             items.append(self.read_one())
 
-    def _read_map(self):
+    INFIX_OPS = frozenset(['+', '-', '*', '/', '%', 'mod', 'rem',
+                           '>', '<', '>=', '<=', '=', '!=', 'not='])
+
+    def _read_map_or_infix(self):
         self.pos += 1  # skip {
-        pairs = []
+        self._skip_ws()
+
+        # Empty {} → empty map
+        if self.pos < len(self.text) and self.text[self.pos] == '}':
+            self.pos += 1
+            return {"m": []}
+
+        # Collect all forms, then decide map vs curly-infix
+        forms = []
         while True:
             self._skip_ws()
             if self.pos >= len(self.text):
-                raise ValueError("Unterminated map")
+                raise ValueError("Unterminated expression")
             if self.text[self.pos] == '}':
                 self.pos += 1
-                return {"m": pairs}
-            k = self.read_one()
-            v = self.read_one()
-            pairs.append([k, v])
+                break
+            forms.append(self.read_one())
+
+        # Single form: {x} → x
+        if len(forms) == 1:
+            return forms[0]
+
+        def _is_infix_op(v):
+            return isinstance(v, str) and not v.startswith(':') and not v.startswith('@') and v in self.INFIX_OPS
+
+        is_infix = (
+            (len(forms) >= 3 and _is_infix_op(forms[1])) or
+            (len(forms) == 2 and _is_infix_op(forms[0]))
+        )
+
+        if not is_infix:
+            if len(forms) % 2 != 0:
+                raise ValueError("Map literal must have an even number of forms")
+            pairs = [[forms[i], forms[i+1]] for i in range(0, len(forms), 2)]
+            return {"m": pairs}
+
+        # Unary: {- x} → (- x)
+        if len(forms) == 2:
+            return forms
+
+        # Validate uniform operator at every odd position
+        op = forms[1]
+        for i in range(3, len(forms), 2):
+            if forms[i] != op:
+                raise ValueError(
+                    "Mixed infix operators — use nested {} for precedence, e.g. {{a + b} * c}"
+                )
+
+        operands = [forms[i] for i in range(0, len(forms), 2)]
+        return [op] + operands
 
     def _read_string(self):
         self.pos += 1  # skip opening "
