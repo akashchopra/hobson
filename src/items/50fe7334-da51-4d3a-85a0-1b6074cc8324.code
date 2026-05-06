@@ -243,6 +243,15 @@ function inflateAll(compactForms) {
         return [kNode, vNode];
       });
       return node;
+    } else if (compact.ci) {
+      node = { id: nextId++, type: 'list', _curlyInfix: true, children: [] };
+      nodeMap.set(node.id, node);
+      node.children = compact.ci.map(child => {
+        const cNode = inflate(child);
+        parentMap.set(cNode.id, node);
+        return cNode;
+      });
+      return node;
     } else {
       node = { id: nextId++, type: 'nil' }; // fallback
     }
@@ -277,15 +286,10 @@ function deflate(node) {
     case 'doc': return node.value;
     case 'list': {
       const kids = node.children.filter(c => c.type !== 'hole');
-      // Normalize natural-infix-order curly lists: {a op b op c} stored as [a,op,b,op,c] → [op,a,b,c]
-      if (node._curlyList && kids.length >= 3
-          && kids[1].type === 'symbol' && INFIX_OPS.has(kids[1].value)) {
-        const opNode = kids[1];
-        const uniform = kids.every((k, i) => i % 2 === 0 || (k.type === 'symbol' && k.value === opNode.value));
-        if (uniform) {
-          const operands = kids.filter((_, i) => i % 2 === 0);
-          return [deflate(opNode), ...operands.map(deflate)];
-        }
+      if (node._curlyInfix || node._curlyList) {
+        const isUnary = kids.length === 2 && kids[0].type === 'symbol' && INFIX_OPS.has(kids[0].value);
+        const isBinary = kids.length >= 3 && kids[1] && kids[1].type === 'symbol' && INFIX_OPS.has(kids[1].value);
+        if (isUnary || isBinary) return { ci: kids.map(deflate) };
       }
       return kids.map(deflate);
     }
@@ -654,6 +658,14 @@ function isInfixList(node) {
     && INFIX_OPS.has(node.children[0].value);
 }
 
+// Unary (- x) produced by mixed +/- normalization — rendered as subtraction within (+ ...)
+function isUnaryMinus(node) {
+  return node.type === 'list' && !node._curlyList
+    && node.children.length === 2
+    && node.children[0].type === 'symbol' && node.children[0].value === '-'
+    && node.children[1].type !== 'hole';
+}
+
 function infixDelim(text) {
   const s = document.createElement('span');
   s.className = 'hob-infix-delim';
@@ -666,6 +678,28 @@ function renderInfixList(node, state, itemNames, api, indent) {
   span.className = 'hob-list';
   span.setAttribute('data-node-id', node.id);
   state.domMap.set(node.id, span);
+
+  // Loaded from {ci:[...]}: children in natural order [operand, op, operand, op, ...]
+  if (node._curlyInfix) {
+    span.appendChild(infixDelim('{'));
+    if (flatWidth(node) <= MAX_LINE) {
+      for (let i = 0; i < node.children.length; i++) {
+        if (i > 0) span.appendChild(ws(node.children[i - 1].id));
+        span.appendChild(renderNode(node.children[i], state, itemNames, api, indent + 1));
+      }
+    } else {
+      span.appendChild(renderNode(node.children[0], state, itemNames, api, indent + 1));
+      for (let i = 1; i < node.children.length - 1; i += 2) {
+        span.appendChild(newline(indent + 1, node.children[i - 1].id));
+        span.appendChild(renderNode(node.children[i], state, itemNames, api, indent + 1));
+        span.appendChild(ws(node.children[i].id));
+        span.appendChild(renderNode(node.children[i + 1], state, itemNames, api, indent + 1));
+      }
+      span.appendChild(newline(indent, node.children[node.children.length - 1].id));
+    }
+    span.appendChild(infixDelim('}'));
+    return span;
+  }
 
   // Not yet a proper infix list (empty or op not yet committed) — show {} with children as-is
   if (!isInfixList(node)) {
@@ -694,17 +728,20 @@ function renderInfixList(node, state, itemNames, api, indent) {
       // Binary / n-ary: { a op b op c }
       for (let i = 0; i < operands.length; i++) {
         if (i > 0) {
-          // Operator between operands: render first occurrence as the real node,
-          // subsequent as visual-only ghosts
+          const neg = op.value === '+' && isUnaryMinus(operands[i]);
           const s = document.createElement('span');
           s.className = 'hob-symbol';
-          s.textContent = ' ' + op.value + ' ';
+          s.textContent = ' ' + (neg ? '-' : op.value) + ' ';
           if (i === 1) {
-            // First (and often only) separator: register op in domMap so it's selectable
             s.setAttribute('data-node-id', op.id);
             state.domMap.set(op.id, s);
           }
+          if (neg) state.domMap.set(operands[i].id, s);
           span.appendChild(s);
+          if (neg) {
+            span.appendChild(renderNode(operands[i].children[1], state, itemNames, api, indent + 1));
+            continue;
+          }
         }
         span.appendChild(renderNode(operands[i], state, itemNames, api, indent + 1));
       }
@@ -721,13 +758,15 @@ function renderInfixList(node, state, itemNames, api, indent) {
     } else {
       span.appendChild(renderNode(operands[0], state, itemNames, api, childIndent));
       for (let i = 1; i < operands.length; i++) {
+        const neg = op.value === '+' && isUnaryMinus(operands[i]);
         span.appendChild(newline(childIndent, operands[i - 1].id));
         const s = document.createElement('span');
         s.className = 'hob-symbol';
-        s.textContent = op.value + ' ';
+        s.textContent = (neg ? '-' : op.value) + ' ';
         if (i === 1) { s.setAttribute('data-node-id', op.id); state.domMap.set(op.id, s); }
+        if (neg) state.domMap.set(operands[i].id, s);
         span.appendChild(s);
-        span.appendChild(renderNode(operands[i], state, itemNames, api, childIndent));
+        span.appendChild(renderNode(neg ? operands[i].children[1] : operands[i], state, itemNames, api, childIndent));
       }
     }
     const lastOperand = operands[operands.length - 1];
@@ -739,7 +778,7 @@ function renderInfixList(node, state, itemNames, api, indent) {
 }
 
 function renderList(node, state, itemNames, api, indent) {
-  if (isInfixList(node) || node._curlyList) return renderInfixList(node, state, itemNames, api, indent);
+  if (isInfixList(node) || node._curlyList || node._curlyInfix) return renderInfixList(node, state, itemNames, api, indent);
 
   const span = document.createElement('span');
   span.className = 'hob-list';
@@ -1415,7 +1454,7 @@ function nodeLabel(node) {
   if (node.type === 'list' && node.children.length > 0 && node.children[0].type === 'symbol') {
     return '(' + node.children[0].value + ')';
   }
-  if (node.type === 'list') return (node._curlyList || isInfixList(node)) ? '{}' : '()';
+  if (node.type === 'list') return (node._curlyList || node._curlyInfix || isInfixList(node)) ? '{}' : '()';
   if (node.type === 'vector') return '[]';
   if (node.type === 'map') return '{}';
   return leafText(node);
@@ -2458,7 +2497,7 @@ function handleInputKey(e, ctx) {
     while (cur) {
       cur = state.parentMap.get(cur.id);
       if (cur && cur.type === targetType) { found = cur; break; }
-      if (targetCurly && cur && (cur._curlyList || isInfixList(cur))) { found = cur; break; }
+      if (targetCurly && cur && (cur._curlyList || cur._curlyInfix || isInfixList(cur))) { found = cur; break; }
       if (cur && cur.type === 'root') break;
     }
     exitToNav(state, found ? found.id : state.selectedId);

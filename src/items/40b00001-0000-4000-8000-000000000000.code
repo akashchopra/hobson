@@ -373,24 +373,8 @@ function createParser(tokens) {
       return { type: 'map', entries, line: open.line, col: open.col };
     }
 
-    // Unary: {- x} → (- x)
-    if (forms.length === 2) {
-      return { type: 'list', elements: forms, line: open.line, col: open.col };
-    }
-
-    // Validate uniform operator at every odd position
-    const op = forms[1];
-    for (let i = 3; i < forms.length; i += 2) {
-      if (forms[i].type !== 'symbol' || forms[i].value !== op.value) {
-        throw hobError(
-          `Mixed infix operators — use nested {} for precedence, e.g. {{a + b} * c}`,
-          forms[i]
-        );
-      }
-    }
-
-    const operands = forms.filter((_, i) => i % 2 === 0);
-    return { type: 'list', elements: [op, ...operands], line: open.line, col: open.col };
+    // All infix (unary, uniform, and mixed) → curly-infix node preserving natural order
+    return { type: 'curly-infix', forms, line: open.line, col: open.col };
   }
 
   function parseAnonFn() {
@@ -522,6 +506,8 @@ function compactify(node) {
       return { s: node.value };
     case 'list':
       return node.elements.map(compactify);
+    case 'curly-infix':
+      return { ci: node.forms.map(compactify) };
     case 'vector':
       return { v: node.elements.map(compactify) };
     case 'map':
@@ -558,6 +544,15 @@ function prettyPrint(json, indent = 0) {
     if ('s' in json) return ppStr(json.s);
     if ('v' in json) return ppVec(json.v, indent);
     if ('m' in json) return ppMap(json.m, indent);
+    if ('ci' in json) {
+      const flat = '{' + json.ci.map(e => prettyPrint(e, 0)).join(' ') + '}';
+      if (flat.length <= 80) return flat;
+      const ind = '  '.repeat(indent + 1);
+      const out = [prettyPrint(json.ci[0], indent + 1)];
+      for (let i = 1; i < json.ci.length - 1; i += 2)
+        out.push('\n' + ind + prettyPrint(json.ci[i], 0) + ' ' + prettyPrint(json.ci[i + 1], indent + 1));
+      return '{' + out.join('') + '\n' + '  '.repeat(indent) + '}';
+    }
   }
   if (Array.isArray(json)) return ppList(json, indent);
   return String(json);
@@ -1324,6 +1319,31 @@ async function evaluate(ast, env, callStack) {
         obj[key] = val;
       }
       return obj;
+    }
+
+    if ('ci' in ast) {
+      const forms = ast.ci;
+      if (forms.length === 0) throw hobError('Empty curly-infix expression', null, callStack, ast);
+      // Unary: {- x} → ci = [op, operand]
+      if (forms.length === 2 && typeof forms[0] === 'string' && INFIX_OPS.has(forms[0])) {
+        const fn = await evaluate(forms[0], env, callStack);
+        if (typeof fn !== 'function') throw hobError(`'${forms[0]}' is not a function`, null, callStack, ast);
+        const arg = await evaluate(forms[1], env, callStack);
+        let r = fn(arg);
+        if (r && typeof r.then === 'function') r = await r;
+        return r;
+      }
+      // Left-to-right fold: operand op operand op ...
+      let acc = await evaluate(forms[0], env, callStack);
+      for (let i = 1; i < forms.length - 1; i += 2) {
+        const fn = await evaluate(forms[i], env, callStack);
+        if (typeof fn !== 'function') throw hobError(`'${forms[i]}' is not a function`, null, callStack, ast);
+        const operand = await evaluate(forms[i + 1], env, callStack);
+        let r = fn(acc, operand);
+        if (r && typeof r.then === 'function') r = await r;
+        acc = r;
+      }
+      return acc;
     }
   }
 

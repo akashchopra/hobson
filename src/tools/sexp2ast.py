@@ -125,20 +125,8 @@ class Reader:
             pairs = [[forms[i], forms[i+1]] for i in range(0, len(forms), 2)]
             return {"m": pairs}
 
-        # Unary: {- x} → (- x)
-        if len(forms) == 2:
-            return forms
-
-        # Validate uniform operator at every odd position
-        op = forms[1]
-        for i in range(3, len(forms), 2):
-            if forms[i] != op:
-                raise ValueError(
-                    "Mixed infix operators — use nested {} for precedence, e.g. {{a + b} * c}"
-                )
-
-        operands = [forms[i] for i in range(0, len(forms), 2)]
-        return [op] + operands
+        # All infix (unary, uniform, and mixed) → {"ci": [...]} preserving natural order
+        return {"ci": forms}
 
     def _read_string(self):
         self.pos += 1  # skip opening "

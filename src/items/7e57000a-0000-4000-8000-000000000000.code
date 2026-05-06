@@ -178,34 +178,33 @@ export async function run(api) {
 
   function readsInfixBinary() {
     const ast = hob.read('{a + b}');
-    assert(Array.isArray(ast), 'Should be a list');
-    assertEquals(ast[0], '+');
-    assertEquals(ast[1], 'a');
-    assertEquals(ast[2], 'b');
+    assert(ast && ast.ci !== undefined, 'Should have .ci property');
+    assertEquals(ast.ci[0], 'a');
+    assertEquals(ast.ci[1], '+');
+    assertEquals(ast.ci[2], 'b');
   }
 
   function readsInfixChained() {
     const ast = hob.read('{a + b + c}');
-    assert(Array.isArray(ast), 'Should be a list');
-    assertEquals(ast[0], '+');
-    assertEquals(ast.length, 4);
-    assertEquals(ast[3], 'c');
+    assert(ast && ast.ci !== undefined, 'Should have .ci property');
+    assertEquals(ast.ci.length, 5);
+    assertEquals(ast.ci[4], 'c');
   }
 
   function readsInfixNested() {
     const ast = hob.read('{{a + b} * c}');
-    assert(Array.isArray(ast), 'Should be a list');
-    assertEquals(ast[0], '*');
-    assert(Array.isArray(ast[1]), 'First operand should be a list');
-    assertEquals(ast[1][0], '+');
-    assertEquals(ast[2], 'c');
+    assert(ast && ast.ci !== undefined, 'Should have .ci property');
+    assertEquals(ast.ci[1], '*');
+    assert(ast.ci[0] && ast.ci[0].ci !== undefined, 'First operand should be a ci node');
+    assertEquals(ast.ci[0].ci[1], '+');
+    assertEquals(ast.ci[2], 'c');
   }
 
   function readsInfixUnary() {
     const ast = hob.read('{- x}');
-    assert(Array.isArray(ast), 'Should be a list');
-    assertEquals(ast[0], '-');
-    assertEquals(ast[1], 'x');
+    assert(ast && ast.ci !== undefined, 'Should have .ci property');
+    assertEquals(ast.ci[0], '-');
+    assertEquals(ast.ci[1], 'x');
   }
 
   function readsInfixSingleton() {
@@ -213,10 +212,14 @@ export async function run(api) {
     assertEquals(ast, 'x');
   }
 
-  function errorOnMixedInfixOps() {
-    let caught = false;
-    try { hob.read('{a + b * c}'); } catch (e) { caught = true; assert(e.message.includes('Mixed infix'), 'Should mention mixed operators'); }
-    assert(caught, 'Should throw on mixed infix operators');
+  function readsMixedInfixOps() {
+    const ast = hob.read('{a + b - c}');
+    assert(ast && ast.ci !== undefined, 'Should have .ci property');
+    assertEquals(ast.ci[0], 'a');
+    assertEquals(ast.ci[1], '+');
+    assertEquals(ast.ci[2], 'b');
+    assertEquals(ast.ci[3], '-');
+    assertEquals(ast.ci[4], 'c');
   }
 
   // --- Run all tests ---
@@ -251,7 +254,7 @@ export async function run(api) {
   test('reads infix nested', readsInfixNested);
   test('reads infix unary', readsInfixUnary);
   test('reads infix singleton', readsInfixSingleton);
-  test('error on mixed infix operators', errorOnMixedInfixOps);
+  test('reads mixed infix operators', readsMixedInfixOps);
 
   return getResults();
 }
