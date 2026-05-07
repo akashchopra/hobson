@@ -1,0 +1,69 @@
+(defn render [item api]
+  (def lib (js-require "market-data"))
+  (def
+    instruments
+    (sort-by
+      (fn [p] (get-field p :instrument-type))
+      (find-items {:type "60ccdb32-566d-480b-8dae-ef1e4a5cdecc"})))
+  (defn type-label [t]
+    (if
+      (= t "conventional_gilt")
+      "Conventional Gilt"
+      (if
+        (= t "index_linked_gilt")
+        "Index-Linked Gilt"
+        (if (= t "etf") "ETF" (or t "Unknown")))))
+  (defn fmt-price [p] (if (= p nil) "—" (str "£" (.toFixed p 3))))
+  (def
+    s-th
+    "text-align: left; padding: 8px 12px; border-bottom: 2px solid var(--color-border); font-weight: 600;")
+  (def
+    s-th-r
+    "text-align: right; padding: 8px 12px; border-bottom: 2px solid var(--color-border); font-weight: 600;")
+  (def s-td "padding: 8px 12px; border-bottom: 1px solid var(--color-border);")
+  (def
+    s-td-r
+    "padding: 8px 12px; border-bottom: 1px solid var(--color-border); text-align: right; font-variant-numeric: tabular-nums;")
+  [:div {:style "padding: 20px; max-width: 800px;"}
+    [:div {:style "display: flex; align-items: center; gap: 16px; margin-bottom: 20px;"}
+
+      [:h2 {:style "margin: 0;"} "Market Data"]
+      [:button {:style "padding: 6px 14px; background: var(--color-accent, #2563eb); color: white; border: none; border-radius: 4px; cursor: pointer;"
+                :on-click (fn [e]
+                            (let [res (.fetchAllPrices lib api)
+                                  errors (filter
+                                           (fn [r] (= (:status r) "error"))
+                                           res)]
+                              (when
+                                (seq errors)
+                                (log "market-data errors:" errors)
+                                (alert
+                                  (str
+                                    (count errors)
+                                    " price fetch error(s). Check the console for details.")))
+                              (rerender!)))}
+        "Update All Prices"]]
+    (if
+      (empty? instruments)
+      [:p {:style "color: var(--color-text-secondary);"}
+        "No instruments found."]
+      [:table {:style "width: 100%; border-collapse: collapse;"}
+        [:thead {}
+          [:tr {}
+            [:th {:style s-th} "Name"]
+            [:th {:style s-th} "Type"]
+            [:th {:style s-th-r} "Price"]
+            [:th {:style s-th} "Updated"]]]
+        [:tbody {}
+          (for [inst (seq instruments)]
+            [:tr {}
+              [:td {:style s-td}
+                [:span {:class "hob-item-ref"
+                        :on-click (fn [e] (open-item! e (:id inst)))}
+                  (:name inst)]]
+              [:td {:style s-td}
+                (type-label (get-in inst [:content :instrument-type]))]
+              [:td {:style s-td-r}
+                (fmt-price (get-in inst [:content :last-price]))]
+              [:td {:style s-td}
+                (or (get-in inst [:content :last-price-date]) "—")]])]])])
