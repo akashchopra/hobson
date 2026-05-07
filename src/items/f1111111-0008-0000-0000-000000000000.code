@@ -550,6 +550,25 @@ export class RenderingSystem {
     }
   }
 
+  /** Show a transient toast notification in the bottom-right corner.
+   * @param {string} message - Plain text message
+   * @param {{ severity?: 'info'|'warning'|'danger', duration?: number, onClick?: Function }} [options]
+   */
+  showToast(message, { severity = 'info', duration = 8000, onClick } = {}) {
+    const existing = document.querySelector('.hobson-toast');
+    if (existing) existing.remove();
+    const toast = document.createElement('div');
+    toast.className = 'hobson-toast';
+    const bgColor = severity === 'danger' ? 'var(--color-danger)'
+      : severity === 'warning' ? 'var(--color-warning)'
+      : 'var(--color-primary)';
+    toast.style.cssText = `position:fixed;bottom:20px;right:20px;background:${bgColor};color:white;padding:16px;border-radius:var(--border-radius);box-shadow:var(--shadow-md);max-width:400px;z-index:2147483647;cursor:pointer;font-family:system-ui,sans-serif;white-space:pre-wrap;`;
+    toast.textContent = message;
+    toast.onclick = () => { toast.remove(); onClick?.(); };
+    document.body.appendChild(toast);
+    setTimeout(() => { if (toast.parentNode) toast.remove(); }, duration);
+  }
+
   /** Enrich a base kernel API with rendering methods.
    * Called by renderItem/renderHobView before passing API to views.
    * @param {Object} api - Base kernel API from kernel.createAPI()
@@ -715,6 +734,9 @@ export class RenderingSystem {
         return vpMgr ? await vpMgr.restorePreviousRootView() : false;
       }
     };
+
+    // Toast notifications
+    api.showToast = (message, options) => rendering.showToast(message, options);
 
     // Context-specific methods (only when containerItem provided)
     if (containerItem) {

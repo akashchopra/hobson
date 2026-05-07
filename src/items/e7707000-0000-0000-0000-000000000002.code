@@ -40,7 +40,22 @@ export async function onErrorEvent({ error, context, timestamp, hobStack, hobExp
 
     // Show toast notification
     const toastMessage = itemLabel + (error.message || 'Unknown error');
-    showErrorToast(toastMessage, errorId, context, api);
+    const truncatedMessage = toastMessage.length > 100 ? toastMessage.substring(0, 100) + '...' : toastMessage;
+    vpMgr.getRendering().showToast(`⚠ Error: ${truncatedMessage}\nClick to view details`, {
+      severity: 'danger',
+      duration: 8000,
+      onClick: async () => {
+        const currentRoot = vpMgr.getRoot();
+        if (context.itemId === currentRoot) {
+          await vpMgr.navigate(errorId);
+        } else if (currentRoot) {
+          await api.attach(currentRoot, errorId);
+          await vpMgr.getRendering().renderViewport();
+        } else {
+          await vpMgr.navigate(errorId);
+        }
+      }
+    });
   } catch (handlerError) {
     // If our handler fails, just log to console
     console.error('Error handler failed:', handlerError);
@@ -164,65 +179,3 @@ async function parseStackTrace(stack, api) {
   return frames;
 }
 
-function showErrorToast(message, errorId, context, api) {
-  // Remove any existing toast
-  const existing = document.querySelector('.error-toast');
-  if (existing) existing.remove();
-
-  const toast = api.createElement('div', {}, []);
-  toast.className = 'error-toast';
-  toast.style.cssText = `
-    position: fixed;
-    bottom: 20px;
-    right: 20px;
-    background: var(--color-danger);
-    color: white;
-    padding: 16px;
-    border-radius: var(--border-radius);
-    box-shadow: var(--shadow-md);
-    max-width: 400px;
-    z-index: 2147483647;
-    cursor: pointer;
-    font-family: system-ui, sans-serif;
-  `;
-
-  const truncatedMessage = (message || 'Unknown error').length > 100
-    ? message.substring(0, 100) + '...'
-    : message;
-
-  toast.innerHTML = `
-    <div style="display: flex; gap: 12px; align-items: start;">
-      <span style="font-size: 1.5rem;">&#9888;</span>
-      <div style="flex: 1;">
-        <strong>Error Occurred</strong>
-        <p style="margin: 4px 0 0 0; font-size: 0.875rem;">${truncatedMessage}</p>
-        <p style="margin: 4px 0 0 0; font-size: 0.75rem; opacity: 0.8;">Click to view details</p>
-      </div>
-    </div>
-  `;
-
-  toast.onclick = async () => {
-    toast.remove();
-    const vpMgr = await api.require('viewport-manager');
-    const currentRoot = vpMgr.getRoot();
-    if (context.itemId === currentRoot) {
-      // Error was in root item - navigate to error
-      await vpMgr.navigate(errorId);
-    } else {
-      // Error was in child - open error as sibling of root's children
-      if (currentRoot) {
-        await api.attach(currentRoot, errorId);
-        await vpMgr.getRendering().renderViewport();
-      } else {
-        await vpMgr.navigate(errorId);
-      }
-    }
-  };
-
-  document.body.appendChild(toast);
-
-  // Auto-dismiss after 8 seconds
-  setTimeout(() => {
-    if (toast.parentNode) toast.remove();
-  }, 8000);
-}
