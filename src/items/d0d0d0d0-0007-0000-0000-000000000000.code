@@ -2610,6 +2610,29 @@ export async function render(value, options, api) {
         renderAllBlocks();
         emitChange();
         requestAnimationFrame(() => focusBlock(path, 0));
+      } else if (childIdx === 0 && path.length >= 2) {
+        // Backspace at start of first child inside a blockquote — lift the paragraph out
+        const parentPath = path.slice(0, -1);
+        const parentBlock = getBlock(parentPath);
+        if (tagOf(parentBlock) === ':blockquote') {
+          e.preventDefault();
+          pushUndo();
+          const inlineContent = block.slice(1);
+          const newP = [':p', ...(inlineContent.length ? inlineContent : [{ s: '' }])];
+          const docParent = getParent(parentPath);
+          const bqIdx = parentPath[parentPath.length - 1];
+          if (parentBlock.length <= 2) {
+            // Only one :p — replace the whole blockquote with a plain :p
+            docParent.splice(bqIdx + 1, 1, newP);
+          } else {
+            // Multiple children — remove first :p and insert it before the blockquote
+            parentBlock.splice(1, 1);
+            docParent.splice(bqIdx + 1, 0, newP);
+          }
+          renderAllBlocks();
+          emitChange();
+          requestAnimationFrame(() => focusBlock(parentPath, 0));
+        }
       }
     } else {
       const target = getNonEditableNodeBefore(blockEl);
