@@ -1,0 +1,89 @@
+export async function render(item, api) {
+  const history = item.content?.history ?? {};
+  const labels = Object.keys(history);
+
+  const container = api.createElement('div');
+  container.style.cssText = 'padding: 16px;';
+
+  const heading = api.createElement('h2');
+  heading.textContent = item.name;
+  heading.style.cssText = 'margin: 0 0 16px 0;';
+  container.appendChild(heading);
+
+  if (labels.length === 0) {
+    const empty = api.createElement('p');
+    empty.textContent = 'No history recorded yet.';
+    empty.style.cssText = 'color: var(--color-text-secondary);';
+    container.appendChild(empty);
+    return container;
+  }
+
+  // Collect all unique timestamps across all series, sorted descending
+  const tsSet = new Set();
+  for (const label of labels) {
+    for (const { t } of history[label]) tsSet.add(t);
+  }
+  const timestamps = [...tsSet].sort((a, b) => b - a);
+
+  // Build index: label -> Map(t -> v) for O(1) lookup
+  const index = {};
+  for (const label of labels) {
+    index[label] = new Map(history[label].map(({ t, v }) => [t, v]));
+  }
+
+  const formatDate = (t) => new Date(t).toISOString(); //.slice(0, 10);
+
+  const formatValue = (v) => {
+    if (v == null) return '\u2014';
+    if (typeof v === 'number') return v.toLocaleString('en-GB', { maximumFractionDigits: 2 });
+    if (typeof v === 'object') return JSON.stringify(v);
+    return String(v);
+  };
+
+  const s = {
+    table: 'width: 100%; border-collapse: collapse; font-size: 0.875rem;',
+    th: 'padding: 8px 12px; text-align: right; border-bottom: 2px solid var(--color-border); font-weight: 600; white-space: nowrap;',
+    thDate: 'padding: 8px 12px; text-align: left; border-bottom: 2px solid var(--color-border); font-weight: 600;',
+    td: 'padding: 6px 12px; text-align: right; border-bottom: 1px solid var(--color-border); font-variant-numeric: tabular-nums;',
+    tdDate: 'padding: 6px 12px; text-align: left; border-bottom: 1px solid var(--color-border); color: var(--color-text-secondary);',
+  };
+
+  const table = api.createElement('table');
+  table.style.cssText = s.table;
+
+  const thead = api.createElement('thead');
+  const headerRow = api.createElement('tr');
+  const dateTh = api.createElement('th');
+  dateTh.textContent = 'Date';
+  dateTh.style.cssText = s.thDate;
+  headerRow.appendChild(dateTh);
+  for (const label of labels) {
+    const th = api.createElement('th');
+    th.textContent = label;
+    th.style.cssText = s.th;
+    headerRow.appendChild(th);
+  }
+  thead.appendChild(headerRow);
+  table.appendChild(thead);
+
+  const tbody = api.createElement('tbody');
+  for (const t of timestamps) {
+    const row = api.createElement('tr');
+    const dateTd = api.createElement('td');
+    dateTd.textContent = formatDate(t);
+    dateTd.style.cssText = s.tdDate;
+    row.appendChild(dateTd);
+    for (const label of labels) {
+      const td = api.createElement('td');
+      const v = index[label].get(t);
+      td.textContent = v !== undefined ? formatValue(v) : '\u2014';
+      td.style.cssText = s.td;
+      row.appendChild(td);
+    }
+    tbody.appendChild(row);
+  }
+  table.appendChild(tbody);
+  container.appendChild(table);
+
+  return container;
+}

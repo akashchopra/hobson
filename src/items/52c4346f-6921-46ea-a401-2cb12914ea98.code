@@ -1,0 +1,84 @@
+// history-service — background service for time-series value recording.
+// On boot, registers a listener for each unique trigger event found across all
+// history items. On trigger, reads configured fields from each item's target
+// and appends timestamped values to content.history (series-keyed by label).
+
+const HISTORY_TYPE_ID = '3147ac83-79eb-4df6-a6bc-0a3847a8e1d8';
+
+let _hob = null;
+let _interp = null;
+const _listeners = new Map(); // eventId -> listener fn
+
+export async function onKernelBootComplete({ safeMode }, api) {
+  if (safeMode) return;
+  _hob = await api.require('hob-interpreter');
+  _interp = _hob.createInterpreter(api);
+  await _interp.macrosReady;
+  await registerAllHistoryItems(api);
+}
+
+export async function onItemCreated({ item }, api) {
+  if (!_interp || !item || item.type !== HISTORY_TYPE_ID) return;
+  await registerAllHistoryItems(api);
+}
+
+export async function onItemUpdated({ item, previous }, api) {
+  if (!_interp || !item || item.type !== HISTORY_TYPE_ID) return;
+  // Only re-register if config changed — history data writes must not cause re-registration
+  const configChanged =
+    item.content?.trigger !== previous?.content?.trigger ||
+    item.content?.target !== previous?.content?.target ||
+    JSON.stringify(item.content?.fields) !== JSON.stringify(previous?.content?.fields);
+  if (configChanged) await registerAllHistoryItems(api);
+}
+
+async function registerAllHistoryItems(api) {
+  for (const [eventId, fn] of _listeners) {
+    api.events.off(eventId, fn);
+  }
+  _listeners.clear();
+
+  const historyItems = await api.query({ type: HISTORY_TYPE_ID });
+  const triggerIds = new Set(historyItems.map(i => i.content?.trigger).filter(Boolean));
+
+  for (const eventId of triggerIds) {
+    const fn = async (event) => {
+      const current = await api.query({ type: HISTORY_TYPE_ID });
+      for (const item of current) {
+        if (item.content?.trigger === eventId) {
+          await recordSnapshot(item, event, api);
+        }
+      }
+    };
+    api.events.on(eventId, fn);
+    _listeners.set(eventId, fn);
+  }
+}
+
+async function recordSnapshot(historyItem, event, api) {
+  const targetId = historyItem.content?.target;
+  const fields = historyItem.content?.fields;
+  if (!targetId || !fields?.length) return;
+
+  const timestamp = event.content?.timestamp ?? Date.now();
+  const history = JSON.parse(JSON.stringify(historyItem.content.history || {}));
+
+  for (const { field, label } of fields) {
+    if (!field || !label) continue;
+    try {
+      const value = await _interp.eval(`(get-field "${targetId}" ${field})`);
+      if (value == null || value?._hobType === 'computed-field-error') continue;
+      if (!history[label]) history[label] = [];
+      const idx = history[label].findIndex(e => e.t === timestamp);
+      if (idx >= 0) {
+        history[label][idx] = { t: timestamp, v: value };
+      } else {
+        history[label].push({ t: timestamp, v: value });
+      }
+    } catch (e) {
+      console.warn(`history-service: failed to read ${field} from ${targetId}:`, e);
+    }
+  }
+
+  await api.set({ ...historyItem, content: { ...historyItem.content, history } });
+}

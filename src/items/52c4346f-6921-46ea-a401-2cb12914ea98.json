@@ -1,0 +1,273 @@
+{
+  "id": "52c4346f-6921-46ea-a401-2cb12914ea98",
+  "name": "history-service",
+  "type": "66666666-0000-0000-0000-000000000000",
+  "created": 1778200000000,
+  "modified": 1778241764394,
+  "watches": [
+    {
+      "event": "e0e00000-0002-0002-0000-000000000000"
+    },
+    {
+      "event": "e0e00000-0001-0001-0000-000000000000"
+    },
+    {
+      "event": "e0e00000-0001-0002-0000-000000000000"
+    }
+  ],
+  "content": {
+    "description": [
+      ":doc",
+      [
+        ":p",
+        {
+          "s": "Background service that records time-series snapshots for all history items. Registers event listeners at boot based on each history item's configured trigger. On each trigger event, reads the configured fields from the target item and appends {t, v} records to content.history (keyed by label)."
+        }
+      ]
+    ],
+    "code": "// history-service — background service for time-series value recording.\n// On boot, registers a listener for each unique trigger event found across all\n// history items. On trigger, reads configured fields from each item's target\n// and appends timestamped values to content.history (series-keyed by label).\n\nconst HISTORY_TYPE_ID = '3147ac83-79eb-4df6-a6bc-0a3847a8e1d8';\n\nlet _hob = null;\nlet _interp = null;\nconst _listeners = new Map(); // eventId -> listener fn\n\nexport async function onKernelBootComplete({ safeMode }, api) {\n  if (safeMode) return;\n  _hob = await api.require('hob-interpreter');\n  _interp = _hob.createInterpreter(api);\n  await _interp.macrosReady;\n  await registerAllHistoryItems(api);\n}\n\nexport async function onItemCreated({ item }, api) {\n  if (!_interp || !item || item.type !== HISTORY_TYPE_ID) return;\n  await registerAllHistoryItems(api);\n}\n\nexport async function onItemUpdated({ item, previous }, api) {\n  if (!_interp || !item || item.type !== HISTORY_TYPE_ID) return;\n  // Only re-register if config changed — history data writes must not cause re-registration\n  const configChanged =\n    item.content?.trigger !== previous?.content?.trigger ||\n    item.content?.target !== previous?.content?.target ||\n    JSON.stringify(item.content?.fields) !== JSON.stringify(previous?.content?.fields);\n  if (configChanged) await registerAllHistoryItems(api);\n}\n\nasync function registerAllHistoryItems(api) {\n  for (const [eventId, fn] of _listeners) {\n    api.events.off(eventId, fn);\n  }\n  _listeners.clear();\n\n  const historyItems = await api.query({ type: HISTORY_TYPE_ID });\n  const triggerIds = new Set(historyItems.map(i => i.content?.trigger).filter(Boolean));\n\n  for (const eventId of triggerIds) {\n    const fn = async (event) => {\n      const current = await api.query({ type: HISTORY_TYPE_ID });\n      for (const item of current) {\n        if (item.content?.trigger === eventId) {\n          await recordSnapshot(item, event, api);\n        }\n      }\n    };\n    api.events.on(eventId, fn);\n    _listeners.set(eventId, fn);\n  }\n}\n\nasync function recordSnapshot(historyItem, event, api) {\n  const targetId = historyItem.content?.target;\n  const fields = historyItem.content?.fields;\n  if (!targetId || !fields?.length) return;\n\n  const timestamp = event.content?.timestamp ?? Date.now();\n  const history = JSON.parse(JSON.stringify(historyItem.content.history || {}));\n\n  for (const { field, label } of fields) {\n    if (!field || !label) continue;\n    try {\n      const value = await _interp.eval(`(get-field \"${targetId}\" ${field})`);\n      if (value == null || value?._hobType === 'computed-field-error') continue;\n      if (!history[label]) history[label] = [];\n      const idx = history[label].findIndex(e => e.t === timestamp);\n      if (idx >= 0) {\n        history[label][idx] = { t: timestamp, v: value };\n      } else {\n        history[label].push({ t: timestamp, v: value });\n      }\n    } catch (e) {\n      console.warn(`history-service: failed to read ${field} from ${targetId}:`, e);\n    }\n  }\n\n  await api.set({ ...historyItem, content: { ...historyItem.content, history } });\n}\n",
+    "_symbols": {
+      "HISTORY_TYPE_ID": {
+        "name": "HISTORY_TYPE_ID",
+        "line": 6,
+        "col": 6,
+        "endLine": 6,
+        "endCol": 62,
+        "kind": "variable",
+        "scope": null
+      },
+      "_hob": {
+        "name": "_hob",
+        "line": 8,
+        "col": 4,
+        "endLine": 8,
+        "endCol": 15,
+        "kind": "variable",
+        "scope": null
+      },
+      "_interp": {
+        "name": "_interp",
+        "line": 9,
+        "col": 4,
+        "endLine": 9,
+        "endCol": 18,
+        "kind": "variable",
+        "scope": null
+      },
+      "_listeners": {
+        "name": "_listeners",
+        "line": 10,
+        "col": 6,
+        "endLine": 10,
+        "endCol": 28,
+        "kind": "variable",
+        "scope": null
+      },
+      "onKernelBootComplete": {
+        "name": "onKernelBootComplete",
+        "line": 12,
+        "col": 7,
+        "endLine": 18,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "({ ... }, api)"
+      },
+      "onItemCreated": {
+        "name": "onItemCreated",
+        "line": 20,
+        "col": 7,
+        "endLine": 23,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "({ ... }, api)"
+      },
+      "onItemUpdated": {
+        "name": "onItemUpdated",
+        "line": 25,
+        "col": 7,
+        "endLine": 33,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "({ ... }, api)"
+      },
+      "onItemUpdated.configChanged": {
+        "name": "configChanged",
+        "line": 28,
+        "col": 8,
+        "endLine": 31,
+        "endCol": 86,
+        "kind": "variable",
+        "scope": "onItemUpdated"
+      },
+      "registerAllHistoryItems": {
+        "name": "registerAllHistoryItems",
+        "line": 35,
+        "col": 0,
+        "endLine": 56,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(api)"
+      },
+      "registerAllHistoryItems.historyItems": {
+        "name": "historyItems",
+        "line": 41,
+        "col": 8,
+        "endLine": 41,
+        "endCol": 65,
+        "kind": "variable",
+        "scope": "registerAllHistoryItems"
+      },
+      "registerAllHistoryItems.triggerIds": {
+        "name": "triggerIds",
+        "line": 42,
+        "col": 8,
+        "endLine": 42,
+        "endCol": 87,
+        "kind": "variable",
+        "scope": "registerAllHistoryItems"
+      },
+      "registerAllHistoryItems.eventId": {
+        "name": "eventId",
+        "line": 44,
+        "col": 13,
+        "endLine": 44,
+        "endCol": 20,
+        "kind": "variable",
+        "scope": "registerAllHistoryItems"
+      },
+      "registerAllHistoryItems.fn": {
+        "name": "fn",
+        "line": 45,
+        "col": 10,
+        "endLine": 52,
+        "endCol": 5,
+        "kind": "function",
+        "scope": "registerAllHistoryItems",
+        "signature": "(event)"
+      },
+      "fn.current": {
+        "name": "current",
+        "line": 46,
+        "col": 12,
+        "endLine": 46,
+        "endCol": 64,
+        "kind": "variable",
+        "scope": "fn"
+      },
+      "fn.item": {
+        "name": "item",
+        "line": 47,
+        "col": 17,
+        "endLine": 47,
+        "endCol": 21,
+        "kind": "variable",
+        "scope": "fn"
+      },
+      "recordSnapshot": {
+        "name": "recordSnapshot",
+        "line": 58,
+        "col": 0,
+        "endLine": 84,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(historyItem, event, api)"
+      },
+      "recordSnapshot.targetId": {
+        "name": "targetId",
+        "line": 59,
+        "col": 8,
+        "endLine": 59,
+        "endCol": 46,
+        "kind": "variable",
+        "scope": "recordSnapshot"
+      },
+      "recordSnapshot.fields": {
+        "name": "fields",
+        "line": 60,
+        "col": 8,
+        "endLine": 60,
+        "endCol": 44,
+        "kind": "variable",
+        "scope": "recordSnapshot"
+      },
+      "recordSnapshot.timestamp": {
+        "name": "timestamp",
+        "line": 63,
+        "col": 8,
+        "endLine": 63,
+        "endCol": 58,
+        "kind": "variable",
+        "scope": "recordSnapshot"
+      },
+      "recordSnapshot.history": {
+        "name": "history",
+        "line": 64,
+        "col": 8,
+        "endLine": 64,
+        "endCol": 79,
+        "kind": "variable",
+        "scope": "recordSnapshot"
+      },
+      "recordSnapshot.value": {
+        "name": "value",
+        "line": 69,
+        "col": 12,
+        "endLine": 69,
+        "endCol": 76,
+        "kind": "variable",
+        "scope": "recordSnapshot"
+      },
+      "recordSnapshot.idx": {
+        "name": "idx",
+        "line": 72,
+        "col": 12,
+        "endLine": 72,
+        "endCol": 66,
+        "kind": "variable",
+        "scope": "recordSnapshot"
+      },
+      "recordSnapshot.t": {
+        "name": "t",
+        "line": 76,
+        "col": 30,
+        "endLine": 76,
+        "endCol": 42,
+        "kind": "property",
+        "scope": "recordSnapshot"
+      },
+      "recordSnapshot.v": {
+        "name": "v",
+        "line": 76,
+        "col": 44,
+        "endLine": 76,
+        "endCol": 52,
+        "kind": "property",
+        "scope": "recordSnapshot"
+      },
+      "recordSnapshot.content": {
+        "name": "content",
+        "line": 83,
+        "col": 34,
+        "endLine": 83,
+        "endCol": 78,
+        "kind": "property",
+        "scope": "recordSnapshot"
+      },
+      "recordSnapshot.content.history": {
+        "name": "history",
+        "line": 83,
+        "col": 69,
+        "endLine": 83,
+        "endCol": 76,
+        "kind": "property",
+        "scope": "recordSnapshot.content"
+      }
+    }
+  },
+  "attachments": []
+}
