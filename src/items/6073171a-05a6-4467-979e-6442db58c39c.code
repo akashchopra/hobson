@@ -11,7 +11,7 @@ const PRICES_UPDATED_EVENT_ID = '7c41cb53-3ad5-4235-97f1-a3d6f3bf9b86';
 function parseGiltsYieldPrice(html) {
   const match = html.match(/id="price"[^>]*value="([\d.]+)"/);
   if (!match) throw new Error('Dirty price not found in page');
-  return parseFloat(match[1]);
+  return { price: parseFloat(match[1]), date: null };
 }
 
 function parseYahooPrice(data) {
@@ -19,7 +19,11 @@ function parseYahooPrice(data) {
   const price = meta?.regularMarketPrice;
   if (price == null) throw new Error('Price not found in Yahoo Finance response');
   const currency = meta?.currency;
-  return (currency === 'GBp' || currency === 'GBX') ? price / 100 : price;
+  const adjustedPrice = (currency === 'GBp' || currency === 'GBX') ? price / 100 : price;
+  const date = meta?.regularMarketTime
+    ? new Date(meta.regularMarketTime * 1000).toISOString().slice(0, 10)
+    : null;
+  return { price: adjustedPrice, date };
 }
 
 async function fetchPrice(instrument) {
@@ -44,13 +48,16 @@ async function fetchPrice(instrument) {
 export async function fetchAllPrices(api) {
   const allInstruments = await api.query({ type: INSTRUMENT_TYPE_ID });
   const instruments = allInstruments.filter(i => i.content['instrument-type'] !== 'cash');
-  const date = new Date().toISOString().slice(0, 10);
+  const today = new Date().toISOString().slice(0, 10);
   const results = [];
+  let firstSourceDate = null;
   for (const instrument of instruments) {
     try {
-      const price = await fetchPrice(instrument);
+      const { price, date } = await fetchPrice(instrument);
+      const priceDate = date ?? today;
+      if (date && !firstSourceDate) firstSourceDate = date;
       instrument.content['last-price'] = price;
-      instrument.content['last-price-date'] = date;
+      instrument.content['last-price-date'] = priceDate;
       instrument.modified = Date.now();
       await api.update(instrument);
       results.push({ id: instrument.id, name: instrument.name, price, status: 'ok' });
@@ -58,7 +65,8 @@ export async function fetchAllPrices(api) {
       results.push({ id: instrument.id, name: instrument.name, error: err?.message ?? String(err), status: 'error' });
     }
   }
-  const timestamp = new Date(date).getTime() + 86400000 - 1;
+  const eventDate = firstSourceDate ?? today;
+  const timestamp = new Date(eventDate).getTime() + 86400000 - 1;
   api.events.emit({ type: PRICES_UPDATED_EVENT_ID, content: { results, timestamp } });
   return results;
 }
