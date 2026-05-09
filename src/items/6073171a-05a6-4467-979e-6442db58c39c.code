@@ -49,24 +49,35 @@ export async function fetchAllPrices(api) {
   const allInstruments = await api.query({ type: INSTRUMENT_TYPE_ID });
   const instruments = allInstruments.filter(i => i.content['instrument-type'] !== 'cash');
   const today = new Date().toISOString().slice(0, 10);
-  const results = [];
-  let firstSourceDate = null;
+
+  // Phase 1: fetch all prices before writing, so the canonical date is known
+  const fetched = [];
   for (const instrument of instruments) {
     try {
       const { price, date } = await fetchPrice(instrument);
-      const priceDate = date ?? today;
-      if (date && !firstSourceDate) firstSourceDate = date;
+      fetched.push({ instrument, price, date, status: 'ok' });
+    } catch (err) {
+      fetched.push({ instrument, error: err?.message ?? String(err), status: 'error' });
+    }
+  }
+
+  const sourceDate = fetched.find(r => r.date)?.date ?? today;
+
+  // Phase 2: write, using sourceDate as fallback for instruments with no date (e.g. gilts)
+  const results = [];
+  for (const { instrument, price, date, error, status } of fetched) {
+    if (status === 'ok') {
       instrument.content['last-price'] = price;
-      instrument.content['last-price-date'] = priceDate;
+      instrument.content['last-price-date'] = date ?? sourceDate;
       instrument.modified = Date.now();
       await api.update(instrument);
       results.push({ id: instrument.id, name: instrument.name, price, status: 'ok' });
-    } catch (err) {
-      results.push({ id: instrument.id, name: instrument.name, error: err?.message ?? String(err), status: 'error' });
+    } else {
+      results.push({ id: instrument.id, name: instrument.name, error, status: 'error' });
     }
   }
-  const eventDate = firstSourceDate ?? today;
-  const timestamp = new Date(eventDate).getTime() + 86400000 - 1;
+
+  const timestamp = new Date(sourceDate).getTime() + 86400000 - 1;
   api.events.emit({ type: PRICES_UPDATED_EVENT_ID, content: { results, timestamp } });
   return results;
 }
