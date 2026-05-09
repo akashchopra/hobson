@@ -3,7 +3,7 @@
   "name": "market-data-lib",
   "type": "66666666-0000-0000-0000-000000000000",
   "created": 1746057600000,
-  "modified": 1778889600000,
+  "modified": 1778976000000,
   "content": {
     "description": [
       ":doc",
@@ -131,7 +131,7 @@
         ]
       ]
     ],
-    "code": "// Item: market-data\n// ID: 6073171a-05a6-4467-979e-6442db58c39c\n// Type: 66666666-0000-0000-0000-000000000000\n//\n// Fetches instrument prices from external sources.\n// giltsyield.com for gilts; Yahoo Finance for ETFs.\n\nconst INSTRUMENT_TYPE_ID = '60ccdb32-566d-480b-8dae-ef1e4a5cdecc';\nconst PRICES_UPDATED_EVENT_ID = '7c41cb53-3ad5-4235-97f1-a3d6f3bf9b86';\n\nfunction parseGiltsYieldPrice(html) {\n  const match = html.match(/id=\"price\"[^>]*value=\"([\\d.]+)\"/);\n  if (!match) throw new Error('Dirty price not found in page');\n  return { price: parseFloat(match[1]), date: null };\n}\n\nfunction parseYahooPrice(data) {\n  const meta = data?.chart?.result?.[0]?.meta;\n  const price = meta?.regularMarketPrice;\n  if (price == null) throw new Error('Price not found in Yahoo Finance response');\n  const currency = meta?.currency;\n  const adjustedPrice = (currency === 'GBp' || currency === 'GBX') ? price / 100 : price;\n  const date = meta?.regularMarketTime\n    ? new Date(meta.regularMarketTime * 1000).toISOString().slice(0, 10)\n    : null;\n  return { price: adjustedPrice, date };\n}\n\nasync function fetchPrice(instrument) {\n  const type = instrument.content['instrument-type'];\n  const sourceId = instrument.content['source-id'];\n  const tauriFetch = window.__TAURI__.http.fetch;\n\n  if (type === 'conventional_gilt' || type === 'index_linked_gilt') {\n    const url = `https://giltsyield.com/bond/${encodeURIComponent(sourceId)}/`;\n    const response = await tauriFetch(url, { method: 'GET' });\n    if (!response.ok) throw new Error(`HTTP ${response.status}`);\n    return parseGiltsYieldPrice(await response.text());\n  } else if (type === 'etf') {\n    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sourceId)}`;\n    const response = await tauriFetch(url);\n    if (!response.ok) throw new Error(`HTTP ${response.status}`);\n    return parseYahooPrice(await response.json());\n  }\n  throw new Error(`Unknown instrument-type: ${type}`);\n}\n\nexport async function fetchAllPrices(api) {\n  const allInstruments = await api.query({ type: INSTRUMENT_TYPE_ID });\n  const instruments = allInstruments.filter(i => i.content['instrument-type'] !== 'cash');\n  const today = new Date().toISOString().slice(0, 10);\n\n  // Phase 1: fetch all prices before writing, so the canonical date is known\n  const fetched = [];\n  for (const instrument of instruments) {\n    try {\n      const { price, date } = await fetchPrice(instrument);\n      fetched.push({ instrument, price, date, status: 'ok' });\n    } catch (err) {\n      fetched.push({ instrument, error: err?.message ?? String(err), status: 'error' });\n    }\n  }\n\n  const sourceDate = fetched.find(r => r.date)?.date ?? today;\n\n  // Phase 2: write, using sourceDate as fallback for instruments with no date (e.g. gilts)\n  const results = [];\n  for (const { instrument, price, date, error, status } of fetched) {\n    if (status === 'ok') {\n      instrument.content['last-price'] = price;\n      instrument.content['last-price-date'] = date ?? sourceDate;\n      instrument.modified = Date.now();\n      await api.update(instrument);\n      results.push({ id: instrument.id, name: instrument.name, price, status: 'ok' });\n    } else {\n      results.push({ id: instrument.id, name: instrument.name, error, status: 'error' });\n    }\n  }\n\n  const timestamp = new Date(sourceDate).getTime() + 86400000 - 1;\n  api.events.emit({ type: PRICES_UPDATED_EVENT_ID, content: { results, timestamp } });\n  return results;\n}\n",
+    "code": "// Item: market-data\n// ID: 6073171a-05a6-4467-979e-6442db58c39c\n// Type: 66666666-0000-0000-0000-000000000000\n//\n// Fetches instrument prices from external sources.\n// giltsyield.com for gilts; Yahoo Finance for ETFs.\n\nconst INSTRUMENT_TYPE_ID = '60ccdb32-566d-480b-8dae-ef1e4a5cdecc';\nconst PRICES_UPDATED_EVENT_ID = '7c41cb53-3ad5-4235-97f1-a3d6f3bf9b86';\n\nfunction parseGiltsYieldPrice(html) {\n  const match = html.match(/id=\"price\"[^>]*value=\"([\\d.]+)\"/);\n  if (!match) throw new Error('Dirty price not found in page');\n  return { price: parseFloat(match[1]), date: null };\n}\n\nfunction parseYahooPrice(data) {\n  const meta = data?.chart?.result?.[0]?.meta;\n  const price = meta?.regularMarketPrice;\n  if (price == null) throw new Error('Price not found in Yahoo Finance response');\n  const currency = meta?.currency;\n  const adjustedPrice = (currency === 'GBp' || currency === 'GBX') ? price / 100 : price;\n  const date = meta?.regularMarketTime\n    ? new Date(meta.regularMarketTime * 1000).toISOString().slice(0, 10)\n    : null;\n  return { price: adjustedPrice, date };\n}\n\nasync function fetchPrice(instrument) {\n  const type = instrument.content['instrument-type'];\n  const sourceId = instrument.content['source-id'];\n  const tauriFetch = window.__TAURI__.http.fetch;\n\n  if (type === 'conventional_gilt' || type === 'index_linked_gilt') {\n    const url = `https://giltsyield.com/bond/${encodeURIComponent(sourceId)}/`;\n    const response = await tauriFetch(url, { method: 'GET' });\n    if (!response.ok) throw new Error(`HTTP ${response.status}`);\n    return parseGiltsYieldPrice(await response.text());\n  } else if (type === 'etf') {\n    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sourceId)}`;\n    const response = await tauriFetch(url);\n    if (!response.ok) throw new Error(`HTTP ${response.status}`);\n    return parseYahooPrice(await response.json());\n  }\n  throw new Error(`Unknown instrument-type: ${type}`);\n}\n\nexport async function fetchAllPrices(api) {\n  const allInstruments = await api.query({ type: INSTRUMENT_TYPE_ID });\n  const instruments = allInstruments.filter(i => i.content['instrument-type'] !== 'cash');\n  const today = new Date().toISOString().slice(0, 10);\n\n  // Phase 1: fetch all prices before writing, so the canonical date is known\n  const fetched = [];\n  for (const instrument of instruments) {\n    try {\n      const { price, date } = await fetchPrice(instrument);\n      fetched.push({ instrument, price, date, status: 'ok' });\n    } catch (err) {\n      fetched.push({ instrument, error: err?.message ?? String(err), status: 'error' });\n    }\n  }\n\n  const sourceDates = fetched.filter(r => r.status === 'ok' && r.date).map(r => r.date);\n  const sourceDate = sourceDates.length > 0 ? sourceDates.sort().at(-1) : today;\n\n  // Phase 2: write, using sourceDate as fallback for instruments with no date (e.g. gilts)\n  const results = [];\n  for (const { instrument, price, date, error, status } of fetched) {\n    if (status === 'ok') {\n      instrument.content['last-price'] = price;\n      instrument.content['last-price-date'] = date ?? sourceDate;\n      instrument.modified = Date.now();\n      await api.update(instrument);\n      results.push({ id: instrument.id, name: instrument.name, price, status: 'ok' });\n    } else {\n      results.push({ id: instrument.id, name: instrument.name, error, status: 'error' });\n    }\n  }\n\n  const timestamp = new Date(sourceDate).getTime() + 86400000 - 1;\n  api.events.emit({ type: PRICES_UPDATED_EVENT_ID, content: { results, timestamp } });\n  return results;\n}\n",
     "_symbols": {
       "INSTRUMENT_TYPE_ID": {
         "name": "INSTRUMENT_TYPE_ID",
@@ -302,7 +302,7 @@
         "name": "fetchAllPrices",
         "line": 48,
         "col": 7,
-        "endLine": 72,
+        "endLine": 83,
         "endCol": 1,
         "kind": "function",
         "scope": null,
@@ -335,137 +335,137 @@
         "kind": "variable",
         "scope": "fetchAllPrices"
       },
-      "fetchAllPrices.results": {
-        "name": "results",
-        "line": 52,
+      "fetchAllPrices.fetched": {
+        "name": "fetched",
+        "line": 54,
         "col": 8,
-        "endLine": 52,
+        "endLine": 54,
         "endCol": 20,
-        "kind": "variable",
-        "scope": "fetchAllPrices"
-      },
-      "fetchAllPrices.firstSourceDate": {
-        "name": "firstSourceDate",
-        "line": 53,
-        "col": 6,
-        "endLine": 53,
-        "endCol": 28,
         "kind": "variable",
         "scope": "fetchAllPrices"
       },
       "fetchAllPrices.instrument": {
         "name": "instrument",
-        "line": 54,
-        "col": 13,
-        "endLine": 54,
-        "endCol": 23,
+        "line": 60,
+        "col": 21,
+        "endLine": 60,
+        "endCol": 31,
+        "kind": "property",
+        "scope": "fetchAllPrices"
+      },
+      "fetchAllPrices.price": {
+        "name": "price",
+        "line": 74,
+        "col": 63,
+        "endLine": 74,
+        "endCol": 68,
+        "kind": "property",
+        "scope": "fetchAllPrices"
+      },
+      "fetchAllPrices.date": {
+        "name": "date",
+        "line": 58,
+        "col": 40,
+        "endLine": 58,
+        "endCol": 44,
+        "kind": "property",
+        "scope": "fetchAllPrices"
+      },
+      "fetchAllPrices.status": {
+        "name": "status",
+        "line": 76,
+        "col": 70,
+        "endLine": 76,
+        "endCol": 85,
+        "kind": "property",
+        "scope": "fetchAllPrices"
+      },
+      "fetchAllPrices.error": {
+        "name": "error",
+        "line": 76,
+        "col": 63,
+        "endLine": 76,
+        "endCol": 68,
+        "kind": "property",
+        "scope": "fetchAllPrices"
+      },
+      "fetchAllPrices.sourceDate": {
+        "name": "sourceDate",
+        "line": 64,
+        "col": 8,
+        "endLine": 64,
+        "endCol": 61,
         "kind": "variable",
         "scope": "fetchAllPrices"
       },
-      "fetchAllPrices.priceDate": {
-        "name": "priceDate",
-        "line": 57,
-        "col": 12,
-        "endLine": 57,
-        "endCol": 37,
+      "fetchAllPrices.results": {
+        "name": "results",
+        "line": 67,
+        "col": 8,
+        "endLine": 67,
+        "endCol": 20,
         "kind": "variable",
         "scope": "fetchAllPrices"
       },
       "fetchAllPrices.id": {
         "name": "id",
-        "line": 65,
+        "line": 76,
         "col": 21,
-        "endLine": 65,
+        "endLine": 76,
         "endCol": 38,
         "kind": "property",
         "scope": "fetchAllPrices"
       },
       "fetchAllPrices.name": {
         "name": "name",
-        "line": 65,
+        "line": 76,
         "col": 40,
-        "endLine": 65,
+        "endLine": 76,
         "endCol": 61,
         "kind": "property",
         "scope": "fetchAllPrices"
       },
-      "fetchAllPrices.price": {
-        "name": "price",
-        "line": 63,
-        "col": 63,
-        "endLine": 63,
-        "endCol": 68,
-        "kind": "property",
-        "scope": "fetchAllPrices"
-      },
-      "fetchAllPrices.status": {
-        "name": "status",
-        "line": 65,
-        "col": 99,
-        "endLine": 65,
-        "endCol": 114,
-        "kind": "property",
-        "scope": "fetchAllPrices"
-      },
-      "fetchAllPrices.error": {
-        "name": "error",
-        "line": 65,
-        "col": 63,
-        "endLine": 65,
-        "endCol": 97,
-        "kind": "property",
-        "scope": "fetchAllPrices"
-      },
-      "fetchAllPrices.eventDate": {
-        "name": "eventDate",
-        "line": 68,
-        "col": 8,
-        "endLine": 68,
-        "endCol": 44,
-        "kind": "variable",
-        "scope": "fetchAllPrices"
-      },
       "fetchAllPrices.timestamp": {
         "name": "timestamp",
-        "line": 69,
+        "line": 80,
         "col": 8,
-        "endLine": 69,
-        "endCol": 64,
+        "endLine": 80,
+        "endCol": 65,
         "kind": "variable",
         "scope": "fetchAllPrices"
       },
       "fetchAllPrices.type": {
         "name": "type",
-        "line": 70,
+        "line": 81,
         "col": 20,
-        "endLine": 70,
+        "endLine": 81,
         "endCol": 49,
         "kind": "property",
         "scope": "fetchAllPrices"
       },
       "fetchAllPrices.content": {
         "name": "content",
-        "line": 70,
+        "line": 81,
         "col": 51,
-        "endLine": 70,
+        "endLine": 81,
         "endCol": 82,
         "kind": "property",
         "scope": "fetchAllPrices"
       },
       "fetchAllPrices.content.results": {
         "name": "results",
-        "line": 70,
+        "line": 81,
         "col": 62,
-        "endLine": 70,
+        "endLine": 81,
         "endCol": 69,
         "kind": "property",
         "scope": "fetchAllPrices.content"
       },
       "fetchAllPrices.content.timestamp": {
         "name": "timestamp",
-        "line": 70,
+        "line": 81,
         "col": 71,
-        "endLine": 70,
+        "endLine": 81,
         "endCol": 80,
         "kind": "property",
         "scope": "fetchAllPrices.content"
