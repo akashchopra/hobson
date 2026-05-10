@@ -1,6 +1,8 @@
 export async function render(value, options, api) {
-  const { label } = options;
-  const attachments = value || [];
+  const { label, mode, onChange } = options;
+  const isEditable = mode === 'editable' && onChange;
+
+  let currentAttachments = value || [];
 
   const wrapper = api.createElement('div', { className: 'field-attachments' });
   wrapper.style.cssText = 'display: flex; flex-direction: column; gap: 4px;';
@@ -8,45 +10,70 @@ export async function render(value, options, api) {
   if (label) {
     const labelEl = api.createElement('div');
     labelEl.textContent = label;
-    labelEl.style.cssText = 'font-weight: 500; font-size: 0.875rem; color: var(--color-text); margin-bottom: 4px;';
+    labelEl.style.cssText = 'font-weight: 500; font-size: 0.875rem; color: var(--color-text); margin-bottom: 2px;';
     wrapper.appendChild(labelEl);
   }
 
-  for (const att of attachments) {
-    const id = att.id;
-    let item, typeItem;
-    try { item = await api.get(id); } catch { item = null; }
-    if (item?.type) {
-      try { typeItem = await api.get(item.type); } catch { typeItem = null; }
-    }
+  const cardsContainer = api.createElement('div');
+  cardsContainer.style.cssText = 'display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-start;';
 
-    const row = api.createElement('div');
-    row.style.cssText = 'display: flex; align-items: baseline; gap: 6px; padding: 3px 0; border-radius: var(--border-radius);';
+  const renderCards = async () => {
+    while (cardsContainer.firstChild) cardsContainer.removeChild(cardsContainer.firstChild);
 
-    if (item) {
-      row.style.cursor = 'pointer';
-      row.addEventListener('click', (e) => api.openItem(e, { id }));
-
-      const nameEl = api.createElement('span');
-      nameEl.textContent = item.name || id.slice(0, 8);
-      nameEl.style.cssText = 'color: var(--color-link, #2563eb); font-size: 0.8125rem;';
-      row.appendChild(nameEl);
-
-      if (typeItem?.name) {
-        const typeEl = api.createElement('span');
-        typeEl.textContent = typeItem.name;
-        typeEl.style.cssText = 'color: var(--color-border-dark); font-size: 0.6875rem;';
-        row.appendChild(typeEl);
+    for (const att of currentAttachments) {
+      const id = att.id;
+      let item, typeItem;
+      try { item = await api.get(id); } catch { item = null; }
+      if (item?.type) {
+        try { typeItem = await api.get(item.type); } catch { typeItem = null; }
       }
-    } else {
-      const missingEl = api.createElement('span');
-      missingEl.textContent = `[deleted: ${id.slice(0, 13)}]`;
-      missingEl.style.cssText = 'color: var(--color-border-dark); font-style: italic; font-size: 0.8125rem;';
-      row.appendChild(missingEl);
+
+      const card = api.createElement('div');
+      card.style.cssText = 'display: flex; flex-direction: column; border-radius: var(--border-radius);';
+
+      if (item) {
+        const nameRow = api.createElement('div');
+        nameRow.style.cssText = 'display: flex; align-items: center; gap: 4px;';
+
+        const nameEl = api.createElement('span');
+        nameEl.textContent = item.name || id.slice(0, 8);
+        nameEl.style.cssText = 'color: var(--color-link, #2563eb); font-size: 0.8125rem; cursor: pointer;';
+        nameEl.addEventListener('click', (e) => api.openItem(e, { id }));
+        nameRow.appendChild(nameEl);
+
+        if (isEditable) {
+          const removeBtn = api.createElement('button');
+          removeBtn.textContent = '\u00d7';
+          removeBtn.style.cssText = 'background: none; border: none; color: var(--color-text-secondary); cursor: pointer; padding: 0; font-size: 0.875rem; line-height: 1; opacity: 0.6;';
+          removeBtn.title = 'Remove attachment';
+          removeBtn.addEventListener('click', () => {
+            currentAttachments = currentAttachments.filter(a => a.id !== id);
+            onChange(currentAttachments);
+            renderCards();
+          });
+          nameRow.appendChild(removeBtn);
+        }
+
+        card.appendChild(nameRow);
+
+        if (typeItem?.name) {
+          const typeEl = api.createElement('span');
+          typeEl.textContent = typeItem.name;
+          typeEl.style.cssText = 'color: var(--color-border-dark); font-size: 0.6875rem;';
+          card.appendChild(typeEl);
+        }
+      } else {
+        const missingEl = api.createElement('span');
+        missingEl.textContent = `[deleted: ${id.slice(0, 13)}]`;
+        missingEl.style.cssText = 'color: var(--color-border-dark); font-style: italic; font-size: 0.8125rem;';
+        card.appendChild(missingEl);
+      }
+
+      cardsContainer.appendChild(card);
     }
+  };
 
-    wrapper.appendChild(row);
-  }
-
+  await renderCards();
+  wrapper.appendChild(cardsContainer);
   return wrapper;
 }

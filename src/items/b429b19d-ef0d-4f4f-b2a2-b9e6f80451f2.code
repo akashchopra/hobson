@@ -92,7 +92,12 @@ export async function render(item, api) {
   // Try context first (sibling navigation), then URL params (root navigation)
   const navigateTo = (api.getNavigateTo ? api.getNavigateTo() : null) || getNavigateToFromURL();
   // Render each field according to ui_hints
-  for (const [path, hint] of Object.entries(uiHints)) {   
+  // Consecutive fields with inline:true are collected into a shared flex row
+  let inlineRow = null;
+  const flushInlineRow = () => {
+    if (inlineRow) { scrollArea.appendChild(inlineRow); inlineRow = null; }
+  };
+  for (const [path, hint] of Object.entries(uiHints)) {
     if (hint.hidden) continue;
 
     // Get current value from item
@@ -192,8 +197,9 @@ export async function render(item, api) {
     // Skip empty field views (e.g. field-summary with no fields)
     if (fieldElement.style.display === 'none') continue;
 
-    // Wrap in collapsible <details> if requested
+    // Append field: collapsible gets a <details>, inline joins/starts a flex row, others flush any pending row and append directly
     if (hint.collapsible) {
+      flushInlineRow();
       const details = api.createElement('details');
       details.setAttribute('data-sort-key', fieldKey);
       const shouldOpen = hint.startCollapsed === 'ifEmpty' ? !!value : !hint.startCollapsed;
@@ -204,18 +210,29 @@ export async function render(item, api) {
       details.appendChild(summary);
       details.appendChild(fieldElement);
       scrollArea.appendChild(details);
+    } else if (hint.inline) {
+      if (!inlineRow) {
+        inlineRow = api.createElement('div');
+        inlineRow.style.cssText = 'display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start;';
+      }
+      fieldElement.style.flex = '1';
+      fieldElement.setAttribute('data-sort-key', fieldKey);
+      inlineRow.appendChild(fieldElement);
     } else {
+      flushInlineRow();
       fieldElement.setAttribute('data-sort-key', fieldKey);
       scrollArea.appendChild(fieldElement);
     }
 
-    // Add divider after field if requested
+    // Add divider after field if requested — for inline fields this flushes the row first
     if (hint.dividerAfter) {
+      flushInlineRow();
       const divider = api.createElement('hr');
       divider.style.cssText = 'border: none; border-top: 2px solid var(--color-border); margin: 8px 0; flex-shrink: 0;';
       scrollArea.appendChild(divider);
     }
   }
+  flushInlineRow();
 
   container.appendChild(scrollArea);
 
