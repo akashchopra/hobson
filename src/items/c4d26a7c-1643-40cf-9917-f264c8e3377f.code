@@ -1,5 +1,4 @@
 ;;; --- JavaScript ---
-;;; --- JavaScript ---
 // reminder-scheduler — JS boot shim
 // Loads and evaluates this item's Hob scheduling logic at boot time.
 // Also watches item:updated to reactively re-schedule edited reminders.
@@ -199,19 +198,22 @@ async function checkExactAlarmPermission(api) {
         nid (notif-id-for id)
         next-scheduled (eval-all (get-in reminder [:content :hob]) lib)
         snooze-at (let [t (+ (now) duration-ms)]
-                    (if (and (number? next-scheduled) (>= t next-scheduled))
+                    (if
+                      (and (number? next-scheduled) (> next-scheduled (now)) (>= t next-scheduled))
                       next-scheduled
                       t))
-        title (or (get-in reminder [:content :title])
-                  (get reminder :name)
-                  "Reminder")]
+        title (or
+                (get-in reminder [:content :title])
+                (get reminder :name)
+                "Reminder")]
     (try
       (when-let [tauri (dom-get win :__TAURI__)]
         (when-let [notif (dom-get tauri :notification)] (.cancel notif [nid])))
       (catch e nil))
     (swap! scheduled-at-map dissoc id)
     (swap! notif-id-to-item-id dissoc nid)
-    (when (> snooze-at (now))
+    (when
+      (> snooze-at (now))
       (when-let [tauri (dom-get win :__TAURI__)]
         (when-let [notif (dom-get tauri :notification)]
           (.batch
