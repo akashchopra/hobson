@@ -148,38 +148,53 @@ pub fn run() {
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_process::init())
-        .on_page_load(|webview, _payload| {
-            // Clear orphaned state from pre-reload session
-            let pending: tauri::State<'_, PendingRequests> = webview.state();
-            let server_running: tauri::State<'_, Arc<AtomicBool>> = webview.state();
-            let pending_clone = pending.inner().clone();
-            server_running.store(false, Ordering::SeqCst);
-            tauri::async_runtime::spawn(async move {
-                pending_clone.lock().await.clear();
-            });
-
-            let _ = webview.eval(r#"
-                document.addEventListener('keydown', e => {
-                    // Prevent WebKitGTK from consuming Ctrl+ shortcuts
-                    // Allow clipboard operations (Ctrl+C/V/X/A) to keep native behavior
-                    if (e.ctrlKey && !e.altKey) {
-                        const allow = ['c','v','x','a','f'].includes(e.key.toLowerCase());
-                        if (!allow) e.preventDefault();
-                    }
-                }, { capture: true });
-                document.addEventListener('keydown', e => {
-                    if ((e.ctrlKey && e.key === 'r') || e.key === 'F5') {
-                        e.preventDefault();
-                        location.reload();
-                    } else if (e.altKey && e.key === 'ArrowLeft') {
-                        e.preventDefault();
-                        history.back();
-                    } else if (e.altKey && e.key === 'ArrowRight') {
-                        e.preventDefault();
-                        history.forward();
-                    }
+        .on_page_load(|webview, payload| {
+            // Clear orphaned state from pre-reload session — runs on Started so
+            // pending HTTP requests are cancelled before the new page boots.
+            if payload.event() == tauri::webview::PageLoadEvent::Started {
+                let pending: tauri::State<'_, PendingRequests> = webview.state();
+                let server_running: tauri::State<'_, Arc<AtomicBool>> = webview.state();
+                let pending_clone = pending.inner().clone();
+                server_running.store(false, Ordering::SeqCst);
+                tauri::async_runtime::spawn(async move {
+                    pending_clone.lock().await.clear();
                 });
-            "#);
+            }
+
+            // Inject keyboard handlers only on Finished (new JS context is ready).
+            // Injecting on Started risks landing in the old context, which accumulates
+            // extra Ctrl+R handlers across rapid reloads and can cause a reload storm.
+            if payload.event() == tauri::webview::PageLoadEvent::Finished {
+                let _ = webview.eval(r#"
+                    document.addEventListener('keydown', e => {
+                        // Prevent WebKitGTK from consuming Ctrl+ shortcuts
+                        // Allow clipboard operations (Ctrl+C/V/X/A) to keep native behavior
+                        if (e.ctrlKey && !e.altKey) {
+                            const allow = ['c','v','x','a','f'].includes(e.key.toLowerCase());
+                            if (!allow) e.preventDefault();
+                        }
+                    }, { capture: true });
+                    document.addEventListener('keydown', e => {
+                        if ((e.ctrlKey && e.key === 'r') || e.key === 'F5') {
+                            e.preventDefault();
+                            // Guard against concurrent reloads: WebKitGTK processes each
+                            // location.reload() call as a separate navigation, so two rapid
+                            // Ctrl+Rs spawn two concurrent boot sequences that compete over
+                            // shared IndexedDB and cause runaway memory growth.
+                            if (!window.__hobsonReloading) {
+                                window.__hobsonReloading = true;
+                                location.reload();
+                            }
+                        } else if (e.altKey && e.key === 'ArrowLeft') {
+                            e.preventDefault();
+                            history.back();
+                        } else if (e.altKey && e.key === 'ArrowRight') {
+                            e.preventDefault();
+                            history.forward();
+                        }
+                    });
+                "#);
+            }
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

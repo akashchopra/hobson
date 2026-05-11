@@ -201,17 +201,29 @@
         const kernel = new Kernel();
         window.kernel = kernel;
         
-        // Listen for reload requests
-        window.addEventListener('message', async (e) => {
-          if (e.data.type === 'reload-kernel') {
-            // Remove kernel's root element if it exists
-            const app = document.getElementById('app');
-            if (app) app.remove();
-            const repl = document.getElementById('repl-container');
-            if (repl) repl.remove();
-            await boot();
-          }
-        });
+        // Listen for reload requests (registered once — boot() is called on soft reloads)
+        if (!window._reloadListenerAdded) {
+          window._reloadListenerAdded = true;
+          window.addEventListener('message', async (e) => {
+            if (e.data.type === 'reload-kernel') {
+              // Tear down old kernel's modules so GC can reclaim their memory
+              if (window.kernel) {
+                for (const [, cached] of window.kernel.moduleSystem.moduleCache) {
+                  if (typeof cached.module?.cleanup === 'function') {
+                    try { await cached.module.cleanup(); } catch (_) {}
+                  }
+                }
+                window.kernel.moduleSystem.clearCache();
+                window.kernel = null;
+              }
+              const app = document.getElementById('app');
+              if (app) app.remove();
+              const repl = document.getElementById('repl-container');
+              if (repl) repl.remove();
+              await boot();
+            }
+          });
+        }
         
         // Append kernel's rootElement to body BEFORE boot
         // so DOM structure exists when kernel:boot-complete fires
