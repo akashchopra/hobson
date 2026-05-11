@@ -1,0 +1,75 @@
+(def eval-base-time (atom nil))
+
+(def
+  day-keyword-map
+  {:sunday 0
+   :monday 1
+   :tuesday 2
+   :wednesday 3
+   :thursday 4
+   :friday 5
+   :saturday 6})
+
+(defn in? [coll x] (some (fn [y] (= y x)) coll))
+
+(defn day-nums [selector]
+  (cond
+    (= selector :day)
+    [0 1 2 3 4 5 6]
+    (= selector :weekday)
+    [1 2 3 4 5]
+    (= selector :weekend)
+    [0 6]
+    (keyword? selector)
+    [(get day-keyword-map selector)]
+    (sequential? selector)
+    (map (fn [k] (get day-keyword-map k)) selector)
+    :else
+    []))
+
+(defn notif-id-for [item-id] (js/parseInt (.substring item-id 0 7) 16))
+
+(defn every [selector & args]
+  (let [base (or (deref eval-base-time) (now))]
+    (cond
+      (= selector :month)
+      (let [[day hour minute] args
+            target (js/Date. base)
+            base-month (.getMonth target)]
+        (.setDate target day)
+        (.setHours target hour minute 0 0)
+        (when
+          (<= (.getTime target) base)
+          (.setDate target 1)
+          (.setMonth target (+ base-month 1))
+          (.setDate target day)
+          (.setHours target hour minute 0 0))
+        (.getTime target))
+      (= selector :year)
+      (let [[month day hour minute] args
+            target (js/Date. base)
+            base-year (.getFullYear target)]
+        (.setDate target 1)
+        (.setMonth target (- month 1))
+        (.setDate target day)
+        (.setHours target hour minute 0 0)
+        (when
+          (<= (.getTime target) base)
+          (.setDate target 1)
+          (.setFullYear target (+ base-year 1))
+          (.setMonth target (- month 1))
+          (.setDate target day)
+          (.setHours target hour minute 0 0))
+        (.getTime target))
+      :else
+      (let [[hour minute] args days (day-nums selector) target (js/Date. base)]
+        (.setHours target hour minute 0 0)
+        (when
+          (<= (.getTime target) base)
+          (.setDate target (+ (.getDate target) 1)))
+        (loop [i 0]
+          (when
+            (and (< i 7) (not (in? days (.getDay target))))
+            (.setDate target (+ (.getDate target) 1))
+            (recur (+ i 1))))
+        (.getTime target)))))
