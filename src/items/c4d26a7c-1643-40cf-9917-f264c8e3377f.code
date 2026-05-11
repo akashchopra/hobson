@@ -1,4 +1,5 @@
 ;;; --- JavaScript ---
+;;; --- JavaScript ---
 // reminder-scheduler — JS boot shim
 // Loads and evaluates this item's Hob scheduling logic at boot time.
 // Also watches item:updated to reactively re-schedule edited reminders.
@@ -17,6 +18,7 @@ const REMINDER_TYPE = '521cb06c-2146-47f1-9375-1207bb6b5b27';
 let _hob = null;
 let _interp = null;
 let _scheduleOne = null;
+let _snoozeOne = null;
 
 export async function onKernelBootComplete({ safeMode }, api) {
   if (safeMode) return;
@@ -29,6 +31,7 @@ export async function onKernelBootComplete({ safeMode }, api) {
     await _interp.evaluate(ast);
   }
   _scheduleOne = await _interp.eval('schedule-one!');
+  _snoozeOne = await _interp.eval('snooze!');
   await checkExactAlarmPermission(api);
   await ensureReminderChannel();
   await _interp.eval('(boot-scan!)');
@@ -62,6 +65,12 @@ export async function evalSchedule(item, baseTime) {
       await _interp.eval('(reset! eval-base-time nil)');
     }
   }
+}
+
+// Snooze a reminder for durationMs milliseconds, capped at its next scheduled time.
+export async function snooze(item, durationMs) {
+  if (!_snoozeOne) return;
+  await _snoozeOne(item, durationMs);
 }
 
 // Returns the currently scheduled OS alarm timestamp for a reminder, or null.
@@ -135,7 +144,6 @@ async function checkExactAlarmPermission(api) {
   } catch (_) {}
 }
 
-
 ;;; --- Hob ---
 (def doc (dom-get (hiccup->dom [:div]) :ownerDocument))
 
@@ -185,6 +193,40 @@ async function checkExactAlarmPermission(api) {
 ])))
         (swap! scheduled-at-map assoc id next-time)
         (swap! notif-id-to-item-id assoc nid id)))))
+
+(defn snooze! [reminder duration-ms]
+  (let [id (get reminder :id)
+        nid (notif-id-for id)
+        next-scheduled (eval-all (get-in reminder [:content :hob]) lib)
+        snooze-at (let [t (+ (now) duration-ms)]
+                    (if (and (number? next-scheduled) (>= t next-scheduled))
+                      next-scheduled
+                      t))
+        title (or (get-in reminder [:content :title])
+                  (get reminder :name)
+                  "Reminder")]
+    (try
+      (when-let [tauri (dom-get win :__TAURI__)]
+        (when-let [notif (dom-get tauri :notification)] (.cancel notif [nid])))
+      (catch e nil))
+    (swap! scheduled-at-map dissoc id)
+    (swap! notif-id-to-item-id dissoc nid)
+    (when (> snooze-at (now))
+      (when-let [tauri (dom-get win :__TAURI__)]
+        (when-let [notif (dom-get tauri :notification)]
+          (.batch
+            notif
+            [{:id nid
+               :title title
+               :body ""
+               :channelId "reminders"
+               :schedule {:at {:date (.toISOString (js/Date. snooze-at))
+                               :repeating false
+                               :allowWhileIdle true}}
+}
+])))
+      (swap! scheduled-at-map assoc id snooze-at)
+      (swap! notif-id-to-item-id assoc nid id))))
 
 (defn cancel-one! [id]
   (let [nid (notif-id-for id)]
