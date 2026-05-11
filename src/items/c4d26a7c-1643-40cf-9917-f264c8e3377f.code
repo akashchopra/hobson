@@ -30,6 +30,7 @@ export async function onKernelBootComplete({ safeMode }, api) {
   }
   _scheduleOne = await _interp.eval('schedule-one!');
   await checkExactAlarmPermission(api);
+  await ensureReminderChannel();
   await _interp.eval('(boot-scan!)');
 }
 
@@ -100,6 +101,21 @@ export async function scheduleOneFrom(item, baseTime) {
   }
 }
 
+async function ensureReminderChannel() {
+  try {
+    const notif = window.__TAURI__?.notification;
+    if (!notif?.createChannel) return;
+    await notif.createChannel({
+      id: 'reminders',
+      name: 'Reminders',
+      importance: 4,
+      vibration: true,
+    });
+  } catch (e) {
+    console.error('[reminder-scheduler] createChannel failed:', e);
+  }
+}
+
 // Checks whether exact alarms are available on Android 12+.
 // If not, opens the system settings screen so the user can grant
 // SCHEDULE_EXACT_ALARM — needed for reminders to fire on time.
@@ -162,18 +178,50 @@ async function checkExactAlarmPermission(api) {
 
 (defn notif-id-for [item-id] (js/parseInt (.substring item-id 0 7) 16))
 
-(defn every [selector hour minute]
-  (let [days (day-nums selector)
-        base (or (deref eval-base-time) (now))
-        target (js/Date. base)]
-    (.setHours target hour minute 0 0)
-    (when (<= (.getTime target) base) (.setDate target (+ (.getDate target) 1)))
-    (loop [i 0]
-      (when
-        (and (< i 7) (not (in? days (.getDay target))))
-        (.setDate target (+ (.getDate target) 1))
-        (recur (+ i 1))))
-    (.getTime target)))
+(defn every [selector & args]
+  (let [base (or (deref eval-base-time) (now))]
+    (cond
+      (= selector :month)
+      (let [[day hour minute] args
+            target (js/Date. base)
+            base-month (.getMonth target)]
+        (.setDate target day)
+        (.setHours target hour minute 0 0)
+        (when
+          (<= (.getTime target) base)
+          (.setDate target 1)
+          (.setMonth target (+ base-month 1))
+          (.setDate target day)
+          (.setHours target hour minute 0 0))
+        (.getTime target))
+      (= selector :year)
+      (let [[month day hour minute] args
+            target (js/Date. base)
+            base-year (.getFullYear target)]
+        (.setDate target 1)
+        (.setMonth target (- month 1))
+        (.setDate target day)
+        (.setHours target hour minute 0 0)
+        (when
+          (<= (.getTime target) base)
+          (.setDate target 1)
+          (.setFullYear target (+ base-year 1))
+          (.setMonth target (- month 1))
+          (.setDate target day)
+          (.setHours target hour minute 0 0))
+        (.getTime target))
+      :else
+      (let [[hour minute] args days (day-nums selector) target (js/Date. base)]
+        (.setHours target hour minute 0 0)
+        (when
+          (<= (.getTime target) base)
+          (.setDate target (+ (.getDate target) 1)))
+        (loop [i 0]
+          (when
+            (and (< i 7) (not (in? days (.getDay target))))
+            (.setDate target (+ (.getDate target) 1))
+            (recur (+ i 1))))
+        (.getTime target)))))
 
 (defn schedule-one! [reminder]
   (let [id (get reminder :id)
@@ -200,6 +248,7 @@ async function checkExactAlarmPermission(api) {
               [{:id nid
                  :title title
                  :body ""
+                 :channelId "reminders"
                  :schedule {:at {:date (.toISOString (js/Date. next-time))
                                  :repeating false
                                  :allowWhileIdle true}}

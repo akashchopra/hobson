@@ -45,7 +45,6 @@
   (def attachments (:attachments item))
   (def target-id (when (seq attachments) (:id (first attachments))))
   (def target-item (when target-id (get-item target-id)))
-  (def picked-date (atom nil))
   (def pending-ast (atom nil))
   (def hob-editor-mod (require "field-view-hob"))
   (def
@@ -75,28 +74,45 @@
         [:div {:style "font-size: 0.75rem; color: var(--color-text-secondary); margin-bottom: 4px;"}
 
           "Set reminder"]
-        [:div {:style "display: flex; gap: 8px; align-items: center;"}
-          [:input {:type "datetime-local"
-                   :style "padding: 8px; border: 1px solid var(--color-border); border-radius: var(--border-radius); background: var(--color-bg-surface); color: var(--color-text); font-size: 0.875rem;"
-                   :on-input (fn [e]
-                               (reset!
-                                 picked-date
-                                 (dom-get (dom-get e :target) :value)))}]
+        [:div {:style "display: flex; gap: 8px; align-items: center; flex-wrap: wrap;"}
+
+          [:input {:type "date"
+                   :id "reminder-date"
+                   :style "padding: 8px; border: 1px solid var(--color-border); border-radius: var(--border-radius); background: var(--color-bg-surface); color: var(--color-text); font-size: 0.875rem;"}]
+          [:input {:type "time"
+                   :id "reminder-time"
+                   :style "padding: 8px; border: 1px solid var(--color-border); border-radius: var(--border-radius); background: var(--color-bg-surface); color: var(--color-text); font-size: 0.875rem;"}]
           [:button {:style "padding: 8px 16px; background: var(--color-primary); color: white; border: none; border-radius: var(--border-radius); cursor: pointer; font-size: 0.875rem;"
                     :on-click (fn [e]
-                                (when-let [d (deref picked-date)]
-                                  (let [ts (js/Date.parse d)]
-                                    (when
-                                      (and (number? ts) (> ts (now)))
-                                      (let [fresh (get-item (:id item))]
-                                        (set-item!
-                                          (->
-                                            fresh
-                                            (assoc-in
-                                              [:content :hob]
-                                              [["js/Date.parse" {:s d}]])
-                                            (assoc :modified (now))))
-                                        (rerender!))))))}
+                                (let [date-el (.getElementById
+                                                doc
+                                                "reminder-date")
+                                      time-el (.getElementById
+                                                doc
+                                                "reminder-time")
+                                      dv (when date-el (dom-get date-el :value))
+                                      tv (when time-el (dom-get time-el :value))
+                                      dt (when
+                                           (and dv (not= dv ""))
+                                           (str
+                                             dv
+                                             "T"
+                                             (if
+                                               (and tv (not= tv ""))
+                                               tv
+                                               "00:00")))
+                                      ts (when dt (js/Date.parse dt))]
+                                  (when
+                                    (and (number? ts) (> ts (now)))
+                                    (let [fresh (get-item (:id item))]
+                                      (set-item!
+                                        (->
+                                          fresh
+                                          (assoc-in
+                                            [:content :hob]
+                                            [["js/Date.parse" {:s dt}]])
+                                          (assoc :modified (now))))
+                                      (rerender!)))))}
             "Set"]]])
     (when
       has-schedule
