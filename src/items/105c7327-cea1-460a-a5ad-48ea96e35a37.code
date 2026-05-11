@@ -24,25 +24,23 @@
     scheduled-at
     (when has-schedule (try (.getScheduledAt sched (:id item)) (catch e nil))))
   (def display-time (or scheduled-at next-time))
-  (def desc (get-in item [:content :description]))
+  (def desc (or (get-in item [:content :description]) [":doc"]))
   (def
     desc-el
-    (when
-      (and desc (sequential? desc) (= (first desc) ":doc"))
-      (let [doc-mod (require "field-view-doc-editable")]
-        (.render
-          doc-mod
-          desc
-          {:mode "editable"
-           :label "Notes"
-           :onChange (fn [new-desc]
-                       (let [fresh (get-item (:id item))]
-                         (set-item!
-                           (->
-                             fresh
-                             (assoc-in [:content :description] new-desc)
-                             (assoc :modified (now))))))}
-          api))))
+    (let [doc-mod (require "field-view-doc-editable")]
+      (.render
+        doc-mod
+        desc
+        {:mode "editable"
+         :label "Notes"
+         :onChange (fn [new-desc]
+                     (let [fresh (get-item (:id item))]
+                       (set-item!
+                         (->
+                           fresh
+                           (assoc-in [:content :description] new-desc)
+                           (assoc :modified (now))))))}
+        api)))
   (def attachments (:attachments item))
   (def target-id (when (seq attachments) (:id (first attachments))))
   (def target-item (when target-id (get-item target-id)))
@@ -143,7 +141,7 @@
           "Target: "]
         [:span {:style "color: var(--color-primary);"}
           (or (:name target-item) (subs target-id 0 8))]])
-    (when desc-el desc-el)
+    desc-el
     (when
       has-schedule
       (let [snooze-presets [["15m" (* 15 60 1000)]
