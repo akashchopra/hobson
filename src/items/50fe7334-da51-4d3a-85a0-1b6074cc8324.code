@@ -43,6 +43,11 @@ const STDLIB = [
   { n: 'get-parent-id',         d: 'domain' }, { n: 'get-current-root',     d: 'domain' },
   { n: 'pmap',                  d: 'domain' },
   { n: 'find-items',            d: 'domain' }, { n: 'get-all',              d: 'domain' },
+  { n: 'text?',                 d: 'domain' }, { n: 'type?',               d: 'domain' },
+  { n: 'tagged?',               d: 'domain' }, { n: 'name?',               d: 'domain' },
+  { n: 'modified-after?',       d: 'domain' }, { n: 'modified-before?',    d: 'domain' },
+  { n: 'has-field?',            d: 'domain' }, { n: 'eval-hob-ast!',       d: 'domain' },
+  { n: 'parse-hob!',            d: 'domain' },
   { n: 'resolve-ref',           d: 'domain' }, { n: 'resolve-field-refs',   d: 'domain' },
   { n: 'transclude',            d: 'domain' }, { n: 'transclusion-chrome',  d: 'domain' },
   { n: 'call-export',           d: 'domain' }, { n: 'extract-symbol',       d: 'domain' },
@@ -2119,6 +2124,13 @@ function handleNavKey(e, ctx) {
       state.selectedId = holes[prevIdx];
       state.expansionStack = [];
     } else { handled = false; }
+  } else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !e.shiftKey && state.onSubmit) {
+    // Ctrl/Cmd+Enter → submit the current AST
+    e.preventDefault();
+    e.stopPropagation();
+    const root = state.nodeMap.get(0);
+    if (root) state.onSubmit(deflateAll(root));
+    handled = true;
   } else if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey && node.type === 'doc' && state.onChange) {
     // Enter on doc node → activate prose editor
     enterDocEditing(state, node.id, itemNames, api, statusBar);
@@ -3049,6 +3061,8 @@ export async function render(value, options, api) {
     domMap: new Map(),
     editorEl: null,
     onChange: options.onChange || null,
+    onSubmit: options.onSubmit || null,
+    compact: options.compact || false,
     mode: 'nav',
     inputBuffer: '',
     inputCursor: 0,
@@ -3093,9 +3107,11 @@ export async function render(value, options, api) {
 
   // Wrapper
   const wrapper = api.createElement('div');
-  wrapper.style.cssText = 'display: flex; flex-direction: column; border: 1px solid var(--color-border); border-radius: var(--border-radius); min-height: 200px; position: relative;';
+  wrapper.style.cssText = options.compact
+    ? 'display: flex; flex-direction: column; border: 1px solid var(--color-border); border-radius: var(--border-radius); position: relative;'
+    : 'display: flex; flex-direction: column; border: 1px solid var(--color-border); border-radius: var(--border-radius); min-height: 200px; position: relative;';
   wrapper.appendChild(editorEl);
-  wrapper.appendChild(statusBar);
+  if (!options.compact) wrapper.appendChild(statusBar);
 
   // Event context (shared by key and click handlers)
   const ctx = { state, statusBar, itemNames, api, wrapper };
