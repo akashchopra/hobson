@@ -38,10 +38,11 @@
   (def
     open-item-handler
     (fn [item-id-or-att]
-      (let [att-id (if
-                     (map? item-id-or-att)
-                     (:id item-id-or-att)
-                     item-id-or-att)
+      (let [att (if
+                   (map? item-id-or-att)
+                   item-id-or-att
+                   {:id item-id-or-att})
+            att-id (:id att)
             fresh (get-item (:id item))
             fresh-children (or (:attachments fresh) [])
             existing (some (fn [c] (= (:id c) att-id)) fresh-children)
@@ -50,11 +51,24 @@
                        (assoc
                          fresh
                          :attachments
-                         (conj fresh-children {:id att-id})
+                         (conj fresh-children att)
                          :modified
                          (now))
                        fresh)]
         (set-item! (assoc-in with-att [:content :activeTab] att-id)))))
+  (on-event!
+    "e0e00000-0003-0001-0000-000000000000"
+    (fn [event]
+      (let [current (get-in event [:content :current])
+            iid     (:itemId current)
+            pid     (:parentId current)]
+        (when (= pid (:id item))
+          (let [fresh (get-item (:id item))]
+            (when
+              (and
+                (not= (get-in fresh [:content :activeTab]) iid)
+                (some (fn [s] (= (:id s) iid)) (or (:attachments fresh) [])))
+              (set-item! (assoc-in fresh [:content :activeTab] iid))))))))
   (def touch-x (atom 0))
   (def touch-y (atom 0))
   (def tracking (atom false))
