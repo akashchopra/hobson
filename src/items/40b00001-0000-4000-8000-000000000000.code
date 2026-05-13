@@ -3268,99 +3268,42 @@ function registerItemOps(env, api) {
     return walk(node);
   }, { _hobName: 'extract-text' }));
 
-  // Search predicates — used by item-search-lib Hob query mode.
-  // Name→ID caches are per registerItemOps call (i.e. per interpreter instance).
-  const typeNameCache = new Map();
-  const tagNameCache = new Map();
+  /** Search predicates — data operations available in all interpreters (including fresh eval contexts). */
+  env.define('text?', Object.assign(async (item, query) => {
+    const lib = await api.require('item-search-lib');
+    return lib.textMatch(hobToJs(item), hobToJs(query));
+  }, { _hobName: 'text?' }));
 
-  /** True if item matches type name or GUID. Caches type lookups. */
   env.define('type?', Object.assign(async (item, typeName) => {
-    if (typeName && typeName._hobType === 'item-ref') typeName = typeName.value;
-    if (!item || typeof item !== 'object') return false;
-    const nameKey = typeof typeName === 'string' ? typeName.toLowerCase() : '';
-    if (!typeNameCache.has(nameKey)) {
-      if (UUID_RE.test(typeName)) {
-        typeNameCache.set(nameKey, typeName);
-      } else {
-        const allTypes = await api.query({ type: '11111111-0000-0000-0000-000000000000' });
-        for (const t of allTypes) {
-          if (t.name) {
-            const full = t.name.toLowerCase();
-            typeNameCache.set(full, t.id);
-            if (full.includes(':')) typeNameCache.set(full.split(':').pop(), t.id);
-          }
-        }
-      }
-    }
-    const resolvedId = typeNameCache.get(nameKey) || typeName;
-    return item.type === resolvedId;
+    const lib = await api.require('item-search-lib');
+    return await lib.typeMatch(hobToJs(item), hobToJs(typeName), api);
   }, { _hobName: 'type?' }));
 
-  /** True if item has the given tag (by name or GUID). */
-  env.define('tagged?', Object.assign(async (item, tagName) => {
-    if (tagName && tagName._hobType === 'item-ref') tagName = tagName.value;
-    if (!item || typeof item !== 'object') return false;
-    const tags = item.content?.tags || [];
-    if (UUID_RE.test(tagName)) return tags.includes(tagName);
-    const nameKey = tagName.toLowerCase();
-    if (!tagNameCache.has(nameKey)) {
-      const allItems = await api.getAll();
-      for (const i of allItems) {
-        if (i.name) {
-          const name = i.name.toLowerCase();
-          if (!tagNameCache.has(name)) tagNameCache.set(name, []);
-          tagNameCache.get(name).push(i.id);
-        }
-      }
-    }
-    const tagIds = tagNameCache.get(nameKey) || [];
-    return tagIds.some(id => tags.includes(id));
+  env.define('tagged?', Object.assign(async (item, tagNameOrId) => {
+    const lib = await api.require('item-search-lib');
+    return await lib.taggedMatch(hobToJs(item), hobToJs(tagNameOrId), api);
   }, { _hobName: 'tagged?' }));
 
-  /** True if item name contains substring (case-insensitive). */
-  env.define('name?', Object.assign((item, substring) => {
-    if (!item || typeof item !== 'object') return false;
-    const name = item.name || '';
-    return name.toLowerCase().includes(substring.toLowerCase());
+  env.define('name?', Object.assign(async (item, query) => {
+    const lib = await api.require('item-search-lib');
+    return lib.nameMatch(hobToJs(item), hobToJs(query));
   }, { _hobName: 'name?' }));
 
-  /** True if item was modified after the given timestamp. */
-  env.define('modified-after?', Object.assign((item, timestamp) => {
-    if (!item || typeof item !== 'object') return false;
-    return (item.modified || 0) > timestamp;
+  env.define('modified-after?', Object.assign(async (item, timestamp) => {
+    const lib = await api.require('item-search-lib');
+    return lib.modifiedAfter(hobToJs(item), hobToJs(timestamp));
   }, { _hobName: 'modified-after?' }));
 
-  /** True if item was modified before the given timestamp. */
-  env.define('modified-before?', Object.assign((item, timestamp) => {
-    if (!item || typeof item !== 'object') return false;
-    return (item.modified || 0) < timestamp;
+  env.define('modified-before?', Object.assign(async (item, timestamp) => {
+    const lib = await api.require('item-search-lib');
+    return lib.modifiedBefore(hobToJs(item), hobToJs(timestamp));
   }, { _hobName: 'modified-before?' }));
 
-  /** True if item has the given content field. */
-  env.define('has-field?', Object.assign((item, field) => {
-    if (!item || typeof item !== 'object') return false;
-    const key = typeof field === 'string' && field.startsWith('\u029e') ? field.slice(1) : field;
-    return item.content != null && key in item.content;
+  env.define('has-field?', Object.assign(async (item, fieldName) => {
+    const lib = await api.require('item-search-lib');
+    return lib.hasField(hobToJs(item), hobToJs(fieldName));
   }, { _hobName: 'has-field?' }));
 
-  /** Full-text search across item fields (case-insensitive). */
-  env.define('text?', Object.assign((item, query) => {
-    if (!item || typeof item !== 'object') return false;
-    const c = item.content;
-    const searchable = [
-      item.id, item.type, item.name, c?.title, c?.body,
-      typeof c?.description === 'string' ? c.description :
-        Array.isArray(c?.description) ? (function walk(n) {
-          if (typeof n === 'string') return n;
-          if (n && typeof n === 'object' && 's' in n) return n.s;
-          if (Array.isArray(n)) return n.slice(1).map(walk).join(' ');
-          return '';
-        })(c.description) : null,
-      c?.code && typeof c.code === 'string' ? c.code : null,
-      c?.displayName, c?.for_type,
-    ].filter(Boolean).join(' ').toLowerCase();
-    return searchable.includes(query.toLowerCase());
-  }, { _hobName: 'text?' }));
 }
 
 // ============================================================
@@ -3474,42 +3417,6 @@ function registerViewOps(env, api) {
     return await searchLib.searchItems(query, api, options ? hobToJs(options) : {});
   }, { _hobName: 'search-items!' }));
 
-  /** Search predicates for use in Hob search expressions. */
-  env.define('text?', Object.assign(async (item, query) => {
-    const lib = await api.require('item-search-lib');
-    return lib.textMatch(hobToJs(item), hobToJs(query));
-  }, { _hobName: 'text?' }));
-
-  env.define('type?', Object.assign(async (item, typeName) => {
-    const lib = await api.require('item-search-lib');
-    return await lib.typeMatch(hobToJs(item), hobToJs(typeName), api);
-  }, { _hobName: 'type?' }));
-
-  env.define('tagged?', Object.assign(async (item, tagNameOrId) => {
-    const lib = await api.require('item-search-lib');
-    return await lib.taggedMatch(hobToJs(item), hobToJs(tagNameOrId), api);
-  }, { _hobName: 'tagged?' }));
-
-  env.define('name?', Object.assign(async (item, query) => {
-    const lib = await api.require('item-search-lib');
-    return lib.nameMatch(hobToJs(item), hobToJs(query));
-  }, { _hobName: 'name?' }));
-
-  env.define('modified-after?', Object.assign(async (item, timestamp) => {
-    const lib = await api.require('item-search-lib');
-    return lib.modifiedAfter(hobToJs(item), hobToJs(timestamp));
-  }, { _hobName: 'modified-after?' }));
-
-  env.define('modified-before?', Object.assign(async (item, timestamp) => {
-    const lib = await api.require('item-search-lib');
-    return lib.modifiedBefore(hobToJs(item), hobToJs(timestamp));
-  }, { _hobName: 'modified-before?' }));
-
-  env.define('has-field?', Object.assign(async (item, fieldName) => {
-    const lib = await api.require('item-search-lib');
-    return lib.hasField(hobToJs(item), hobToJs(fieldName));
-  }, { _hobName: 'has-field?' }));
-
   /** Parse a Hob source string into compact JSON AST (synchronous). */
   env.define('parse-hob!', Object.assign((source) => {
     return readAll(hobToJs(source));
@@ -3523,6 +3430,17 @@ function registerViewOps(env, api) {
     const source = hob.prettyPrintAll(hobToJs(ast));
     return await interp.eval(source);
   }, { _hobName: 'eval-hob-ast!' }));
+
+  /** Macro-expand a compact search predicate AST, then evaluate it. */
+  env.define('eval-search-ast!', Object.assign(async (ast) => {
+    const lib = await api.require('item-search-lib');
+    const expanded = lib.expandSearchAst(hobToJs(ast));
+    const hob = await api.require('hob-interpreter');
+    const interp = hob.createInterpreter(api);
+    await interp.macrosReady;
+    const source = hob.prettyPrintAll(expanded);
+    return await interp.eval(source);
+  }, { _hobName: 'eval-search-ast!' }));
 
   /** Get items tagged as starred. */
   env.define('get-starred-items!', Object.assign(async (options) => {

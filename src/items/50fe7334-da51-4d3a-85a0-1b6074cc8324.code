@@ -1236,8 +1236,17 @@ function deleteSelected(state) {
   const parent = state.parentMap.get(state.selectedId);
   if (!parent || !parent.children) return;
 
-  // Prevent deleting the last top-level form
-  if (parent.type === 'root' && parent.children.length <= 1) return;
+  // Sole top-level form: replace with (·) and enter input mode immediately
+  if (parent.type === 'root' && parent.children.length <= 1) {
+    const hole = makeNode(state, 'hole', {});
+    const list = makeNode(state, 'list', { children: [hole] });
+    removeFromMaps(node, state);
+    parent.children[0] = list;
+    state.parentMap.set(list.id, parent);
+    state.parentMap.set(hole.id, list);
+    enterInputMode(state, hole.id);
+    return;
+  }
 
   const idx = parent.children.indexOf(node);
   if (idx === -1) return;
@@ -1262,7 +1271,15 @@ function deleteSelected(state) {
     removeFromMaps(node, state);
     // Selection: next sibling → previous sibling → parent
     if (parent.children.length === 0) {
-      state.selectedId = parent.id;
+      if (parent.type === 'list' || parent.type === 'vector') {
+        // Empty collection: insert a hole and enter input mode immediately
+        const hole = makeNode(state, 'hole', {});
+        parent.children.push(hole);
+        state.parentMap.set(hole.id, parent);
+        enterInputMode(state, hole.id);
+      } else {
+        state.selectedId = parent.id;
+      }
     } else if (idx < parent.children.length) {
       state.selectedId = parent.children[idx].id;
     } else {
@@ -2691,17 +2708,13 @@ function handleStringKey(e, ctx) {
   } else if (e.key === 'End') {
     state.inputCursor = state.inputBuffer.length; updateHoleDisplay(state);
   } else if (e.key === 'Enter' && !e.shiftKey) {
-    // Commit string and create sibling hole for continued input
+    // Commit string and exit to nav
     const strNode = makeNode(state, 'string', { value: state.inputBuffer });
     pushUndo(state);
     replaceNode(state, state.inputHoleId, strNode);
     notifyChange(state);
-    const nextHole = makeNode(state, 'hole', {});
-    pushUndo(state);
-    insertAfter(state, strNode.id, nextHole);
-    notifyChange(state);
     state.replaceOriginal = null;
-    enterInputMode(state, nextHole.id);
+    exitToNav(state, strNode.id);
     rerender(state, itemNames, api, statusBar);
   } else if (e.key === 'Enter' && e.shiftKey) {
     state.inputBuffer = state.inputBuffer.slice(0, state.inputCursor) + '\n' + state.inputBuffer.slice(state.inputCursor);
@@ -2721,7 +2734,7 @@ function handleStringKey(e, ctx) {
 }
 
 function handleKey(e, ctx) {
-  const { state, statusBar } = ctx;
+  const { state, statusBar, itemNames, api } = ctx;
 
   // Help overlay is modal — swallow all keys; Ctrl+/ and Escape dismiss it
   if (state.helpVisible) {
@@ -2733,6 +2746,34 @@ function handleKey(e, ctx) {
 
   // In doc mode, let the prose editor handle all keys (Escape handled by doc's own listener)
   if (state.mode === 'doc') return;
+
+  // Ctrl/Cmd+Enter — commit any in-progress edit then submit, from any mode
+  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !e.shiftKey && state.onSubmit) {
+    if (state.mode === 'input') {
+      if (state.inputBuffer) {
+        commitToken(state, itemNames, api, statusBar);
+      } else {
+        state.selectedId = state.inputHoleId;
+        pushUndo(state);
+        deleteSelected(state);
+        notifyChange(state);
+      }
+      exitToNav(state, state.selectedId);
+      rerender(state, itemNames, api, statusBar);
+    } else if (state.mode === 'string') {
+      const strNode = makeNode(state, 'string', { value: state.inputBuffer });
+      pushUndo(state);
+      replaceNode(state, state.inputHoleId, strNode);
+      notifyChange(state);
+      exitToNav(state, strNode.id);
+      rerender(state, itemNames, api, statusBar);
+    }
+    const root = state.nodeMap.get(0);
+    if (root) state.onSubmit(deflateAll(root));
+    e.preventDefault();
+    e.stopPropagation();
+    return;
+  }
 
   let handled;
   if (state.mode === 'string') {
@@ -3168,6 +3209,35 @@ export async function render(value, options, api) {
   // Initial selection
   updateSelectionVisual(state);
   updateStatusBar(state, statusBar);
+
+  // Auto-focus: enter string mode on first empty string, or input mode on first hole
+  if (options.autoFocus && state.onChange) {
+    let autoFocusNode = null;
+    for (const n of state.nodeMap.values()) {
+      if (n.type === 'string' && n.value === '') { autoFocusNode = n; break; }
+      if (n.type === 'hole' && !autoFocusNode) autoFocusNode = n;
+    }
+    if (autoFocusNode) {
+      if (autoFocusNode.type === 'string') {
+        const hole = makeNode(state, 'hole', {});
+        state.replaceOriginal = { nodeSnapshot: JSON.parse(JSON.stringify(autoFocusNode)), parentId: state.parentMap.get(autoFocusNode.id)?.id };
+        replaceNode(state, autoFocusNode.id, hole);
+        enterInputMode(state, hole.id);
+        state.mode = 'string';
+        state.inputBuffer = autoFocusNode.value;
+        state.inputCursor = autoFocusNode.value.length;
+      } else {
+        enterInputMode(state, autoFocusNode.id);
+      }
+      rerender(state, itemNames, api, statusBar);
+      let _focusAttempts = 0;
+      const tryFocus = () => {
+        if (editorEl.isConnected) { editorEl.focus(); }
+        else if (++_focusAttempts < 10) { requestAnimationFrame(tryFocus); }
+      };
+      requestAnimationFrame(tryFocus);
+    }
+  }
 
   // Deferred scroll — element may not be in the DOM yet when render() returns.
   // When opened as a new canvas sibling, the window/scroll container may take

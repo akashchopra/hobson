@@ -399,6 +399,57 @@ export function hasField(item, fieldName) {
   return item.content?.[fieldName] !== undefined;
 }
 
+// Predicates that take (item, ...) — macro inserts 'i' when item arg is absent
+const SEARCH_PREDICATES = new Set(['type?', 'tagged?', 'text?', 'name?', 'modified-after?', 'modified-before?', 'has-field?']);
+
+function insertItemArg(node) {
+  if (!Array.isArray(node)) return node;
+  const [head, ...args] = node;
+  if (typeof head === 'string' && SEARCH_PREDICATES.has(head) && args[0] !== 'i') {
+    return [head, 'i', ...args.map(insertItemArg)];
+  }
+  return [head, ...args.map(insertItemArg)];
+}
+
+/**
+ * Macro-expand a compact search predicate AST into a full filter+sort program.
+ *
+ * Input: array of top-level nodes, e.g.:
+ *   [(type? "note")]  or  [(and (type? "note") (tagged? "todo")), (sort :modified)]
+ *
+ * Output: array of one top-level node: a complete (filter ... (get-all)) expression,
+ *   optionally wrapped in (reverse (sort-by field ...)).
+ */
+export function expandSearchAst(topLevelNodes) {
+  if (!Array.isArray(topLevelNodes) || topLevelNodes.length === 0) return topLevelNodes;
+
+  // Pass through full programs (->>, filter, sort-by as top-level) without expansion
+  const firstNode = topLevelNodes[0];
+  if (Array.isArray(firstNode) && (firstNode[0] === '->>' || firstNode[0] === 'filter' || firstNode[0] === 'sort-by')) {
+    return topLevelNodes;
+  }
+
+  let predNode = topLevelNodes[0];
+  let sortField = ':modified';
+  let sortAsc = false;
+
+  // Peel (sort field [dir]) directive from last top-level expression
+  if (topLevelNodes.length >= 2) {
+    const last = topLevelNodes[topLevelNodes.length - 1];
+    if (Array.isArray(last) && last[0] === 'sort') {
+      sortField = last[1] || ':modified';
+      const dir = last[2];
+      sortAsc = dir === ':asc' || dir === 'asc';
+    }
+  }
+
+  const expanded = insertItemArg(predNode);
+  const predFn = ['fn', { v: ['i'] }, expanded];
+  const filtered = ['filter', predFn, ['get-all']];
+  const sorted = ['sort-by', sortField, filtered];
+  return sortAsc ? [sorted] : [['reverse', sorted]];
+}
+
 // [BEGIN:searchItems]
 /**
  * Search items based on query string
