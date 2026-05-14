@@ -126,30 +126,103 @@ export async function onViewportReady(event, _api) {
 
       try {
         const modalLib = await api.require('modal-lib');
+        const structEd = await api.require('field-view-hob-structural');
+        const hob = await api.require('hob-interpreter');
+
+        const enrichedApi = { ...api, createElement: window.kernel._baseCreateElement };
+        let closeModal;
+
+        const errorDiv = document.createElement('div');
+        errorDiv.style.cssText = 'display:none; margin-top:8px; padding:8px 12px; border:1px solid var(--color-error,#c00); border-radius:var(--border-radius); color:var(--color-error,#c00); font-family:monospace; font-size:0.8125rem; white-space:pre-wrap;';
+
+        const resultsDiv = document.createElement('div');
+        resultsDiv.style.cssText = 'margin-top:12px; max-height:400px; overflow-y:auto;';
+
         const searchLib = await api.require('item-search-lib');
 
+        const runSearch = async (ast) => {
+          errorDiv.style.display = 'none';
+          resultsDiv.innerHTML = '';
+          resultsDiv.textContent = 'Searching…';
+          let matches;
+          try {
+            const expanded = searchLib.expandSearchAst(ast);
+
+            const interp = hob.createInterpreter(enrichedApi);
+            await interp.macrosReady;
+            matches = await interp.eval(hob.prettyPrintAll(expanded));
+            if (!Array.isArray(matches)) matches = [];
+          } catch (err) {
+            resultsDiv.textContent = '';
+            errorDiv.textContent = String(err);
+            errorDiv.style.display = 'block';
+            return;
+          }
+          resultsDiv.textContent = '';
+          if (matches.length === 0) {
+            resultsDiv.textContent = 'No items found.';
+            return;
+          }
+          const countDiv = document.createElement('div');
+          countDiv.style.cssText = 'margin-bottom:10px; font-size:0.8125rem; color:var(--color-text-secondary); font-weight:500;';
+          countDiv.textContent = `Found ${matches.length} item${matches.length === 1 ? '' : 's'}`;
+          resultsDiv.appendChild(countDiv);
+          for (const item of matches) {
+            const row = document.createElement('div');
+            row.style.cssText = 'padding:12px; margin-bottom:8px; background:var(--color-bg-surface); border:1px solid var(--color-border-light); border-radius:var(--border-radius); cursor:pointer; transition:all 0.2s;';
+            const title = document.createElement('div');
+            title.style.cssText = 'font-weight:500; color:var(--color-text); margin-bottom:6px; font-size:0.9375rem;';
+            title.textContent = item.name || item.content?.title || item.id;
+            row.appendChild(title);
+            const rawDesc = item.content?.body || item.content?.description;
+            const previewText = typeof rawDesc === 'string' ? rawDesc
+              : Array.isArray(rawDesc) ? searchLib.extractText(rawDesc)
+              : JSON.stringify(item.content).substring(0, 150);
+            const preview = document.createElement('div');
+            preview.style.cssText = 'font-size:0.8125rem; color:var(--color-text-secondary); margin-bottom:6px; line-height:1.4; overflow:hidden; text-overflow:ellipsis; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical;';
+            preview.textContent = previewText.substring(0, 200);
+            row.appendChild(preview);
+            const meta = document.createElement('div');
+            meta.style.cssText = 'font-size:0.75rem; color:var(--color-border-dark);';
+            meta.textContent = 'Type: ' + item.type.substring(0, 8) + '... | Modified: ' + new Date(item.modified).toLocaleDateString();
+            row.appendChild(meta);
+            row.onmouseover = () => { row.style.borderColor = 'var(--color-primary)'; row.style.background = 'var(--color-bg-surface-alt)'; row.style.transform = 'translateX(4px)'; };
+            row.onmouseout = () => { row.style.borderColor = 'var(--color-border-light)'; row.style.background = 'var(--color-bg-surface)'; row.style.transform = 'translateX(0)'; };
+            row.onclick = async () => {
+              closeModal?.();
+              const root = await api.get(rootId);
+              root.attachments = [...(root.attachments || []), { id: item.id }];
+              root.modified = Date.now();
+              await api.set(root);
+            };
+            resultsDiv.appendChild(row);
+          }
+        };
+
+        const editorEl = await structEd.render(hob.readAll('(text? "")'), {
+          compact: true,
+          autoFocus: true,
+          onChange: () => {},
+          onSubmit: (ast) => runSearch(ast),
+        }, enrichedApi);
+
+        const hintDiv = document.createElement('div');
+        hintDiv.style.cssText = 'margin-top:4px; font-size:0.75rem; color:var(--color-text-secondary);';
+        hintDiv.textContent = 'Ctrl+Enter to search  ·  e.g. (text? "foo")  (tagged? "project")';
+
         const searchContainer = document.createElement('div');
-        const enrichedApi = { ...api, createElement: window.kernel._baseCreateElement };
-        const { close } = modalLib.showModal({
+        searchContainer.appendChild(editorEl);
+        searchContainer.appendChild(hintDiv);
+        searchContainer.appendChild(errorDiv);
+        searchContainer.appendChild(resultsDiv);
+
+        ({ close: closeModal } = modalLib.showModal({
           title: 'Add Existing Item',
           width: '600px',
           maxHeight: '80vh',
           api: enrichedApi,
           content: searchContainer
-        });
-
-        searchLib.createSearchUI(
-          searchContainer,
-          async (selectedItem) => {
-            close();
-            const root = await api.get(rootId);
-            root.attachments = [...(root.attachments || []), { id: selectedItem.id }];
-            root.modified = Date.now();
-            await api.set(root);
-          },
-          enrichedApi,
-          { placeholder: 'Search for items to add...', autoFocus: true }
-        );
+        }));
       } catch (err) {
         console.warn('Ctrl+Shift+A failed:', err.message);
       }
