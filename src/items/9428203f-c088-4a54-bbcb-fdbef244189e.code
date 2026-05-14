@@ -14,6 +14,23 @@
   (def error-div (js/document.createElement "div"))
   (dom-set! (dom-get error-div :style) :cssText "display: none; margin-bottom: 16px; padding: 10px 14px; border: 1px solid var(--color-error, #c00); border-radius: var(--border-radius); color: var(--color-error, #c00); font-family: monospace; font-size: 0.875rem; white-space: pre-wrap;")
 
+  (defn do-submit [ast]
+    (dom-set! error-div :textContent "")
+    (dom-set! (dom-get error-div :style) :display "none")
+    (try
+      (let [matches (eval-search-ast! ast)
+            new-atts (vec (map (fn [m] {:id (:id m)}) matches))
+            fresh (get-item (:id item))]
+        (set-item!
+          (->
+            fresh
+            (assoc :attachments new-atts)
+            (assoc-in [:content :currentAst] ast)
+            (assoc :modified (now)))))
+      (catch e
+        (dom-set! error-div :textContent (str e))
+        (dom-set! (dom-get error-div :style) :display "block"))))
+
   (def struct-ed (require "field-view-hob-structural"))
   (def editor-el
     (let [el (.render struct-ed
@@ -21,24 +38,10 @@
       {:compact true
        :autoFocus is-modal
        :onChange (fn [new-ast] (reset! pending-ast new-ast))
-       :onSubmit (fn [ast]
-                   (dom-set! error-div :textContent "")
-                   (dom-set! (dom-get error-div :style) :display "none")
-                   (try
-                     (let [matches (eval-search-ast! ast)
-                           new-atts (vec (map (fn [m] {:id (:id m)}) matches))
-                           fresh (get-item (:id item))]
-                       (set-item!
-                         (->
-                           fresh
-                           (assoc :attachments new-atts)
-                           (assoc-in [:content :currentAst] ast)
-                           (assoc :modified (now)))))
-                     (catch e
-                       (dom-set! error-div :textContent (str e))
-                       (dom-set! (dom-get error-div :style) :display "block"))))}
+       :onSubmit do-submit}
       api)]
-      (dom-set! el :id (str "search-editor-" (now)))
+      (dom-set! el :id (str "search-editor-" (:id item)))
+      (.setAttribute el "data-morphdom-skip" "")
       el))
 
   (defn render-group [ids]
@@ -54,11 +57,16 @@
       [:h2 {:style "margin: 0; font-size: 1.25rem;"}
         (or (:name search) "Search")]]
 
-    [:div {:style "margin-bottom: 4px;"}
-      editor-el]
+    [:div {:style "display: flex; align-items: center; gap: 8px; margin-bottom: 4px;"}
+      [:div {:style "flex: 1; min-width: 0;"}
+        editor-el]
+      [:button
+        {:style "padding: 6px 14px; background: var(--color-primary); color: white; border: none; border-radius: var(--border-radius); cursor: pointer; font-size: 0.875rem; white-space: nowrap; flex-shrink: 0;"
+         :on-click (fn [_] (.hobSubmit editor-el))}
+        "Search"]]
 
     [:div {:style "margin-bottom: 16px; font-size: 0.75rem; color: var(--color-text-secondary);"}
-      "Ctrl+Enter to search  ·  e.g. (type? \"note\")  (and (tagged? \"todo\") (text? \"foo\"))  (sort :modified)"]
+      "Ctrl+Enter or tap Search  ·  e.g. (type? \"note\")  (tagged? \"todo\")  (sort :modified)"]
 
     error-div
 
@@ -77,7 +85,7 @@
             (render-group starred-ids)])
         (when (and (empty? starred-ids) (empty? recent-ids))
           [:div {:style "padding: 40px; text-align: center; color: var(--color-border-dark); font-style: italic;"}
-            "Press Ctrl+Enter to run the query"])]
+            "Tap Search or press Ctrl+Enter to run the query"])]
       (if
         (empty? attachments)
         [:div {:style "text-align: center; padding: 40px;"}
