@@ -2823,6 +2823,16 @@ function handleClick(e, ctx) {
 
   // Now handle the click target (re-check in case node was removed)
   if (!state.nodeMap.has(id)) return;
+
+  // Second click/tap on already-selected node → enter edit mode.
+  // Handles mobile tap-to-edit (tap once to select, tap again to edit)
+  // and desktop slow double-click. The dblclick event that follows a fast
+  // double-click is handled by handleDoubleClick, which bails if mode != nav.
+  if (state.selectedId === id && state.mode === 'nav' && state.onChange) {
+    handleDoubleClick(e, ctx);
+    return;
+  }
+
   state.selectedId = id;
   state.selectionAnchorId = null;
   state.expansionStack = [];
@@ -2834,8 +2844,9 @@ function handleDoubleClick(e, ctx) {
   const { state, statusBar, itemNames, api } = ctx;
   if (!state.onChange) return;
 
-  // Commit/cancel any active input mode
-  if (state.mode !== 'nav') commitOrCancelInput(state, itemNames, api, statusBar);
+  // If already in edit mode (e.g. entered via handleClick on second tap/click),
+  // do nothing — avoids double-entry when dblclick fires after click(2).
+  if (state.mode !== 'nav') return;
 
   const target = e.target.closest('[data-node-id]');
   if (!target) return;
