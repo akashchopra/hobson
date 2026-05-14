@@ -2818,7 +2818,13 @@ function handleClick(e, ctx) {
     }
   }
 
-  // If in input/string mode, commit or cancel before handling click
+  // If in input/string mode and the user tapped the active hole, just focus
+  // the native <input> — this is a user gesture so the mobile keyboard appears.
+  if (state.mode !== 'nav' && id === state.inputHoleId) {
+    const inp = state.domMap.get(id)?.querySelector?.('.hob-hole-input');
+    if (inp) { inp.focus(); return; }
+  }
+  // Otherwise commit or cancel before handling click
   if (state.mode !== 'nav') commitOrCancelInput(state, itemNames, api, statusBar);
 
   // Now handle the click target (re-check in case node was removed)
@@ -3061,9 +3067,24 @@ export async function render(value, options, api) {
   // Inflate AST
   const { root, nodeMap, parentMap } = inflateAll(value);
 
+  // On touch devices pre-select the first string (or hole) leaf so one tap enters edit mode.
+  // On desktop keep the top-level form selected (nav with keyboard is the norm there).
+  const _isTouch = window.matchMedia?.('(pointer: coarse)').matches || ('ontouchstart' in window);
+  let _initialSelectedId = root.children[0]?.id || null;
+  if (_isTouch) {
+    for (const n of nodeMap.values()) {
+      if (n.type === 'string') { _initialSelectedId = n.id; break; }
+    }
+    if (_initialSelectedId === (root.children[0]?.id || null)) {
+      for (const n of nodeMap.values()) {
+        if (n.type === 'hole') { _initialSelectedId = n.id; break; }
+      }
+    }
+  }
+
   // Build state
   const state = {
-    selectedId: root.children[0]?.id || null,
+    selectedId: _initialSelectedId,
     selectionAnchorId: null,
     expansionStack: [],
     nodeMap,
@@ -3179,34 +3200,54 @@ export async function render(value, options, api) {
   updateSelectionVisual(state);
   updateStatusBar(state, statusBar);
 
-  // Auto-focus: enter string mode on first empty string, or input mode on first hole
+  // Auto-focus: enter edit mode on first empty string or hole.
+  // On touch devices, only select the node — the keyboard can only be shown
+  // from a direct user gesture, so we wait for the user to tap it (which will
+  // enter string mode via handleDoubleClick and focus within the gesture).
   if (options.autoFocus && state.onChange) {
+    const isTouch = window.matchMedia?.('(pointer: coarse)').matches || ('ontouchstart' in window);
     let autoFocusNode = null;
-    for (const n of state.nodeMap.values()) {
-      if (n.type === 'string' && n.value === '') { autoFocusNode = n; break; }
-      if (n.type === 'hole' && !autoFocusNode) autoFocusNode = n;
+    if (isTouch) {
+      // On touch: any string (including non-empty from saved AST) or first hole
+      for (const n of state.nodeMap.values()) {
+        if (n.type === 'string') { autoFocusNode = n; break; }
+        if (n.type === 'hole' && !autoFocusNode) autoFocusNode = n;
+      }
+    } else {
+      // On desktop: only enter edit mode for empty strings or holes
+      for (const n of state.nodeMap.values()) {
+        if (n.type === 'string' && n.value === '') { autoFocusNode = n; break; }
+        if (n.type === 'hole' && !autoFocusNode) autoFocusNode = n;
+      }
     }
     if (autoFocusNode) {
-      if (autoFocusNode.type === 'string') {
-        const hole = makeNode(state, 'hole', {});
-        state.replaceOriginal = { nodeSnapshot: JSON.parse(JSON.stringify(autoFocusNode)), parentId: state.parentMap.get(autoFocusNode.id)?.id };
-        replaceNode(state, autoFocusNode.id, hole);
-        enterInputMode(state, hole.id);
-        state.mode = 'string';
-        state.inputBuffer = autoFocusNode.value;
-        state.inputCursor = autoFocusNode.value.length;
+      if (isTouch) {
+        // Select the node so one tap enters edit mode (tap-to-edit-on-selected)
+        state.selectedId = autoFocusNode.id;
+        updateSelectionVisual(state);
+        updateStatusBar(state, statusBar);
       } else {
-        enterInputMode(state, autoFocusNode.id);
+        if (autoFocusNode.type === 'string') {
+          const hole = makeNode(state, 'hole', {});
+          state.replaceOriginal = { nodeSnapshot: JSON.parse(JSON.stringify(autoFocusNode)), parentId: state.parentMap.get(autoFocusNode.id)?.id };
+          replaceNode(state, autoFocusNode.id, hole);
+          enterInputMode(state, hole.id);
+          state.mode = 'string';
+          state.inputBuffer = autoFocusNode.value;
+          state.inputCursor = autoFocusNode.value.length;
+        } else {
+          enterInputMode(state, autoFocusNode.id);
+        }
+        rerender(state, itemNames, api, statusBar);
+        let _focusAttempts = 0;
+        const tryFocus = () => {
+          if (editorEl.isConnected) {
+            const inp = editorEl.querySelector('.hob-hole-input');
+            (inp || editorEl).focus();
+          } else if (++_focusAttempts < 10) { requestAnimationFrame(tryFocus); }
+        };
+        requestAnimationFrame(tryFocus);
       }
-      rerender(state, itemNames, api, statusBar);
-      let _focusAttempts = 0;
-      const tryFocus = () => {
-        if (editorEl.isConnected) {
-          const inp = editorEl.querySelector('.hob-hole-input');
-          (inp || editorEl).focus();
-        } else if (++_focusAttempts < 10) { requestAnimationFrame(tryFocus); }
-      };
-      requestAnimationFrame(tryFocus);
     }
   }
 
