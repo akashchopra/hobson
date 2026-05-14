@@ -1141,10 +1141,55 @@ function postRender(state) {
     inp.value = state.inputBuffer;
     inp.style.width = state.inputBuffer.length + 'ch';
     inp.addEventListener('input', () => {
-      state.inputBuffer = inp.value;
-      state.inputCursor = inp.selectionStart ?? inp.value.length;
+      const raw = inp.value;
+      // On mobile, special characters arrive via `input` (keydown fires Unidentified so
+      // e.preventDefault was never called). Mirror the keydown handling here.
+      if (state.mode === 'input') {
+        const { itemNames, api, statusBar } = state._ctx;
+        // Space: commit token and open new hole
+        if (raw.endsWith(' ') && raw.trim()) {
+          state.inputBuffer = raw.trimEnd();
+          const newNode = commitToken(state, itemNames, api, statusBar);
+          if (newNode) {
+            const nextHole = makeNode(state, 'hole', {});
+            pushUndo(state);
+            insertAfter(state, newNode.id, nextHole);
+            notifyChange(state);
+            state.replaceOriginal = null;
+            enterInputMode(state, nextHole.id);
+          }
+          rerender(state, itemNames, api, statusBar);
+          return;
+        }
+        // `"`: enter string mode (with or without prior token)
+        if (raw.endsWith('"')) {
+          const bufBefore = raw.slice(0, -1);
+          if (bufBefore) {
+            state.inputBuffer = bufBefore;
+            const newNode = commitToken(state, itemNames, api, statusBar);
+            const nextHole = makeNode(state, 'hole', {});
+            pushUndo(state);
+            insertAfter(state, newNode.id, nextHole);
+            notifyChange(state);
+            state.replaceOriginal = null;
+            state.mode = 'string';
+            state.inputHoleId = nextHole.id;
+            state.inputBuffer = '';
+            state.selectedId = nextHole.id;
+            state.expansionStack = [];
+          } else {
+            state.mode = 'string';
+            state.inputBuffer = '';
+          }
+          rerender(state, itemNames, api, statusBar);
+          updateStringAutocomplete(state, state._ctx);
+          return;
+        }
+      }
+      state.inputBuffer = raw;
+      state.inputCursor = inp.selectionStart ?? raw.length;
       state.inputSelectAll = false;
-      inp.style.width = inp.value.length + 'ch';
+      inp.style.width = raw.length + 'ch';
       if (state.mode === 'string') {
         updateStringAutocomplete(state, state._ctx);
       } else {
@@ -2673,6 +2718,18 @@ function handleStringKey(e, ctx) {
       exitToNav(state, state.selectedId);
     }
     rerender(state, itemNames, api, statusBar);
+  } else if (e.key === 'Backspace' && !state.inputBuffer) {
+    // Buffer already empty — delete the hole/node (mirrors handleInputKey Backspace behaviour).
+    const holeId = state.inputHoleId;
+    state.selectedId = holeId;
+    pushUndo(state);
+    deleteSelected(state);
+    notifyChange(state);
+    state.replaceOriginal = null;
+    exitToNav(state, state.selectedId);
+    rerender(state, itemNames, api, statusBar);
+  } else if (e.key === 'Backspace') {
+    handled = false; // non-empty buffer: native <input> handles character deletion
   } else if (e.key === '"' && !e.shiftKey) {
     // Commit string
     const strNode = makeNode(state, 'string', { value: state.inputBuffer });
