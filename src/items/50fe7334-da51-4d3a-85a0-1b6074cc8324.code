@@ -733,13 +733,15 @@ function renderInfixList(node, state, itemNames, api, indent) {
         if (i > 0) {
           const neg = op.value === '+' && isUnaryMinus(operands[i]);
           const s = document.createElement('span');
-          s.className = 'hob-symbol';
+          s.className = 'hob-symbol hob-infix-sep';
           s.textContent = ' ' + (neg ? '-' : op.value) + ' ';
-          if (i === 1) {
+          if (i === 1) { state.domMap.set(op.id, s); }
+          if (neg) {
+            s.setAttribute('data-node-id', operands[i].id);
+            state.domMap.set(operands[i].id, s);
+          } else {
             s.setAttribute('data-node-id', op.id);
-            state.domMap.set(op.id, s);
           }
-          if (neg) state.domMap.set(operands[i].id, s);
           span.appendChild(s);
           if (neg) {
             span.appendChild(renderNode(operands[i].children[1], state, itemNames, api, indent + 1));
@@ -764,10 +766,15 @@ function renderInfixList(node, state, itemNames, api, indent) {
         const neg = op.value === '+' && isUnaryMinus(operands[i]);
         span.appendChild(newline(childIndent, operands[i - 1].id));
         const s = document.createElement('span');
-        s.className = 'hob-symbol';
+        s.className = 'hob-symbol hob-infix-sep';
         s.textContent = (neg ? '-' : op.value) + ' ';
-        if (i === 1) { s.setAttribute('data-node-id', op.id); state.domMap.set(op.id, s); }
-        if (neg) state.domMap.set(operands[i].id, s);
+        if (i === 1) { state.domMap.set(op.id, s); }
+        if (neg) {
+          s.setAttribute('data-node-id', operands[i].id);
+          state.domMap.set(operands[i].id, s);
+        } else {
+          s.setAttribute('data-node-id', op.id);
+        }
         span.appendChild(s);
         span.appendChild(renderNode(neg ? operands[i].children[1] : operands[i], state, itemNames, api, childIndent));
       }
@@ -2421,8 +2428,9 @@ function handleNavKey(e, ctx) {
     // Toggle keyboard help overlay
     e.preventDefault();
     state.helpVisible ? hideHelp(state) : showHelp(state, ctx.wrapper);
-  } else if (e.key.length === 1 && e.key !== ' ' && !e.ctrlKey && !e.metaKey && !e.altKey && state.onChange && !node.children) {
-    // Typing on a leaf: immediately enter replace mode.
+  } else if (e.key.length === 1 && e.key !== ' ' && !e.ctrlKey && !e.metaKey && !e.altKey && state.onChange
+      && (!node.children || isUnaryMinus(node))) {
+    // Typing on a leaf (or the subtracted-term node in an infix expression): enter replace mode.
     // Special case: " on a string edits the existing value in place (cursor at end).
     if (node.type === 'hole') {
       enterInputMode(state, node.id);
@@ -2942,13 +2950,22 @@ function handleDoubleClick(e, ctx) {
       updateStatusBar(state, statusBar);
     }
   } else if (node.children) {
-    // Container → append child hole, enter input mode
-    const hole = makeNode(state, 'hole', {});
-    applyMutation(state, itemNames, api, statusBar, () => appendChild(state, node.id, hole));
-    enterInputMode(state, hole.id);
-    rerender(state, itemNames, api, statusBar);
-    updateSelectionVisual(state);
-    updateStatusBar(state, statusBar);
+    if (isUnaryMinus(node)) {
+      // Subtracted term in infix expression — navigate to the argument rather than appending a hole
+      state.selectedId = node.children[1].id;
+      state.selectionAnchorId = null;
+      state.expansionStack = [];
+      updateSelectionVisual(state);
+      updateStatusBar(state, statusBar);
+    } else {
+      // Container → append child hole, enter input mode
+      const hole = makeNode(state, 'hole', {});
+      applyMutation(state, itemNames, api, statusBar, () => appendChild(state, node.id, hole));
+      enterInputMode(state, hole.id);
+      rerender(state, itemNames, api, statusBar);
+      updateSelectionVisual(state);
+      updateStatusBar(state, statusBar);
+    }
   } else {
     // Leaf → replace mode
     const hole = makeNode(state, 'hole', {});
