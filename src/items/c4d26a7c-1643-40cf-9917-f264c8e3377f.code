@@ -35,6 +35,14 @@ export async function onKernelBootComplete({ safeMode }, api) {
   await checkExactAlarmPermission(api);
   await ensureReminderChannel();
   await _interp.eval('(boot-scan!)');
+  try {
+    const items = await api.getAll();
+    for (const item of items) {
+      if (item.type === REMINDER_TYPE) {
+        _lastHob.set(item.id, JSON.stringify(item.content?.hob ?? []));
+      }
+    }
+  } catch (_) {}
 }
 
 export async function onItemUpdated({ item }, api) {
@@ -246,8 +254,8 @@ async function checkExactAlarmPermission(api) {
 }
 ]))))
       (swap! scheduled-at-map assoc id snooze-at)
-      (swap! notif-id-to-item-id assoc nid id)))
-  (set-item! (assoc-in (get-item id) [:content :scheduledAt] snooze-at)))
+      (swap! notif-id-to-item-id assoc nid id))
+    (set-item! (assoc-in (get-item id) [:content :scheduledAt] snooze-at))))
 
 (defn cancel-one! [id]
   (let [nid (notif-id-for id)]
