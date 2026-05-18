@@ -995,14 +995,14 @@ function appendHiccupChild(parent, child, sourceCtx, _refs) {
 // ============================================================
 
 function setupSortable(el) {
-  el.addEventListener('mousedown', (e) => {
+  function startDrag(clientY, target, preventDefault) {
     const config = el.__hobSortable;
     if (!config) return;
     const handleSelector = config.handle || '.drag-handle';
-    const handle = e.target.closest(handleSelector);
+    const handle = target.closest(handleSelector);
     if (!handle || !el.contains(handle)) return;
 
-    e.preventDefault();
+    preventDefault();
     const items = Array.from(el.querySelectorAll(':scope > [data-item-id]'));
     const draggedItem = handle.closest('[data-item-id]');
     const draggedIndex = items.indexOf(draggedItem);
@@ -1014,13 +1014,12 @@ function setupSortable(el) {
     const indicator = document.createElement('div');
     indicator.style.cssText = 'height: 3px; background: var(--color-primary); margin: 4px 0; border-radius: 2px;';
 
-    const onMouseMove = (moveE) => {
-      const mouseY = moveE.clientY;
+    function updateIndicator(y) {
       let targetIndex = items.length;
       for (let i = 0; i < items.length; i++) {
         if (items[i] === draggedItem) continue;
         const rect = items[i].getBoundingClientRect();
-        if (mouseY < rect.top + rect.height / 2) {
+        if (y < rect.top + rect.height / 2) {
           targetIndex = i;
           break;
         }
@@ -1030,22 +1029,18 @@ function setupSortable(el) {
       } else {
         el.appendChild(indicator);
       }
-    };
+    }
 
-    const onMouseUp = (upE) => {
-      document.removeEventListener('mousemove', onMouseMove);
-      document.removeEventListener('mouseup', onMouseUp);
-
+    function finishDrag(y) {
       draggedItem.style.opacity = '';
       handle.style.cursor = '';
       if (indicator.parentNode) indicator.remove();
 
-      const mouseY = upE.clientY;
       let newIndex = items.length;
       for (let i = 0; i < items.length; i++) {
         if (items[i] === draggedItem) continue;
         const rect = items[i].getBoundingClientRect();
-        if (mouseY < rect.top + rect.height / 2) {
+        if (y < rect.top + rect.height / 2) {
           newIndex = i;
           break;
         }
@@ -1055,11 +1050,36 @@ function setupSortable(el) {
       if (newIndex !== draggedIndex && config['on-reorder']) {
         config['on-reorder'](draggedIndex, newIndex);
       }
+    }
+
+    const onMouseMove = (moveE) => updateIndicator(moveE.clientY);
+    const onMouseUp = (upE) => {
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+      finishDrag(upE.clientY);
     };
 
-    document.addEventListener('mousemove', onMouseMove);
-    document.addEventListener('mouseup', onMouseUp);
-  });
+    const onTouchMove = (moveE) => {
+      moveE.preventDefault();
+      updateIndicator(moveE.touches[0].clientY);
+    };
+    const onTouchEnd = (upE) => {
+      document.removeEventListener('touchmove', onTouchMove);
+      document.removeEventListener('touchend', onTouchEnd);
+      finishDrag(upE.changedTouches[0].clientY);
+    };
+
+    if (clientY === 'mouse') {
+      document.addEventListener('mousemove', onMouseMove);
+      document.addEventListener('mouseup', onMouseUp);
+    } else {
+      document.addEventListener('touchmove', onTouchMove, { passive: false });
+      document.addEventListener('touchend', onTouchEnd);
+    }
+  }
+
+  el.addEventListener('mousedown', (e) => startDrag('mouse', e.target, () => e.preventDefault()));
+  el.addEventListener('touchstart', (e) => startDrag(e.touches[0].clientY, e.target, () => e.preventDefault()), { passive: false });
   el.__hobSortableSetup = true;
 }
 
