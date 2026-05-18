@@ -2153,10 +2153,15 @@ export class RenderingSystem {
       if (crossDepIds && crossDepIds.size > 0) {
         this._scheduleReRenders(crossDepIds, itemId);
       }
-      // Library/code module hot-reload: if a code item changed that isn't tracked
-      // as a rendered item or view, it's a library — full viewport re-render
+      // Library/code module hot-reload: if a code item's source changed and it isn't
+      // tracked as a rendered item or view, it's a library — full viewport re-render.
+      // Compare against previous to avoid triggering on data-only writes (e.g. a reminder
+      // item updating scheduledAt while its content.hob schedule expression is unchanged).
       const item = event.content?.item;
-      if (item && (item.content?.code || item.content?.hob) &&
+      const previous = event.content?.previous;
+      const codeChanged = item?.content?.code !== undefined && item.content.code !== previous?.content?.code;
+      const hobChanged = item?.content?.hob !== undefined && JSON.stringify(item.content.hob) !== JSON.stringify(previous?.content?.hob);
+      if ((codeChanged || hobChanged) &&
           !this.registry.byItemId.has(itemId) &&
           !this.registry.byViewId.has(itemId)) {
         if (!this._pendingLibraryReRender) {

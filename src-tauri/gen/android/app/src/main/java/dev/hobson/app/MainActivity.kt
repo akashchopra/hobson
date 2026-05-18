@@ -12,6 +12,14 @@ import androidx.core.view.WindowInsetsCompat
 import java.io.File
 
 class MainActivity : TauriActivity() {
+  override fun onWebViewCreate(webView: WebView) {
+    webView.settings.apply {
+      setSupportZoom(true)
+      builtInZoomControls = true
+      displayZoomControls = false
+    }
+  }
+
   override fun onCreate(savedInstanceState: Bundle?) {
     android.webkit.WebView.setWebContentsDebuggingEnabled(true)
     enableEdgeToEdge()

@@ -995,7 +995,7 @@ function appendHiccupChild(parent, child, sourceCtx, _refs) {
 // ============================================================
 
 function setupSortable(el) {
-  el.addEventListener('mousedown', (e) => {
+  el.addEventListener('pointerdown', (e) => {
     const config = el.__hobSortable;
     if (!config) return;
     const handleSelector = config.handle || '.drag-handle';
@@ -1003,6 +1003,8 @@ function setupSortable(el) {
     if (!handle || !el.contains(handle)) return;
 
     e.preventDefault();
+    handle.setPointerCapture(e.pointerId);
+
     const items = Array.from(el.querySelectorAll(':scope > [data-item-id]'));
     const draggedItem = handle.closest('[data-item-id]');
     const draggedIndex = items.indexOf(draggedItem);
@@ -1014,51 +1016,49 @@ function setupSortable(el) {
     const indicator = document.createElement('div');
     indicator.style.cssText = 'height: 3px; background: var(--color-primary); margin: 4px 0; border-radius: 2px;';
 
-    const onMouseMove = (moveE) => {
-      const mouseY = moveE.clientY;
+    function updateIndicator(y) {
       let targetIndex = items.length;
       for (let i = 0; i < items.length; i++) {
         if (items[i] === draggedItem) continue;
         const rect = items[i].getBoundingClientRect();
-        if (mouseY < rect.top + rect.height / 2) {
-          targetIndex = i;
-          break;
-        }
+        if (y < rect.top + rect.height / 2) { targetIndex = i; break; }
       }
       if (targetIndex < items.length) {
         el.insertBefore(indicator, items[targetIndex]);
       } else {
         el.appendChild(indicator);
       }
-    };
+    }
 
-    const onMouseUp = (upE) => {
-      document.removeEventListener('mousemove', onMouseMove);
-      document.removeEventListener('mouseup', onMouseUp);
-
+    function cleanup(y) {
+      handle.removeEventListener('pointermove', onMove);
+      handle.removeEventListener('pointerup', onUp);
+      handle.removeEventListener('pointercancel', onCancel);
       draggedItem.style.opacity = '';
       handle.style.cursor = '';
       if (indicator.parentNode) indicator.remove();
 
-      const mouseY = upE.clientY;
-      let newIndex = items.length;
-      for (let i = 0; i < items.length; i++) {
-        if (items[i] === draggedItem) continue;
-        const rect = items[i].getBoundingClientRect();
-        if (mouseY < rect.top + rect.height / 2) {
-          newIndex = i;
-          break;
+      if (y !== null) {
+        let newIndex = items.length;
+        for (let i = 0; i < items.length; i++) {
+          if (items[i] === draggedItem) continue;
+          const rect = items[i].getBoundingClientRect();
+          if (y < rect.top + rect.height / 2) { newIndex = i; break; }
+        }
+        if (newIndex > draggedIndex) newIndex--;
+        if (newIndex !== draggedIndex && config['on-reorder']) {
+          config['on-reorder'](draggedIndex, newIndex);
         }
       }
-      if (newIndex > draggedIndex) newIndex--;
+    }
 
-      if (newIndex !== draggedIndex && config['on-reorder']) {
-        config['on-reorder'](draggedIndex, newIndex);
-      }
-    };
+    const onMove = (e) => updateIndicator(e.clientY);
+    const onUp = (e) => cleanup(e.clientY);
+    const onCancel = () => cleanup(null);
 
-    document.addEventListener('mousemove', onMouseMove);
-    document.addEventListener('mouseup', onMouseUp);
+    handle.addEventListener('pointermove', onMove);
+    handle.addEventListener('pointerup', onUp);
+    handle.addEventListener('pointercancel', onCancel);
   });
   el.__hobSortableSetup = true;
 }
@@ -3268,99 +3268,42 @@ function registerItemOps(env, api) {
     return walk(node);
   }, { _hobName: 'extract-text' }));
 
-  // Search predicates — used by item-search-lib Hob query mode.
-  // Name→ID caches are per registerItemOps call (i.e. per interpreter instance).
-  const typeNameCache = new Map();
-  const tagNameCache = new Map();
+  /** Search predicates — data operations available in all interpreters (including fresh eval contexts). */
+  env.define('text?', Object.assign(async (item, query) => {
+    const lib = await api.require('item-search-lib');
+    return lib.textMatch(hobToJs(item), hobToJs(query));
+  }, { _hobName: 'text?' }));
 
-  /** True if item matches type name or GUID. Caches type lookups. */
   env.define('type?', Object.assign(async (item, typeName) => {
-    if (typeName && typeName._hobType === 'item-ref') typeName = typeName.value;
-    if (!item || typeof item !== 'object') return false;
-    const nameKey = typeof typeName === 'string' ? typeName.toLowerCase() : '';
-    if (!typeNameCache.has(nameKey)) {
-      if (UUID_RE.test(typeName)) {
-        typeNameCache.set(nameKey, typeName);
-      } else {
-        const allTypes = await api.query({ type: '11111111-0000-0000-0000-000000000000' });
-        for (const t of allTypes) {
-          if (t.name) {
-            const full = t.name.toLowerCase();
-            typeNameCache.set(full, t.id);
-            if (full.includes(':')) typeNameCache.set(full.split(':').pop(), t.id);
-          }
-        }
-      }
-    }
-    const resolvedId = typeNameCache.get(nameKey) || typeName;
-    return item.type === resolvedId;
+    const lib = await api.require('item-search-lib');
+    return await lib.typeMatch(hobToJs(item), hobToJs(typeName), api);
   }, { _hobName: 'type?' }));
 
-  /** True if item has the given tag (by name or GUID). */
-  env.define('tagged?', Object.assign(async (item, tagName) => {
-    if (tagName && tagName._hobType === 'item-ref') tagName = tagName.value;
-    if (!item || typeof item !== 'object') return false;
-    const tags = item.content?.tags || [];
-    if (UUID_RE.test(tagName)) return tags.includes(tagName);
-    const nameKey = tagName.toLowerCase();
-    if (!tagNameCache.has(nameKey)) {
-      const allItems = await api.getAll();
-      for (const i of allItems) {
-        if (i.name) {
-          const name = i.name.toLowerCase();
-          if (!tagNameCache.has(name)) tagNameCache.set(name, []);
-          tagNameCache.get(name).push(i.id);
-        }
-      }
-    }
-    const tagIds = tagNameCache.get(nameKey) || [];
-    return tagIds.some(id => tags.includes(id));
+  env.define('tagged?', Object.assign(async (item, tagNameOrId) => {
+    const lib = await api.require('item-search-lib');
+    return await lib.taggedMatch(hobToJs(item), hobToJs(tagNameOrId), api);
   }, { _hobName: 'tagged?' }));
 
-  /** True if item name contains substring (case-insensitive). */
-  env.define('name?', Object.assign((item, substring) => {
-    if (!item || typeof item !== 'object') return false;
-    const name = item.name || '';
-    return name.toLowerCase().includes(substring.toLowerCase());
+  env.define('name?', Object.assign(async (item, query) => {
+    const lib = await api.require('item-search-lib');
+    return lib.nameMatch(hobToJs(item), hobToJs(query));
   }, { _hobName: 'name?' }));
 
-  /** True if item was modified after the given timestamp. */
-  env.define('modified-after?', Object.assign((item, timestamp) => {
-    if (!item || typeof item !== 'object') return false;
-    return (item.modified || 0) > timestamp;
+  env.define('modified-after?', Object.assign(async (item, timestamp) => {
+    const lib = await api.require('item-search-lib');
+    return lib.modifiedAfter(hobToJs(item), hobToJs(timestamp));
   }, { _hobName: 'modified-after?' }));
 
-  /** True if item was modified before the given timestamp. */
-  env.define('modified-before?', Object.assign((item, timestamp) => {
-    if (!item || typeof item !== 'object') return false;
-    return (item.modified || 0) < timestamp;
+  env.define('modified-before?', Object.assign(async (item, timestamp) => {
+    const lib = await api.require('item-search-lib');
+    return lib.modifiedBefore(hobToJs(item), hobToJs(timestamp));
   }, { _hobName: 'modified-before?' }));
 
-  /** True if item has the given content field. */
-  env.define('has-field?', Object.assign((item, field) => {
-    if (!item || typeof item !== 'object') return false;
-    const key = typeof field === 'string' && field.startsWith('\u029e') ? field.slice(1) : field;
-    return item.content != null && key in item.content;
+  env.define('has-field?', Object.assign(async (item, fieldName) => {
+    const lib = await api.require('item-search-lib');
+    return lib.hasField(hobToJs(item), hobToJs(fieldName));
   }, { _hobName: 'has-field?' }));
 
-  /** Full-text search across item fields (case-insensitive). */
-  env.define('text?', Object.assign((item, query) => {
-    if (!item || typeof item !== 'object') return false;
-    const c = item.content;
-    const searchable = [
-      item.id, item.type, item.name, c?.title, c?.body,
-      typeof c?.description === 'string' ? c.description :
-        Array.isArray(c?.description) ? (function walk(n) {
-          if (typeof n === 'string') return n;
-          if (n && typeof n === 'object' && 's' in n) return n.s;
-          if (Array.isArray(n)) return n.slice(1).map(walk).join(' ');
-          return '';
-        })(c.description) : null,
-      c?.code && typeof c.code === 'string' ? c.code : null,
-      c?.displayName, c?.for_type,
-    ].filter(Boolean).join(' ').toLowerCase();
-    return searchable.includes(query.toLowerCase());
-  }, { _hobName: 'text?' }));
 }
 
 // ============================================================
@@ -3473,6 +3416,31 @@ function registerViewOps(env, api) {
     const searchLib = await api.require('item-search-lib');
     return await searchLib.searchItems(query, api, options ? hobToJs(options) : {});
   }, { _hobName: 'search-items!' }));
+
+  /** Parse a Hob source string into compact JSON AST (synchronous). */
+  env.define('parse-hob!', Object.assign((source) => {
+    return readAll(hobToJs(source));
+  }, { _hobName: 'parse-hob!' }));
+
+  /** Evaluate a compact Hob AST array and return the result. */
+  env.define('eval-hob-ast!', Object.assign(async (ast) => {
+    const hob = await api.require('hob-interpreter');
+    const interp = hob.createInterpreter(api);
+    await interp.macrosReady;
+    const source = hob.prettyPrintAll(hobToJs(ast));
+    return await interp.eval(source);
+  }, { _hobName: 'eval-hob-ast!' }));
+
+  /** Macro-expand a compact search predicate AST, then evaluate it. */
+  env.define('eval-search-ast!', Object.assign(async (ast) => {
+    const lib = await api.require('item-search-lib');
+    const expanded = lib.expandSearchAst(hobToJs(ast));
+    const hob = await api.require('hob-interpreter');
+    const interp = hob.createInterpreter(api);
+    await interp.macrosReady;
+    const source = hob.prettyPrintAll(expanded);
+    return await interp.eval(source);
+  }, { _hobName: 'eval-search-ast!' }));
 
   /** Get items tagged as starred. */
   env.define('get-starred-items!', Object.assign(async (options) => {

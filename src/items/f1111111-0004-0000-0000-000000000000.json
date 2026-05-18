@@ -3,7 +3,7 @@
   "type": "66666666-0000-0000-0000-000000000000",
   "name": "keyboard-shortcuts",
   "created": 1738368000000,
-  "modified": 1775756680697,
+  "modified": 1778670500000,
   "watches": [
     {
       "event": "e0e00000-0003-0003-0000-000000000000"
@@ -19,7 +19,7 @@
         }
       ]
     ],
-    "code": "// Keyboard Shortcuts Library\n// Registers global keyboard shortcuts, initialized by viewport:ready.\n// Capabilities obtained via require() at runtime (not captured closures).\n\nlet api = null;\n\nexport async function onViewportReady(event, _api) {\n  api = _api;\n\n  // Clean up old handler before registering new one (supports re-activation after edit)\n  cleanup();\n\n  window._userKeyboardHandler = async (e) => {\n    // Cmd/Ctrl+Shift+? - Help dialog\n    if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === '?') {\n      e.preventDefault();\n      try {\n        const helpDialog = await api.require('help-dialog');\n        helpDialog.show();\n      } catch (err) {\n        console.warn('help-dialog not available:', err.message);\n      }\n    }\n    // Ctrl+E - Edit selected item\n    if (e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey && e.key === 'e') {\n      const tag = document.activeElement?.tagName;\n      if (tag === 'INPUT' || tag === 'TEXTAREA' || document.activeElement?.isContentEditable) return;\n\n      const selMgr = await api.require('selection-manager');\n      const selectedId = selMgr.getSelection();\n      if (!selectedId) return;\n\n      e.preventDefault();\n\n      const parentId = selMgr.getSelectionParent();\n\n      try {\n        const vpMgr = await api.require('viewport-manager');\n        const rendering = vpMgr.getRendering();\n        const ctxLib = await api.require('context-menu-lib');\n        const item = await api.get(selectedId);\n        const enrichedApi = { ...api, getViews: (typeId) => rendering.getViews(typeId) };\n        const editView = await ctxLib.findEditableView(enrichedApi, item.type);\n        if (!editView) return;\n\n        if (parentId) {\n          const parent = await api.get(parentId);\n          const idx = parent.attachments.findIndex(c => c.id === selectedId);\n          if (idx >= 0) {\n            const child = parent.attachments[idx];\n            parent.attachments = [...parent.attachments];\n            parent.attachments[idx] = {\n              ...child,\n              previousView: child.view ? { ...child.view } : null,\n              view: { ...(child.view || {}), type: editView.id }\n            };\n            await api.set(parent);\n          }\n        } else {\n          const rootId = new URLSearchParams(window.location.search).get('root');\n          await vpMgr.navigate(rootId, { view: editView.id });\n        }\n      } catch (err) {\n        console.warn('Ctrl+E edit failed:', err.message);\n      }\n    }\n\n    // Ctrl+Shift+N - New child item on spatial canvas\n    if (e.ctrlKey && !e.metaKey && e.shiftKey && !e.altKey && e.key === 'N') {\n      const tag = document.activeElement?.tagName;\n      if (tag === 'INPUT' || tag === 'TEXTAREA' || document.activeElement?.isContentEditable) return;\n\n      const rootId = new URLSearchParams(window.location.search).get('root');\n      if (!rootId || !document.querySelector(`[data-container-id=\"${rootId}\"]`)) return;\n\n      e.preventDefault();\n\n      try {\n        const vpMgr = await api.require('viewport-manager');\n        const rendering = vpMgr.getRendering();\n        const typePicker = await api.require('type-picker-lib');\n        const ctxLib = await api.require('context-menu-lib');\n        const enrichedApi = {\n          ...api,\n          getViews: (typeId) => rendering.getViews(typeId),\n          createElement: window.kernel._baseCreateElement\n        };\n\n        const selectedType = await typePicker.showTypePicker(enrichedApi);\n        if (!selectedType) return;\n\n        const editView = await ctxLib.findEditableView(enrichedApi, selectedType);\n\n        const newItem = {\n          id: crypto.randomUUID(),\n          name: new Date().toISOString(),\n          type: selectedType,\n          created: Date.now(),\n          modified: Date.now(),\n          attachments: [],\n          content: {}\n        };\n        await api.set(newItem);\n\n        const attachment = { id: newItem.id };\n        if (editView) attachment.view = { type: editView.id };\n\n        const root = await api.get(rootId);\n        root.attachments = [...(root.attachments || []), attachment];\n        root.modified = Date.now();\n        await api.set(root);\n      } catch (err) {\n        console.warn('Ctrl+Shift+N failed:', err.message);\n      }\n    }\n\n    // Ctrl+Shift+A - Add existing item to spatial canvas\n    if (e.ctrlKey && !e.metaKey && e.shiftKey && !e.altKey && e.key === 'A') {\n      const tag = document.activeElement?.tagName;\n      if (tag === 'INPUT' || tag === 'TEXTAREA' || document.activeElement?.isContentEditable) return;\n\n      const rootId = new URLSearchParams(window.location.search).get('root');\n      if (!rootId || !document.querySelector(`[data-container-id=\"${rootId}\"]`)) return;\n\n      e.preventDefault();\n\n      try {\n        const modalLib = await api.require('modal-lib');\n        const searchLib = await api.require('item-search-lib');\n\n        const searchContainer = document.createElement('div');\n        const enrichedApi = { ...api, createElement: window.kernel._baseCreateElement };\n        const { close } = modalLib.showModal({\n          title: 'Add Existing Item',\n          width: '600px',\n          maxHeight: '80vh',\n          api: enrichedApi,\n          content: searchContainer\n        });\n\n        searchLib.createSearchUI(\n          searchContainer,\n          async (selectedItem) => {\n            close();\n            const root = await api.get(rootId);\n            root.attachments = [...(root.attachments || []), { id: selectedItem.id }];\n            root.modified = Date.now();\n            await api.set(root);\n          },\n          enrichedApi,\n          { placeholder: 'Search for items to add...', autoFocus: true }\n        );\n      } catch (err) {\n        console.warn('Ctrl+Shift+A failed:', err.message);\n      }\n    }\n\n    // Note: Cmd+K (item palette) is handled by viewport-view\n  };\n  document.addEventListener('keydown', window._userKeyboardHandler);\n}\n\n// Cleanup: remove old handler so new code can re-register\nexport function cleanup() {\n  if (window._userKeyboardHandler) {\n    document.removeEventListener('keydown', window._userKeyboardHandler);\n    delete window._userKeyboardHandler;\n  }\n}\n",
+    "code": "// Keyboard Shortcuts Library\n// Registers global keyboard shortcuts, initialized by viewport:ready.\n// Capabilities obtained via require() at runtime (not captured closures).\n\nlet api = null;\n\nexport async function onViewportReady(event, _api) {\n  api = _api;\n\n  // Clean up old handler before registering new one (supports re-activation after edit)\n  cleanup();\n\n  window._userKeyboardHandler = async (e) => {\n    // Cmd/Ctrl+Shift+? - Help dialog\n    if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === '?') {\n      e.preventDefault();\n      try {\n        const helpDialog = await api.require('help-dialog');\n        helpDialog.show();\n      } catch (err) {\n        console.warn('help-dialog not available:', err.message);\n      }\n    }\n    // Ctrl+E - Edit selected item\n    if (e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey && e.key === 'e') {\n      const tag = document.activeElement?.tagName;\n      if (tag === 'INPUT' || tag === 'TEXTAREA' || document.activeElement?.isContentEditable) return;\n\n      const selMgr = await api.require('selection-manager');\n      const selectedId = selMgr.getSelection();\n      if (!selectedId) return;\n\n      e.preventDefault();\n\n      const parentId = selMgr.getSelectionParent();\n\n      try {\n        const vpMgr = await api.require('viewport-manager');\n        const rendering = vpMgr.getRendering();\n        const ctxLib = await api.require('context-menu-lib');\n        const item = await api.get(selectedId);\n        const enrichedApi = { ...api, getViews: (typeId) => rendering.getViews(typeId) };\n        const editView = await ctxLib.findEditableView(enrichedApi, item.type);\n        if (!editView) return;\n\n        if (parentId) {\n          const parent = await api.get(parentId);\n          const idx = parent.attachments.findIndex(c => c.id === selectedId);\n          if (idx >= 0) {\n            const child = parent.attachments[idx];\n            parent.attachments = [...parent.attachments];\n            parent.attachments[idx] = {\n              ...child,\n              previousView: child.view ? { ...child.view } : null,\n              view: { ...(child.view || {}), type: editView.id }\n            };\n            await api.set(parent);\n          }\n        } else {\n          const rootId = new URLSearchParams(window.location.search).get('root');\n          await vpMgr.navigate(rootId, { view: editView.id });\n        }\n      } catch (err) {\n        console.warn('Ctrl+E edit failed:', err.message);\n      }\n    }\n\n    // Ctrl+Shift+N - New child item on spatial canvas\n    if (e.ctrlKey && !e.metaKey && e.shiftKey && !e.altKey && e.key === 'N') {\n      const tag = document.activeElement?.tagName;\n      if (tag === 'INPUT' || tag === 'TEXTAREA' || document.activeElement?.isContentEditable) return;\n\n      const rootId = new URLSearchParams(window.location.search).get('root');\n      if (!rootId || !document.querySelector(`[data-container-id=\"${rootId}\"]`)) return;\n\n      e.preventDefault();\n\n      try {\n        const vpMgr = await api.require('viewport-manager');\n        const rendering = vpMgr.getRendering();\n        const typePicker = await api.require('type-picker-lib');\n        const ctxLib = await api.require('context-menu-lib');\n        const enrichedApi = {\n          ...api,\n          getViews: (typeId) => rendering.getViews(typeId),\n          createElement: window.kernel._baseCreateElement\n        };\n\n        const selectedType = await typePicker.showTypePicker(enrichedApi);\n        if (!selectedType) return;\n\n        const editView = await ctxLib.findEditableView(enrichedApi, selectedType);\n\n        const newItem = {\n          id: crypto.randomUUID(),\n          name: new Date().toISOString(),\n          type: selectedType,\n          created: Date.now(),\n          modified: Date.now(),\n          attachments: [],\n          content: {}\n        };\n        await api.set(newItem);\n\n        const attachment = { id: newItem.id };\n        if (editView) attachment.view = { type: editView.id };\n\n        const root = await api.get(rootId);\n        root.attachments = [...(root.attachments || []), attachment];\n        root.modified = Date.now();\n        await api.set(root);\n      } catch (err) {\n        console.warn('Ctrl+Shift+N failed:', err.message);\n      }\n    }\n\n    // Ctrl+Shift+A - Add existing item to spatial canvas\n    if (e.ctrlKey && !e.metaKey && e.shiftKey && !e.altKey && e.key === 'A') {\n      const tag = document.activeElement?.tagName;\n      if (tag === 'INPUT' || tag === 'TEXTAREA' || document.activeElement?.isContentEditable) return;\n\n      const rootId = new URLSearchParams(window.location.search).get('root');\n      if (!rootId || !document.querySelector(`[data-container-id=\"${rootId}\"]`)) return;\n\n      e.preventDefault();\n\n      try {\n        const modalLib = await api.require('modal-lib');\n        const structEd = await api.require('field-view-hob-structural');\n        const hob = await api.require('hob-interpreter');\n\n        const enrichedApi = { ...api, createElement: window.kernel._baseCreateElement };\n        let closeModal;\n\n        const errorDiv = document.createElement('div');\n        errorDiv.style.cssText = 'display:none; margin-top:8px; padding:8px 12px; border:1px solid var(--color-error,#c00); border-radius:var(--border-radius); color:var(--color-error,#c00); font-family:monospace; font-size:0.8125rem; white-space:pre-wrap;';\n\n        const resultsDiv = document.createElement('div');\n        resultsDiv.style.cssText = 'margin-top:12px; max-height:400px; overflow-y:auto;';\n\n        const searchLib = await api.require('item-search-lib');\n\n        const runSearch = async (ast) => {\n          errorDiv.style.display = 'none';\n          resultsDiv.innerHTML = '';\n          resultsDiv.textContent = 'Searching\u2026';\n          let matches;\n          try {\n            const expanded = searchLib.expandSearchAst(ast);\n\n            const interp = hob.createInterpreter(enrichedApi);\n            await interp.macrosReady;\n            matches = await interp.eval(hob.prettyPrintAll(expanded));\n            if (!Array.isArray(matches)) matches = [];\n          } catch (err) {\n            resultsDiv.textContent = '';\n            errorDiv.textContent = String(err);\n            errorDiv.style.display = 'block';\n            return;\n          }\n          resultsDiv.textContent = '';\n          if (matches.length === 0) {\n            resultsDiv.textContent = 'No items found.';\n            return;\n          }\n          const countDiv = document.createElement('div');\n          countDiv.style.cssText = 'margin-bottom:10px; font-size:0.8125rem; color:var(--color-text-secondary); font-weight:500;';\n          countDiv.textContent = `Found ${matches.length} item${matches.length === 1 ? '' : 's'}`;\n          resultsDiv.appendChild(countDiv);\n          for (const item of matches) {\n            const row = document.createElement('div');\n            row.style.cssText = 'padding:12px; margin-bottom:8px; background:var(--color-bg-surface); border:1px solid var(--color-border-light); border-radius:var(--border-radius); cursor:pointer; transition:all 0.2s;';\n            const title = document.createElement('div');\n            title.style.cssText = 'font-weight:500; color:var(--color-text); margin-bottom:6px; font-size:0.9375rem;';\n            title.textContent = item.name || item.content?.title || item.id;\n            row.appendChild(title);\n            const rawDesc = item.content?.body || item.content?.description;\n            const previewText = typeof rawDesc === 'string' ? rawDesc\n              : Array.isArray(rawDesc) ? searchLib.extractText(rawDesc)\n              : JSON.stringify(item.content).substring(0, 150);\n            const preview = document.createElement('div');\n            preview.style.cssText = 'font-size:0.8125rem; color:var(--color-text-secondary); margin-bottom:6px; line-height:1.4; overflow:hidden; text-overflow:ellipsis; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical;';\n            preview.textContent = previewText.substring(0, 200);\n            row.appendChild(preview);\n            const meta = document.createElement('div');\n            meta.style.cssText = 'font-size:0.75rem; color:var(--color-border-dark);';\n            meta.textContent = 'Type: ' + item.type.substring(0, 8) + '... | Modified: ' + new Date(item.modified).toLocaleDateString();\n            row.appendChild(meta);\n            row.onmouseover = () => { row.style.borderColor = 'var(--color-primary)'; row.style.background = 'var(--color-bg-surface-alt)'; row.style.transform = 'translateX(4px)'; };\n            row.onmouseout = () => { row.style.borderColor = 'var(--color-border-light)'; row.style.background = 'var(--color-bg-surface)'; row.style.transform = 'translateX(0)'; };\n            row.onclick = async () => {\n              closeModal?.();\n              const root = await api.get(rootId);\n              root.attachments = [...(root.attachments || []), { id: item.id }];\n              root.modified = Date.now();\n              await api.set(root);\n            };\n            resultsDiv.appendChild(row);\n          }\n        };\n\n        const editorEl = await structEd.render(hob.readAll('(text? \"\")'), {\n          compact: true,\n          autoFocus: true,\n          onChange: () => {},\n          onSubmit: (ast) => runSearch(ast),\n        }, enrichedApi);\n\n        const hintDiv = document.createElement('div');\n        hintDiv.style.cssText = 'margin-top:4px; font-size:0.75rem; color:var(--color-text-secondary);';\n        hintDiv.textContent = 'Ctrl+Enter to search  \u00b7  e.g. (text? \"foo\")  (tagged? \"project\")';\n\n        const searchContainer = document.createElement('div');\n        searchContainer.appendChild(editorEl);\n        searchContainer.appendChild(hintDiv);\n        searchContainer.appendChild(errorDiv);\n        searchContainer.appendChild(resultsDiv);\n\n        ({ close: closeModal } = modalLib.showModal({\n          title: 'Add Existing Item',\n          width: '600px',\n          maxHeight: '80vh',\n          api: enrichedApi,\n          content: searchContainer\n        }));\n      } catch (err) {\n        console.warn('Ctrl+Shift+A failed:', err.message);\n      }\n    }\n\n    // Note: Cmd+K (item palette) is handled by viewport-view\n  };\n  document.addEventListener('keydown', window._userKeyboardHandler);\n}\n\n// Cleanup: remove old handler so new code can re-register\nexport function cleanup() {\n  if (window._userKeyboardHandler) {\n    document.removeEventListener('keydown', window._userKeyboardHandler);\n    delete window._userKeyboardHandler;\n  }\n}\n",
     "_symbols": {
       "api": {
         "name": "api",
@@ -34,7 +34,7 @@
         "name": "onViewportReady",
         "line": 7,
         "col": 7,
-        "endLine": 161,
+        "endLine": 220,
         "endCol": 1,
         "kind": "function",
         "scope": null,
@@ -340,10 +340,10 @@
       },
       "onViewportReady.root": {
         "name": "root",
-        "line": 145,
-        "col": 18,
-        "endLine": 145,
-        "endCol": 46,
+        "line": 108,
+        "col": 14,
+        "endLine": 108,
+        "endCol": 42,
         "kind": "variable",
         "scope": "onViewportReady"
       },
@@ -356,56 +356,237 @@
         "kind": "variable",
         "scope": "onViewportReady"
       },
-      "onViewportReady.searchLib": {
-        "name": "searchLib",
+      "onViewportReady.structEd": {
+        "name": "structEd",
         "line": 129,
         "col": 14,
         "endLine": 129,
-        "endCol": 62,
+        "endCol": 71,
+        "kind": "variable",
+        "scope": "onViewportReady"
+      },
+      "onViewportReady.hob": {
+        "name": "hob",
+        "line": 130,
+        "col": 14,
+        "endLine": 130,
+        "endCol": 56,
+        "kind": "variable",
+        "scope": "onViewportReady"
+      },
+      "onViewportReady.closeModal": {
+        "name": "closeModal",
+        "line": 133,
+        "col": 12,
+        "endLine": 133,
+        "endCol": 22,
+        "kind": "variable",
+        "scope": "onViewportReady"
+      },
+      "onViewportReady.errorDiv": {
+        "name": "errorDiv",
+        "line": 135,
+        "col": 14,
+        "endLine": 135,
+        "endCol": 54,
+        "kind": "variable",
+        "scope": "onViewportReady"
+      },
+      "onViewportReady.resultsDiv": {
+        "name": "resultsDiv",
+        "line": 138,
+        "col": 14,
+        "endLine": 138,
+        "endCol": 56,
+        "kind": "variable",
+        "scope": "onViewportReady"
+      },
+      "onViewportReady.runSearch": {
+        "name": "runSearch",
+        "line": 141,
+        "col": 14,
+        "endLine": 186,
+        "endCol": 9,
+        "kind": "function",
+        "scope": "onViewportReady",
+        "signature": "(ast)"
+      },
+      "runSearch.matches": {
+        "name": "matches",
+        "line": 145,
+        "col": 14,
+        "endLine": 145,
+        "endCol": 21,
+        "kind": "variable",
+        "scope": "runSearch"
+      },
+      "runSearch.searchLib": {
+        "name": "searchLib",
+        "line": 147,
+        "col": 18,
+        "endLine": 147,
+        "endCol": 66,
+        "kind": "variable",
+        "scope": "runSearch"
+      },
+      "runSearch.expanded": {
+        "name": "expanded",
+        "line": 148,
+        "col": 18,
+        "endLine": 148,
+        "endCol": 59,
+        "kind": "variable",
+        "scope": "runSearch"
+      },
+      "runSearch.interp": {
+        "name": "interp",
+        "line": 149,
+        "col": 18,
+        "endLine": 149,
+        "endCol": 61,
+        "kind": "variable",
+        "scope": "runSearch"
+      },
+      "runSearch.countDiv": {
+        "name": "countDiv",
+        "line": 164,
+        "col": 16,
+        "endLine": 164,
+        "endCol": 56,
+        "kind": "variable",
+        "scope": "runSearch"
+      },
+      "runSearch.item": {
+        "name": "item",
+        "line": 168,
+        "col": 21,
+        "endLine": 168,
+        "endCol": 25,
+        "kind": "variable",
+        "scope": "runSearch"
+      },
+      "runSearch.row": {
+        "name": "row",
+        "line": 169,
+        "col": 18,
+        "endLine": 169,
+        "endCol": 53,
+        "kind": "variable",
+        "scope": "runSearch"
+      },
+      "runSearch.title": {
+        "name": "title",
+        "line": 171,
+        "col": 18,
+        "endLine": 171,
+        "endCol": 55,
+        "kind": "variable",
+        "scope": "runSearch"
+      },
+      "runSearch.root": {
+        "name": "root",
+        "line": 179,
+        "col": 20,
+        "endLine": 179,
+        "endCol": 48,
+        "kind": "variable",
+        "scope": "runSearch"
+      },
+      "runSearch.id": {
+        "name": "id",
+        "line": 180,
+        "col": 65,
+        "endLine": 180,
+        "endCol": 76,
+        "kind": "property",
+        "scope": "runSearch"
+      },
+      "onViewportReady.editorEl": {
+        "name": "editorEl",
+        "line": 188,
+        "col": 14,
+        "endLine": 193,
+        "endCol": 23,
+        "kind": "variable",
+        "scope": "onViewportReady"
+      },
+      "onViewportReady.hintDiv": {
+        "name": "hintDiv",
+        "line": 195,
+        "col": 14,
+        "endLine": 195,
+        "endCol": 53,
         "kind": "variable",
         "scope": "onViewportReady"
       },
       "onViewportReady.searchContainer": {
         "name": "searchContainer",
-        "line": 131,
+        "line": 199,
         "col": 14,
-        "endLine": 131,
+        "endLine": 199,
         "endCol": 61,
         "kind": "variable",
         "scope": "onViewportReady"
       },
-      "onViewportReady.id": {
-        "name": "id",
-        "line": 146,
-        "col": 63,
-        "endLine": 146,
-        "endCol": 82,
+      "onViewportReady.close": {
+        "name": "close",
+        "line": 205,
+        "col": 11,
+        "endLine": 205,
+        "endCol": 28,
         "kind": "property",
         "scope": "onViewportReady"
       },
-      "onViewportReady.placeholder": {
-        "name": "placeholder",
-        "line": 151,
-        "col": 12,
-        "endLine": 151,
-        "endCol": 53,
+      "onViewportReady.title": {
+        "name": "title",
+        "line": 206,
+        "col": 10,
+        "endLine": 206,
+        "endCol": 36,
         "kind": "property",
         "scope": "onViewportReady"
       },
-      "onViewportReady.autoFocus": {
-        "name": "autoFocus",
-        "line": 151,
-        "col": 55,
-        "endLine": 151,
-        "endCol": 70,
+      "onViewportReady.width": {
+        "name": "width",
+        "line": 207,
+        "col": 10,
+        "endLine": 207,
+        "endCol": 24,
+        "kind": "property",
+        "scope": "onViewportReady"
+      },
+      "onViewportReady.maxHeight": {
+        "name": "maxHeight",
+        "line": 208,
+        "col": 10,
+        "endLine": 208,
+        "endCol": 27,
+        "kind": "property",
+        "scope": "onViewportReady"
+      },
+      "onViewportReady.api": {
+        "name": "api",
+        "line": 209,
+        "col": 10,
+        "endLine": 209,
+        "endCol": 26,
+        "kind": "property",
+        "scope": "onViewportReady"
+      },
+      "onViewportReady.content": {
+        "name": "content",
+        "line": 210,
+        "col": 10,
+        "endLine": 210,
+        "endCol": 34,
         "kind": "property",
         "scope": "onViewportReady"
       },
       "cleanup": {
         "name": "cleanup",
-        "line": 164,
+        "line": 223,
         "col": 7,
-        "endLine": 169,
+        "endLine": 228,
         "endCol": 1,
         "kind": "function",
         "scope": null,

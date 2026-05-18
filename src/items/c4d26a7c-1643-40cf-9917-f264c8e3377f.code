@@ -18,6 +18,7 @@ let _hob = null;
 let _interp = null;
 let _scheduleOne = null;
 let _snoozeOne = null;
+const _lastHob = new Map();
 
 export async function onKernelBootComplete({ safeMode }, api) {
   if (safeMode) return;
@@ -34,10 +35,22 @@ export async function onKernelBootComplete({ safeMode }, api) {
   await checkExactAlarmPermission(api);
   await ensureReminderChannel();
   await _interp.eval('(boot-scan!)');
+  try {
+    const items = await api.getAll();
+    for (const item of items) {
+      if (item.type === REMINDER_TYPE) {
+        _lastHob.set(item.id, JSON.stringify(item.content?.hob ?? []));
+      }
+    }
+  } catch (_) {}
 }
 
 export async function onItemUpdated({ item }, api) {
   if (!_scheduleOne || !item || item.type !== REMINDER_TYPE) return;
+  // Skip re-schedule when only content.scheduledAt changed (written by schedule-one! itself).
+  const hobKey = JSON.stringify(item.content?.hob ?? []);
+  if (_lastHob.get(item.id) === hobKey) return;
+  _lastHob.set(item.id, hobKey);
   await _scheduleOne(item);
 }
 
@@ -163,7 +176,8 @@ async function checkExactAlarmPermission(api) {
 (defn schedule-one! [reminder]
   (let [id (get reminder :id)
         nid (notif-id-for id)
-        next-time (eval-all (get-in reminder [:content :hob]) lib)]
+        next-time (eval-all (get-in reminder [:content :hob]) lib)
+        at (when (and (number? next-time) (> next-time (now))) next-time)]
     (try
       (when-let [tauri (dom-get win :__TAURI__)]
         (when-let [notif (dom-get tauri :notification)] (.cancel notif [nid])))
@@ -171,27 +185,32 @@ async function checkExactAlarmPermission(api) {
     (swap! scheduled-at-map dissoc id)
     (swap! notif-id-to-item-id dissoc nid)
     (when
-      (and (number? next-time) (> next-time (now)))
+      at
       (let [title (or
                     (get-in reminder [:content :title])
                     (get reminder :name)
                     "Reminder")
 ]
-        (when-let [tauri (dom-get win :__TAURI__)]
-          (when-let [notif (dom-get tauri :notification)]
-            (.batch
-              notif
-              [{:id nid
-                 :title title
-                 :body ""
-                 :channelId "reminders"
-                 :schedule {:at {:date (.toISOString (js/Date. next-time))
-                                 :repeating false
-                                 :allowWhileIdle true}}
+        (when
+          (.contains
+            (dom-get (dom-get doc :documentElement) :classList)
+            "env-mobile")
+          (when-let [tauri (dom-get win :__TAURI__)]
+            (when-let [notif (dom-get tauri :notification)]
+              (.batch
+                notif
+                [{:id nid
+                   :title title
+                   :body ""
+                   :channelId "reminders"
+                   :schedule {:at {:date (.toISOString (js/Date. at))
+                                   :repeating false
+                                   :allowWhileIdle true}}
 }
-])))
-        (swap! scheduled-at-map assoc id next-time)
-        (swap! notif-id-to-item-id assoc nid id)))))
+]))))
+        (swap! scheduled-at-map assoc id at)
+        (swap! notif-id-to-item-id assoc nid id)))
+    (set-item! (assoc-in (get-item id) [:content :scheduledAt] at))))
 
 (defn snooze! [reminder duration-ms]
   (let [id (get reminder :id)
@@ -217,21 +236,26 @@ async function checkExactAlarmPermission(api) {
     (swap! notif-id-to-item-id dissoc nid)
     (when
       (> snooze-at (now))
-      (when-let [tauri (dom-get win :__TAURI__)]
-        (when-let [notif (dom-get tauri :notification)]
-          (.batch
-            notif
-            [{:id nid
-               :title title
-               :body ""
-               :channelId "reminders"
-               :schedule {:at {:date (.toISOString (js/Date. snooze-at))
-                               :repeating false
-                               :allowWhileIdle true}}
+      (when
+        (.contains
+          (dom-get (dom-get doc :documentElement) :classList)
+          "env-mobile")
+        (when-let [tauri (dom-get win :__TAURI__)]
+          (when-let [notif (dom-get tauri :notification)]
+            (.batch
+              notif
+              [{:id nid
+                 :title title
+                 :body ""
+                 :channelId "reminders"
+                 :schedule {:at {:date (.toISOString (js/Date. snooze-at))
+                                 :repeating false
+                                 :allowWhileIdle true}}
 }
-])))
+]))))
       (swap! scheduled-at-map assoc id snooze-at)
-      (swap! notif-id-to-item-id assoc nid id))))
+      (swap! notif-id-to-item-id assoc nid id))
+    (set-item! (assoc-in (get-item id) [:content :scheduledAt] snooze-at))))
 
 (defn cancel-one! [id]
   (let [nid (notif-id-for id)]

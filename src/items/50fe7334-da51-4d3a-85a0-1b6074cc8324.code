@@ -43,6 +43,11 @@ const STDLIB = [
   { n: 'get-parent-id',         d: 'domain' }, { n: 'get-current-root',     d: 'domain' },
   { n: 'pmap',                  d: 'domain' },
   { n: 'find-items',            d: 'domain' }, { n: 'get-all',              d: 'domain' },
+  { n: 'text?',                 d: 'domain' }, { n: 'type?',               d: 'domain' },
+  { n: 'tagged?',               d: 'domain' }, { n: 'name?',               d: 'domain' },
+  { n: 'modified-after?',       d: 'domain' }, { n: 'modified-before?',    d: 'domain' },
+  { n: 'has-field?',            d: 'domain' }, { n: 'eval-hob-ast!',       d: 'domain' },
+  { n: 'parse-hob!',            d: 'domain' },
   { n: 'resolve-ref',           d: 'domain' }, { n: 'resolve-field-refs',   d: 'domain' },
   { n: 'transclude',            d: 'domain' }, { n: 'transclusion-chrome',  d: 'domain' },
   { n: 'call-export',           d: 'domain' }, { n: 'extract-symbol',       d: 'domain' },
@@ -560,18 +565,16 @@ function renderLeaf(node, state, itemNames, api) {
     }
     case 'hole':
       if (state.mode !== 'nav' && state.inputHoleId === node.id) {
-        span.className = 'hob-hole hob-hole-active';
-        if (state.inputSelectAll) {
-          span.classList.add('hob-hole-select-all');
-          span.textContent = state.inputBuffer;
-        } else if (state.mode === 'string') {
-          const b = state.inputBuffer, c = state.inputCursor;
-          buildCursorContent(span, '"' + b.slice(0, c), b.slice(c) + '"');
-          span.classList.add('hob-string');
-        } else {
-          const b = state.inputBuffer, c = state.inputCursor;
-          buildCursorContent(span, b.slice(0, c), b.slice(c));
-        }
+        span.className = 'hob-hole hob-hole-active' + (state.mode === 'string' ? ' hob-string' : '');
+        const inp = document.createElement('input');
+        inp.type = 'text';
+        inp.className = 'hob-hole-input';
+        inp.value = state.inputBuffer;
+        inp.style.width = state.inputBuffer.length + 'ch';
+        if (state.mode === 'string') inp.setAttribute('data-string-mode', '1');
+        span.appendChild(inp);
+        // Tapping the span (including ::before/::after quote pseudo-elements) focuses the input
+        span.addEventListener('click', (e) => { e.stopPropagation(); inp.focus(); });
       } else {
         span.className = 'hob-hole';
         span.textContent = '·';
@@ -730,13 +733,15 @@ function renderInfixList(node, state, itemNames, api, indent) {
         if (i > 0) {
           const neg = op.value === '+' && isUnaryMinus(operands[i]);
           const s = document.createElement('span');
-          s.className = 'hob-symbol';
+          s.className = 'hob-symbol hob-infix-sep';
           s.textContent = ' ' + (neg ? '-' : op.value) + ' ';
-          if (i === 1) {
+          if (i === 1) { state.domMap.set(op.id, s); }
+          if (neg) {
+            s.setAttribute('data-node-id', operands[i].id);
+            state.domMap.set(operands[i].id, s);
+          } else {
             s.setAttribute('data-node-id', op.id);
-            state.domMap.set(op.id, s);
           }
-          if (neg) state.domMap.set(operands[i].id, s);
           span.appendChild(s);
           if (neg) {
             span.appendChild(renderNode(operands[i].children[1], state, itemNames, api, indent + 1));
@@ -761,10 +766,15 @@ function renderInfixList(node, state, itemNames, api, indent) {
         const neg = op.value === '+' && isUnaryMinus(operands[i]);
         span.appendChild(newline(childIndent, operands[i - 1].id));
         const s = document.createElement('span');
-        s.className = 'hob-symbol';
+        s.className = 'hob-symbol hob-infix-sep';
         s.textContent = (neg ? '-' : op.value) + ' ';
-        if (i === 1) { s.setAttribute('data-node-id', op.id); state.domMap.set(op.id, s); }
-        if (neg) state.domMap.set(operands[i].id, s);
+        if (i === 1) { state.domMap.set(op.id, s); }
+        if (neg) {
+          s.setAttribute('data-node-id', operands[i].id);
+          state.domMap.set(operands[i].id, s);
+        } else {
+          s.setAttribute('data-node-id', op.id);
+        }
         span.appendChild(s);
         span.appendChild(renderNode(neg ? operands[i].children[1] : operands[i], state, itemNames, api, childIndent));
       }
@@ -1103,7 +1113,13 @@ function rerender(state, itemNames, api, statusBar) {
   // Clear domMap
   state.domMap = new Map();
 
-  // Rebuild DOM children (reuse same editorEl to preserve event listeners)
+  // Rebuild DOM children (reuse same editorEl to preserve event listeners).
+  // Before clearing, move focus from any child input to editorEl itself — some browsers
+  // scroll the page to (0,0) when a focused element is removed from the DOM.
+  const _active = document.activeElement;
+  if (_active && _active !== state.editorEl && state.editorEl.contains(_active)) {
+    state.editorEl.focus({ preventScroll: true });
+  }
   state.editorEl.textContent = '';
   const root = state.nodeMap.get(0);
   for (let i = 0; i < root.children.length; i++) {
@@ -1120,6 +1136,84 @@ function rerender(state, itemNames, api, statusBar) {
 
   updateSelectionVisual(state);
   updateStatusBar(state, statusBar);
+  postRender(state);
+}
+
+function postRender(state) {
+  if (state.mode === 'input' || state.mode === 'string') {
+    const holeEl = state.domMap.get(state.inputHoleId);
+    if (!holeEl) return;
+    const inp = holeEl.querySelector('.hob-hole-input');
+    if (!inp) return;
+    inp.value = state.inputBuffer;
+    inp.style.width = state.inputBuffer.length + 'ch';
+    inp.addEventListener('input', () => {
+      const raw = inp.value;
+      // On mobile, special characters arrive via `input` (keydown fires Unidentified so
+      // e.preventDefault was never called). Mirror the keydown handling here.
+      if (state.mode === 'input') {
+        const { itemNames, api, statusBar } = state._ctx;
+        // Space: commit token and open new hole
+        if (raw.endsWith(' ') && raw.trim()) {
+          state.inputBuffer = raw.trimEnd();
+          const newNode = commitToken(state, itemNames, api, statusBar);
+          if (newNode) {
+            const nextHole = makeNode(state, 'hole', {});
+            pushUndo(state);
+            insertAfter(state, newNode.id, nextHole);
+            notifyChange(state);
+            state.replaceOriginal = null;
+            enterInputMode(state, nextHole.id);
+          }
+          rerender(state, itemNames, api, statusBar);
+          return;
+        }
+        // `"`: enter string mode (with or without prior token)
+        if (raw.endsWith('"')) {
+          const bufBefore = raw.slice(0, -1);
+          if (bufBefore) {
+            state.inputBuffer = bufBefore;
+            const newNode = commitToken(state, itemNames, api, statusBar);
+            const nextHole = makeNode(state, 'hole', {});
+            pushUndo(state);
+            insertAfter(state, newNode.id, nextHole);
+            notifyChange(state);
+            state.replaceOriginal = null;
+            state.mode = 'string';
+            state.inputHoleId = nextHole.id;
+            state.inputBuffer = '';
+            state.selectedId = nextHole.id;
+            state.expansionStack = [];
+          } else {
+            state.mode = 'string';
+            state.inputBuffer = '';
+          }
+          rerender(state, itemNames, api, statusBar);
+          updateStringAutocomplete(state, state._ctx);
+          return;
+        }
+      }
+      state.inputBuffer = raw;
+      state.inputCursor = inp.selectionStart ?? raw.length;
+      state.inputSelectAll = false;
+      inp.style.width = raw.length + 'ch';
+      if (state.mode === 'string') {
+        updateStringAutocomplete(state, state._ctx);
+      } else {
+        updateAutocomplete(state, state._ctx);
+      }
+    });
+    if (state.inputSelectAll) {
+      inp.select();
+    } else {
+      try { inp.setSelectionRange(state.inputCursor, state.inputCursor); } catch (_) {}
+    }
+    inp.focus();
+  } else if (state.mode === 'nav') {
+    if (!document.activeElement || document.activeElement === document.body) {
+      state.editorEl?.focus({ preventScroll: true });
+    }
+  }
 }
 
 // --- Undo/Redo (snapshot approach) ---
@@ -1231,8 +1325,17 @@ function deleteSelected(state) {
   const parent = state.parentMap.get(state.selectedId);
   if (!parent || !parent.children) return;
 
-  // Prevent deleting the last top-level form
-  if (parent.type === 'root' && parent.children.length <= 1) return;
+  // Sole top-level form: replace with (·) and enter input mode immediately
+  if (parent.type === 'root' && parent.children.length <= 1) {
+    const hole = makeNode(state, 'hole', {});
+    const list = makeNode(state, 'list', { children: [hole] });
+    removeFromMaps(node, state);
+    parent.children[0] = list;
+    state.parentMap.set(list.id, parent);
+    state.parentMap.set(hole.id, list);
+    enterInputMode(state, hole.id);
+    return;
+  }
 
   const idx = parent.children.indexOf(node);
   if (idx === -1) return;
@@ -1257,7 +1360,15 @@ function deleteSelected(state) {
     removeFromMaps(node, state);
     // Selection: next sibling → previous sibling → parent
     if (parent.children.length === 0) {
-      state.selectedId = parent.id;
+      if (parent.type === 'list' || parent.type === 'vector') {
+        // Empty collection: insert a hole and enter input mode immediately
+        const hole = makeNode(state, 'hole', {});
+        parent.children.push(hole);
+        state.parentMap.set(hole.id, parent);
+        enterInputMode(state, hole.id);
+      } else {
+        state.selectedId = parent.id;
+      }
     } else if (idx < parent.children.length) {
       state.selectedId = parent.children[idx].id;
     } else {
@@ -1545,19 +1656,16 @@ function buildCursorContent(el, before, after) {
 }
 
 function updateHoleDisplay(state) {
-  const el = state.domMap.get(state.inputHoleId);
-  if (!el) return;
+  const holeEl = state.domMap.get(state.inputHoleId);
+  if (!holeEl) return;
+  const inp = holeEl.querySelector('.hob-hole-input');
+  if (!inp) return;
+  inp.value = state.inputBuffer;
+  inp.style.width = state.inputBuffer.length + 'ch';
   if (state.inputSelectAll) {
-    el.textContent = state.inputBuffer;
-    el.classList.add('hob-hole-select-all');
+    inp.select();
   } else {
-    el.classList.remove('hob-hole-select-all');
-    const b = state.inputBuffer, c = state.inputCursor;
-    if (state.mode === 'string') {
-      buildCursorContent(el, '"' + b.slice(0, c), b.slice(c) + '"');
-    } else {
-      buildCursorContent(el, b.slice(0, c), b.slice(c));
-    }
+    try { inp.setSelectionRange(state.inputCursor, state.inputCursor); } catch (_) {}
   }
 }
 
@@ -2119,6 +2227,13 @@ function handleNavKey(e, ctx) {
       state.selectedId = holes[prevIdx];
       state.expansionStack = [];
     } else { handled = false; }
+  } else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !e.shiftKey && state.onSubmit) {
+    // Ctrl/Cmd+Enter → submit the current AST
+    e.preventDefault();
+    e.stopPropagation();
+    const root = state.nodeMap.get(0);
+    if (root) state.onSubmit(deflateAll(root));
+    handled = true;
   } else if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey && node.type === 'doc' && state.onChange) {
     // Enter on doc node → activate prose editor
     enterDocEditing(state, node.id, itemNames, api, statusBar);
@@ -2134,28 +2249,6 @@ function handleNavKey(e, ctx) {
     applyMutation(state, itemNames, api, statusBar, () => insertBefore(state, node.id, hole));
     enterInputMode(state, hole.id);
     rerender(state, itemNames, api, statusBar);
-  } else if (e.key === 'r' && !e.ctrlKey && !e.metaKey && !e.altKey && state.onChange) {
-    // Replace: swap selected with hole pre-filled (select-all: first keystroke replaces)
-    if (!node.children) {
-      const hole = makeNode(state, 'hole', {});
-      state.replaceOriginal = { nodeSnapshot: JSON.parse(JSON.stringify(node)), parentId: state.parentMap.get(node.id)?.id };
-      state.selectedId = hole.id;
-      applyMutation(state, itemNames, api, statusBar, () => replaceNode(state, node.id, hole));
-      if (node.type === 'string') {
-        // Strings → enter string mode with raw value (no quotes)
-        enterInputMode(state, hole.id);
-        state.mode = 'string';
-        state.inputBuffer = node.value;
-        state.inputCursor = node.value.length;
-      } else {
-        const prefill = leafText(node);
-        enterInputMode(state, hole.id);
-        state.inputBuffer = prefill;
-        state.inputCursor = prefill.length;
-        state.inputSelectAll = true;
-      }
-      rerender(state, itemNames, api, statusBar);
-    } else { handled = false; }
   } else if ((e.key === '(' || e.key === '[' || e.key === '{') && state.onChange) {
     // Create container with inner hole, insert after selected
     const containerType = e.key === '[' ? 'vector' : 'list';
@@ -2188,7 +2281,7 @@ function handleNavKey(e, ctx) {
         });
       }
     }
-  } else if (e.key === 'w' && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && state.onChange) {
+  } else if (e.key === 'w' && !e.ctrlKey && !e.metaKey && e.altKey && !e.shiftKey && state.onChange) {
     // Wrap in list: (· selected) — hole as head, enter input mode
     if (parent && parent.children) {
       const hole = makeNode(state, 'hole', {});
@@ -2203,7 +2296,7 @@ function handleNavKey(e, ctx) {
       enterInputMode(state, hole.id);
       rerender(state, itemNames, api, statusBar);
     }
-  } else if (e.key === 'W' && !e.ctrlKey && !e.metaKey && !e.altKey && state.onChange) {
+  } else if (e.key === 'W' && !e.ctrlKey && !e.metaKey && e.altKey && state.onChange) {
     // Wrap in vector: [selected] — stay in nav, select wrapper
     if (parent && parent.children) {
       const wrapper = makeNode(state, 'vector', { children: [node] });
@@ -2215,7 +2308,7 @@ function handleNavKey(e, ctx) {
         state.selectedId = wrapper.id;
       });
     }
-  } else if (e.key === 'u' && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && state.onChange) {
+  } else if (e.key === 'u' && !e.ctrlKey && !e.metaKey && e.altKey && !e.shiftKey && state.onChange) {
     // Unwrap/splice: replace container with its children
     if (node.children && parent && parent.children) {
       applyMutation(state, itemNames, api, statusBar, () => {
@@ -2228,7 +2321,7 @@ function handleNavKey(e, ctx) {
         state.selectedId = kids[0]?.id ?? parent.id;
       });
     }
-  } else if (e.key === 'd' && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && state.onChange) {
+  } else if (e.key === 'd' && !e.ctrlKey && !e.metaKey && e.altKey && !e.shiftKey && state.onChange) {
     // Duplicate: clone subtree as next sibling
     if (parent && parent.children) {
       const compact = deflate(node);
@@ -2238,7 +2331,7 @@ function handleNavKey(e, ctx) {
         state.selectedId = clone.id;
       });
     }
-  } else if (e.key === '>' && !e.ctrlKey && !e.metaKey && !e.altKey && state.onChange) {
+  } else if (e.key === '>' && !e.ctrlKey && !e.metaKey && e.altKey && state.onChange) {
     // Slurp right: pull next sibling into container as last child
     if (node.children && parent && parent.children) {
       const idx = parent.children.indexOf(node);
@@ -2251,7 +2344,7 @@ function handleNavKey(e, ctx) {
         });
       }
     }
-  } else if (e.key === '<' && !e.ctrlKey && !e.metaKey && !e.altKey && state.onChange) {
+  } else if (e.key === '<' && !e.ctrlKey && !e.metaKey && e.altKey && state.onChange) {
     // Barf right: eject last child as next sibling
     if (node.children && node.children.length > 0 && parent && parent.children) {
       applyMutation(state, itemNames, api, statusBar, () => {
@@ -2261,7 +2354,7 @@ function handleNavKey(e, ctx) {
         state.parentMap.set(ejected.id, parent);
       });
     }
-  } else if (e.key === 't' && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && state.onChange) {
+  } else if (e.key === 't' && !e.ctrlKey && !e.metaKey && e.altKey && !e.shiftKey && state.onChange) {
     // Change container type: list → vector → map → list
     if (node.children) {
       const cycle = { list: 'vector', vector: 'map', map: 'list' };
@@ -2323,7 +2416,7 @@ function handleNavKey(e, ctx) {
         state.selectionAnchorId = null;
       });
     } else { handled = false; }
-  } else if (e.key === ';' && !e.ctrlKey && !e.metaKey && !e.altKey && state.onChange) {
+  } else if (e.key === ';' && !e.ctrlKey && !e.metaKey && e.altKey && state.onChange) {
     // Insert doc node (comment) after selected
     const docNode = makeNode(state, 'doc', { value: [':doc', [':p', { s: '' }]] });
     applyMutation(state, itemNames, api, statusBar, () => insertAfter(state, node.id, docNode));
@@ -2335,6 +2428,34 @@ function handleNavKey(e, ctx) {
     // Toggle keyboard help overlay
     e.preventDefault();
     state.helpVisible ? hideHelp(state) : showHelp(state, ctx.wrapper);
+  } else if (e.key.length === 1 && e.key !== ' ' && !e.ctrlKey && !e.metaKey && !e.altKey && state.onChange
+      && (!node.children || isUnaryMinus(node))) {
+    // Typing on a leaf (or the subtracted-term node in an infix expression): enter replace mode.
+    // Special case: " on a string edits the existing value in place (cursor at end).
+    if (node.type === 'hole') {
+      enterInputMode(state, node.id);
+      if (e.key === '"') { state.mode = 'string'; }
+      else { state.inputBuffer = e.key; state.inputCursor = 1; }
+    } else if (node.type === 'string' && e.key === '"') {
+      const hole = makeNode(state, 'hole', {});
+      state.replaceOriginal = { nodeSnapshot: JSON.parse(JSON.stringify(node)), parentId: state.parentMap.get(node.id)?.id };
+      pushUndo(state);
+      replaceNode(state, node.id, hole);
+      notifyChange(state);
+      enterInputMode(state, hole.id);
+      state.mode = 'string';
+      state.inputBuffer = node.value;
+      state.inputCursor = node.value.length;
+    } else {
+      const hole = makeNode(state, 'hole', {});
+      state.replaceOriginal = { nodeSnapshot: JSON.parse(JSON.stringify(node)), parentId: state.parentMap.get(node.id)?.id };
+      pushUndo(state);
+      replaceNode(state, node.id, hole);
+      notifyChange(state);
+      if (e.key === '"') { enterInputMode(state, hole.id); state.mode = 'string'; }
+      else { enterInputMode(state, hole.id); state.inputBuffer = e.key; state.inputCursor = 1; }
+    }
+    rerender(state, itemNames, api, statusBar);
   } else {
     handled = false;
   }
@@ -2367,9 +2488,6 @@ function handleInputKey(e, ctx) {
       return true;
     }
   }
-
-  const isTypable = e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey;
-  const TYPABLE_CHARS = /^[a-zA-Z0-9\-_?!+*=<>\/.:@$]$/;
 
   if (e.key === 'Escape') {
     // Cancel: restore or remove hole
@@ -2419,18 +2537,7 @@ function handleInputKey(e, ctx) {
     }
     // If empty buffer, no-op
   } else if (e.key === 'Backspace') {
-    if (state.inputSelectAll) {
-      state.inputBuffer = '';
-      state.inputCursor = 0;
-      state.inputSelectAll = false;
-      updateHoleDisplay(state);
-      updateAutocomplete(state, ctx);
-    } else if (state.inputCursor > 0) {
-      state.inputBuffer = state.inputBuffer.slice(0, state.inputCursor - 1) + state.inputBuffer.slice(state.inputCursor);
-      state.inputCursor--;
-      updateHoleDisplay(state);
-      updateAutocomplete(state, ctx);
-    } else if (!state.inputBuffer) {
+    if (!state.inputBuffer) {
       // Empty buffer: remove hole, exit to nav
       const holeId = state.inputHoleId;
       state.selectedId = holeId;
@@ -2448,6 +2555,8 @@ function handleInputKey(e, ctx) {
         exitToNav(state, state.selectedId);
       }
       rerender(state, itemNames, api, statusBar);
+    } else {
+      handled = false; // non-empty: native input handles deletion
     }
   } else if (e.key === '(' || e.key === '[' || e.key === '{') {
     // Commit buffer if non-empty, then create container with inner hole
@@ -2504,10 +2613,10 @@ function handleInputKey(e, ctx) {
     rerender(state, itemNames, api, statusBar);
   } else if (e.key === '"') {
     if (!state.inputBuffer) {
-      // Enter string mode
+      // Enter string mode — rerender so span gets hob-string class for quote pseudo-elements
       state.mode = 'string';
       state.inputBuffer = '';
-      updateHoleDisplay(state);
+      rerender(state, itemNames, api, statusBar);
       updateStringAutocomplete(state, ctx);
     } else {
       // Commit current, then create new hole in string mode
@@ -2553,32 +2662,6 @@ function handleInputKey(e, ctx) {
       exitToNav(state, state.selectedId);
     }
     rerender(state, itemNames, api, statusBar);
-  } else if (e.key === 'ArrowLeft' && !e.ctrlKey && !e.metaKey) {
-    if (state.inputSelectAll) {
-      state.inputCursor = 0;
-      state.inputSelectAll = false;
-      updateHoleDisplay(state);
-    } else if (state.inputCursor > 0) {
-      state.inputCursor--;
-      updateHoleDisplay(state);
-    }
-  } else if (e.key === 'ArrowRight' && !e.ctrlKey && !e.metaKey) {
-    if (state.inputSelectAll) {
-      state.inputCursor = state.inputBuffer.length;
-      state.inputSelectAll = false;
-      updateHoleDisplay(state);
-    } else if (state.inputCursor < state.inputBuffer.length) {
-      state.inputCursor++;
-      updateHoleDisplay(state);
-    }
-  } else if (e.key === 'Home') {
-    state.inputCursor = 0;
-    state.inputSelectAll = false;
-    updateHoleDisplay(state);
-  } else if (e.key === 'End') {
-    state.inputCursor = state.inputBuffer.length;
-    state.inputSelectAll = false;
-    updateHoleDisplay(state);
   } else if (e.key === 'v' && (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && _clipboard !== null) {
     // Structural paste from internal clipboard
     const holeId = state.inputHoleId;
@@ -2596,17 +2679,6 @@ function handleInputKey(e, ctx) {
         replaceNode(state, holeId, pasted);
       }
     });
-  } else if (isTypable && TYPABLE_CHARS.test(e.key)) {
-    if (state.inputSelectAll) {
-      state.inputBuffer = e.key;
-      state.inputCursor = 1;
-      state.inputSelectAll = false;
-    } else {
-      state.inputBuffer = state.inputBuffer.slice(0, state.inputCursor) + e.key + state.inputBuffer.slice(state.inputCursor);
-      state.inputCursor++;
-    }
-    updateHoleDisplay(state);
-    updateAutocomplete(state, ctx);
   } else {
     handled = false;
   }
@@ -2654,6 +2726,18 @@ function handleStringKey(e, ctx) {
       exitToNav(state, state.selectedId);
     }
     rerender(state, itemNames, api, statusBar);
+  } else if (e.key === 'Backspace' && !state.inputBuffer) {
+    // Buffer already empty — delete the hole/node (mirrors handleInputKey Backspace behaviour).
+    const holeId = state.inputHoleId;
+    state.selectedId = holeId;
+    pushUndo(state);
+    deleteSelected(state);
+    notifyChange(state);
+    state.replaceOriginal = null;
+    exitToNav(state, state.selectedId);
+    rerender(state, itemNames, api, statusBar);
+  } else if (e.key === 'Backspace') {
+    handled = false; // non-empty buffer: native <input> handles character deletion
   } else if (e.key === '"' && !e.shiftKey) {
     // Commit string
     const strNode = makeNode(state, 'string', { value: state.inputBuffer });
@@ -2662,24 +2746,8 @@ function handleStringKey(e, ctx) {
     notifyChange(state);
     exitToNav(state, strNode.id);
     rerender(state, itemNames, api, statusBar);
-  } else if (e.key === 'Backspace') {
-    if (state.inputCursor > 0) {
-      state.inputBuffer = state.inputBuffer.slice(0, state.inputCursor - 1) + state.inputBuffer.slice(state.inputCursor);
-      state.inputCursor--;
-      updateHoleDisplay(state);
-      updateStringAutocomplete(state, ctx);
-    }
-    // Don't delete hole on empty backspace in string mode — stay in mode
-  } else if (e.key === 'ArrowLeft' && !e.ctrlKey && !e.metaKey) {
-    if (state.inputCursor > 0) { state.inputCursor--; updateHoleDisplay(state); }
-  } else if (e.key === 'ArrowRight' && !e.ctrlKey && !e.metaKey) {
-    if (state.inputCursor < state.inputBuffer.length) { state.inputCursor++; updateHoleDisplay(state); }
-  } else if (e.key === 'Home') {
-    state.inputCursor = 0; updateHoleDisplay(state);
-  } else if (e.key === 'End') {
-    state.inputCursor = state.inputBuffer.length; updateHoleDisplay(state);
-  } else if (e.key === 'Enter' && !e.shiftKey) {
-    // Commit string and exit to nav
+  } else if (e.key === 'Enter') {
+    // Commit string and exit to nav (<input> is single-line, so Shift+Enter also commits)
     const strNode = makeNode(state, 'string', { value: state.inputBuffer });
     pushUndo(state);
     replaceNode(state, state.inputHoleId, strNode);
@@ -2687,16 +2755,6 @@ function handleStringKey(e, ctx) {
     state.replaceOriginal = null;
     exitToNav(state, strNode.id);
     rerender(state, itemNames, api, statusBar);
-  } else if (e.key === 'Enter' && e.shiftKey) {
-    state.inputBuffer = state.inputBuffer.slice(0, state.inputCursor) + '\n' + state.inputBuffer.slice(state.inputCursor);
-    state.inputCursor++;
-    updateHoleDisplay(state);
-  } else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
-    // Any printable char
-    state.inputBuffer = state.inputBuffer.slice(0, state.inputCursor) + e.key + state.inputBuffer.slice(state.inputCursor);
-    state.inputCursor++;
-    updateHoleDisplay(state);
-    updateStringAutocomplete(state, ctx);
   } else {
     handled = false;
   }
@@ -2705,7 +2763,7 @@ function handleStringKey(e, ctx) {
 }
 
 function handleKey(e, ctx) {
-  const { state, statusBar } = ctx;
+  const { state, statusBar, itemNames, api } = ctx;
 
   // Help overlay is modal — swallow all keys; Ctrl+/ and Escape dismiss it
   if (state.helpVisible) {
@@ -2717,6 +2775,34 @@ function handleKey(e, ctx) {
 
   // In doc mode, let the prose editor handle all keys (Escape handled by doc's own listener)
   if (state.mode === 'doc') return;
+
+  // Ctrl/Cmd+Enter — commit any in-progress edit then submit, from any mode
+  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !e.shiftKey && state.onSubmit) {
+    if (state.mode === 'input') {
+      if (state.inputBuffer) {
+        commitToken(state, itemNames, api, statusBar);
+      } else {
+        state.selectedId = state.inputHoleId;
+        pushUndo(state);
+        deleteSelected(state);
+        notifyChange(state);
+      }
+      exitToNav(state, state.selectedId);
+      rerender(state, itemNames, api, statusBar);
+    } else if (state.mode === 'string') {
+      const strNode = makeNode(state, 'string', { value: state.inputBuffer });
+      pushUndo(state);
+      replaceNode(state, state.inputHoleId, strNode);
+      notifyChange(state);
+      exitToNav(state, strNode.id);
+      rerender(state, itemNames, api, statusBar);
+    }
+    const root = state.nodeMap.get(0);
+    if (root) state.onSubmit(deflateAll(root));
+    e.preventDefault();
+    e.stopPropagation();
+    return;
+  }
 
   let handled;
   if (state.mode === 'string') {
@@ -2803,11 +2889,27 @@ function handleClick(e, ctx) {
     }
   }
 
-  // If in input/string mode, commit or cancel before handling click
+  // If in input/string mode and the user tapped the active hole, just focus
+  // the native <input> — this is a user gesture so the mobile keyboard appears.
+  if (state.mode !== 'nav' && id === state.inputHoleId) {
+    const inp = state.domMap.get(id)?.querySelector?.('.hob-hole-input');
+    if (inp) { inp.focus(); return; }
+  }
+  // Otherwise commit or cancel before handling click
   if (state.mode !== 'nav') commitOrCancelInput(state, itemNames, api, statusBar);
 
   // Now handle the click target (re-check in case node was removed)
   if (!state.nodeMap.has(id)) return;
+
+  // Second click/tap on already-selected node → enter edit mode.
+  // Handles mobile tap-to-edit (tap once to select, tap again to edit)
+  // and desktop slow double-click. The dblclick event that follows a fast
+  // double-click is handled by handleDoubleClick, which bails if mode != nav.
+  if (state.selectedId === id && state.mode === 'nav' && state.onChange) {
+    handleDoubleClick(e, ctx);
+    return;
+  }
+
   state.selectedId = id;
   state.selectionAnchorId = null;
   state.expansionStack = [];
@@ -2819,8 +2921,9 @@ function handleDoubleClick(e, ctx) {
   const { state, statusBar, itemNames, api } = ctx;
   if (!state.onChange) return;
 
-  // Commit/cancel any active input mode
-  if (state.mode !== 'nav') commitOrCancelInput(state, itemNames, api, statusBar);
+  // If already in edit mode (e.g. entered via handleClick on second tap/click),
+  // do nothing — avoids double-entry when dblclick fires after click(2).
+  if (state.mode !== 'nav') return;
 
   const target = e.target.closest('[data-node-id]');
   if (!target) return;
@@ -2847,13 +2950,22 @@ function handleDoubleClick(e, ctx) {
       updateStatusBar(state, statusBar);
     }
   } else if (node.children) {
-    // Container → append child hole, enter input mode
-    const hole = makeNode(state, 'hole', {});
-    applyMutation(state, itemNames, api, statusBar, () => appendChild(state, node.id, hole));
-    enterInputMode(state, hole.id);
-    rerender(state, itemNames, api, statusBar);
-    updateSelectionVisual(state);
-    updateStatusBar(state, statusBar);
+    if (isUnaryMinus(node)) {
+      // Subtracted term in infix expression — navigate to the argument rather than appending a hole
+      state.selectedId = node.children[1].id;
+      state.selectionAnchorId = null;
+      state.expansionStack = [];
+      updateSelectionVisual(state);
+      updateStatusBar(state, statusBar);
+    } else {
+      // Container → append child hole, enter input mode
+      const hole = makeNode(state, 'hole', {});
+      applyMutation(state, itemNames, api, statusBar, () => appendChild(state, node.id, hole));
+      enterInputMode(state, hole.id);
+      rerender(state, itemNames, api, statusBar);
+      updateSelectionVisual(state);
+      updateStatusBar(state, statusBar);
+    }
   } else {
     // Leaf → replace mode
     const hole = makeNode(state, 'hole', {});
@@ -3035,9 +3147,24 @@ export async function render(value, options, api) {
   // Inflate AST
   const { root, nodeMap, parentMap } = inflateAll(value);
 
+  // On touch devices pre-select the first string (or hole) leaf so one tap enters edit mode.
+  // On desktop keep the top-level form selected (nav with keyboard is the norm there).
+  const _isTouch = window.matchMedia?.('(pointer: coarse)').matches || ('ontouchstart' in window);
+  let _initialSelectedId = root.children[0]?.id || null;
+  if (_isTouch) {
+    for (const n of nodeMap.values()) {
+      if (n.type === 'string') { _initialSelectedId = n.id; break; }
+    }
+    if (_initialSelectedId === (root.children[0]?.id || null)) {
+      for (const n of nodeMap.values()) {
+        if (n.type === 'hole') { _initialSelectedId = n.id; break; }
+      }
+    }
+  }
+
   // Build state
   const state = {
-    selectedId: root.children[0]?.id || null,
+    selectedId: _initialSelectedId,
     selectionAnchorId: null,
     expansionStack: [],
     nodeMap,
@@ -3045,6 +3172,8 @@ export async function render(value, options, api) {
     domMap: new Map(),
     editorEl: null,
     onChange: options.onChange || null,
+    onSubmit: options.onSubmit || null,
+    compact: options.compact || false,
     mode: 'nav',
     inputBuffer: '',
     inputCursor: 0,
@@ -3089,9 +3218,11 @@ export async function render(value, options, api) {
 
   // Wrapper
   const wrapper = api.createElement('div');
-  wrapper.style.cssText = 'display: flex; flex-direction: column; border: 1px solid var(--color-border); border-radius: var(--border-radius); min-height: 200px; position: relative;';
+  wrapper.style.cssText = options.compact
+    ? 'display: flex; flex-direction: column; border: 1px solid var(--color-border); border-radius: var(--border-radius); position: relative;'
+    : 'display: flex; flex-direction: column; border: 1px solid var(--color-border); border-radius: var(--border-radius); min-height: 200px; position: relative;';
   wrapper.appendChild(editorEl);
-  wrapper.appendChild(statusBar);
+  if (!options.compact) wrapper.appendChild(statusBar);
 
   // Event context (shared by key and click handlers)
   const ctx = { state, statusBar, itemNames, api, wrapper };
@@ -3149,6 +3280,57 @@ export async function render(value, options, api) {
   updateSelectionVisual(state);
   updateStatusBar(state, statusBar);
 
+  // Auto-focus: enter edit mode on first empty string or hole.
+  // On touch devices, only select the node — the keyboard can only be shown
+  // from a direct user gesture, so we wait for the user to tap it (which will
+  // enter string mode via handleDoubleClick and focus within the gesture).
+  if (options.autoFocus && state.onChange) {
+    const isTouch = window.matchMedia?.('(pointer: coarse)').matches || ('ontouchstart' in window);
+    let autoFocusNode = null;
+    if (isTouch) {
+      // On touch: any string (including non-empty from saved AST) or first hole
+      for (const n of state.nodeMap.values()) {
+        if (n.type === 'string') { autoFocusNode = n; break; }
+        if (n.type === 'hole' && !autoFocusNode) autoFocusNode = n;
+      }
+    } else {
+      // On desktop: only enter edit mode for empty strings or holes
+      for (const n of state.nodeMap.values()) {
+        if (n.type === 'string' && n.value === '') { autoFocusNode = n; break; }
+        if (n.type === 'hole' && !autoFocusNode) autoFocusNode = n;
+      }
+    }
+    if (autoFocusNode) {
+      if (isTouch) {
+        // Select the node so one tap enters edit mode (tap-to-edit-on-selected)
+        state.selectedId = autoFocusNode.id;
+        updateSelectionVisual(state);
+        updateStatusBar(state, statusBar);
+      } else {
+        if (autoFocusNode.type === 'string') {
+          const hole = makeNode(state, 'hole', {});
+          state.replaceOriginal = { nodeSnapshot: JSON.parse(JSON.stringify(autoFocusNode)), parentId: state.parentMap.get(autoFocusNode.id)?.id };
+          replaceNode(state, autoFocusNode.id, hole);
+          enterInputMode(state, hole.id);
+          state.mode = 'string';
+          state.inputBuffer = autoFocusNode.value;
+          state.inputCursor = autoFocusNode.value.length;
+        } else {
+          enterInputMode(state, autoFocusNode.id);
+        }
+        rerender(state, itemNames, api, statusBar);
+        let _focusAttempts = 0;
+        const tryFocus = () => {
+          if (editorEl.isConnected) {
+            const inp = editorEl.querySelector('.hob-hole-input');
+            (inp || editorEl).focus();
+          } else if (++_focusAttempts < 10) { requestAnimationFrame(tryFocus); }
+        };
+        requestAnimationFrame(tryFocus);
+      }
+    }
+  }
+
   // Deferred scroll — element may not be in the DOM yet when render() returns.
   // When opened as a new canvas sibling, the window/scroll container may take
   // multiple frames to mount, so retry until the element is actually in the document.
@@ -3182,6 +3364,31 @@ export async function render(value, options, api) {
   // Cleanup
   wrapper.setAttribute('data-hobson-cleanup', '');
   wrapper.__hobsonCleanup = () => { hideAutocomplete(state); hideHelp(state); };
+
+  // Public submit: commit any in-progress edit then call onSubmit — mirrors Ctrl+Enter
+  wrapper.hobSubmit = () => {
+    if (state.mode === 'string') {
+      const strNode = makeNode(state, 'string', { value: state.inputBuffer });
+      pushUndo(state);
+      replaceNode(state, state.inputHoleId, strNode);
+      notifyChange(state);
+      exitToNav(state, strNode.id);
+      rerender(state, itemNames, api, statusBar);
+    } else if (state.mode === 'input') {
+      if (state.inputBuffer) {
+        commitToken(state, itemNames, api, statusBar);
+      } else {
+        state.selectedId = state.inputHoleId;
+        pushUndo(state);
+        deleteSelected(state);
+        notifyChange(state);
+      }
+      exitToNav(state, state.selectedId);
+      rerender(state, itemNames, api, statusBar);
+    }
+    const root = state.nodeMap.get(0);
+    if (root && state.onSubmit) state.onSubmit(deflateAll(root));
+  };
 
   return wrapper;
 }

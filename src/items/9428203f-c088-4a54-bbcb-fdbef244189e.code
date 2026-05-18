@@ -1,82 +1,98 @@
 (defn render [item api]
   (def search item)
-  (def currentQuery (get-in search [:content :currentQuery]))
   (def target-container (get-in search [:content :target_container]))
   (def attachments (or (:attachments search) []))
   (def starred-ids (or (get-in search [:content :starredIds]) []))
   (def recent-ids (or (get-in search [:content :recentIds]) []))
   (def default-view-id "d4e5f6a7-b8c9-4d0e-a1b2-c3d4e5f6a7b8")
-  (def is-default (or (nil? currentQuery) (= currentQuery "")))
+  (def saved-ast (get-in search [:content :currentAst]))
+  (def is-default (nil? saved-ast))
+  (def default-ast (parse-hob! "(text? \"\")"))
+  (def pending-ast (atom (or saved-ast default-ast)))
+  (def is-modal (= (get-parent-id) "88888888-0000-0000-0000-000000000000"))
+
+  (def error-div (js/document.createElement "div"))
+  (dom-set! (dom-get error-div :style) :cssText "display: none; margin-bottom: 16px; padding: 10px 14px; border: 1px solid var(--color-error, #c00); border-radius: var(--border-radius); color: var(--color-error, #c00); font-family: monospace; font-size: 0.875rem; white-space: pre-wrap;")
+
+  (defn do-submit [ast]
+    (dom-set! error-div :textContent "")
+    (dom-set! (dom-get error-div :style) :display "none")
+    (try
+      (let [matches (eval-search-ast! ast)
+            new-atts (vec (map (fn [m] {:id (:id m)}) matches))
+            fresh (get-item (:id item))]
+        (set-item!
+          (->
+            fresh
+            (assoc :attachments new-atts)
+            (assoc-in [:content :currentAst] ast)
+            (assoc :modified (now)))))
+      (catch e
+        (dom-set! error-div :textContent (str e))
+        (dom-set! (dom-get error-div :style) :display "block"))))
+
+  (def struct-ed (require "field-view-hob-structural"))
+  (def editor-el
+    (let [el (.render struct-ed
+      (deref pending-ast)
+      {:compact true
+       :autoFocus is-modal
+       :onChange (fn [new-ast] (reset! pending-ast new-ast))
+       :onSubmit do-submit}
+      api)]
+      (dom-set! el :id (str "search-editor-" (:id item)))
+      (.setAttribute el "data-morphdom-skip" "")
+      el))
+
   (defn render-group [ids]
     (for [id ids]
       [:render-child {:item id
                       :view default-view-id
                       :open-in (or target-container (get-parent-id))
                       :data-sort-key id}]))
-  (defn do-search [query]
-    (let [options (if target-container {:targetContainer target-container} {})
-          matches (if
-                    (or (nil? query) (= query ""))
-                    []
-                    (search-items! query options))
-          new-atts (vec (map (fn [m] {:id (:id m)}) matches))]
-      (set-item!
-        (->
-          search
-          (assoc :attachments new-atts)
-          (assoc-in [:content :currentQuery] query)
-          (assoc :modified (now))))))
+
   [:div.item-search-view {:style "width: 100%; max-width: 800px; margin: 0 auto; padding: 20px; box-sizing: border-box;"}
 
     [:div {:style "margin-bottom: 20px; padding-bottom: 15px; border-bottom: 2px solid var(--color-border-light);"}
-
       [:h2 {:style "margin: 0; font-size: 1.25rem;"}
         (or (:name search) "Search")]]
-    [:div {:style "margin-bottom: 20px;"}
-      [:input {:type "text"
-               :placeholder "text, name|type|tag:..., or (hob). Press Enter."
-               :value (or currentQuery "")
-               :autofocus true
-               :style "width: 100%; padding: 12px 16px; font-size: 1rem; border: 2px solid var(--color-border); border-radius: 8px; outline: none; transition: border-color 0.2s; box-sizing: border-box;"
-               :on-keydown (fn [e]
-                             (when
-                               (= (:key e) "Enter")
-                               (do-search (:value (:target e)))))}]]
+
+    [:div {:style "display: flex; align-items: center; gap: 8px; margin-bottom: 4px;"}
+      [:div {:style "flex: 1; min-width: 0;"}
+        editor-el]
+      [:button
+        {:style "padding: 6px 14px; background: var(--color-primary); color: white; border: none; border-radius: var(--border-radius); cursor: pointer; font-size: 0.875rem; white-space: nowrap; flex-shrink: 0;"
+         :on-click (fn [_] (.hobSubmit editor-el))}
+        "Search"]]
+
+    [:div {:style "margin-bottom: 16px; font-size: 0.75rem; color: var(--color-text-secondary);"}
+      "Ctrl+Enter or tap Search  ·  e.g. (type? \"note\")  (tagged? \"todo\")  (sort :modified)"]
+
+    error-div
+
     (if
       is-default
       [:div
-        (when
-          (seq recent-ids)
+        (when (seq recent-ids)
           [:details {:open true :style "margin-bottom: 12px;"}
             [:summary {:style "font-size: 0.875rem; color: var(--color-text-secondary); font-weight: 500; cursor: pointer; padding: 4px 0; margin-bottom: 8px;"}
-
               "Recent"]
             (render-group recent-ids)])
-        (when
-          (seq starred-ids)
+        (when (seq starred-ids)
           [:details {:open true :style "margin-bottom: 12px;"}
             [:summary {:style "font-size: 0.875rem; color: var(--color-text-secondary); font-weight: 500; cursor: pointer; list-style: none; padding: 4px 0; margin-bottom: 8px;"}
-
               "★ Starred"]
             (render-group starred-ids)])
-        (when
-          (and (empty? starred-ids) (empty? recent-ids))
+        (when (and (empty? starred-ids) (empty? recent-ids))
           [:div {:style "padding: 40px; text-align: center; color: var(--color-border-dark); font-style: italic;"}
-
-            "Type to search, press Enter"])]
+            "Tap Search or press Ctrl+Enter to run the query"])]
       (if
         (empty? attachments)
         [:div {:style "text-align: center; padding: 40px;"}
-          [:div {:style "color: var(--color-text-secondary);"}
-            (str "No items found matching \"" currentQuery "\"")]]
+          [:div {:style "color: var(--color-text-secondary);"} "No items found"]]
         [:div
           [:div {:style "margin-bottom: 15px; font-size: 0.875rem; color: var(--color-text-secondary); font-weight: 500;"}
-
-            (str
-              "Found "
-              (count attachments)
-              " item"
-              (if (= (count attachments) 1) "" "s"))]
+            (str "Found " (count attachments) " item" (if (= (count attachments) 1) "" "s"))]
           (for [att attachments]
             (let [child-id (if (map? att) (:id att) att)
                   view-id (or (get-in att [:view :type]) default-view-id)]
