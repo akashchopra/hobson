@@ -995,14 +995,16 @@ function appendHiccupChild(parent, child, sourceCtx, _refs) {
 // ============================================================
 
 function setupSortable(el) {
-  function startDrag(clientY, target, preventDefault) {
+  el.addEventListener('pointerdown', (e) => {
     const config = el.__hobSortable;
     if (!config) return;
     const handleSelector = config.handle || '.drag-handle';
-    const handle = target.closest(handleSelector);
+    const handle = e.target.closest(handleSelector);
     if (!handle || !el.contains(handle)) return;
 
-    preventDefault();
+    e.preventDefault();
+    handle.setPointerCapture(e.pointerId);
+
     const items = Array.from(el.querySelectorAll(':scope > [data-item-id]'));
     const draggedItem = handle.closest('[data-item-id]');
     const draggedIndex = items.indexOf(draggedItem);
@@ -1019,10 +1021,7 @@ function setupSortable(el) {
       for (let i = 0; i < items.length; i++) {
         if (items[i] === draggedItem) continue;
         const rect = items[i].getBoundingClientRect();
-        if (y < rect.top + rect.height / 2) {
-          targetIndex = i;
-          break;
-        }
+        if (y < rect.top + rect.height / 2) { targetIndex = i; break; }
       }
       if (targetIndex < items.length) {
         el.insertBefore(indicator, items[targetIndex]);
@@ -1031,55 +1030,36 @@ function setupSortable(el) {
       }
     }
 
-    function finishDrag(y) {
+    function cleanup(y) {
+      handle.removeEventListener('pointermove', onMove);
+      handle.removeEventListener('pointerup', onUp);
+      handle.removeEventListener('pointercancel', onCancel);
       draggedItem.style.opacity = '';
       handle.style.cursor = '';
       if (indicator.parentNode) indicator.remove();
 
-      let newIndex = items.length;
-      for (let i = 0; i < items.length; i++) {
-        if (items[i] === draggedItem) continue;
-        const rect = items[i].getBoundingClientRect();
-        if (y < rect.top + rect.height / 2) {
-          newIndex = i;
-          break;
+      if (y !== null) {
+        let newIndex = items.length;
+        for (let i = 0; i < items.length; i++) {
+          if (items[i] === draggedItem) continue;
+          const rect = items[i].getBoundingClientRect();
+          if (y < rect.top + rect.height / 2) { newIndex = i; break; }
+        }
+        if (newIndex > draggedIndex) newIndex--;
+        if (newIndex !== draggedIndex && config['on-reorder']) {
+          config['on-reorder'](draggedIndex, newIndex);
         }
       }
-      if (newIndex > draggedIndex) newIndex--;
-
-      if (newIndex !== draggedIndex && config['on-reorder']) {
-        config['on-reorder'](draggedIndex, newIndex);
-      }
     }
 
-    const onMouseMove = (moveE) => updateIndicator(moveE.clientY);
-    const onMouseUp = (upE) => {
-      document.removeEventListener('mousemove', onMouseMove);
-      document.removeEventListener('mouseup', onMouseUp);
-      finishDrag(upE.clientY);
-    };
+    const onMove = (e) => updateIndicator(e.clientY);
+    const onUp = (e) => cleanup(e.clientY);
+    const onCancel = () => cleanup(null);
 
-    const onTouchMove = (moveE) => {
-      moveE.preventDefault();
-      updateIndicator(moveE.touches[0].clientY);
-    };
-    const onTouchEnd = (upE) => {
-      document.removeEventListener('touchmove', onTouchMove);
-      document.removeEventListener('touchend', onTouchEnd);
-      finishDrag(upE.changedTouches[0].clientY);
-    };
-
-    if (clientY === 'mouse') {
-      document.addEventListener('mousemove', onMouseMove);
-      document.addEventListener('mouseup', onMouseUp);
-    } else {
-      document.addEventListener('touchmove', onTouchMove, { passive: false });
-      document.addEventListener('touchend', onTouchEnd);
-    }
-  }
-
-  el.addEventListener('mousedown', (e) => startDrag('mouse', e.target, () => e.preventDefault()));
-  el.addEventListener('touchstart', (e) => startDrag(e.touches[0].clientY, e.target, () => e.preventDefault()), { passive: false });
+    handle.addEventListener('pointermove', onMove);
+    handle.addEventListener('pointerup', onUp);
+    handle.addEventListener('pointercancel', onCancel);
+  });
   el.__hobSortableSetup = true;
 }
 
