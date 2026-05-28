@@ -85,10 +85,13 @@ After dismissal the scheduler clears `content.hob` to `[]`, which evaluates to n
 (every :month 15 9 0)  ; every month on the 15th at 09:00
 ```
 
-**Yearly** (month day hour minute — month is 1-indexed):
+**Yearly** (named month, day, hour, minute):
 ```hob
-(every :year 5 15 9 0) ; every year on May 15th at 09:00
+(every :may 15 9 0)      ; every year on May 15th at 09:00
+(every :december 25 8 0) ; every year on Dec 25th at 08:00
 ```
+
+All 12 month keywords are supported: `:january` `:february` `:march` `:april` `:may` `:june` `:july` `:august` `:september` `:october` `:november` `:december`
 
 `every` computes the next occurrence of the given day/time from the current moment. It always returns a future timestamp.
 
