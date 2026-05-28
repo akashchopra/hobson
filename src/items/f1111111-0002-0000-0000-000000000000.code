@@ -40,21 +40,35 @@ export async function onKernelBootComplete({ safeMode, rootElement }, _api) {
   // Sync URL ↔ viewport item
   let urlRoot = getRoot();
   if (urlRoot) {
-    const viewport = await window.kernel.storage.get(activeViewportId);
-    const currentChild = viewport.attachments?.[0];
-    if (currentChild?.id !== urlRoot) {
-      await persistRootChange(urlRoot, currentChild?.id);
+    if (!await window.kernel.storage.exists(urlRoot)) {
+      const url = new URL(window.location);
+      url.searchParams.delete('root');
+      window.history.replaceState({}, '', url);
+      urlRoot = null;
+    } else {
+      const viewport = await window.kernel.storage.get(activeViewportId);
+      const currentChild = viewport.attachments?.[0];
+      if (currentChild?.id !== urlRoot) {
+        await persistRootChange(urlRoot, currentChild?.id);
+      }
     }
-  } else {
+  }
+  if (!urlRoot) {
     // No ?root= in URL (Tauri default, direct file load) — populate from stored state
     const viewport = await window.kernel.storage.get(activeViewportId);
     const storedRoot = viewport.attachments?.[0]?.id
       || (typeof viewport.attachments?.[0] === 'string' ? viewport.attachments[0] : null);
     if (storedRoot) {
-      const url = new URL(window.location);
-      url.searchParams.set('root', storedRoot);
-      window.history.replaceState({ itemId: storedRoot }, '', url);
-      urlRoot = storedRoot;
+      if (!await window.kernel.storage.exists(storedRoot)) {
+        viewport.attachments = [];
+        viewport.modified = Date.now();
+        await window.kernel.saveItem(viewport, { silent: true });
+      } else {
+        const url = new URL(window.location);
+        url.searchParams.set('root', storedRoot);
+        window.history.replaceState({ itemId: storedRoot }, '', url);
+        urlRoot = storedRoot;
+      }
     }
   }
 
