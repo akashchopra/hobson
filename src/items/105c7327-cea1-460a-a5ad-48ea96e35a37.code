@@ -1,5 +1,3 @@
-(def _mode-state (atom {}))
-
 (defn render [item api]
   (def doc (dom-get (hiccup->dom [:div]) :ownerDocument))
   (def win (dom-get doc :defaultView))
@@ -52,17 +50,14 @@
       (or hob-ast [])
       {:mode "editable" :onChange (fn [new-ast] (reset! pending-ast new-ast))}
       api))
-  (def current-mode (or (get (deref _mode-state) (:id item)) (if has-schedule :hob :date)))
   (def
     default-date-val
     (when
       display-time
       (let [d (js/Date. display-time) m (+ (.getMonth d) 1)]
         (str
-          (.getFullYear d)
-          "-"
-          (if (< m 10) (str "0" m) (str m))
-          "-"
+          (.getFullYear d) "-"
+          (if (< m 10) (str "0" m) (str m)) "-"
           (if (< (.getDate d) 10) (str "0" (.getDate d)) (str (.getDate d)))))))
   (def
     default-time-val
@@ -70,16 +65,22 @@
       display-time
       (let [d (js/Date. display-time) h (.getHours d) mn (.getMinutes d)]
         (str
-          (if (< h 10) (str "0" h) (str h))
-          ":"
+          (if (< h 10) (str "0" h) (str h)) ":"
           (if (< mn 10) (str "0" mn) (str mn))))))
+  ; Panel and tab IDs — scoped to item to support multiple open reminders
+  (def date-panel-id (str "rem-date-" (:id item)))
+  (def hob-panel-id (str "rem-hob-" (:id item)))
+  (def date-tab-id (str "rem-tab-date-" (:id item)))
+  (def hob-tab-id (str "rem-tab-hob-" (:id item)))
+  ; Tab button styles
+  (def date-tab-active "padding: 6px 16px; font-size: 0.8125rem; cursor: pointer; border: 1px solid var(--color-primary); border-radius: var(--border-radius) 0 0 var(--border-radius); background: var(--color-primary); color: white;")
+  (def date-tab-inactive "padding: 6px 16px; font-size: 0.8125rem; cursor: pointer; border: 1px solid var(--color-border); border-radius: var(--border-radius) 0 0 var(--border-radius); background: var(--color-bg-surface); color: var(--color-text-secondary);")
+  (def hob-tab-active "padding: 6px 16px; font-size: 0.8125rem; cursor: pointer; border: 1px solid var(--color-primary); border-left: none; border-radius: 0 var(--border-radius) var(--border-radius) 0; background: var(--color-primary); color: white;")
+  (def hob-tab-inactive "padding: 6px 16px; font-size: 0.8125rem; cursor: pointer; border: 1px solid var(--color-border); border-left: none; border-radius: 0 var(--border-radius) var(--border-radius) 0; background: var(--color-bg-surface); color: var(--color-text-secondary);")
   [:div {:style "max-width: 700px; margin: 0 auto; padding: 20px;"}
     name-el
     [:div {:style "margin: 16px 0; padding: 12px; background: var(--color-bg-surface); border-radius: var(--border-radius); border: 1px solid var(--color-border-light);"}
-
-      [:div {:style "font-size: 0.875rem; color: var(--color-text-secondary); margin-bottom: 4px;"}
-
-        "Next"]
+      [:div {:style "font-size: 0.875rem; color: var(--color-text-secondary); margin-bottom: 4px;"} "Next"]
       [:div {:style "font-size: 1.125rem; font-weight: 500;"}
         (if
           (number? display-time)
@@ -87,97 +88,87 @@
                            (<= display-time (now))
                            "color: var(--color-error, #e53e3e); font-weight: 600;"
                            "")}
-
             (format-date display-time)]
           (if has-schedule "Expression returned no time" "Not scheduled"))]]
     [:div {:style "display: flex; margin: 12px 0 0;"}
-      [:button {:style (str
-                         "padding: 6px 16px; font-size: 0.8125rem; border: 1px solid var(--color-border); cursor: pointer;"
-                         "border-radius: var(--border-radius) 0 0 var(--border-radius);"
-                         (if
-                           (= current-mode :date)
-                           " background: var(--color-primary); color: white; border-color: var(--color-primary);"
-                           " background: var(--color-bg-surface); color: var(--color-text-secondary);"))
-                :on-click (fn [e] (swap! _mode-state assoc (:id item) :date) (rerender!))}
+      [:button
+        {:id date-tab-id
+         :style (if has-schedule date-tab-inactive date-tab-active)
+         :on-click (fn [e]
+                     (let [dp (.getElementById doc date-panel-id)
+                           hp (.getElementById doc hob-panel-id)
+                           dt (.getElementById doc date-tab-id)
+                           ht (.getElementById doc hob-tab-id)]
+                       (dom-set! dp :style "display: block; margin: 8px 0 12px;")
+                       (dom-set! hp :style "display: none")
+                       (dom-set! dt :style date-tab-active)
+                       (dom-set! ht :style hob-tab-inactive)))}
         "Date & Time"]
-      [:button {:style (str
-                         "padding: 6px 16px; font-size: 0.8125rem; border: 1px solid var(--color-border); border-left: none; cursor: pointer;"
-                         "border-radius: 0 var(--border-radius) var(--border-radius) 0;"
-                         (if
-                           (= current-mode :hob)
-                           " background: var(--color-primary); color: white; border-color: var(--color-primary);"
-                           " background: var(--color-bg-surface); color: var(--color-text-secondary);"))
-                :on-click (fn [e] (swap! _mode-state assoc (:id item) :hob) (rerender!))}
+      [:button
+        {:id hob-tab-id
+         :style (if has-schedule hob-tab-active hob-tab-inactive)
+         :on-click (fn [e]
+                     (let [dp (.getElementById doc date-panel-id)
+                           hp (.getElementById doc hob-panel-id)
+                           dt (.getElementById doc date-tab-id)
+                           ht (.getElementById doc hob-tab-id)]
+                       (dom-set! dp :style "display: none")
+                       (dom-set! hp :style "display: block; margin: 8px 0 12px;")
+                       (dom-set! dt :style date-tab-inactive)
+                       (dom-set! ht :style hob-tab-active)))}
         "Expression"]]
-    (when
-      (= current-mode :date)
-      [:div {:style "margin: 8px 0 12px;"}
-        [:div {:style "display: flex; gap: 8px; align-items: center; flex-wrap: wrap;"}
-
-          [:input {:type "date"
-                   :id "reminder-date"
-                   :value (or default-date-val "")
-                   :style "padding: 8px; border: 1px solid var(--color-border); border-radius: var(--border-radius); background: var(--color-bg-surface); color: var(--color-text); font-size: 0.875rem;"}]
-          [:input {:type "time"
-                   :id "reminder-time"
-                   :value (or default-time-val "")
-                   :style "padding: 8px; border: 1px solid var(--color-border); border-radius: var(--border-radius); background: var(--color-bg-surface); color: var(--color-text); font-size: 0.875rem;"}]
-          [:button {:style "padding: 8px 16px; background: var(--color-primary); color: white; border: none; border-radius: var(--border-radius); cursor: pointer; font-size: 0.875rem;"
-                    :on-click (fn [e]
-                                (let [date-el (.getElementById
-                                                doc
-                                                "reminder-date")
-                                      time-el (.getElementById
-                                                doc
-                                                "reminder-time")
-                                      dv (when date-el (dom-get date-el :value))
-                                      tv (when time-el (dom-get time-el :value))
-                                      dt (when
-                                           (and dv (not= dv ""))
-                                           (str
-                                             dv
-                                             "T"
-                                             (if
-                                               (and tv (not= tv ""))
-                                               tv
-                                               "00:00")))
-                                      ts (when dt (js/Date.parse dt))]
-                                  (when
-                                    (and (number? ts) (> ts (now)))
-                                    (let [fresh (get-item (:id item))]
-                                      (set-item!
-                                        (->
-                                          fresh
-                                          (assoc-in
-                                            [:content :hob]
-                                            [["js/Date.parse" {:s dt}]])
-                                          (assoc :modified (now))))
-                                      (rerender!)))))}
-            "Set"]]])
-    (when
-      (= current-mode :hob)
-      [:div {:style "margin: 8px 0 12px;"}
-        editor-el
-        [:button {:style "margin-top: 8px; padding: 6px 16px; font-size: 0.8125rem; background: var(--color-primary); color: white; border: none; border-radius: var(--border-radius); cursor: pointer;"
+    [:div {:id date-panel-id
+           :style (if has-schedule "display: none" "display: block; margin: 8px 0 12px;")}
+      [:div {:style "display: flex; gap: 8px; align-items: center; flex-wrap: wrap;"}
+        [:input {:type "date"
+                 :id "reminder-date"
+                 :value (or default-date-val "")
+                 :style "padding: 8px; border: 1px solid var(--color-border); border-radius: var(--border-radius); background: var(--color-bg-surface); color: var(--color-text); font-size: 0.875rem;"}]
+        [:input {:type "time"
+                 :id "reminder-time"
+                 :value (or default-time-val "")
+                 :style "padding: 8px; border: 1px solid var(--color-border); border-radius: var(--border-radius); background: var(--color-bg-surface); color: var(--color-text); font-size: 0.875rem;"}]
+        [:button {:style "padding: 8px 16px; background: var(--color-primary); color: white; border: none; border-radius: var(--border-radius); cursor: pointer; font-size: 0.875rem;"
                   :on-click (fn [e]
-                              (when-let [ast (deref pending-ast)]
-                                (let [fresh (get-item (:id item))
-                                      updated (->
-                                                fresh
-                                                (assoc-in [:content :hob] ast)
-                                                (assoc :modified (now)))]
-                                  (set-item! updated)
-                                  (.scheduleOneFrom sched updated nil))
-                                (reset! pending-ast nil)
-                                (rerender!)))}
-          "Save Schedule"]])
+                              (let [date-el (.getElementById doc "reminder-date")
+                                    time-el (.getElementById doc "reminder-time")
+                                    dv (when date-el (dom-get date-el :value))
+                                    tv (when time-el (dom-get time-el :value))
+                                    dt (when
+                                         (and dv (not= dv ""))
+                                         (str dv "T" (if (and tv (not= tv "")) tv "00:00")))
+                                    ts (when dt (js/Date.parse dt))]
+                                (when
+                                  (and (number? ts) (> ts (now)))
+                                  (let [fresh (get-item (:id item))]
+                                    (set-item!
+                                      (->
+                                        fresh
+                                        (assoc-in [:content :hob] [["js/Date.parse" {:s dt}]])
+                                        (assoc :modified (now))))
+                                    (rerender!)))))}
+          "Set"]]]
+    [:div {:id hob-panel-id
+           :style (if has-schedule "display: block; margin: 8px 0 12px;" "display: none")}
+      editor-el
+      [:button {:style "margin-top: 8px; padding: 6px 16px; font-size: 0.8125rem; background: var(--color-primary); color: white; border: none; border-radius: var(--border-radius); cursor: pointer;"
+                :on-click (fn [e]
+                            (when-let [ast (deref pending-ast)]
+                              (let [fresh (get-item (:id item))
+                                    updated (->
+                                              fresh
+                                              (assoc-in [:content :hob] ast)
+                                              (assoc :modified (now)))]
+                                (set-item! updated)
+                                (.scheduleOneFrom sched updated nil))
+                              (reset! pending-ast nil)
+                              (rerender!)))}
+        "Save Schedule"]]
     (when
       target-item
       [:div {:style "margin: 12px 0; padding: 8px 12px; background: var(--color-bg-surface); border-radius: var(--border-radius); cursor: pointer; border: 1px solid var(--color-border-light);"
              :on-click (fn [e] (open-item! e target-id))}
-        [:span {:style "font-size: 0.75rem; color: var(--color-text-secondary);"}
-
-          "Target: "]
+        [:span {:style "font-size: 0.75rem; color: var(--color-text-secondary);"} "Target: "]
         [:span {:style "color: var(--color-primary);"}
           (or (:name target-item) (subs target-id 0 8))]])
     desc-el
@@ -186,17 +177,12 @@
       (let [snooze-presets [["15m" (* 15 60 1000)]
                             ["1h" (* 60 60 1000)]
                             ["3h" (* 3 60 60 1000)]
-                            ["1d" (* 24 60 60 1000)]]
-]
+                            ["1d" (* 24 60 60 1000)]]]
         [:div {:style "margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--color-border-light);"}
-
           [:div {:style "display: flex; gap: 8px; flex-wrap: wrap; align-items: center;"}
-
             [:button {:style "padding: 8px 20px; background: var(--color-primary); color: white; border: none; border-radius: var(--border-radius); cursor: pointer; font-size: 0.875rem;"
                       :on-click (fn [e]
-                                  (let [base-time (.getScheduledAt
-                                                    sched
-                                                    (:id item))
+                                  (let [base-time (.getScheduledAt sched (:id item))
                                         fresh (get-item (:id item))]
                                     (.scheduleOneFrom sched fresh base-time)
                                     (rerender!)))}
