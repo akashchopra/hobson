@@ -104,14 +104,17 @@ export async function scheduleOneFrom(item, baseTime) {
   if (!_interp || !_scheduleOne) return;
   let base = baseTime;
   const now = Date.now();
-  // Advance base until evalSchedule returns a future time.
-  // Bounded to 10 iterations (enough for any weekly recurrence pattern).
+  // Advance base one recurrence step at a time until we find a future slot.
+  // Bounded to 10 iterations as a guard against expression bugs. If iterations
+  // are exhausted with base still in the past, fall back to now so schedule-one!
+  // finds the next occurrence from the present rather than silently dropping the alarm.
   let iter = 0;
   while (base != null && base <= now && iter++ < 10) {
     const next = await evalSchedule(item, base);
     if (next == null || next > now) break;
     base = next;
   }
+  if (base != null && base <= now) base = null;
   try {
     if (base != null) {
       await _interp.eval(`(reset! eval-base-time ${base})`);
@@ -155,6 +158,14 @@ async function checkExactAlarmPermission(api) {
     await notif.requestScheduleExactAlarm();
   } catch (_) {}
 }
+
+
+
+
+
+
+
+
 
 ;;; --- Hob ---
 (def doc (dom-get (hiccup->dom [:div]) :ownerDocument))
@@ -278,16 +289,14 @@ async function checkExactAlarmPermission(api) {
                             (or pending-list []))]
           (doseq [r reminders]
             (let [id (get r :id) nid (notif-id-for id) p (get pending-map nid)]
+              (swap! notif-id-to-item-id assoc nid id)
               (when
                 p
                 (let [sched (dom-get p :schedule)
                       at (when sched (dom-get sched :at))
                       date-str (when at (dom-get at :date))
                       ts (when date-str (.getTime (js/Date. date-str)))]
-                  (when
-                    (number? ts)
-                    (swap! scheduled-at-map assoc id ts)
-                    (swap! notif-id-to-item-id assoc nid id)))))))
+                  (when (number? ts) (swap! scheduled-at-map assoc id ts)))))))
         (when
           (dom-get notif :onAction)
           (try
@@ -300,16 +309,19 @@ async function checkExactAlarmPermission(api) {
                                     (get (deref notif-id-to-item-id) nid))]
                   (when
                     reminder-id
-                    (dom-set!
-                      (dom-get win :location)
-                      :search
-                      (str "?root=" reminder-id))
-                    (let [all (get-all)
-                          reminder (first
-                                     (filter
-                                       (fn [r] (= (get r :id) reminder-id))
-                                       all))]
-                      (when reminder (schedule-one! reminder)))))))
+                    (let [kernel (dom-get win :kernel)
+                          vp-mgr (when
+                                   kernel
+                                   (.getCached
+                                     (dom-get kernel :moduleSystem)
+                                     "viewport-manager"))]
+                      (if
+                        vp-mgr
+                        (.navigate vp-mgr reminder-id)
+                        (dom-set!
+                          (dom-get win :location)
+                          :search
+                          (str "?root=" reminder-id))))))))
             (catch e nil)))))
     (.log
       (dom-get win :console)

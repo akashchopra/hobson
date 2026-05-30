@@ -3,7 +3,7 @@
   "name": "reminder-view",
   "type": "aaaaaaaa-0000-0000-0000-000000000000",
   "created": 1775632742718,
-  "modified": 1779956695172,
+  "modified": 1780158146001,
   "content": {
     "for_type": "521cb06c-2146-47f1-9375-1207bb6b5b27",
     "displayName": "Reminder",
@@ -1144,22 +1144,70 @@
                                       ],
                                       "dv",
                                       [
-                                        "when",
-                                        "date-el",
+                                        "let",
+                                        {
+                                          "v": [
+                                            "v",
+                                            [
+                                              "when",
+                                              "date-el",
+                                              [
+                                                "dom-get",
+                                                "date-el",
+                                                ":value"
+                                              ]
+                                            ]
+                                          ]
+                                        },
                                         [
-                                          "dom-get",
-                                          "date-el",
-                                          ":value"
+                                          "if",
+                                          [
+                                            "and",
+                                            "v",
+                                            [
+                                              "not=",
+                                              "v",
+                                              {
+                                                "s": ""
+                                              }
+                                            ]
+                                          ],
+                                          "v",
+                                          "default-date-val"
                                         ]
                                       ],
                                       "tv",
                                       [
-                                        "when",
-                                        "time-el",
+                                        "let",
+                                        {
+                                          "v": [
+                                            "v",
+                                            [
+                                              "when",
+                                              "time-el",
+                                              [
+                                                "dom-get",
+                                                "time-el",
+                                                ":value"
+                                              ]
+                                            ]
+                                          ]
+                                        },
                                         [
-                                          "dom-get",
-                                          "time-el",
-                                          ":value"
+                                          "if",
+                                          [
+                                            "and",
+                                            "v",
+                                            [
+                                              "not=",
+                                              "v",
+                                              {
+                                                "s": ""
+                                              }
+                                            ]
+                                          ],
+                                          "v",
+                                          "default-time-val"
                                         ]
                                       ],
                                       "dt",
@@ -1836,18 +1884,14 @@
       ]
     ],
     "_symbols": {
-      "_mode-state": {
-        "name": "_mode-state",
-        "kind": "variable",
-        "scope": null
-      },
       "render": {
         "name": "render",
         "kind": "function",
         "scope": null,
         "signature": "(item api)"
       }
-    }
+    },
+    "code": "(defn render [item api]\n  (def doc (dom-get (hiccup->dom [:div]) :ownerDocument))\n  (def win (dom-get doc :defaultView))\n  (def heading-mod (require \"field-view-heading\"))\n  (def\n    name-el\n    (.render\n      heading-mod\n      (:name item)\n      {:mode \"editable\"\n       :level 1\n       :onChange (fn [new-name]\n                   (let [fresh (get-item (:id item))]\n                     (set-item! (assoc fresh :name new-name :modified (now)))))}\n      api))\n  (def hob-ast (get-in item [:content :hob]))\n  (def has-schedule (and hob-ast (seq hob-ast)))\n  (def sched (js-require \"reminder-scheduler\"))\n  (def reminder-lib (require \"reminder-lib\"))\n  (def\n    next-time\n    (when has-schedule (try (eval-all hob-ast reminder-lib) (catch e nil))))\n  (def display-time (or (get-in item [:content :scheduledAt]) next-time))\n  (def desc (or (get-in item [:content :description]) [\":doc\"]))\n  (def\n    desc-el\n    (let [doc-mod (require \"field-view-doc-editable\")]\n      (.render\n        doc-mod\n        desc\n        {:mode \"editable\"\n         :label \"Notes\"\n         :onChange (fn [new-desc]\n                     (let [fresh (get-item (:id item))]\n                       (set-item!\n                         (->\n                           fresh\n                           (assoc-in [:content :description] new-desc)\n                           (assoc :modified (now))))))}\n        api)))\n  (def attachments (:attachments item))\n  (def target-id (when (seq attachments) (:id (first attachments))))\n  (def target-item (when target-id (get-item target-id)))\n  (def pending-ast (atom nil))\n  (def hob-editor-mod (require \"field-view-hob\"))\n  (def\n    editor-el\n    (.render\n      hob-editor-mod\n      (or hob-ast [])\n      {:mode \"editable\" :onChange (fn [new-ast] (reset! pending-ast new-ast))}\n      api))\n  (def\n    default-date-val\n    (when\n      display-time\n      (let [d (js/Date. display-time) m (+ (.getMonth d) 1)]\n        (str\n          (.getFullYear d)\n          \"-\"\n          (if (< m 10) (str \"0\" m) (str m))\n          \"-\"\n          (if (< (.getDate d) 10) (str \"0\" (.getDate d)) (str (.getDate d)))))))\n  (def\n    default-time-val\n    (when\n      display-time\n      (let [d (js/Date. display-time) h (.getHours d) mn (.getMinutes d)]\n        (str\n          (if (< h 10) (str \"0\" h) (str h))\n          \":\"\n          (if (< mn 10) (str \"0\" mn) (str mn))))))\n  (def date-panel-id (str \"rem-date-\" (:id item)))\n  (def hob-panel-id (str \"rem-hob-\" (:id item)))\n  (def date-tab-id (str \"rem-tab-date-\" (:id item)))\n  (def hob-tab-id (str \"rem-tab-hob-\" (:id item)))\n  (def\n    date-tab-active\n    \"padding: 6px 16px; font-size: 0.8125rem; cursor: pointer; border: 1px solid var(--color-primary); border-radius: var(--border-radius) 0 0 var(--border-radius); background: var(--color-primary); color: white;\")\n  (def\n    date-tab-inactive\n    \"padding: 6px 16px; font-size: 0.8125rem; cursor: pointer; border: 1px solid var(--color-border); border-radius: var(--border-radius) 0 0 var(--border-radius); background: var(--color-bg-surface); color: var(--color-text-secondary);\")\n  (def\n    hob-tab-active\n    \"padding: 6px 16px; font-size: 0.8125rem; cursor: pointer; border: 1px solid var(--color-primary); border-left: none; border-radius: 0 var(--border-radius) var(--border-radius) 0; background: var(--color-primary); color: white;\")\n  (def\n    hob-tab-inactive\n    \"padding: 6px 16px; font-size: 0.8125rem; cursor: pointer; border: 1px solid var(--color-border); border-left: none; border-radius: 0 var(--border-radius) var(--border-radius) 0; background: var(--color-bg-surface); color: var(--color-text-secondary);\")\n  [:div {:style \"max-width: 700px; margin: 0 auto; padding: 20px;\"}\n    name-el\n    [:div {:style \"margin: 16px 0; padding: 12px; background: var(--color-bg-surface); border-radius: var(--border-radius); border: 1px solid var(--color-border-light);\"}\n\n      [:div {:style \"font-size: 0.875rem; color: var(--color-text-secondary); margin-bottom: 4px;\"}\n\n        \"Next\"]\n      [:div {:style \"font-size: 1.125rem; font-weight: 500;\"}\n        (if\n          (number? display-time)\n          [:span {:style (if\n                           (<= display-time (now))\n                           \"color: var(--color-error, #e53e3e); font-weight: 600;\"\n                           \"\")}\n\n            (format-date display-time)]\n          (if has-schedule \"Expression returned no time\" \"Not scheduled\"))]]\n    [:div {:style \"display: flex; margin: 12px 0 0;\"}\n      [:button {:id date-tab-id\n                :style (if has-schedule date-tab-inactive date-tab-active)\n                :on-click (fn [e]\n                            (let [dp (.getElementById doc date-panel-id)\n                                  hp (.getElementById doc hob-panel-id)\n                                  dt (.getElementById doc date-tab-id)\n                                  ht (.getElementById doc hob-tab-id)]\n                              (dom-set!\n                                dp\n                                :style\n                                \"display: block; margin: 8px 0 12px;\")\n                              (dom-set! hp :style \"display: none\")\n                              (dom-set! dt :style date-tab-active)\n                              (dom-set! ht :style hob-tab-inactive)))}\n        \"Date & Time\"]\n      [:button {:id hob-tab-id\n                :style (if has-schedule hob-tab-active hob-tab-inactive)\n                :on-click (fn [e]\n                            (let [dp (.getElementById doc date-panel-id)\n                                  hp (.getElementById doc hob-panel-id)\n                                  dt (.getElementById doc date-tab-id)\n                                  ht (.getElementById doc hob-tab-id)]\n                              (dom-set! dp :style \"display: none\")\n                              (dom-set!\n                                hp\n                                :style\n                                \"display: block; margin: 8px 0 12px;\")\n                              (dom-set! dt :style date-tab-inactive)\n                              (dom-set! ht :style hob-tab-active)))}\n        \"Expression\"]]\n    [:div {:id date-panel-id\n           :style (if\n                    has-schedule\n                    \"display: none\"\n                    \"display: block; margin: 8px 0 12px;\")}\n      [:div {:style \"display: flex; gap: 8px; align-items: center; flex-wrap: wrap;\"}\n\n        [:input {:type \"date\"\n                 :id \"reminder-date\"\n                 :value (or default-date-val \"\")\n                 :style \"padding: 8px; border: 1px solid var(--color-border); border-radius: var(--border-radius); background: var(--color-bg-surface); color: var(--color-text); font-size: 0.875rem;\"}]\n        [:input {:type \"time\"\n                 :id \"reminder-time\"\n                 :value (or default-time-val \"\")\n                 :style \"padding: 8px; border: 1px solid var(--color-border); border-radius: var(--border-radius); background: var(--color-bg-surface); color: var(--color-text); font-size: 0.875rem;\"}]\n        [:button {:style \"padding: 8px 16px; background: var(--color-primary); color: white; border: none; border-radius: var(--border-radius); cursor: pointer; font-size: 0.875rem;\"\n                  :on-click (fn [e]\n                              (let [date-el (.getElementById\n                                              doc\n                                              \"reminder-date\")\n                                    time-el (.getElementById\n                                              doc\n                                              \"reminder-time\")\n                                    dv (let [v (when date-el (dom-get date-el :value))]\n                                         (if (and v (not= v \"\")) v default-date-val))\n                                    tv (let [v (when time-el (dom-get time-el :value))]\n                                         (if (and v (not= v \"\")) v default-time-val))\n                                    dt (when\n                                         (and dv (not= dv \"\"))\n                                         (str\n                                           dv\n                                           \"T\"\n                                           (if (and tv (not= tv \"\")) tv \"00:00\")))\n                                    ts (when dt (js/Date.parse dt))]\n                                (when\n                                  (and (number? ts) (> ts (now)))\n                                  (let [fresh (get-item (:id item))]\n                                    (set-item!\n                                      (->\n                                        fresh\n                                        (assoc-in\n                                          [:content :hob]\n                                          [[\"js/Date.parse\" {:s dt}]])\n                                        (assoc :modified (now))))\n                                    (rerender!)))))}\n          \"Set\"]]]\n    [:div {:id hob-panel-id\n           :style (if\n                    has-schedule\n                    \"display: block; margin: 8px 0 12px;\"\n                    \"display: none\")}\n      editor-el\n      [:button {:style \"margin-top: 8px; padding: 6px 16px; font-size: 0.8125rem; background: var(--color-primary); color: white; border: none; border-radius: var(--border-radius); cursor: pointer;\"\n                :on-click (fn [e]\n                            (when-let [ast (deref pending-ast)]\n                              (let [fresh (get-item (:id item))\n                                    updated (->\n                                              fresh\n                                              (assoc-in [:content :hob] ast)\n                                              (assoc :modified (now)))]\n                                (set-item! updated)\n                                (.scheduleOneFrom sched updated nil))\n                              (reset! pending-ast nil)\n                              (rerender!)))}\n        \"Save Schedule\"]]\n    (when\n      target-item\n      [:div {:style \"margin: 12px 0; padding: 8px 12px; background: var(--color-bg-surface); border-radius: var(--border-radius); cursor: pointer; border: 1px solid var(--color-border-light);\"\n             :on-click (fn [e] (open-item! e target-id))}\n        [:span {:style \"font-size: 0.75rem; color: var(--color-text-secondary);\"}\n\n          \"Target: \"]\n        [:span {:style \"color: var(--color-primary);\"}\n          (or (:name target-item) (subs target-id 0 8))]])\n    desc-el\n    (when\n      has-schedule\n      (let [snooze-presets [[\"15m\" (* 15 60 1000)]\n                            [\"1h\" (* 60 60 1000)]\n                            [\"3h\" (* 3 60 60 1000)]\n                            [\"1d\" (* 24 60 60 1000)]]\n]\n        [:div {:style \"margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--color-border-light);\"}\n\n          [:div {:style \"display: flex; gap: 8px; flex-wrap: wrap; align-items: center;\"}\n\n            [:button {:style \"padding: 8px 20px; background: var(--color-primary); color: white; border: none; border-radius: var(--border-radius); cursor: pointer; font-size: 0.875rem;\"\n                      :on-click (fn [e]\n                                  (let [base-time (.getScheduledAt\n                                                    sched\n                                                    (:id item))\n                                        fresh (get-item (:id item))]\n                                    (.scheduleOneFrom sched fresh base-time)\n                                    (rerender!)))}\n              \"Done\"]\n            (for [preset (seq snooze-presets)]\n              (let [label (first preset) ms (nth preset 1)]\n                [:button {:style \"padding: 8px 12px; background: var(--color-bg-surface); color: var(--color-text-secondary); border: 1px solid var(--color-border); border-radius: var(--border-radius); cursor: pointer; font-size: 0.8125rem;\"\n                          :on-click (fn [e]\n                                      (let [fresh (get-item (:id item))]\n                                        (.snooze sched fresh ms)\n                                        (rerender!)))}\n                  (str \"+\" label)]))\n            [:button {:style \"padding: 8px 16px; background: var(--color-bg-surface); color: var(--color-text-secondary); border: 1px solid var(--color-border); border-radius: var(--border-radius); cursor: pointer; font-size: 0.875rem;\"\n                      :on-click (fn [e]\n                                  (let [fresh (get-item (:id item))]\n                                    (set-item!\n                                      (->\n                                        fresh\n                                        (assoc-in [:content :hob] [])\n                                        (assoc :modified (now))))\n                                    (rerender!)))}\n              \"Dismiss\"]]]))])"
   },
   "attachments": []
 }
