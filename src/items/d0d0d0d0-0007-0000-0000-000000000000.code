@@ -3521,6 +3521,45 @@ export async function render(value, options, api) {
       if (transclusionSpan && editor.contains(transclusionSpan)) { showTransclusionPopover(transclusionSpan); return; }
     });
   }
+  // WebKitGTK (Tauri/Linux) intercepts Shift+Tab before any JS keydown fires,
+  // moving focus backward via the GTK focus ring. Detect this by watching for
+  // keyboard-driven backward focus transitions from list items inside the editor.
+  if (editable) {
+    let _prevFocusedPath = null;
+    let _lastPointerDown = 0;
+
+    const _ptrDown = () => {
+      if (!document.contains(editor)) {
+        document.removeEventListener('pointerdown', _ptrDown, true);
+        return;
+      }
+      _lastPointerDown = Date.now();
+    };
+    document.addEventListener('pointerdown', _ptrDown, true);
+
+    editor.addEventListener('focusout', (e) => {
+      const blockEl = e.target.closest?.('[data-block-path]');
+      _prevFocusedPath = blockEl?.dataset?.blockPath
+        ? parsePath(blockEl.dataset.blockPath) : null;
+    });
+
+    editor.addEventListener('focusin', (e) => {
+      if (Date.now() - _lastPointerDown < 200) return;
+      const prevPath = _prevFocusedPath;
+      _prevFocusedPath = null;
+      if (!prevPath) return;
+      const newBlockEl = e.target.closest?.('[data-block-path]');
+      if (!newBlockEl?.dataset?.blockPath) return;
+      const newPath = parsePath(newBlockEl.dataset.blockPath);
+      const listCtx = getListContext(prevPath);
+      if (!listCtx) return;
+      const prevIdx = editablePaths.findIndex(p => pathStr(p) === pathStr(prevPath));
+      const newIdx = editablePaths.findIndex(p => pathStr(p) === pathStr(newPath));
+      if (prevIdx < 0 || newIdx !== prevIdx - 1) return;
+      handleListOutdent(prevPath, listCtx);
+    });
+  }
+
   renderAllBlocks();
   wrapper.appendChild(editor);
   return wrapper;
