@@ -1,0 +1,268 @@
+export async function render(item, api) {
+  const container = api.createElement('div');
+  container.style.cssText = 'padding: 20px; max-width: 800px;';
+
+  const heading = api.createElement('h2');
+  heading.textContent = `Import from ${item.name}`;
+  heading.style.cssText = 'margin: 0 0 16px 0;';
+  container.appendChild(heading);
+
+  const controls = api.createElement('div');
+  controls.style.cssText = 'display: flex; align-items: center; gap: 12px; margin-bottom: 12px;';
+
+  const label = api.createElement('span');
+  label.textContent = 'Last';
+
+  const daysInput = api.createElement('input');
+  daysInput.type = 'number';
+  daysInput.value = '7';
+  daysInput.min = '1';
+  daysInput.style.cssText = 'width: 60px; padding: 6px 8px; border: 1px solid var(--color-border); border-radius: var(--border-radius);';
+
+  const label2 = api.createElement('span');
+  label2.textContent = 'days';
+
+  const fetchBtn = api.createElement('button');
+  fetchBtn.textContent = 'Fetch';
+  fetchBtn.style.cssText = 'padding: 6px 16px; background: var(--color-primary); color: white; border: none; border-radius: var(--border-radius); cursor: pointer;';
+
+  controls.appendChild(label);
+  controls.appendChild(daysInput);
+  controls.appendChild(label2);
+  controls.appendChild(fetchBtn);
+  container.appendChild(controls);
+
+  const folderRow = api.createElement('div');
+  folderRow.style.cssText = 'display: flex; align-items: center; gap: 8px; margin-bottom: 16px;';
+
+  const folderLabel = api.createElement('span');
+  folderLabel.textContent = 'Folder:';
+  folderLabel.style.cssText = 'white-space: nowrap;';
+
+  const folderInput = api.createElement('input');
+  folderInput.type = 'text';
+  folderInput.value = item.content.folder || 'INBOX';
+  folderInput.style.cssText = 'flex: 1; padding: 6px 8px; border: 1px solid var(--color-border); border-radius: var(--border-radius); font-family: monospace; font-size: 0.9em;';
+
+  const browseBtn = api.createElement('button');
+  browseBtn.textContent = 'Browse';
+  browseBtn.style.cssText = 'padding: 6px 12px; border: 1px solid var(--color-border); background: transparent; border-radius: var(--border-radius); cursor: pointer;';
+
+  folderRow.appendChild(folderLabel);
+  folderRow.appendChild(folderInput);
+  folderRow.appendChild(browseBtn);
+  container.appendChild(folderRow);
+
+  const folderList = api.createElement('div');
+  folderList.style.cssText = 'display: none; border: 1px solid var(--color-border); border-radius: var(--border-radius); margin-bottom: 12px; max-height: 200px; overflow-y: auto;';
+  container.appendChild(folderList);
+
+  browseBtn.onclick = async () => {
+    if (folderList.style.display === 'block') {
+      folderList.style.display = 'none';
+      return;
+    }
+    const tauri = window.__TAURI__;
+    if (!tauri) return;
+    browseBtn.disabled = true;
+    browseBtn.textContent = 'Loading...';
+    try {
+      const account = {
+        host: item.content.host,
+        port: item.content.port,
+        username: item.content.username,
+        password: item.content.password,
+        folder: folderInput.value || 'INBOX',
+      };
+      const folders = await tauri.core.invoke('list_folders', { account });
+      folderList.innerHTML = '';
+      folders.forEach(name => {
+        const row = api.createElement('div');
+        row.style.cssText = 'padding: 6px 12px; cursor: pointer; font-family: monospace; font-size: 0.9em;';
+        row.textContent = name;
+        row.onmouseenter = () => { row.style.background = 'var(--color-hover, #f5f5f5)'; };
+        row.onmouseleave = () => { row.style.background = ''; };
+        row.onclick = () => { folderInput.value = name; folderList.style.display = 'none'; };
+        folderList.appendChild(row);
+      });
+      folderList.style.display = 'block';
+    } catch (e) {
+      status.textContent = `Error listing folders: ${e}`;
+    } finally {
+      browseBtn.disabled = false;
+      browseBtn.textContent = 'Browse';
+    }
+  };
+
+  const status = api.createElement('div');
+  status.style.cssText = 'color: var(--color-text-secondary); margin-bottom: 12px; font-size: 0.9em;';
+  container.appendChild(status);
+
+  const listContainer = api.createElement('div');
+  container.appendChild(listContainer);
+
+  fetchBtn.onclick = async () => {
+    const tauri = window.__TAURI__;
+    if (!tauri) { status.textContent = 'Error: not running in Tauri'; return; }
+    fetchBtn.disabled = true;
+    fetchBtn.textContent = 'Fetching...';
+    status.textContent = '';
+    listContainer.innerHTML = '';
+    folderList.style.display = 'none';
+    try {
+      const account = {
+        host: item.content.host,
+        port: item.content.port,
+        username: item.content.username,
+        password: item.content.password,
+        folder: folderInput.value || 'INBOX',
+      };
+      const sinceDays = parseInt(daysInput.value, 10) || 7;
+      const headers = await tauri.core.invoke('fetch_email_headers', { account, sinceDays });
+      if (headers.length === 0) {
+        status.textContent = 'No emails in the selected period.';
+      } else {
+        status.textContent = `${headers.length} email${headers.length === 1 ? '' : 's'} found.`;
+        renderList(headers);
+      }
+    } catch (e) {
+      status.textContent = `Error: ${e}`;
+    } finally {
+      fetchBtn.disabled = false;
+      fetchBtn.textContent = 'Fetch';
+    }
+  };
+
+  function renderList(emails) {
+    const selectControls = api.createElement('div');
+    selectControls.style.cssText = 'display: flex; gap: 8px; margin-bottom: 8px;';
+    const selectAllBtn = api.createElement('button');
+    selectAllBtn.textContent = 'Select All';
+    selectAllBtn.style.cssText = 'padding: 4px 10px; border: 1px solid var(--color-border); background: transparent; border-radius: var(--border-radius); cursor: pointer; font-size: 0.85em;';
+    const selectNoneBtn = api.createElement('button');
+    selectNoneBtn.textContent = 'Select None';
+    selectNoneBtn.style.cssText = selectAllBtn.style.cssText;
+    selectControls.appendChild(selectAllBtn);
+    selectControls.appendChild(selectNoneBtn);
+    listContainer.appendChild(selectControls);
+
+    const table = api.createElement('table');
+    table.style.cssText = 'width: 100%; border-collapse: collapse; margin-bottom: 16px;';
+
+    const rows = emails.map(email => {
+      const tr = api.createElement('tr');
+      tr.style.cssText = 'border-bottom: 1px solid var(--color-border);';
+
+      const tdCheck = api.createElement('td');
+      tdCheck.style.cssText = 'padding: 8px; width: 32px;';
+      const checkbox = api.createElement('input');
+      checkbox.type = 'checkbox';
+      tdCheck.appendChild(checkbox);
+
+      const tdFrom = api.createElement('td');
+      tdFrom.style.cssText = 'padding: 8px; width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--color-text-secondary); font-size: 0.9em;';
+      tdFrom.textContent = email.from;
+
+      const tdSubject = api.createElement('td');
+      tdSubject.style.cssText = 'padding: 8px;';
+      tdSubject.textContent = email.subject || '(no subject)';
+
+      const tdDate = api.createElement('td');
+      tdDate.style.cssText = 'padding: 8px; width: 160px; font-size: 0.85em; color: var(--color-text-secondary); white-space: nowrap;';
+      tdDate.textContent = email.date;
+
+      tr.appendChild(tdCheck);
+      tr.appendChild(tdFrom);
+      tr.appendChild(tdSubject);
+      tr.appendChild(tdDate);
+      table.appendChild(tr);
+      return { checkbox, email };
+    });
+
+    listContainer.appendChild(table);
+    selectAllBtn.onclick = () => rows.forEach(r => { r.checkbox.checked = true; });
+    selectNoneBtn.onclick = () => rows.forEach(r => { r.checkbox.checked = false; });
+
+    const importBtn = api.createElement('button');
+    importBtn.textContent = 'Import Selected';
+    importBtn.style.cssText = 'padding: 8px 20px; background: var(--color-primary); color: white; border: none; border-radius: var(--border-radius); cursor: pointer;';
+    listContainer.appendChild(importBtn);
+
+    const importStatus = api.createElement('div');
+    importStatus.style.cssText = 'margin-top: 8px; font-size: 0.9em;';
+    listContainer.appendChild(importStatus);
+
+    importBtn.onclick = async () => {
+      const selected = rows.filter(r => r.checkbox.checked);
+      if (selected.length === 0) { importStatus.textContent = 'No emails selected.'; return; }
+      const tauri = window.__TAURI__;
+      importBtn.disabled = true;
+      importBtn.textContent = `Importing 0 / ${selected.length}...`;
+      const account = {
+        host: item.content.host,
+        port: item.content.port,
+        username: item.content.username,
+        password: item.content.password,
+        folder: folderInput.value || 'INBOX',
+      };
+      let imported = 0;
+      const errors = [];
+      for (const { email } of selected) {
+        try {
+          const body = await tauri.core.invoke('fetch_email_body', { account, uid: email.uid });
+          const now = Date.now();
+          const attachmentIds = [];
+          for (const att of body.attachments) {
+            try {
+              const bytes = Uint8Array.from(atob(att.data), c => c.charCodeAt(0));
+              const blob = new Blob([bytes], { type: att.mimeType });
+              const attId = crypto.randomUUID();
+              await api.setBlob(attId, blob);
+              await api.set({
+                id: attId,
+                name: att.name,
+                type: '602cd3c2-333b-43fd-94f4-9ab08eeb2ca8',
+                created: now,
+                modified: now,
+                content: { mimeType: att.mimeType },
+                attachments: [],
+              });
+              attachmentIds.push({ id: attId });
+            } catch (attErr) {
+              console.warn(`Skipped attachment "${att.name}":`, attErr);
+            }
+          }
+          await api.set({
+            id: crypto.randomUUID(),
+            name: email.subject || '(no subject)',
+            type: 'e99ab8eb-bc25-4a85-a5bd-f471a7ef74da',
+            created: now,
+            modified: now,
+            content: {
+              from: email.from,
+              to: body.to,
+              subject: email.subject,
+              date: email.date,
+              html: body.html || null,
+              text: body.html ? null : (body.text || null),
+              uid: email.uid,
+              account: item.id,
+            },
+            attachments: attachmentIds,
+          });
+          imported++;
+          importBtn.textContent = `Importing ${imported} / ${selected.length}...`;
+        } catch (e) {
+          errors.push(`"${email.subject}": ${e}`);
+        }
+      }
+      importBtn.disabled = false;
+      importBtn.textContent = 'Import Selected';
+      importStatus.textContent = errors.length > 0
+        ? `Imported ${imported}, ${errors.length} error(s): ${errors.join('; ')}`
+        : `Imported ${imported} email${imported === 1 ? '' : 's'}.`;
+    };
+  }
+
+  return container;
+}

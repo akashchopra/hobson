@@ -1,4 +1,6 @@
 use axum::{body::Bytes, extract::{DefaultBodyLimit, State}, http::{HeaderMap, Method, StatusCode}, response::IntoResponse, routing::any, Router};
+use chrono::Duration;
+use mailparse::MailHeaderMap;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, net::SocketAddr, sync::{atomic::{AtomicBool, Ordering}, Arc}};
 use tauri::{AppHandle, Emitter, Manager};
@@ -130,6 +132,186 @@ async fn start_http_server(app: AppHandle, port: u16) -> Result<String, String> 
     Ok(format!("HTTP server listening on 0.0.0.0:{port}"))
 }
 
+#[derive(Deserialize)]
+struct EmailAccount {
+    host: String,
+    port: u16,
+    username: String,
+    password: String,
+    folder: String,
+}
+
+#[derive(Serialize)]
+struct EmailHeader {
+    uid: u32,
+    from: String,
+    subject: String,
+    date: String,
+}
+
+#[derive(Serialize)]
+struct EmailAttachment {
+    name: String,
+    mime_type: String,
+    data: String,
+}
+
+#[derive(Serialize)]
+struct EmailBody {
+    html: Option<String>,
+    text: Option<String>,
+    to: String,
+    attachments: Vec<EmailAttachment>,
+}
+
+struct BodyState {
+    text: Option<String>,
+    html: Option<String>,
+    inline_images: Vec<(String, String)>,
+    attachments: Vec<EmailAttachment>,
+}
+
+fn get_as_base64(part: &mailparse::ParsedMail) -> String {
+    use base64::{Engine, engine::general_purpose::STANDARD};
+    STANDARD.encode(&part.get_body_raw().unwrap_or_default())
+}
+
+fn extract_filename(part: &mailparse::ParsedMail) -> String {
+    if let Some(name) = part.ctype.params.get("name") {
+        return name.clone();
+    }
+    let disp = part.headers.get_first_value("Content-Disposition")
+        .unwrap_or_default();
+    for param in disp.split(';') {
+        let param = param.trim();
+        if let Some(val) = param.strip_prefix("filename=") {
+            let val = val.trim().trim_matches('"');
+            if !val.is_empty() { return val.to_string(); }
+        }
+    }
+    "attachment".to_string()
+}
+
+fn collect_parts(part: &mailparse::ParsedMail, state: &mut BodyState) {
+    let mime = part.ctype.mimetype.to_lowercase();
+    if mime.starts_with("multipart/") {
+        for subpart in &part.subparts {
+            collect_parts(subpart, state);
+        }
+        return;
+    }
+    let disposition = part.headers.get_first_value("Content-Disposition")
+        .unwrap_or_default().to_lowercase();
+    let cid = part.headers.get_first_value("Content-ID")
+        .unwrap_or_default();
+    let cid = cid.trim_matches(|c: char| c == '<' || c == '>').to_string();
+    let is_attachment = disposition.starts_with("attachment");
+    if !is_attachment && mime == "text/plain" && state.text.is_none() {
+        state.text = Some(part.get_body().unwrap_or_default());
+    } else if !is_attachment && mime == "text/html" && state.html.is_none() {
+        state.html = Some(part.get_body().unwrap_or_default());
+    } else if !cid.is_empty() && !is_attachment {
+        let b64 = get_as_base64(part);
+        state.inline_images.push((cid, format!("data:{};base64,{}", mime, b64)));
+    } else if is_attachment || (!mime.starts_with("text/") && !mime.starts_with("multipart/")) {
+        state.attachments.push(EmailAttachment {
+            name: extract_filename(part),
+            mime_type: mime,
+            data: get_as_base64(part),
+        });
+    }
+}
+
+fn with_imap_session<F, T>(account: &EmailAccount, f: F) -> Result<T, String>
+where
+    F: FnOnce(&mut imap::Session<native_tls::TlsStream<std::net::TcpStream>>) -> Result<T, String>,
+{
+    let tls = native_tls::TlsConnector::builder().build().map_err(|e| e.to_string())?;
+    let client = imap::connect((account.host.as_str(), account.port), &account.host, &tls)
+        .map_err(|e| e.to_string())?;
+    let mut session = client.login(&account.username, &account.password)
+        .map_err(|(e, _)| e.to_string())?;
+    session.select(&account.folder).map_err(|e| e.to_string())?;
+    let result = f(&mut session);
+    session.logout().ok();
+    result
+}
+
+#[tauri::command]
+async fn fetch_email_headers(account: EmailAccount, since_days: u32) -> Result<Vec<EmailHeader>, String> {
+    tokio::task::spawn_blocking(move || {
+        with_imap_session(&account, |session| {
+            let since = (chrono::Utc::now() - Duration::days(since_days as i64))
+                .format("%-d-%b-%Y").to_string();
+            let uids: Vec<u32> = session.uid_search(format!("SINCE {since}"))
+                .map_err(|e| e.to_string())?.into_iter().collect();
+            if uids.is_empty() { return Ok(vec![]); }
+            let uid_set = uids.iter().map(|u| u.to_string()).collect::<Vec<_>>().join(",");
+            let messages = session.uid_fetch(&uid_set, "ENVELOPE").map_err(|e| e.to_string())?;
+            Ok(messages.iter().filter_map(|msg| {
+                let uid = msg.uid?;
+                let env = msg.envelope()?;
+                let from = env.from.as_ref().and_then(|f| f.first()).map(|a| {
+                    let mb = a.mailbox.as_deref().map(String::from_utf8_lossy).unwrap_or_default();
+                    let h = a.host.as_deref().map(String::from_utf8_lossy).unwrap_or_default();
+                    format!("{mb}@{h}")
+                }).unwrap_or_default();
+                let subject = env.subject.as_deref()
+                    .map(String::from_utf8_lossy).unwrap_or_default().into_owned();
+                let date = env.date.as_deref()
+                    .map(String::from_utf8_lossy).unwrap_or_default().into_owned();
+                Some(EmailHeader { uid, from, subject, date })
+            }).collect())
+        })
+    }).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn list_folders(account: EmailAccount) -> Result<Vec<String>, String> {
+    tokio::task::spawn_blocking(move || {
+        let tls = native_tls::TlsConnector::builder().build().map_err(|e| e.to_string())?;
+        let client = imap::connect((account.host.as_str(), account.port), &account.host, &tls)
+            .map_err(|e| e.to_string())?;
+        let mut session = client.login(&account.username, &account.password)
+            .map_err(|(e, _)| e.to_string())?;
+        let mailboxes = session.list(None, Some("*")).map_err(|e| e.to_string())?;
+        let mut names: Vec<String> = mailboxes.iter().map(|m| m.name().to_string()).collect();
+        names.sort();
+        session.logout().ok();
+        Ok(names)
+    }).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn fetch_email_body(account: EmailAccount, uid: u32) -> Result<EmailBody, String> {
+    tokio::task::spawn_blocking(move || {
+        with_imap_session(&account, |session| {
+            let messages = session.uid_fetch(uid.to_string(), "BODY[]")
+                .map_err(|e| e.to_string())?;
+            let raw = messages.iter().next()
+                .and_then(|m| m.body())
+                .ok_or_else(|| "No body found".to_string())?;
+            let parsed = mailparse::parse_mail(raw).map_err(|e| e.to_string())?;
+            let to = parsed.headers.get_first_value("To")
+                .unwrap_or_default();
+            let mut state = BodyState {
+                text: None,
+                html: None,
+                inline_images: Vec::new(),
+                attachments: Vec::new(),
+            };
+            collect_parts(&parsed, &mut state);
+            let html = state.html.map(|mut h| {
+                for (cid, data_uri) in &state.inline_images {
+                    h = h.replace(&format!("cid:{}", cid), data_uri);
+                }
+                h
+            });
+            Ok(EmailBody { html, text: state.text, to, attachments: state.attachments })
+        })
+    }).await.map_err(|e| e.to_string())?
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let pending: PendingRequests = Arc::new(Mutex::new(HashMap::new()));
@@ -138,7 +320,8 @@ pub fn run() {
     tauri::Builder::default()
         .manage(pending)
         .manage(server_running)
-        .invoke_handler(tauri::generate_handler![start_http_server, http_response, consume_pending_share])
+        .invoke_handler(tauri::generate_handler![start_http_server, http_response, consume_pending_share,
+            fetch_email_headers, fetch_email_body, list_folders])
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_http::init())

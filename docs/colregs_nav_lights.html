@@ -1,0 +1,467 @@
+
+<div style="width:100%;height:100%;position:relative;background:#1a1a1a;border-radius:var(--border-radius-lg);overflow:hidden;">
+  <div style="position:absolute;top:12px;left:12px;z-index:10;background:rgba(0,0,0,0.65);color:#fff;padding:10px 14px;border-radius:8px;font-size:13px;line-height:1.6;font-family:var(--font-sans);">
+    <div style="font-size:15px;font-weight:500;margin-bottom:6px;" id="vessel-title">Sailing vessel</div>
+    <div id="vessel-desc" style="color:#ccc;">Mast visible · Standard sailing lights</div>
+  </div>
+  <div style="position:absolute;top:12px;right:12px;z-index:10;display:flex;gap:8px;align-items:center;">
+    <select id="vessel-select" style="padding:6px 10px;border-radius:6px;border:0.5px solid #555;background:#222;color:#fff;font-size:13px;cursor:pointer;">
+      <option value="sailing">Sailing vessel</option>
+      <option value="power">Power vessel</option>
+      <option value="power50m">Power vessel > 50m</option>
+      <option value="fishing">Fishing</option>
+      <option value="trawling">Trawling</option>
+      <option value="nuc">Not under command</option>
+      <option value="ram">Restricted manoeuvre</option>
+      <option value="cbd">Constrained by draught</option>
+      <option value="pilot">Pilot vessel</option>
+      <option value="anchor">At anchor</option>
+      <option value="aground">Aground</option>
+    </select>
+    <button id="reset-btn" style="padding:6px 12px;background:#222;color:#fff;border:0.5px solid #555;border-radius:6px;font-size:13px;cursor:pointer;">Reset view</button>
+  </div>
+  <div id="three-container" style="width:100%;height:100%;"></div>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+const container = document.getElementById('three-container');
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x1a1a1a);
+
+const camera = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 0.1, 1000);
+camera.position.set(40, 15, 15);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(container.clientWidth, container.clientHeight);
+renderer.shadowMap.enabled = true;
+container.appendChild(renderer.domElement);
+
+scene.add(new THREE.AmbientLight(0x404040, 1.5));
+const dir = new THREE.DirectionalLight(0xffffff, 1.5);
+dir.position.set(-5, 15, 10);
+dir.castShadow = true;
+scene.add(dir);
+
+const water = new THREE.Mesh(
+  new THREE.PlaneGeometry(100, 100),
+  new THREE.MeshBasicMaterial({ color: 0x003366, transparent: true, opacity: 0.6 })
+);
+water.rotation.x = -Math.PI / 2;
+scene.add(water);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.05;
+controls.target.set(0, 0, 0);
+
+const boatGroup = new THREE.Group();
+scene.add(boatGroup);
+
+let lights = {};
+
+const totalLength = 10, bowLength = 2;
+const mainHullLength = totalLength - bowLength;
+const hullWidth = 2.5, hullHeight = 1.0, mastHeight = 8;
+const bowEndX = totalLength / 2;
+const sternEndX = -mainHullLength / 2 + bowLength / 2 + 0.05;
+const mastheadX = mainHullLength / 2 - 1;
+const sidelightX = bowEndX;
+
+const configs = {
+  sailing: {
+    title: 'Sailing vessel',
+    desc: 'Red over green - Standard sailing lights',
+    lights: [
+      { name:'port',      color:0xff0000, x:sidelightX,   y:hullHeight,              z:-hullWidth/2, label:'Port',  min:-112.5, max:3 },
+      { name:'starboard', color:0x00ff00, x:sidelightX,   y:hullHeight,              z:hullWidth/2,  label:'Starboard', min:-3,     max:112.5 },
+      { name:'mast-red',  color:0xff0000, x:mastheadX,    y:hullHeight+mastHeight,   z:0,            label:'Masthead',   min:-180,   max:180 },
+      { name:'mast-grn',  color:0x00ff00, x:mastheadX,    y:hullHeight+mastHeight-1, z:0,            label:'(optional)', min:-180,   max:180 },
+      { name:'stern',     color:0xffffff, x:sternEndX,    y:hullHeight,              z:0,            label:'Stern',min:112.5,  max:-112.5 }
+    ]
+  },
+  power: {
+    title: 'Power vessel',
+    desc: 'White - Standard steaming light',
+    lights: [
+      { name:'port',      color:0xff0000, x:sidelightX,   y:hullHeight,   z:-hullWidth/2, label:'Port',  min:-112.5, max:3 },
+      { name:'starboard', color:0x00ff00, x:sidelightX,   y:hullHeight,   z:hullWidth/2,  label:'Starboard', min:-3,     max:112.5 },
+      { name:'steaming',  color:0xffffff, x:mastheadX-2,  y:hullHeight+2, z:0,            label:'Steaming',   min:-112.5, max:112.5 },
+      { name:'stern',     color:0xffffff, x:sternEndX,    y:hullHeight,   z:0,            label:'Stern',min:112.5,  max:-112.5 }
+    ]
+  },
+  power50m: {
+    title: 'Power vessel > 50m',
+    desc: 'Double white - low at bow; high at stern',
+    lights: [
+      { name:'port',      color:0xff0000, x:sidelightX,   y:hullHeight,   z:-hullWidth/2, label:'Port',  min:-112.5, max:3 },
+      { name:'starboard', color:0x00ff00, x:sidelightX,   y:hullHeight,   z:hullWidth/2,  label:'Starboard', min:-3,     max:112.5 },
+      { name:'steaming-bow',  color:0xffffff, x:mastheadX+3,  y:hullHeight+2, z:0,            label:'',   min:-112.5, max:112.5 },
+      { name:'steaming-stern',  color:0xffffff, x:mastheadX-4,  y:hullHeight+3, z:0,            label:'',   min:-112.5, max:112.5 },
+      { name:'stern',     color:0xffffff, x:sternEndX,    y:hullHeight,   z:0,            label:'Stern',min:112.5,  max:-112.5 }
+    ]
+  }
+};
+
+configs.fishing = {
+  title: 'Fishing vessel',
+  desc: 'Red over white · Fishing (not trawling)',
+  lights: [
+    { name:'allround-red',   color:0xff0000, x:mastheadX-2, y:hullHeight+3,   z:0, label:'',   min:-180, max:180 },
+    { name:'allround-white', color:0xffffff, x:mastheadX-2, y:hullHeight+2, z:0, label:'', min:-180, max:180 },
+    { name:'port',      color:0xff0000, x:sidelightX, y:hullHeight, z:-hullWidth/2, label:'Port', min:-112.5, max:3 },
+    { name:'starboard', color:0x00ff00, x:sidelightX, y:hullHeight, z:hullWidth/2,  label:'Starboard', min:-3, max:112.5 },
+    { name:'stern',     color:0xffffff, x:sternEndX,    y:hullHeight,   z:0,            label:'Stern',min:112.5,  max:-112.5 }
+  ]
+};
+
+configs.trawling = {
+  title: 'Trawling vessel',
+  desc: 'Green over white',
+  lights: [
+    { name:'allround-green', color:0x00ff00, x:mastheadX-2, y:hullHeight+3,   z:0, label:'', min:-180, max:180 },
+    { name:'allround-white', color:0xffffff, x:mastheadX-2, y:hullHeight+2, z:0, label:'', min:-180, max:180 },
+    { name:'port',      color:0xff0000, x:sidelightX, y:hullHeight, z:-hullWidth/2, label:'Port', min:-112.5, max:3 },
+    { name:'starboard', color:0x00ff00, x:sidelightX, y:hullHeight, z:hullWidth/2,  label:'Starboard', min:-3, max:112.5 },
+    { name:'stern',     color:0xffffff, x:sternEndX,    y:hullHeight,   z:0,            label:'Stern',min:112.5,  max:-112.5 }
+  ]
+};
+
+configs.nuc = {
+  title: 'Not under command',
+  desc: 'Red over red',
+  lights: [
+    { name:'red1', color:0xff0000, x:mastheadX-2, y:hullHeight+3,   z:0, label:'', min:-180, max:180 },
+    { name:'red2', color:0xff0000, x:mastheadX-2, y:hullHeight+2, z:0, label:'', min:-180, max:180 }
+  ]
+};
+
+configs.ram = {
+  title: 'Restricted ability to manoeuvre',
+  desc: 'Red white red',
+  lights: [
+    { name:'red-top',    color:0xff0000, x:mastheadX-2, y:hullHeight+4,   z:0, label:'', min:-180, max:180 },
+    { name:'white-mid',  color:0xffffff, x:mastheadX-2, y:hullHeight+3, z:0, label:'', min:-180, max:180 },
+    { name:'red-bottom', color:0xff0000, x:mastheadX-2, y:hullHeight+2, z:0, label:'', min:-180, max:180 },
+    { name:'port',      color:0xff0000, x:sidelightX, y:hullHeight, z:-hullWidth/2, label:'Port', min:-112.5, max:3 },
+    { name:'starboard', color:0x00ff00, x:sidelightX, y:hullHeight, z:hullWidth/2,  label:'Starboard', min:-3, max:112.5 },
+    { name:'stern',     color:0xffffff, x:sternEndX,    y:hullHeight,   z:0,            label:'Stern',min:112.5,  max:-112.5 }
+  ]
+};
+
+configs.cbd = {
+  title: 'Constrained by draught',
+  desc: 'Three red lights in a line',
+  lights: [
+    { name:'red1', color:0xff0000, x:mastheadX-2, y:hullHeight+4,   z:0, label:'', min:-180, max:180 },
+    { name:'red2', color:0xff0000, x:mastheadX-2, y:hullHeight+3, z:0, label:'', min:-180, max:180 },
+    { name:'red3', color:0xff0000, x:mastheadX-2, y:hullHeight+2, z:0, label:'', min:-180, max:180 },
+    { name:'port',      color:0xff0000, x:sidelightX, y:hullHeight, z:-hullWidth/2, label:'Port', min:-112.5, max:3 },
+    { name:'starboard', color:0x00ff00, x:sidelightX, y:hullHeight, z:hullWidth/2,  label:'Starboard', min:-3, max:112.5 },
+    { name:'stern',     color:0xffffff, x:sternEndX,    y:hullHeight,   z:0,            label:'Stern',min:112.5,  max:-112.5 }
+  ]
+};
+
+configs.pilot = {
+  title: 'Pilot vessel',
+  desc: 'White over red',
+  lights: [
+    { name:'white', color:0xffffff, x:mastheadX-2, y:hullHeight+3,   z:0, label:'', min:-180, max:180 },
+    { name:'red',   color:0xff0000, x:mastheadX-2, y:hullHeight+2, z:0, label:'',   min:-180, max:180 },
+    { name:'stern',     color:0xffffff, x:sternEndX,    y:hullHeight,   z:0,            label:'Stern',min:112.5,  max:-112.5 }
+  ]
+};
+
+configs.anchor = {
+  title: 'At anchor',
+  desc: 'All-round white',
+  lights: [
+    { name:'anchor', color:0xffffff, x:mastheadX-2, y:hullHeight+2, z:0, label:'Anchor', min:-180, max:180 },
+    { name:'stern',     color:0xffffff, x:sternEndX,    y:hullHeight,   z:0,            label:'Stern',min:112.5,  max:-112.5 }
+  ]
+};
+
+configs.aground = {
+  title: 'Aground',
+  desc: 'Anchor + two red',
+  lights: [
+    { name:'anchor', color:0xffffff, x:mastheadX-2, y:hullHeight+2, z:0, label:'', min:-180, max:180 },
+    { name:'red1', color:0xff0000, x:mastheadX-2, y:hullHeight+4,   z:0, label:'', min:-180, max:180 },
+    { name:'red2', color:0xff0000, x:mastheadX-2, y:hullHeight+3, z:0, label:'', min:-180, max:180 },
+    { name:'stern',     color:0xffffff, x:sternEndX,    y:hullHeight,   z:0,            label:'Stern',min:112.5,  max:-112.5 }
+  ]
+};
+
+function clearBoat() {
+  while (boatGroup.children.length) boatGroup.remove(boatGroup.children[0]);
+  lights = {};
+}
+
+function buildHull() {
+  const mainCX = bowLength / 2;
+  const bowCX = totalLength / 2 + bowLength / 2;
+
+  const hull = new THREE.Mesh(
+    new THREE.BoxGeometry(mainHullLength, hullHeight, hullWidth),
+    new THREE.MeshStandardMaterial({ color: 0xdddddd })
+  );
+  hull.position.set(mainCX, hullHeight / 2, 0);
+  boatGroup.add(hull);
+
+  const bowGeometry = new THREE.BoxGeometry(
+    bowLength,      // X (forward)
+    hullHeight,     // Y (vertical)
+    hullWidth       // Z (beam)
+  );
+
+  // Move geometry so its base sits at x = 0
+  bowGeometry.translate(bowLength / 2, 0, 0);
+
+  // Now taper the front face into a point
+  const pos = bowGeometry.attributes.position;
+
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i);
+
+    // 0 at hull face, 1 at bow tip
+    const t = x / bowLength;
+
+    // shrink width and height toward bow tip
+    const scale = 1 - t;
+
+    //pos.setY(i, pos.getY(i) * scale);
+    pos.setZ(i, pos.getZ(i) * scale);
+  }
+
+  pos.needsUpdate = true;
+  bowGeometry.computeVertexNormals();
+
+  const bow = new THREE.Mesh(
+    bowGeometry,
+    new THREE.MeshStandardMaterial({ color: 0xdddddd })
+  );
+
+  const bowEndX = (mainHullLength + bowLength) / 2;
+
+  bow.position.set(
+    bowEndX,
+    hullHeight / 2,
+    0
+  );
+
+  boatGroup.add(bow);
+}
+
+function buildVessel(type) {
+  clearBoat();
+  buildHull();
+
+  if (type === 'sailing') {
+    const mast = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.1, 0.1, mastHeight, 8),
+      new THREE.MeshStandardMaterial({ color: 0x888888 })
+    );
+    mast.position.set(mastheadX, hullHeight + mastHeight / 2, 0);
+    boatGroup.add(mast);
+  } else {
+    const cabinLen = mainHullLength * 0.3;
+    const cabin = new THREE.Mesh(
+      new THREE.BoxGeometry(cabinLen, 1.5, hullWidth * 0.7),
+      new THREE.MeshStandardMaterial({ color: 0xeeeeee })
+    );
+    cabin.position.set(mainHullLength / 4 - cabinLen, hullHeight + 0.75, 0);
+    boatGroup.add(cabin);
+  }
+
+  configs[type].lights.forEach(cfg => addLight(cfg));
+
+  document.getElementById('vessel-title').textContent = configs[type].title;
+  document.getElementById('vessel-desc').textContent = configs[type].desc;
+}
+
+// function colregToRad(deg) {
+//   // Convert:
+//   // COLREG: 0° = +X, clockwise positive
+//   // THREE:  0  = +X, counterclockwise positive
+//   return THREE.MathUtils.degToRad(-deg);
+// }
+function colregToThreeRad(deg) {
+  // COLREG: 0° = bow, + = starboard (clockwise)
+  // THREE:  0 = +X, + = CCW
+  return THREE.MathUtils.degToRad(deg);
+}
+
+function normalizeSector(min, max) {
+  let start = min;
+  let end = max;
+
+  // convert to radians
+  start = THREE.MathUtils.degToRad(start);
+  end = THREE.MathUtils.degToRad(end);
+
+  // ensure shortest direction handling
+  let delta = end - start;
+
+  if (delta < 0) delta += Math.PI * 2;
+
+  return { start, delta };
+}
+
+function addSector(cfg) {
+  const radius = 20;
+
+  const { start, delta } = normalizeSector(cfg.min, cfg.max);
+
+  const segments = 32;
+
+  const geometry = new THREE.BufferGeometry();
+
+  const vertices = [0, 0, 0];
+  const indices = [];
+
+  for (let i = 0; i <= segments; i++) {
+    const t = i / segments;
+    const angle = start + delta * t;
+
+    const x = Math.cos(angle) * radius;
+    const z = Math.sin(angle) * radius;
+
+    vertices.push(x, 0, z);
+
+    if (i < segments) {
+      indices.push(0, i + 1, i + 2);
+    }
+  }
+
+  geometry.setAttribute(
+    'position',
+    new THREE.Float32BufferAttribute(vertices, 3)
+  );
+  geometry.setIndex(indices);
+  geometry.computeVertexNormals();
+
+  const material = new THREE.MeshBasicMaterial({
+    color: cfg.color,
+    transparent: true,
+    opacity: 0.15,
+    side: THREE.DoubleSide,
+    depthWrite: false
+  });
+
+  const sector = new THREE.Mesh(geometry, material);
+
+  sector.position.set(cfg.x, cfg.y + 0.05, cfg.z);
+
+  boatGroup.add(sector);
+  return sector;
+}
+
+
+
+
+
+function addLight(cfg) {
+  const mesh = new THREE.Mesh(
+    new THREE.SphereGeometry(0.4, 16, 16),
+    new THREE.MeshStandardMaterial({ color: cfg.color, emissive: cfg.color, emissiveIntensity: 3.0, roughness: 0.1 })
+  );
+  mesh.position.set(cfg.x, cfg.y, cfg.z);
+  mesh.add(new THREE.PointLight(cfg.color, 2, 15));
+  boatGroup.add(mesh);
+
+  const canvas = document.createElement('canvas');
+  canvas.width = 256; canvas.height = 64;
+  if (cfg.label != '') {
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    ctx.fillRect(0, 0, 256, 64);
+    ctx.font = 'bold 28px Arial';
+    ctx.fillStyle = 'white';
+    ctx.textAlign = 'center';
+    ctx.fillText(cfg.label, 128, 42);
+  }
+
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(canvas) }));
+  sprite.scale.set(3, 0.75, 1);
+  sprite.position.set(cfg.x, cfg.y + 1.5, cfg.z);
+  boatGroup.add(sprite);
+
+  lights[cfg.name] = { mesh, sprite, min: cfg.min, max: cfg.max };
+  const sector = addSector(cfg);
+  lights[cfg.name].sector = sector;
+}
+
+function getBearingFromBoat() {
+  const boatPos = new THREE.Vector3();
+  boatGroup.getWorldPosition(boatPos);
+
+  const camPos = camera.position.clone();
+
+  // Direction from boat → camera (XZ plane only)
+  const dir = camPos.sub(boatPos);
+  dir.y = 0;
+  dir.normalize();
+
+  // Boat forward direction (its local +X axis in world space)
+  const forward = new THREE.Vector3(1, 0, 0);
+  forward.applyQuaternion(boatGroup.quaternion);
+  forward.y = 0;
+  forward.normalize();
+
+  // Signed angle between forward and camera direction
+  const angle = Math.atan2(
+    forward.x * dir.z - forward.z * dir.x, // cross product (Y component)
+    forward.x * dir.x + forward.z * dir.z  // dot product
+  );
+
+  return angle * (180 / Math.PI); // -180 to +180
+}
+
+
+function updateVisibility() {
+  const b = getBearingFromBoat();
+
+  for (const l of Object.values(lights)) {
+    const vis = l.min < l.max
+      ? (b >= l.min && b <= l.max)
+      : (b <= l.max || b >= l.min);
+
+    l.mesh.visible = vis;
+    l.sprite.visible = vis;
+    if (l.sector) l.sector.visible = vis;
+  }
+}
+
+function animate() {
+  requestAnimationFrame(animate);
+  controls.update();
+  updateVisibility();
+  renderer.render(scene, camera);
+}
+
+buildVessel(document.getElementById('vessel-select').value);
+animate();
+
+document.getElementById('vessel-select').addEventListener('change', e => buildVessel(e.target.value));
+document.getElementById('reset-btn').addEventListener('click', () => {
+  camera.position.set(40, 15, 15);
+  controls.target.set(0, 0, 0);
+  controls.update();
+});
+
+window.addEventListener('resize', () => {
+  camera.aspect = container.clientWidth / container.clientHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(container.clientWidth, container.clientHeight);
+});
+</script>

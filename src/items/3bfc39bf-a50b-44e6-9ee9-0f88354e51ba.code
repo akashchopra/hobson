@@ -1,0 +1,70 @@
+export async function render(item, api) {
+  const container = api.createElement('div');
+  container.style.cssText = 'padding: 16px; max-width: 600px;';
+
+  const header = api.createElement('div');
+  header.style.cssText = 'display: flex; align-items: center; gap: 12px; margin-bottom: 16px;';
+
+  const nameEl = api.createElement('div');
+  nameEl.style.cssText = 'flex: 1;';
+
+  const h2 = api.createElement('h2');
+  h2.textContent = item.name;
+  h2.style.cssText = 'margin: 0 0 4px 0; font-size: 1.1em;';
+  nameEl.appendChild(h2);
+
+  const mimeEl = api.createElement('div');
+  mimeEl.textContent = item.content?.mimeType || 'unknown type';
+  mimeEl.style.cssText = 'font-size: 0.85em; color: var(--color-text-secondary);';
+  nameEl.appendChild(mimeEl);
+  header.appendChild(nameEl);
+
+  const downloadBtn = api.createElement('button');
+  downloadBtn.textContent = 'Download';
+  downloadBtn.style.cssText = 'padding: 6px 16px; border: 1px solid var(--color-border); background: transparent; border-radius: var(--border-radius); cursor: pointer;';
+
+  downloadBtn.onclick = async () => {
+    const blob = await api.getBlob(item.id);
+    if (!blob) { downloadBtn.textContent = 'Not found'; return; }
+    const tauri = window.__TAURI__;
+    if (tauri) {
+      try {
+        const savePath = await tauri.dialog.save({ defaultPath: item.name });
+        if (!savePath) return;
+        const buffer = await blob.arrayBuffer();
+        await tauri.fs.writeFile(savePath, new Uint8Array(buffer));
+      } catch (e) {
+        console.error('Download failed:', e);
+        downloadBtn.textContent = 'Failed';
+        setTimeout(() => { downloadBtn.textContent = 'Download'; }, 2000);
+      }
+    } else {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = item.name;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
+  };
+
+  header.appendChild(downloadBtn);
+  container.appendChild(header);
+
+  const mimeType = item.content?.mimeType || '';
+  if (mimeType.startsWith('image/')) {
+    const blob = await api.getBlob(item.id);
+    if (blob) {
+      const url = URL.createObjectURL(blob);
+      const img = api.createElement('img');
+      img.src = url;
+      img.alt = item.name;
+      img.style.cssText = 'max-width: 100%; height: auto; display: block; border: 1px solid var(--color-border); border-radius: var(--border-radius);';
+      container.appendChild(img);
+    }
+  }
+
+  return container;
+}

@@ -669,6 +669,14 @@ function isUnaryMinus(node) {
     && node.children[1].type !== 'hole';
 }
 
+// Operator of a unary-minus wrapper is currently a hole (user is editing it)
+function isOpEditing(node) {
+  return node.type === 'list' && !node._curlyList
+    && node.children.length === 2
+    && node.children[0].type === 'hole'
+    && node.children[1].type !== 'hole';
+}
+
 function infixDelim(text) {
   const s = document.createElement('span');
   s.className = 'hob-infix-delim';
@@ -731,6 +739,19 @@ function renderInfixList(node, state, itemNames, api, indent) {
       // Binary / n-ary: { a op b op c }
       for (let i = 0; i < operands.length; i++) {
         if (i > 0) {
+          const editingOp = isOpEditing(operands[i]);
+          if (editingOp) {
+            const s = document.createElement('span');
+            s.className = 'hob-symbol hob-infix-sep';
+            s.setAttribute('data-node-id', operands[i].id);
+            state.domMap.set(operands[i].id, s);
+            s.appendChild(document.createTextNode(' '));
+            s.appendChild(renderNode(operands[i].children[0], state, itemNames, api, indent + 1));
+            s.appendChild(document.createTextNode(' '));
+            span.appendChild(s);
+            span.appendChild(renderNode(operands[i].children[1], state, itemNames, api, indent + 1));
+            continue;
+          }
           const neg = op.value === '+' && isUnaryMinus(operands[i]);
           const s = document.createElement('span');
           s.className = 'hob-symbol hob-infix-sep';
@@ -763,8 +784,20 @@ function renderInfixList(node, state, itemNames, api, indent) {
     } else {
       span.appendChild(renderNode(operands[0], state, itemNames, api, childIndent));
       for (let i = 1; i < operands.length; i++) {
-        const neg = op.value === '+' && isUnaryMinus(operands[i]);
+        const editingOp = isOpEditing(operands[i]);
         span.appendChild(newline(childIndent, operands[i - 1].id));
+        if (editingOp) {
+          const s = document.createElement('span');
+          s.className = 'hob-symbol hob-infix-sep';
+          s.setAttribute('data-node-id', operands[i].id);
+          state.domMap.set(operands[i].id, s);
+          s.appendChild(renderNode(operands[i].children[0], state, itemNames, api, childIndent));
+          s.appendChild(document.createTextNode(' '));
+          span.appendChild(s);
+          span.appendChild(renderNode(operands[i].children[1], state, itemNames, api, childIndent));
+          continue;
+        }
+        const neg = op.value === '+' && isUnaryMinus(operands[i]);
         const s = document.createElement('span');
         s.className = 'hob-symbol hob-infix-sep';
         s.textContent = (neg ? '-' : op.value) + ' ';
@@ -2429,9 +2462,8 @@ function handleNavKey(e, ctx) {
     e.preventDefault();
     state.helpVisible ? hideHelp(state) : showHelp(state, ctx.wrapper);
   } else if (e.key.length === 1 && e.key !== ' ' && !e.ctrlKey && !e.metaKey && !e.altKey && state.onChange
-      && (!node.children || isUnaryMinus(node))) {
-    // Typing on a leaf (or the subtracted-term node in an infix expression): enter replace mode.
-    // Special case: " on a string edits the existing value in place (cursor at end).
+      && (!node.children || (node.children.length >= 2 && state.domMap.get(node.id)?.classList?.contains('hob-infix-sep')))) {
+    // Typing on a leaf or sep node — replace node with a hole pre-filled with the typed char.
     if (node.type === 'hole') {
       enterInputMode(state, node.id);
       if (e.key === '"') { state.mode = 'string'; }
@@ -2441,21 +2473,23 @@ function handleNavKey(e, ctx) {
       state.replaceOriginal = { nodeSnapshot: JSON.parse(JSON.stringify(node)), parentId: state.parentMap.get(node.id)?.id };
       pushUndo(state);
       replaceNode(state, node.id, hole);
-      notifyChange(state);
       enterInputMode(state, hole.id);
       state.mode = 'string';
       state.inputBuffer = node.value;
       state.inputCursor = node.value.length;
     } else {
+      const isSepNode = node.children && node.children.length >= 2
+        && state.domMap.get(node.id)?.classList?.contains('hob-infix-sep');
+      const targetNode = isSepNode ? node.children[0] : node;
       const hole = makeNode(state, 'hole', {});
-      state.replaceOriginal = { nodeSnapshot: JSON.parse(JSON.stringify(node)), parentId: state.parentMap.get(node.id)?.id };
+      state.replaceOriginal = { nodeSnapshot: JSON.parse(JSON.stringify(targetNode)), parentId: state.parentMap.get(targetNode.id)?.id };
       pushUndo(state);
-      replaceNode(state, node.id, hole);
-      notifyChange(state);
+      replaceNode(state, targetNode.id, hole);
       if (e.key === '"') { enterInputMode(state, hole.id); state.mode = 'string'; }
       else { enterInputMode(state, hole.id); state.inputBuffer = e.key; state.inputCursor = 1; }
     }
     rerender(state, itemNames, api, statusBar);
+    if (node.type !== 'hole') notifyChange(state);
   } else {
     handled = false;
   }
@@ -2950,11 +2984,20 @@ function handleDoubleClick(e, ctx) {
       updateStatusBar(state, statusBar);
     }
   } else if (node.children) {
-    if (isUnaryMinus(node)) {
-      // Subtracted term in infix expression — navigate to the argument rather than appending a hole
-      state.selectedId = node.children[1].id;
-      state.selectionAnchorId = null;
-      state.expansionStack = [];
+    const isSep = node.children.length >= 2 && state.domMap.get(node.id)?.classList?.contains('hob-infix-sep');
+    if (isSep) {
+      // Edit operator only: replace children[0] (the operator symbol), preserve children[1] (the operand)
+      const opNode = node.children[0];
+      const hole = makeNode(state, 'hole', {});
+      state.replaceOriginal = { nodeSnapshot: JSON.parse(JSON.stringify(opNode)), parentId: state.parentMap.get(opNode.id)?.id };
+      pushUndo(state);
+      replaceNode(state, opNode.id, hole);
+      enterInputMode(state, hole.id);
+      state.inputBuffer = opNode.value || '-';
+      state.inputCursor = (opNode.value || '-').length;
+      state.inputSelectAll = true;
+      rerender(state, itemNames, api, statusBar);
+      notifyChange(state);
       updateSelectionVisual(state);
       updateStatusBar(state, statusBar);
     } else {
