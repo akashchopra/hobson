@@ -3521,19 +3521,21 @@ export async function render(value, options, api) {
       if (transclusionSpan && editor.contains(transclusionSpan)) { showTransclusionPopover(transclusionSpan); return; }
     });
   }
-  // WebKitGTK (Tauri/Linux) intercepts Shift+Tab before any JS keydown fires,
-  // moving focus backward via the GTK focus ring. Detect this by watching for
-  // keyboard-driven backward focus transitions from list items inside the editor.
+  // Shared focus tracking: current focused block + Shift+Tab (WebKitGTK) detection.
+  // _ptrDown only marks pointer events inside the editor so toolbar taps don't
+  // interfere with the Shift+Tab backward-focus heuristic.
   if (editable) {
+    let _focusedBlockEl = null;
+    let _focusedBlockPath = null;
     let _prevFocusedPath = null;
     let _lastPointerDown = 0;
 
-    const _ptrDown = () => {
+    const _ptrDown = (e) => {
       if (!document.contains(editor)) {
         document.removeEventListener('pointerdown', _ptrDown, true);
         return;
       }
-      _lastPointerDown = Date.now();
+      if (editor.contains(e.target)) _lastPointerDown = Date.now();
     };
     document.addEventListener('pointerdown', _ptrDown, true);
 
@@ -3544,13 +3546,16 @@ export async function render(value, options, api) {
     });
 
     editor.addEventListener('focusin', (e) => {
+      const blockEl = e.target.closest?.('[data-block-path]');
+      _focusedBlockEl = blockEl || null;
+      _focusedBlockPath = blockEl?.dataset?.blockPath ? parsePath(blockEl.dataset.blockPath) : null;
+
+      // Shift+Tab (WebKitGTK): keyboard-driven backward focus transition from a list item
       if (Date.now() - _lastPointerDown < 200) return;
       const prevPath = _prevFocusedPath;
       _prevFocusedPath = null;
-      if (!prevPath) return;
-      const newBlockEl = e.target.closest?.('[data-block-path]');
-      if (!newBlockEl?.dataset?.blockPath) return;
-      const newPath = parsePath(newBlockEl.dataset.blockPath);
+      if (!prevPath || !blockEl?.dataset?.blockPath) return;
+      const newPath = parsePath(blockEl.dataset.blockPath);
       const listCtx = getListContext(prevPath);
       if (!listCtx) return;
       const prevIdx = editablePaths.findIndex(p => pathStr(p) === pathStr(prevPath));
@@ -3558,6 +3563,82 @@ export async function render(value, options, api) {
       if (prevIdx < 0 || newIdx !== prevIdx - 1) return;
       handleListOutdent(prevPath, listCtx);
     });
+
+    // --- Toolbar ---
+
+    function tbBtn(label, title, style, action) {
+      const b = api.createElement('button');
+      b.type = 'button';
+      b.textContent = label;
+      b.title = title;
+      b.style.cssText = 'min-width: 32px; height: 32px; padding: 0 6px;'
+        + ' border: 1px solid var(--color-border); border-radius: var(--border-radius, 4px);'
+        + ' background: var(--color-bg-surface); color: var(--color-text);'
+        + ' font-size: 0.8125rem; cursor: pointer; font-family: inherit; line-height: 1;'
+        + (style || '');
+      b.addEventListener('pointerdown', (e) => e.preventDefault());
+      b.addEventListener('click', action);
+      return b;
+    }
+
+    function tbSep() {
+      const s = api.createElement('div');
+      s.style.cssText = 'width: 1px; background: var(--color-border); margin: 3px 4px; align-self: stretch;';
+      return s;
+    }
+
+    const toolbar = api.createElement('div', { className: 'doc-toolbar' });
+    toolbar.style.cssText = 'display: flex; align-items: center; gap: 2px; padding: 4px 2px;'
+      + ' border-bottom: 1px solid var(--color-border); margin-bottom: 4px; flex-wrap: wrap;'
+      + ' position: sticky; top: 0; z-index: 10; background: var(--color-bg-surface);';
+
+    toolbar.appendChild(tbBtn('↩', 'Undo', '', () => performUndo()));
+    toolbar.appendChild(tbBtn('↪', 'Redo', '', () => performRedo()));
+    toolbar.appendChild(tbSep());
+    toolbar.appendChild(tbBtn('B', 'Bold', ' font-weight: bold;', () => {
+      if (!_focusedBlockEl) return;
+      document.execCommand('bold', false, null);
+      handleInput(_focusedBlockEl, _focusedBlockPath);
+    }));
+    toolbar.appendChild(tbBtn('I', 'Italic', ' font-style: italic;', () => {
+      if (!_focusedBlockEl) return;
+      document.execCommand('italic', false, null);
+      handleInput(_focusedBlockEl, _focusedBlockPath);
+    }));
+    toolbar.appendChild(tbBtn('`', 'Inline code', ' font-family: monospace;', () => {
+      if (!_focusedBlockEl) return;
+      applyInlineWrap(_focusedBlockEl, _focusedBlockPath, 'code');
+    }));
+    toolbar.appendChild(tbSep());
+    toolbar.appendChild(tbBtn('•', 'Toggle bullet list', '', () => {
+      if (!_focusedBlockEl || !_focusedBlockPath) return;
+      const listCtx = getListContext(_focusedBlockPath);
+      if (listCtx) {
+        pushUndo();
+        liftListItem(_focusedBlockPath, listCtx, domToInlineAst(_focusedBlockEl));
+      } else {
+        if (tagOf(getBlock(_focusedBlockPath)) !== ':p') return;
+        pushUndo();
+        const content = domToInlineAst(_focusedBlockEl);
+        setBlock(_focusedBlockPath, [':ul', [':li', [':p', ...(content.length ? content : [{ s: '' }])]]]);
+        renderAllBlocks();
+        emitChange();
+        requestAnimationFrame(() => focusBlock([..._focusedBlockPath, 0, 0], 0));
+      }
+    }));
+    toolbar.appendChild(tbSep());
+    toolbar.appendChild(tbBtn('→', 'Indent', '', () => {
+      if (!_focusedBlockPath) return;
+      const listCtx = getListContext(_focusedBlockPath);
+      if (listCtx) handleListIndent(_focusedBlockPath, listCtx);
+    }));
+    toolbar.appendChild(tbBtn('←', 'Outdent', '', () => {
+      if (!_focusedBlockPath) return;
+      const listCtx = getListContext(_focusedBlockPath);
+      if (listCtx) handleListOutdent(_focusedBlockPath, listCtx);
+    }));
+
+    wrapper.appendChild(toolbar);
   }
 
   renderAllBlocks();
