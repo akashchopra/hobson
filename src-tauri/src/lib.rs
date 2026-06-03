@@ -171,6 +171,7 @@ struct BodyState {
     attachments: Vec<EmailAttachment>,
 }
 
+
 fn get_as_base64(part: &mailparse::ParsedMail) -> String {
     use base64::{Engine, engine::general_purpose::STANDARD};
     STANDARD.encode(&part.get_body_raw().unwrap_or_default())
@@ -247,19 +248,14 @@ async fn fetch_email_headers(account: EmailAccount, since_days: u32) -> Result<V
                 .map_err(|e| e.to_string())?.into_iter().collect();
             if uids.is_empty() { return Ok(vec![]); }
             let uid_set = uids.iter().map(|u| u.to_string()).collect::<Vec<_>>().join(",");
-            let messages = session.uid_fetch(&uid_set, "ENVELOPE").map_err(|e| e.to_string())?;
+            let messages = session.uid_fetch(&uid_set, "RFC822.HEADER").map_err(|e| e.to_string())?;
             Ok(messages.iter().filter_map(|msg| {
                 let uid = msg.uid?;
-                let env = msg.envelope()?;
-                let from = env.from.as_ref().and_then(|f| f.first()).map(|a| {
-                    let mb = a.mailbox.as_deref().map(String::from_utf8_lossy).unwrap_or_default();
-                    let h = a.host.as_deref().map(String::from_utf8_lossy).unwrap_or_default();
-                    format!("{mb}@{h}")
-                }).unwrap_or_default();
-                let subject = env.subject.as_deref()
-                    .map(String::from_utf8_lossy).unwrap_or_default().into_owned();
-                let date = env.date.as_deref()
-                    .map(String::from_utf8_lossy).unwrap_or_default().into_owned();
+                let raw_headers = msg.header()?;
+                let (headers, _) = mailparse::parse_headers(raw_headers).ok()?;
+                let from = headers.get_first_value("From").unwrap_or_default();
+                let subject = headers.get_first_value("Subject").unwrap_or_default();
+                let date = headers.get_first_value("Date").unwrap_or_default();
                 Some(EmailHeader { uid, from, subject, date })
             }).collect())
         })
