@@ -3,18 +3,18 @@
   "name": "binary-asset-view",
   "type": "aaaaaaaa-0000-0000-0000-000000000000",
   "created": 1780358400000,
-  "modified": 1780406433242,
+  "modified": 1780502871346,
   "content": {
     "for_type": "602cd3c2-333b-43fd-94f4-9ab08eeb2ca8",
     "displayName": "File",
-    "description": "View for binary-asset items. Shows filename, MIME type, download button, and image preview.",
-    "code": "export async function render(item, api) {\n  const container = api.createElement('div');\n  container.style.cssText = 'padding: 16px; max-width: 600px;';\n\n  const header = api.createElement('div');\n  header.style.cssText = 'display: flex; align-items: center; gap: 12px; margin-bottom: 16px;';\n\n  const nameEl = api.createElement('div');\n  nameEl.style.cssText = 'flex: 1;';\n\n  const h2 = api.createElement('h2');\n  h2.textContent = item.name;\n  h2.style.cssText = 'margin: 0 0 4px 0; font-size: 1.1em;';\n  nameEl.appendChild(h2);\n\n  const mimeEl = api.createElement('div');\n  mimeEl.textContent = item.content?.mimeType || 'unknown type';\n  mimeEl.style.cssText = 'font-size: 0.85em; color: var(--color-text-secondary);';\n  nameEl.appendChild(mimeEl);\n  header.appendChild(nameEl);\n\n  const downloadBtn = api.createElement('button');\n  downloadBtn.textContent = 'Download';\n  downloadBtn.style.cssText = 'padding: 6px 16px; border: 1px solid var(--color-border); background: transparent; border-radius: var(--border-radius); cursor: pointer;';\n\n  downloadBtn.onclick = async () => {\n    const blob = await api.getBlob(item.id);\n    if (!blob) { downloadBtn.textContent = 'Not found'; return; }\n    const tauri = window.__TAURI__;\n    if (tauri) {\n      try {\n        const savePath = await tauri.dialog.save({ defaultPath: item.name });\n        if (!savePath) return;\n        const buffer = await blob.arrayBuffer();\n        await tauri.fs.writeFile(savePath, new Uint8Array(buffer));\n      } catch (e) {\n        console.error('Download failed:', e);\n        downloadBtn.textContent = 'Failed';\n        setTimeout(() => { downloadBtn.textContent = 'Download'; }, 2000);\n      }\n    } else {\n      const url = URL.createObjectURL(blob);\n      const a = document.createElement('a');\n      a.href = url;\n      a.download = item.name;\n      document.body.appendChild(a);\n      a.click();\n      document.body.removeChild(a);\n      URL.revokeObjectURL(url);\n    }\n  };\n\n  header.appendChild(downloadBtn);\n  container.appendChild(header);\n\n  const mimeType = item.content?.mimeType || '';\n  if (mimeType.startsWith('image/')) {\n    const blob = await api.getBlob(item.id);\n    if (blob) {\n      const url = URL.createObjectURL(blob);\n      const img = api.createElement('img');\n      img.src = url;\n      img.alt = item.name;\n      img.style.cssText = 'max-width: 100%; height: auto; display: block; border: 1px solid var(--color-border); border-radius: var(--border-radius);';\n      container.appendChild(img);\n    }\n  }\n\n  return container;\n}\n",
+    "description": "View for binary-asset items. Shows filename, MIME type, download button, image preview for images, and Open button for PDFs.",
+    "code": "export async function render(item, api) {\n  const container = api.createElement('div');\n  container.style.cssText = 'padding: 16px; max-width: 600px;';\n\n  const header = api.createElement('div');\n  header.style.cssText = 'display: flex; align-items: center; gap: 12px; margin-bottom: 16px;';\n\n  const nameEl = api.createElement('div');\n  nameEl.style.cssText = 'flex: 1;';\n\n  const h2 = api.createElement('h2');\n  h2.textContent = item.name;\n  h2.style.cssText = 'margin: 0 0 4px 0; font-size: 1.1em;';\n  nameEl.appendChild(h2);\n\n  const mimeEl = api.createElement('div');\n  mimeEl.textContent = item.content?.mimeType || 'unknown type';\n  mimeEl.style.cssText = 'font-size: 0.85em; color: var(--color-text-secondary);';\n  nameEl.appendChild(mimeEl);\n  header.appendChild(nameEl);\n\n  const downloadBtn = api.createElement('button');\n  downloadBtn.textContent = 'Download';\n  downloadBtn.style.cssText = 'padding: 6px 16px; border: 1px solid var(--color-border); background: transparent; border-radius: var(--border-radius); cursor: pointer;';\n\n  downloadBtn.onclick = async () => {\n    const blob = await api.getBlob(item.id);\n    if (!blob) { downloadBtn.textContent = 'Not found'; return; }\n    const tauri = window.__TAURI__;\n    if (tauri) {\n      try {\n        const savePath = await tauri.dialog.save({ defaultPath: item.name });\n        if (!savePath) return;\n        const buffer = await blob.arrayBuffer();\n        await tauri.fs.writeFile(savePath, new Uint8Array(buffer));\n      } catch (e) {\n        console.error('Download failed:', e);\n        downloadBtn.textContent = 'Failed';\n        setTimeout(() => { downloadBtn.textContent = 'Download'; }, 2000);\n      }\n    } else {\n      const url = URL.createObjectURL(blob);\n      const a = document.createElement('a');\n      a.href = url;\n      a.download = item.name;\n      document.body.appendChild(a);\n      a.click();\n      document.body.removeChild(a);\n      URL.revokeObjectURL(url);\n    }\n  };\n\n  header.appendChild(downloadBtn);\n  container.appendChild(header);\n\n  const mimeType = item.content?.mimeType || '';\n  if (mimeType.startsWith('image/')) {\n    const blob = await api.getBlob(item.id);\n    if (blob) {\n      const url = URL.createObjectURL(blob);\n      const img = api.createElement('img');\n      img.src = url;\n      img.alt = item.name;\n      img.style.cssText = 'max-width: 100%; height: auto; display: block; border: 1px solid var(--color-border); border-radius: var(--border-radius);';\n      container.appendChild(img);\n    }\n  } else if (mimeType === 'application/pdf') {\n    const openBtn = api.createElement('button');\n    openBtn.textContent = 'Open';\n    openBtn.style.cssText = downloadBtn.style.cssText;\n    openBtn.onclick = async () => {\n      const tauri = window.__TAURI__;\n      if (!tauri) return;\n      const blob = await api.getBlob(item.id);\n      if (!blob) { openBtn.textContent = 'Not found'; return; }\n      try {\n        const cacheDir = await tauri.path.appCacheDir();\n        const sep = cacheDir.endsWith('/') || cacheDir.endsWith('\\\\') ? '' : '/';\n        const tmpPath = cacheDir + sep + item.name;\n        const buffer = await blob.arrayBuffer();\n        await tauri.fs.writeFile(tmpPath, new Uint8Array(buffer));\n        await tauri.core.invoke('open_with_viewer', { path: tmpPath });\n      } catch (e) {\n        console.error('Open failed:', e);\n        openBtn.textContent = 'Failed';\n        setTimeout(() => { openBtn.textContent = 'Open'; }, 2000);\n      }\n    };\n    header.appendChild(openBtn);\n  }\n\n  return container;\n}\n",
     "_symbols": {
       "render": {
         "name": "render",
         "line": 1,
         "col": 7,
-        "endLine": 70,
+        "endLine": 93,
         "endCol": 1,
         "kind": "function",
         "scope": null,
@@ -76,19 +76,19 @@
       },
       "render.blob": {
         "name": "blob",
-        "line": 58,
-        "col": 10,
-        "endLine": 58,
-        "endCol": 43,
+        "line": 74,
+        "col": 12,
+        "endLine": 74,
+        "endCol": 45,
         "kind": "variable",
         "scope": "render"
       },
       "render.tauri": {
         "name": "tauri",
-        "line": 29,
-        "col": 10,
-        "endLine": 29,
-        "endCol": 34,
+        "line": 72,
+        "col": 12,
+        "endLine": 72,
+        "endCol": 36,
         "kind": "variable",
         "scope": "render"
       },
@@ -103,9 +103,9 @@
       },
       "render.buffer": {
         "name": "buffer",
-        "line": 34,
+        "line": 80,
         "col": 14,
-        "endLine": 34,
+        "endLine": 80,
         "endCol": 47,
         "kind": "variable",
         "scope": "render"
@@ -144,6 +144,51 @@
         "endLine": 61,
         "endCol": 42,
         "kind": "variable",
+        "scope": "render"
+      },
+      "render.openBtn": {
+        "name": "openBtn",
+        "line": 68,
+        "col": 10,
+        "endLine": 68,
+        "endCol": 47,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.cacheDir": {
+        "name": "cacheDir",
+        "line": 77,
+        "col": 14,
+        "endLine": 77,
+        "endCol": 55,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.sep": {
+        "name": "sep",
+        "line": 78,
+        "col": 14,
+        "endLine": 78,
+        "endCol": 80,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.tmpPath": {
+        "name": "tmpPath",
+        "line": 79,
+        "col": 14,
+        "endLine": 79,
+        "endCol": 50,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.path": {
+        "name": "path",
+        "line": 82,
+        "col": 54,
+        "endLine": 82,
+        "endCol": 67,
+        "kind": "property",
         "scope": "render"
       }
     }

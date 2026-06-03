@@ -64,6 +64,29 @@ export async function render(item, api) {
       img.style.cssText = 'max-width: 100%; height: auto; display: block; border: 1px solid var(--color-border); border-radius: var(--border-radius);';
       container.appendChild(img);
     }
+  } else if (mimeType === 'application/pdf') {
+    const openBtn = api.createElement('button');
+    openBtn.textContent = 'Open';
+    openBtn.style.cssText = downloadBtn.style.cssText;
+    openBtn.onclick = async () => {
+      const tauri = window.__TAURI__;
+      if (!tauri) return;
+      const blob = await api.getBlob(item.id);
+      if (!blob) { openBtn.textContent = 'Not found'; return; }
+      try {
+        const cacheDir = await tauri.path.appCacheDir();
+        const sep = cacheDir.endsWith('/') || cacheDir.endsWith('\\') ? '' : '/';
+        const tmpPath = cacheDir + sep + item.name;
+        const buffer = await blob.arrayBuffer();
+        await tauri.fs.writeFile(tmpPath, new Uint8Array(buffer));
+        await tauri.core.invoke('open_with_viewer', { path: tmpPath });
+      } catch (e) {
+        console.error('Open failed:', e);
+        openBtn.textContent = 'Failed';
+        setTimeout(() => { openBtn.textContent = 'Open'; }, 2000);
+      }
+    };
+    header.appendChild(openBtn);
   }
 
   return container;

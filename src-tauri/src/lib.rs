@@ -2,7 +2,7 @@ use axum::{body::Bytes, extract::{DefaultBodyLimit, State}, http::{HeaderMap, Me
 use chrono::NaiveDate;
 use mailparse::MailHeaderMap;
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, net::SocketAddr, sync::{atomic::{AtomicBool, Ordering}, Arc}};
+use std::{collections::HashMap, net::{SocketAddr, TcpStream}, sync::{atomic::{AtomicBool, Ordering}, Arc}};
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::{oneshot, Mutex};
 use tower_http::cors::CorsLayer;
@@ -152,6 +152,7 @@ struct EmailHeader {
 #[derive(Serialize)]
 struct EmailAttachment {
     name: String,
+    #[serde(rename = "mimeType")]
     mime_type: String,
     data: String,
 }
@@ -225,11 +226,12 @@ fn collect_parts(part: &mailparse::ParsedMail, state: &mut BodyState) {
 
 fn with_imap_session<F, T>(account: &EmailAccount, f: F) -> Result<T, String>
 where
-    F: FnOnce(&mut imap::Session<native_tls::TlsStream<std::net::TcpStream>>) -> Result<T, String>,
+    F: FnOnce(&mut imap::Session<rustls_connector::TlsStream<TcpStream>>) -> Result<T, String>,
 {
-    let tls = native_tls::TlsConnector::builder().build().map_err(|e| e.to_string())?;
-    let client = imap::connect((account.host.as_str(), account.port), &account.host, &tls)
-        .map_err(|e| e.to_string())?;
+    let stream = TcpStream::connect((account.host.as_str(), account.port)).map_err(|e| e.to_string())?;
+    let tls = rustls_connector::RustlsConnector::default();
+    let tlsstream = tls.connect(&account.host, stream).map_err(|e| e.to_string())?;
+    let client = imap::Client::new(tlsstream);
     let mut session = client.login(&account.username, &account.password)
         .map_err(|(e, _)| e.to_string())?;
     session.select(&account.folder).map_err(|e| e.to_string())?;
@@ -268,9 +270,9 @@ async fn fetch_email_headers(account: EmailAccount, since_date: String, before_d
 #[tauri::command]
 async fn list_folders(account: EmailAccount) -> Result<Vec<String>, String> {
     tokio::task::spawn_blocking(move || {
-        let tls = native_tls::TlsConnector::builder().build().map_err(|e| e.to_string())?;
-        let client = imap::connect((account.host.as_str(), account.port), &account.host, &tls)
-            .map_err(|e| e.to_string())?;
+        let stream = TcpStream::connect((account.host.as_str(), account.port)).map_err(|e| e.to_string())?;
+        let tls = rustls_connector::RustlsConnector::default();
+        let client = imap::Client::new(tls.connect(&account.host, stream).map_err(|e| e.to_string())?);
         let mut session = client.login(&account.username, &account.password)
             .map_err(|(e, _)| e.to_string())?;
         let mailboxes = session.list(None, Some("*")).map_err(|e| e.to_string())?;
@@ -316,11 +318,17 @@ pub fn run() {
     let pending: PendingRequests = Arc::new(Mutex::new(HashMap::new()));
     let server_running = Arc::new(AtomicBool::new(false));
 
+    #[tauri::command]
+    fn open_with_viewer<R: tauri::Runtime>(app: tauri::AppHandle<R>, path: String) -> Result<(), String> {
+        use tauri_plugin_opener::OpenerExt;
+        app.opener().open_path(path, None::<&str>).map_err(|e| e.to_string())
+    }
+
     tauri::Builder::default()
         .manage(pending)
         .manage(server_running)
         .invoke_handler(tauri::generate_handler![start_http_server, http_response, consume_pending_share,
-            fetch_email_headers, fetch_email_body, list_folders])
+            fetch_email_headers, fetch_email_body, list_folders, open_with_viewer])
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_http::init())
