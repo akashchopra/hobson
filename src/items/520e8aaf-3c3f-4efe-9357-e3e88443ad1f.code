@@ -123,7 +123,7 @@ export async function render(item, api) {
         status.textContent = 'No emails in the selected period.';
       } else {
         status.textContent = `${headers.length} email${headers.length === 1 ? '' : 's'} found.`;
-        renderList(headers);
+        renderList(headers, account);
       }
     } catch (e) {
       status.textContent = `Error: ${e}`;
@@ -133,7 +133,7 @@ export async function render(item, api) {
     }
   };
 
-  function renderList(emails) {
+  function renderList(emails, account) {
     const selectControls = api.createElement('div');
     selectControls.style.cssText = 'display: flex; gap: 8px; margin-bottom: 8px;';
     const selectAllBtn = api.createElement('button');
@@ -160,12 +160,31 @@ export async function render(item, api) {
       tdCheck.appendChild(checkbox);
 
       const tdFrom = api.createElement('td');
-      tdFrom.style.cssText = 'padding: 8px; width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--color-text-secondary); font-size: 0.9em;';
-      tdFrom.textContent = email.from;
+      tdFrom.style.cssText = 'padding: 8px; width: 160px; font-size: 0.9em;';
+      const fromMatch = email.from.match(/^(.*?)\s*<(.+)>$/);
+      if (fromMatch) {
+        const nameEl = api.createElement('div');
+        nameEl.textContent = fromMatch[1].trim();
+        nameEl.style.cssText = 'color: var(--color-text);';
+        const addrEl = api.createElement('div');
+        addrEl.textContent = fromMatch[2].trim();
+        addrEl.style.cssText = 'color: var(--color-text-secondary); font-size: 0.85em;';
+        tdFrom.appendChild(nameEl);
+        tdFrom.appendChild(addrEl);
+      } else {
+        tdFrom.style.color = 'var(--color-text-secondary)';
+        tdFrom.textContent = email.from;
+      }
 
       const tdSubject = api.createElement('td');
       tdSubject.style.cssText = 'padding: 8px;';
-      tdSubject.textContent = email.subject || '(no subject)';
+      const subjectText = api.createElement('div');
+      subjectText.textContent = email.subject || '(no subject)';
+      tdSubject.appendChild(subjectText);
+      const previewBtn = api.createElement('button');
+      previewBtn.textContent = 'Preview';
+      previewBtn.style.cssText = 'background: none; border: none; padding: 0; cursor: pointer; font-size: 0.82em; color: var(--color-text-secondary); margin-top: 3px; display: block;';
+      tdSubject.appendChild(previewBtn);
 
       const tdDate = api.createElement('td');
       tdDate.style.cssText = 'padding: 8px; width: 160px; font-size: 0.85em; color: var(--color-text-secondary); white-space: nowrap;';
@@ -176,6 +195,51 @@ export async function render(item, api) {
       tr.appendChild(tdSubject);
       tr.appendChild(tdDate);
       table.appendChild(tr);
+
+      const trPreview = api.createElement('tr');
+      trPreview.style.display = 'none';
+      const tdPreview = api.createElement('td');
+      tdPreview.setAttribute('colspan', '4');
+      tdPreview.style.cssText = 'padding: 0 8px 8px 40px;';
+      trPreview.appendChild(tdPreview);
+      table.appendChild(trPreview);
+
+      let previewLoaded = false;
+      previewBtn.onclick = async () => {
+        const isOpen = trPreview.style.display !== 'none';
+        trPreview.style.display = isOpen ? 'none' : '';
+        previewBtn.textContent = isOpen ? 'Preview' : 'Hide';
+        if (isOpen || previewLoaded) return;
+        previewLoaded = true;
+        const loadingEl = api.createElement('div');
+        loadingEl.textContent = 'Loading…';
+        loadingEl.style.cssText = 'font-size: 0.85em; color: var(--color-text-secondary); padding: 6px 0;';
+        tdPreview.appendChild(loadingEl);
+        try {
+          const tauri = window.__TAURI__;
+          const body = await tauri.core.invoke('fetch_email_body', { account, uid: email.uid });
+          tdPreview.removeChild(loadingEl);
+          const iframe = api.createElement('iframe');
+          iframe.setAttribute('sandbox', '');
+          iframe.style.cssText = 'width: 100%; height: 400px; border: 1px solid var(--color-border); border-radius: var(--border-radius); display: block;';
+          if (body.html) {
+            iframe.srcdoc = body.html;
+          } else if (body.text) {
+            const escaped = body.text.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+            iframe.srcdoc = `<pre style="white-space:pre-wrap;font-family:inherit;margin:0;padding:8px">${escaped}</pre>`;
+          } else {
+            iframe.srcdoc = '<em style="color:grey">No content</em>';
+          }
+          tdPreview.appendChild(iframe);
+        } catch (e) {
+          tdPreview.removeChild(loadingEl);
+          const errEl = api.createElement('div');
+          errEl.textContent = `Error: ${e}`;
+          errEl.style.cssText = 'color: var(--color-error, #c00); font-size: 0.85em; padding: 6px 0;';
+          tdPreview.appendChild(errEl);
+        }
+      };
+
       return { checkbox, email };
     });
 
