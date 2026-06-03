@@ -7,28 +7,38 @@ export async function render(item, api) {
   heading.style.cssText = 'margin: 0 0 16px 0;';
   container.appendChild(heading);
 
+  const today = new Date();
+  const weekAgo = new Date(today);
+  weekAgo.setDate(today.getDate() - 7);
+  const toIso = d => d.toISOString().slice(0, 10);
+
   const controls = api.createElement('div');
   controls.style.cssText = 'display: flex; align-items: center; gap: 12px; margin-bottom: 12px;';
 
-  const label = api.createElement('span');
-  label.textContent = 'Last';
+  const fromLabel = api.createElement('span');
+  fromLabel.textContent = 'From';
 
-  const daysInput = api.createElement('input');
-  daysInput.type = 'number';
-  daysInput.value = '7';
-  daysInput.min = '1';
-  daysInput.style.cssText = 'width: 60px; padding: 6px 8px; border: 1px solid var(--color-border); border-radius: var(--border-radius);';
+  const fromInput = api.createElement('input');
+  fromInput.type = 'date';
+  fromInput.value = toIso(weekAgo);
+  fromInput.style.cssText = 'padding: 6px 8px; border: 1px solid var(--color-border); border-radius: var(--border-radius);';
 
-  const label2 = api.createElement('span');
-  label2.textContent = 'days';
+  const toLabel = api.createElement('span');
+  toLabel.textContent = 'to';
+
+  const toInput = api.createElement('input');
+  toInput.type = 'date';
+  toInput.value = toIso(today);
+  toInput.style.cssText = 'padding: 6px 8px; border: 1px solid var(--color-border); border-radius: var(--border-radius);';
 
   const fetchBtn = api.createElement('button');
   fetchBtn.textContent = 'Fetch';
   fetchBtn.style.cssText = 'padding: 6px 16px; background: var(--color-primary); color: white; border: none; border-radius: var(--border-radius); cursor: pointer;';
 
-  controls.appendChild(label);
-  controls.appendChild(daysInput);
-  controls.appendChild(label2);
+  controls.appendChild(fromLabel);
+  controls.appendChild(fromInput);
+  controls.appendChild(toLabel);
+  controls.appendChild(toInput);
   controls.appendChild(fetchBtn);
   container.appendChild(controls);
 
@@ -117,8 +127,11 @@ export async function render(item, api) {
         password: item.content.password,
         folder: folderInput.value || 'INBOX',
       };
-      const sinceDays = parseInt(daysInput.value, 10) || 7;
-      const headers = await tauri.core.invoke('fetch_email_headers', { account, sinceDays });
+      const sinceDate = fromInput.value;
+      const beforeDay = new Date(toInput.value);
+      beforeDay.setDate(beforeDay.getDate() + 1);
+      const beforeDate = toIso(beforeDay);
+      const headers = await tauri.core.invoke('fetch_email_headers', { account, sinceDate, beforeDate });
       if (headers.length === 0) {
         status.textContent = 'No emails in the selected period.';
       } else {

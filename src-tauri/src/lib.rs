@@ -1,5 +1,5 @@
 use axum::{body::Bytes, extract::{DefaultBodyLimit, State}, http::{HeaderMap, Method, StatusCode}, response::IntoResponse, routing::any, Router};
-use chrono::Duration;
+use chrono::NaiveDate;
 use mailparse::MailHeaderMap;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, net::SocketAddr, sync::{atomic::{AtomicBool, Ordering}, Arc}};
@@ -239,12 +239,15 @@ where
 }
 
 #[tauri::command]
-async fn fetch_email_headers(account: EmailAccount, since_days: u32) -> Result<Vec<EmailHeader>, String> {
+async fn fetch_email_headers(account: EmailAccount, since_date: String, before_date: String) -> Result<Vec<EmailHeader>, String> {
     tokio::task::spawn_blocking(move || {
         with_imap_session(&account, |session| {
-            let since = (chrono::Utc::now() - Duration::days(since_days as i64))
-                .format("%-d-%b-%Y").to_string();
-            let uids: Vec<u32> = session.uid_search(format!("SINCE {since}"))
+            let fmt = |s: &str| NaiveDate::parse_from_str(s, "%Y-%m-%d")
+                .map_err(|e| e.to_string())
+                .map(|d| d.format("%-d-%b-%Y").to_string());
+            let since = fmt(&since_date)?;
+            let before = fmt(&before_date)?;
+            let uids: Vec<u32> = session.uid_search(format!("SINCE {since} BEFORE {before}"))
                 .map_err(|e| e.to_string())?.into_iter().collect();
             if uids.is_empty() { return Ok(vec![]); }
             let uid_set = uids.iter().map(|u| u.to_string()).collect::<Vec<_>>().join(",");
