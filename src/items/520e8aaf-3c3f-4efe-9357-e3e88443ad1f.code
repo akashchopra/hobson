@@ -67,6 +67,29 @@ export async function render(item, api) {
   folderList.style.cssText = 'display: none; border: 1px solid var(--color-border); border-radius: var(--border-radius); margin-bottom: 12px; max-height: 200px; overflow-y: auto;';
   container.appendChild(folderList);
 
+  const passphraseRow = api.createElement('div');
+  passphraseRow.style.cssText = 'display: flex; align-items: center; gap: 8px; margin-bottom: 16px;';
+  const passphraseLabel = api.createElement('span');
+  passphraseLabel.textContent = 'Passphrase:';
+  passphraseLabel.style.cssText = 'white-space: nowrap;';
+  const passphraseInput = api.createElement('input');
+  passphraseInput.type = 'password';
+  passphraseInput.placeholder = 'Required if password is encrypted';
+  passphraseInput.style.cssText = 'flex: 1; padding: 6px 8px; border: 1px solid var(--color-border); border-radius: var(--border-radius);';
+  passphraseRow.appendChild(passphraseLabel);
+  passphraseRow.appendChild(passphraseInput);
+  container.appendChild(passphraseRow);
+
+  const fvPassword = await api.require('field-view-password');
+  const resolvePassword = async () => {
+    const stored = item.content.password;
+    if (stored && typeof stored === 'object' && stored.ciphertext) {
+      if (!passphraseInput.value) throw new Error('Passphrase required for encrypted account.');
+      return fvPassword.decrypt(stored, passphraseInput.value);
+    }
+    return stored;
+  };
+
   browseBtn.onclick = async () => {
     if (folderList.style.display === 'block') {
       folderList.style.display = 'none';
@@ -81,7 +104,7 @@ export async function render(item, api) {
         host: item.content.host,
         port: item.content.port,
         username: item.content.username,
-        password: item.content.password,
+        password: await resolvePassword(),
         folder: folderInput.value || 'INBOX',
       };
       const folders = await tauri.core.invoke('list_folders', { account });
@@ -124,7 +147,7 @@ export async function render(item, api) {
         host: item.content.host,
         port: item.content.port,
         username: item.content.username,
-        password: item.content.password,
+        password: await resolvePassword(),
         folder: folderInput.value || 'INBOX',
       };
       const sinceDate = fromInput.value;

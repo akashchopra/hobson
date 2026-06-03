@@ -1,0 +1,108 @@
+
+async function deriveKey(passphrase, salt) {
+  const keyMaterial = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(passphrase),
+    { name: 'PBKDF2' },
+    false,
+    ['deriveKey']
+  );
+  return crypto.subtle.deriveKey(
+    { name: 'PBKDF2', salt, iterations: 200000, hash: 'SHA-256' },
+    keyMaterial,
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['encrypt', 'decrypt']
+  );
+}
+
+const toBase64 = arr => {
+  const bytes = new Uint8Array(arr);
+  let binary = '';
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+  return btoa(binary);
+};
+
+const fromBase64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+
+async function encrypt(password, passphrase) {
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const key = await deriveKey(passphrase, salt);
+  const ciphertext = await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv },
+    key,
+    new TextEncoder().encode(password)
+  );
+  return { ciphertext: toBase64(ciphertext), salt: toBase64(salt), iv: toBase64(iv) };
+}
+
+export async function decrypt(encrypted, passphrase) {
+  const key = await deriveKey(passphrase, fromBase64(encrypted.salt));
+  const plaintext = await crypto.subtle.decrypt(
+    { name: 'AES-GCM', iv: fromBase64(encrypted.iv) },
+    key,
+    fromBase64(encrypted.ciphertext)
+  );
+  return new TextDecoder().decode(plaintext);
+}
+
+export function render(value, options, api) {
+  const { mode, onChange, label } = options;
+  const isEditable = mode === 'editable' && onChange;
+  const inputStyle = 'padding: 8px; border: 1px solid var(--color-border); border-radius: var(--border-radius); font-size: 0.875rem;';
+  const wrapper = api.createElement('div', { className: 'field-password' });
+  wrapper.style.cssText = 'display: flex; flex-direction: column; gap: 4px;';
+
+  if (label) {
+    const labelEl = api.createElement('label');
+    labelEl.textContent = label;
+    labelEl.style.cssText = 'font-weight: 500; font-size: 0.875rem; color: var(--color-text);';
+    wrapper.appendChild(labelEl);
+  }
+
+  if (isEditable) {
+    const pwdInput = api.createElement('input');
+    pwdInput.type = 'password';
+    pwdInput.placeholder = value ? 'New password (blank to keep current)' : 'Password';
+    pwdInput.style.cssText = inputStyle;
+
+    const passphraseInput = api.createElement('input');
+    passphraseInput.type = 'password';
+    passphraseInput.placeholder = 'Encryption passphrase';
+    passphraseInput.style.cssText = inputStyle;
+
+    const errorEl = api.createElement('div');
+    errorEl.style.cssText = 'font-size: 0.8rem; color: var(--color-error, #c00); min-height: 1.2em;';
+
+    const tryEncrypt = async () => {
+      const pwd = pwdInput.value;
+      const pass = passphraseInput.value;
+      if (!pwd && !pass) return;
+      if (!pwd || !pass) {
+        errorEl.textContent = 'Both password and passphrase required.';
+        return;
+      }
+      errorEl.textContent = '';
+      try {
+        onChange(await encrypt(pwd, pass));
+      } catch (e) {
+        errorEl.textContent = `Encryption failed: ${e}`;
+      }
+    };
+
+    pwdInput.onblur = tryEncrypt;
+    passphraseInput.onblur = tryEncrypt;
+
+    wrapper.appendChild(pwdInput);
+    wrapper.appendChild(passphraseInput);
+    wrapper.appendChild(errorEl);
+  } else {
+    const span = api.createElement('span');
+    span.textContent = value ? '●●●●●●' : '(not set)';
+    span.style.cssText = 'font-size: 0.875rem; color: var(--color-text-secondary);';
+    wrapper.appendChild(span);
+  }
+
+  return wrapper;
+}
