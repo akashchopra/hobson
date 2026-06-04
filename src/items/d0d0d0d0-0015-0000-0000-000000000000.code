@@ -1,0 +1,118 @@
+export async function render(item, api) {
+  const el = api.createElement('div');
+  el.style.cssText = 'display: flex; flex-direction: column; gap: 12px; padding: 8px;';
+
+  const nameInput = api.createElement('input');
+  nameInput.type = 'text';
+  nameInput.value = item.name || '';
+  nameInput.placeholder = 'File name';
+  nameInput.style.cssText = 'font-size: 1.25rem; font-weight: 600; padding: 4px 8px; border: 1px solid var(--color-border); border-radius: var(--border-radius); background: var(--color-bg-surface); color: var(--color-text); outline: none;';
+
+  const info = api.createElement('div');
+  info.style.cssText = 'font-size: 0.85em; color: var(--color-text-secondary);';
+  info.textContent = item.content?.mimeType || '';
+
+  const dropZone = api.createElement('div');
+  dropZone.style.cssText = 'padding: 2em; text-align: center; border: 2px dashed var(--color-border); border-radius: var(--border-radius); color: var(--color-text-secondary); cursor: pointer; transition: border-color 0.15s, background 0.15s;';
+  dropZone.textContent = item.content?.mimeType ? 'Drop file to replace, or click to browse' : 'Drop file here, or click to browse';
+
+  const EXT_MIME = {
+    pdf: 'application/pdf', csv: 'text/csv', txt: 'text/plain',
+    json: 'application/json', xml: 'application/xml',
+    zip: 'application/zip', gz: 'application/gzip',
+    mp3: 'audio/mpeg', mp4: 'video/mp4', wav: 'audio/wav',
+    png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg',
+    gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml',
+  };
+
+  async function loadFile(file) {
+    if (!file) return;
+    const mimeType = file.type || EXT_MIME[file.name.split('.').pop()?.toLowerCase()] || 'application/octet-stream';
+    await api.setBlob(item.id, file);
+    item.content = item.content || {};
+    item.content.mimeType = mimeType;
+    if (!item.name || item.name === 'Untitled') {
+      item.name = file.name;
+      nameInput.value = item.name;
+    }
+    info.textContent = mimeType;
+    dropZone.textContent = 'Drop file to replace, or click to browse';
+  }
+
+  async function pickFile() {
+    const tauri = window.__TAURI__;
+    if (tauri) {
+      try {
+        const result = await tauri.dialog.open({ multiple: false });
+        if (result) {
+          const bytes = await tauri.fs.readFile(result);
+          const filename = result.split('/').pop().split('\\').pop();
+          const ext = filename.split('.').pop()?.toLowerCase();
+          const mimeType = EXT_MIME[ext] || 'application/octet-stream';
+          const blob = new Blob([bytes], { type: mimeType });
+          await api.setBlob(item.id, blob);
+          item.content = item.content || {};
+          item.content.mimeType = mimeType;
+          if (!item.name || item.name === 'Untitled') {
+            item.name = filename;
+            nameInput.value = item.name;
+          }
+          info.textContent = mimeType;
+          dropZone.textContent = 'Drop file to replace, or click to browse';
+        }
+      } catch (e) {
+        console.error('[binary-asset-editor] file picker error:', e);
+      }
+    } else {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.onchange = () => { if (input.files[0]) loadFile(input.files[0]); };
+      input.click();
+    }
+  }
+
+  dropZone.addEventListener('click', pickFile);
+  dropZone.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    dropZone.style.borderColor = 'var(--color-primary)';
+    dropZone.style.background = 'var(--color-primary-light)';
+  });
+  dropZone.addEventListener('dragleave', () => {
+    dropZone.style.borderColor = 'var(--color-border)';
+    dropZone.style.background = '';
+  });
+  dropZone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    dropZone.style.borderColor = 'var(--color-border)';
+    dropZone.style.background = '';
+    if (e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0]);
+  });
+
+  const actions = api.createElement('div');
+  actions.style.cssText = 'display: flex; gap: 8px; justify-content: flex-end;';
+
+  const cancelBtn = api.createElement('button');
+  cancelBtn.textContent = 'Cancel';
+  cancelBtn.style.cssText = 'padding: 6px 16px; background: var(--color-bg-surface-alt); color: var(--color-text); border: 1px solid var(--color-border); border-radius: var(--border-radius); cursor: pointer; font-size: 0.875rem;';
+  cancelBtn.addEventListener('click', async () => {
+    if (api.restorePreviousView) await api.restorePreviousView(item.id);
+  });
+
+  const saveBtn = api.createElement('button');
+  saveBtn.textContent = 'Save';
+  saveBtn.style.cssText = 'padding: 6px 16px; background: var(--color-primary); color: white; border: none; border-radius: var(--border-radius); cursor: pointer; font-size: 0.875rem;';
+  saveBtn.addEventListener('click', async () => {
+    item.name = nameInput.value || item.name;
+    await api.update(item);
+    if (api.restorePreviousView) await api.restorePreviousView(item.id);
+  });
+
+  actions.appendChild(cancelBtn);
+  actions.appendChild(saveBtn);
+  el.appendChild(nameInput);
+  el.appendChild(info);
+  el.appendChild(dropZone);
+  el.appendChild(actions);
+
+  return el;
+}

@@ -1,0 +1,352 @@
+{
+  "id": "d0d0d0d0-0015-0000-0000-000000000000",
+  "name": "binary-asset-editor-view",
+  "type": "aaaaaaaa-0000-0000-0000-000000000000",
+  "created": 1749000000000,
+  "modified": 1780555852540,
+  "content": {
+    "for_type": "602cd3c2-333b-43fd-94f4-9ab08eeb2ca8",
+    "displayName": "Edit File",
+    "capabilities": [
+      "read",
+      "write"
+    ],
+    "ui_hints": {
+      "content.mimeType": {
+        "mode": "editable"
+      }
+    },
+    "description": "Editor for binary-asset items. Drop zone and file picker to attach or replace the file; saves name and mimeType.",
+    "code": "export async function render(item, api) {\n  const el = api.createElement('div');\n  el.style.cssText = 'display: flex; flex-direction: column; gap: 12px; padding: 8px;';\n\n  const nameInput = api.createElement('input');\n  nameInput.type = 'text';\n  nameInput.value = item.name || '';\n  nameInput.placeholder = 'File name';\n  nameInput.style.cssText = 'font-size: 1.25rem; font-weight: 600; padding: 4px 8px; border: 1px solid var(--color-border); border-radius: var(--border-radius); background: var(--color-bg-surface); color: var(--color-text); outline: none;';\n\n  const info = api.createElement('div');\n  info.style.cssText = 'font-size: 0.85em; color: var(--color-text-secondary);';\n  info.textContent = item.content?.mimeType || '';\n\n  const dropZone = api.createElement('div');\n  dropZone.style.cssText = 'padding: 2em; text-align: center; border: 2px dashed var(--color-border); border-radius: var(--border-radius); color: var(--color-text-secondary); cursor: pointer; transition: border-color 0.15s, background 0.15s;';\n  dropZone.textContent = item.content?.mimeType ? 'Drop file to replace, or click to browse' : 'Drop file here, or click to browse';\n\n  const EXT_MIME = {\n    pdf: 'application/pdf', csv: 'text/csv', txt: 'text/plain',\n    json: 'application/json', xml: 'application/xml',\n    zip: 'application/zip', gz: 'application/gzip',\n    mp3: 'audio/mpeg', mp4: 'video/mp4', wav: 'audio/wav',\n    png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg',\n    gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml',\n  };\n\n  async function loadFile(file) {\n    if (!file) return;\n    const mimeType = file.type || EXT_MIME[file.name.split('.').pop()?.toLowerCase()] || 'application/octet-stream';\n    await api.setBlob(item.id, file);\n    item.content = item.content || {};\n    item.content.mimeType = mimeType;\n    if (!item.name || item.name === 'Untitled') {\n      item.name = file.name;\n      nameInput.value = item.name;\n    }\n    info.textContent = mimeType;\n    dropZone.textContent = 'Drop file to replace, or click to browse';\n  }\n\n  async function pickFile() {\n    const tauri = window.__TAURI__;\n    if (tauri) {\n      try {\n        const result = await tauri.dialog.open({ multiple: false });\n        if (result) {\n          const bytes = await tauri.fs.readFile(result);\n          const filename = result.split('/').pop().split('\\\\').pop();\n          const ext = filename.split('.').pop()?.toLowerCase();\n          const mimeType = EXT_MIME[ext] || 'application/octet-stream';\n          const blob = new Blob([bytes], { type: mimeType });\n          await api.setBlob(item.id, blob);\n          item.content = item.content || {};\n          item.content.mimeType = mimeType;\n          if (!item.name || item.name === 'Untitled') {\n            item.name = filename;\n            nameInput.value = item.name;\n          }\n          info.textContent = mimeType;\n          dropZone.textContent = 'Drop file to replace, or click to browse';\n        }\n      } catch (e) {\n        console.error('[binary-asset-editor] file picker error:', e);\n      }\n    } else {\n      const input = document.createElement('input');\n      input.type = 'file';\n      input.onchange = () => { if (input.files[0]) loadFile(input.files[0]); };\n      input.click();\n    }\n  }\n\n  dropZone.addEventListener('click', pickFile);\n  dropZone.addEventListener('dragover', (e) => {\n    e.preventDefault();\n    dropZone.style.borderColor = 'var(--color-primary)';\n    dropZone.style.background = 'var(--color-primary-light)';\n  });\n  dropZone.addEventListener('dragleave', () => {\n    dropZone.style.borderColor = 'var(--color-border)';\n    dropZone.style.background = '';\n  });\n  dropZone.addEventListener('drop', (e) => {\n    e.preventDefault();\n    dropZone.style.borderColor = 'var(--color-border)';\n    dropZone.style.background = '';\n    if (e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0]);\n  });\n\n  const actions = api.createElement('div');\n  actions.style.cssText = 'display: flex; gap: 8px; justify-content: flex-end;';\n\n  const cancelBtn = api.createElement('button');\n  cancelBtn.textContent = 'Cancel';\n  cancelBtn.style.cssText = 'padding: 6px 16px; background: var(--color-bg-surface-alt); color: var(--color-text); border: 1px solid var(--color-border); border-radius: var(--border-radius); cursor: pointer; font-size: 0.875rem;';\n  cancelBtn.addEventListener('click', async () => {\n    if (api.restorePreviousView) await api.restorePreviousView(item.id);\n  });\n\n  const saveBtn = api.createElement('button');\n  saveBtn.textContent = 'Save';\n  saveBtn.style.cssText = 'padding: 6px 16px; background: var(--color-primary); color: white; border: none; border-radius: var(--border-radius); cursor: pointer; font-size: 0.875rem;';\n  saveBtn.addEventListener('click', async () => {\n    item.name = nameInput.value || item.name;\n    await api.update(item);\n    if (api.restorePreviousView) await api.restorePreviousView(item.id);\n  });\n\n  actions.appendChild(cancelBtn);\n  actions.appendChild(saveBtn);\n  el.appendChild(nameInput);\n  el.appendChild(info);\n  el.appendChild(dropZone);\n  el.appendChild(actions);\n\n  return el;\n}\n",
+    "_symbols": {
+      "render": {
+        "name": "render",
+        "line": 1,
+        "col": 7,
+        "endLine": 118,
+        "endCol": 1,
+        "kind": "function",
+        "scope": null,
+        "signature": "(item, api)"
+      },
+      "render.el": {
+        "name": "el",
+        "line": 2,
+        "col": 8,
+        "endLine": 2,
+        "endCol": 37,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.nameInput": {
+        "name": "nameInput",
+        "line": 5,
+        "col": 8,
+        "endLine": 5,
+        "endCol": 46,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.info": {
+        "name": "info",
+        "line": 11,
+        "col": 8,
+        "endLine": 11,
+        "endCol": 39,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.dropZone": {
+        "name": "dropZone",
+        "line": 15,
+        "col": 8,
+        "endLine": 15,
+        "endCol": 43,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.EXT_MIME": {
+        "name": "EXT_MIME",
+        "line": 19,
+        "col": 8,
+        "endLine": 26,
+        "endCol": 3,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "EXT_MIME.pdf": {
+        "name": "pdf",
+        "line": 20,
+        "col": 4,
+        "endLine": 20,
+        "endCol": 26,
+        "kind": "property",
+        "scope": "EXT_MIME"
+      },
+      "EXT_MIME.csv": {
+        "name": "csv",
+        "line": 20,
+        "col": 28,
+        "endLine": 20,
+        "endCol": 43,
+        "kind": "property",
+        "scope": "EXT_MIME"
+      },
+      "EXT_MIME.txt": {
+        "name": "txt",
+        "line": 20,
+        "col": 45,
+        "endLine": 20,
+        "endCol": 62,
+        "kind": "property",
+        "scope": "EXT_MIME"
+      },
+      "EXT_MIME.json": {
+        "name": "json",
+        "line": 21,
+        "col": 4,
+        "endLine": 21,
+        "endCol": 28,
+        "kind": "property",
+        "scope": "EXT_MIME"
+      },
+      "EXT_MIME.xml": {
+        "name": "xml",
+        "line": 21,
+        "col": 30,
+        "endLine": 21,
+        "endCol": 52,
+        "kind": "property",
+        "scope": "EXT_MIME"
+      },
+      "EXT_MIME.zip": {
+        "name": "zip",
+        "line": 22,
+        "col": 4,
+        "endLine": 22,
+        "endCol": 26,
+        "kind": "property",
+        "scope": "EXT_MIME"
+      },
+      "EXT_MIME.gz": {
+        "name": "gz",
+        "line": 22,
+        "col": 28,
+        "endLine": 22,
+        "endCol": 50,
+        "kind": "property",
+        "scope": "EXT_MIME"
+      },
+      "EXT_MIME.mp3": {
+        "name": "mp3",
+        "line": 23,
+        "col": 4,
+        "endLine": 23,
+        "endCol": 21,
+        "kind": "property",
+        "scope": "EXT_MIME"
+      },
+      "EXT_MIME.mp4": {
+        "name": "mp4",
+        "line": 23,
+        "col": 23,
+        "endLine": 23,
+        "endCol": 39,
+        "kind": "property",
+        "scope": "EXT_MIME"
+      },
+      "EXT_MIME.wav": {
+        "name": "wav",
+        "line": 23,
+        "col": 41,
+        "endLine": 23,
+        "endCol": 57,
+        "kind": "property",
+        "scope": "EXT_MIME"
+      },
+      "EXT_MIME.png": {
+        "name": "png",
+        "line": 24,
+        "col": 4,
+        "endLine": 24,
+        "endCol": 20,
+        "kind": "property",
+        "scope": "EXT_MIME"
+      },
+      "EXT_MIME.jpg": {
+        "name": "jpg",
+        "line": 24,
+        "col": 22,
+        "endLine": 24,
+        "endCol": 39,
+        "kind": "property",
+        "scope": "EXT_MIME"
+      },
+      "EXT_MIME.jpeg": {
+        "name": "jpeg",
+        "line": 24,
+        "col": 41,
+        "endLine": 24,
+        "endCol": 59,
+        "kind": "property",
+        "scope": "EXT_MIME"
+      },
+      "EXT_MIME.gif": {
+        "name": "gif",
+        "line": 25,
+        "col": 4,
+        "endLine": 25,
+        "endCol": 20,
+        "kind": "property",
+        "scope": "EXT_MIME"
+      },
+      "EXT_MIME.webp": {
+        "name": "webp",
+        "line": 25,
+        "col": 22,
+        "endLine": 25,
+        "endCol": 40,
+        "kind": "property",
+        "scope": "EXT_MIME"
+      },
+      "EXT_MIME.svg": {
+        "name": "svg",
+        "line": 25,
+        "col": 42,
+        "endLine": 25,
+        "endCol": 62,
+        "kind": "property",
+        "scope": "EXT_MIME"
+      },
+      "render.loadFile": {
+        "name": "loadFile",
+        "line": 28,
+        "col": 2,
+        "endLine": 40,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "render",
+        "signature": "(file)"
+      },
+      "loadFile.mimeType": {
+        "name": "mimeType",
+        "line": 30,
+        "col": 10,
+        "endLine": 30,
+        "endCol": 115,
+        "kind": "variable",
+        "scope": "loadFile"
+      },
+      "render.pickFile": {
+        "name": "pickFile",
+        "line": 42,
+        "col": 2,
+        "endLine": 72,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "render",
+        "signature": "()"
+      },
+      "pickFile.tauri": {
+        "name": "tauri",
+        "line": 43,
+        "col": 10,
+        "endLine": 43,
+        "endCol": 34,
+        "kind": "variable",
+        "scope": "pickFile"
+      },
+      "pickFile.result": {
+        "name": "result",
+        "line": 46,
+        "col": 14,
+        "endLine": 46,
+        "endCol": 67,
+        "kind": "variable",
+        "scope": "pickFile"
+      },
+      "pickFile.bytes": {
+        "name": "bytes",
+        "line": 48,
+        "col": 16,
+        "endLine": 48,
+        "endCol": 55,
+        "kind": "variable",
+        "scope": "pickFile"
+      },
+      "pickFile.filename": {
+        "name": "filename",
+        "line": 49,
+        "col": 16,
+        "endLine": 49,
+        "endCol": 68,
+        "kind": "variable",
+        "scope": "pickFile"
+      },
+      "pickFile.ext": {
+        "name": "ext",
+        "line": 50,
+        "col": 16,
+        "endLine": 50,
+        "endCol": 62,
+        "kind": "variable",
+        "scope": "pickFile"
+      },
+      "pickFile.mimeType": {
+        "name": "mimeType",
+        "line": 51,
+        "col": 16,
+        "endLine": 51,
+        "endCol": 70,
+        "kind": "variable",
+        "scope": "pickFile"
+      },
+      "pickFile.blob": {
+        "name": "blob",
+        "line": 52,
+        "col": 16,
+        "endLine": 52,
+        "endCol": 60,
+        "kind": "variable",
+        "scope": "pickFile"
+      },
+      "pickFile.input": {
+        "name": "input",
+        "line": 67,
+        "col": 12,
+        "endLine": 67,
+        "endCol": 51,
+        "kind": "variable",
+        "scope": "pickFile"
+      },
+      "render.actions": {
+        "name": "actions",
+        "line": 91,
+        "col": 8,
+        "endLine": 91,
+        "endCol": 42,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.cancelBtn": {
+        "name": "cancelBtn",
+        "line": 94,
+        "col": 8,
+        "endLine": 94,
+        "endCol": 47,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.saveBtn": {
+        "name": "saveBtn",
+        "line": 101,
+        "col": 8,
+        "endLine": 101,
+        "endCol": 45,
+        "kind": "variable",
+        "scope": "render"
+      }
+    }
+  },
+  "attachments": []
+}
