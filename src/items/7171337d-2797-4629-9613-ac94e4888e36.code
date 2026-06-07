@@ -1,0 +1,43 @@
+(defn render [item api]
+  (def name-atom (atom nil))
+  (def desc-atom (atom nil))
+  (def doc-mod (require "field-view-doc-editable"))
+  (def
+    desc-el
+    (.render
+      doc-mod
+      (get-in item [:content :description])
+      {:mode "editable"
+       :placeholder "Add a description..."
+       :onChange (fn [new-val] (reset! desc-atom new-val))}
+      api))
+  [:div {:style "max-width: 700px; margin: 0 auto; padding: 20px; font-family: inherit;"}
+
+    [:input {:type "text"
+             :value (or (deref name-atom) (:name item) "")
+             :placeholder "Task name"
+             :style "font-size: 1.4em; font-weight: 600; border: none; outline: none; width: 100%; background: transparent; font-family: inherit; margin-bottom: 16px;"
+             :on-input (fn [e]
+                         (reset! name-atom (dom-get (dom-get e :target) :value)))}]
+    [:div {:style "margin-bottom: 24px;"} desc-el]
+    [:div {:style "display: flex; gap: 10px; justify-content: flex-end; padding-top: 16px; border-top: 1px solid var(--color-border-light);"}
+
+      [:button {:style "padding: 8px 16px; cursor: pointer; background: none; border: 1px solid var(--color-border-light); border-radius: var(--border-radius);"
+                :on-click (fn [e] (.restorePreviousView api (:id item)))}
+        "Cancel"]
+      [:button {:style "padding: 8px 16px; cursor: pointer; background: var(--color-primary); color: white; border: none; border-radius: var(--border-radius);"
+                :on-click (fn [e]
+                            (let [n (deref name-atom)
+                                  d (deref desc-atom)
+                                  fresh (get-item (:id item))
+                                  with-name (if n (assoc fresh :name n) fresh)
+                                  with-desc (if
+                                              d
+                                              (assoc-in
+                                                with-name
+                                                [:content :description]
+                                                d)
+                                              with-name)]
+                              (set-item! (assoc with-desc :modified (now))))
+                            (.restorePreviousView api (:id item)))}
+        "Save & View"]]])
