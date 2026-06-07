@@ -13,7 +13,7 @@
 // even when that time is now in the past.
 
 const SELF_ID = 'c4d26a7c-1643-40cf-9917-f264c8e3377f';
-const REMINDER_TYPE = '521cb06c-2146-47f1-9375-1207bb6b5b27';
+const REMINDER_TYPE = '0a41387e-78a9-4722-ab18-92aa14799385';
 let _hob = null;
 let _interp = null;
 let _scheduleOne = null;
@@ -39,7 +39,7 @@ export async function onKernelBootComplete({ safeMode }, api) {
     const items = await api.getAll();
     for (const item of items) {
       if (item.type === REMINDER_TYPE) {
-        _lastHob.set(item.id, JSON.stringify(item.content?.hob ?? []));
+        _lastHob.set(item.id, JSON.stringify(item.content?.schedule ?? []));
       }
     }
   } catch (_) {}
@@ -48,7 +48,7 @@ export async function onKernelBootComplete({ safeMode }, api) {
 export async function onItemUpdated({ item }, api) {
   if (!_scheduleOne || !item || item.type !== REMINDER_TYPE) return;
   // Skip re-schedule when only content.scheduledAt changed (written by schedule-one! itself).
-  const hobKey = JSON.stringify(item.content?.hob ?? []);
+  const hobKey = JSON.stringify(item.content?.schedule ?? []);
   if (_lastHob.get(item.id) === hobKey) return;
   _lastHob.set(item.id, hobKey);
   await _scheduleOne(item);
@@ -61,7 +61,7 @@ export async function onItemUpdated({ item }, api) {
 // from within Hob code running in _interp.
 export async function evalSchedule(item, baseTime) {
   if (!_interp || !_hob) return null;
-  const ast = item?.content?.hob;
+  const ast = item?.content?.schedule;
   if (!ast || ast.length === 0) return null;
   try {
     if (baseTime != null) {
@@ -152,7 +152,7 @@ async function checkExactAlarmPermission(api) {
     if (value) return;
     const items = await api.getAll();
     const hasScheduled = items.some(
-      it => it.type === REMINDER_TYPE && it.content?.hob?.length > 0
+      it => it.type === REMINDER_TYPE && it.content?.schedule?.length > 0
     );
     if (!hasScheduled) return;
     await notif.requestScheduleExactAlarm();
@@ -172,7 +172,7 @@ async function checkExactAlarmPermission(api) {
 
 (def win (dom-get doc :defaultView))
 
-(def REMINDER_TYPE "521cb06c-2146-47f1-9375-1207bb6b5b27")
+(def REMINDER_TYPE "0a41387e-78a9-4722-ab18-92aa14799385")
 
 (def lib (require "reminder-lib"))
 
@@ -187,7 +187,7 @@ async function checkExactAlarmPermission(api) {
 (defn schedule-one! [reminder]
   (let [id (get reminder :id)
         nid (notif-id-for id)
-        next-time (eval-all (get-in reminder [:content :hob]) lib)
+        next-time (eval-all (get-in reminder [:content :schedule]) lib)
         at (when (and (number? next-time) (> next-time (now))) next-time)]
     (try
       (when-let [tauri (dom-get win :__TAURI__)]
@@ -226,7 +226,7 @@ async function checkExactAlarmPermission(api) {
 (defn snooze! [reminder duration-ms]
   (let [id (get reminder :id)
         nid (notif-id-for id)
-        next-scheduled (eval-all (get-in reminder [:content :hob]) lib)
+        next-scheduled (eval-all (get-in reminder [:content :schedule]) lib)
         snooze-at (let [t (+ (now) duration-ms)]
                     (if
                       (and

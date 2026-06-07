@@ -46,6 +46,63 @@
       api))
   (def status (or (get-in item [:content :status]) "todo"))
   (def is-done (= status "done"))
+  (def sched (js-require "reminder-scheduler"))
+  (def reminder-lib (require "reminder-lib"))
+  (def schedule-ast (get-in item [:content :schedule]))
+  (def has-schedule (and schedule-ast (seq schedule-ast)))
+  (def
+    next-time
+    (when has-schedule (try (eval-all schedule-ast reminder-lib) (catch e nil))))
+  (def display-time (or (get-in item [:content :scheduledAt]) next-time))
+  (def sched-panel-id (str "task-sched-panel-" (:id item)))
+  (def sched-date-panel-id (str "task-sched-dp-" (:id item)))
+  (def sched-hob-panel-id (str "task-sched-hp-" (:id item)))
+  (def sched-date-tab-id (str "task-sched-dt-" (:id item)))
+  (def sched-hob-tab-id (str "task-sched-ht-" (:id item)))
+  (def sched-date-input-id (str "task-sched-di-" (:id item)))
+  (def sched-time-input-id (str "task-sched-ti-" (:id item)))
+  (def pending-schedule-atom (atom nil))
+  (def hob-editor-mod (require "field-view-hob"))
+  (def
+    editor-el
+    (.render
+      hob-editor-mod
+      (or schedule-ast [])
+      {:mode "editable"
+       :onChange (fn [new-ast] (reset! pending-schedule-atom new-ast))}
+      api))
+  (def
+    default-date-val
+    (when
+      display-time
+      (let [d (js/Date. display-time) m (+ (.getMonth d) 1)]
+        (str
+          (.getFullYear d)
+          "-"
+          (if (< m 10) (str "0" m) (str m))
+          "-"
+          (if (< (.getDate d) 10) (str "0" (.getDate d)) (str (.getDate d)))))))
+  (def
+    default-time-val
+    (when
+      display-time
+      (let [d (js/Date. display-time) h (.getHours d) mn (.getMinutes d)]
+        (str
+          (if (< h 10) (str "0" h) (str h))
+          ":"
+          (if (< mn 10) (str "0" mn) (str mn))))))
+  (def
+    date-tab-active
+    "padding: 5px 14px; font-size: 0.8125rem; cursor: pointer; border: 1px solid var(--color-primary); border-radius: var(--border-radius) 0 0 var(--border-radius); background: var(--color-primary); color: white;")
+  (def
+    date-tab-inactive
+    "padding: 5px 14px; font-size: 0.8125rem; cursor: pointer; border: 1px solid var(--color-border); border-radius: var(--border-radius) 0 0 var(--border-radius); background: var(--color-bg-surface); color: var(--color-text-secondary);")
+  (def
+    hob-tab-active
+    "padding: 5px 14px; font-size: 0.8125rem; cursor: pointer; border: 1px solid var(--color-primary); border-left: none; border-radius: 0 var(--border-radius) var(--border-radius) 0; background: var(--color-primary); color: white;")
+  (def
+    hob-tab-inactive
+    "padding: 5px 14px; font-size: 0.8125rem; cursor: pointer; border: 1px solid var(--color-border); border-left: none; border-radius: 0 var(--border-radius) var(--border-radius) 0; background: var(--color-bg-surface); color: var(--color-text-secondary);")
   [:div {:style "padding: 12px 0; font-family: inherit;"}
     [:div {:id (str "task-header-" (:id item))
            :style "display: flex; align-items: center; gap: 10px; margin-bottom: 8px;"}
@@ -69,6 +126,175 @@
       [:div {:style "margin-bottom: 12px; padding-left: 26px; font-size: 0.9em; color: var(--color-text-secondary);"}
 
         desc-el])
+    [:div {:style "padding-left: 26px; margin-bottom: 12px;"}
+      (when
+        has-schedule
+        [:div {:style "margin-bottom: 6px; font-size: 0.85em;"}
+          [:span {:style "color: var(--color-text-secondary);"} "Next: "]
+          [:span {:style (if
+                           (and (number? display-time) (<= display-time (now)))
+                           "color: var(--color-error, #e53e3e); font-weight: 600;"
+                           "")}
+
+            (if (number? display-time) (format-date display-time) "—")]])
+      (when
+        has-schedule
+        [:div {:style "display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-bottom: 8px;"}
+
+          [:button {:style "padding: 5px 14px; background: var(--color-primary); color: white; border: none; border-radius: var(--border-radius); cursor: pointer; font-size: 0.8125rem;"
+                    :on-click (fn [e]
+                                (let [base-time (.getScheduledAt
+                                                  sched
+                                                  (:id item))
+                                      fresh (get-item (:id item))]
+                                  (.scheduleOneFrom sched fresh base-time)
+                                  (rerender!)))}
+            "Done"]
+          (for [preset
+                (seq
+                   [["15m" (* 15 60 1000)]
+                    ["1h" (* 60 60 1000)]
+                    ["3h" (* 3 60 60 1000)]
+                    ["1d" (* 24 60 60 1000)]])]
+            (let [label (first preset) ms (nth preset 1)]
+              [:button {:style "padding: 5px 10px; background: var(--color-bg-surface); color: var(--color-text-secondary); border: 1px solid var(--color-border); border-radius: var(--border-radius); cursor: pointer; font-size: 0.8125rem;"
+                        :on-click (fn [e]
+                                    (let [fresh (get-item (:id item))]
+                                      (.snooze sched fresh ms)
+                                      (rerender!)))}
+                (str "+" label)]))
+          [:button {:style "padding: 5px 12px; background: var(--color-bg-surface); color: var(--color-text-secondary); border: 1px solid var(--color-border); border-radius: var(--border-radius); cursor: pointer; font-size: 0.8125rem;"
+                    :on-click (fn [e]
+                                (let [fresh (get-item (:id item))]
+                                  (set-item!
+                                    (->
+                                      fresh
+                                      (assoc-in [:content :schedule] [])
+                                      (assoc :modified (now))))
+                                  (rerender!)))}
+            "Dismiss"]])
+      [:span {:style "font-size: 0.8em; color: var(--color-primary); cursor: pointer; text-decoration: underline;"
+              :on-click (fn [e]
+                          (let [p (.getElementById doc sched-panel-id)
+                                current (dom-get (dom-get p :style) :display)]
+                            (dom-set!
+                              (dom-get p :style)
+                              :display
+                              (if (= current "none") "block" "none"))))}
+        (if has-schedule "Edit schedule" "Set schedule")]
+      [:div {:id sched-panel-id :style "display: none; margin-top: 8px;"}
+        [:div {:style "display: flex; margin-bottom: 8px;"}
+          [:button {:id sched-date-tab-id
+                    :style (if has-schedule date-tab-inactive date-tab-active)
+                    :on-click (fn [e]
+                                (let [dp (.getElementById
+                                           doc
+                                           sched-date-panel-id)
+                                      hp (.getElementById
+                                           doc
+                                           sched-hob-panel-id)
+                                      dt (.getElementById doc sched-date-tab-id)
+                                      ht (.getElementById doc sched-hob-tab-id)]
+                                  (dom-set! dp :style "display: block")
+                                  (dom-set! hp :style "display: none")
+                                  (dom-set! dt :style date-tab-active)
+                                  (dom-set! ht :style hob-tab-inactive)))}
+            "Date & Time"]
+          [:button {:id sched-hob-tab-id
+                    :style (if has-schedule hob-tab-active hob-tab-inactive)
+                    :on-click (fn [e]
+                                (let [dp (.getElementById
+                                           doc
+                                           sched-date-panel-id)
+                                      hp (.getElementById
+                                           doc
+                                           sched-hob-panel-id)
+                                      dt (.getElementById doc sched-date-tab-id)
+                                      ht (.getElementById doc sched-hob-tab-id)]
+                                  (dom-set! dp :style "display: none")
+                                  (dom-set! hp :style "display: block")
+                                  (dom-set! dt :style date-tab-inactive)
+                                  (dom-set! ht :style hob-tab-active)))}
+            "Expression"]]
+        [:div {:id sched-date-panel-id
+               :style (if has-schedule "display: none" "display: block")}
+          [:div {:style "display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 6px;"}
+
+            [:input {:type "date"
+                     :id sched-date-input-id
+                     :value (or default-date-val "")
+                     :style "padding: 6px; border: 1px solid var(--color-border); border-radius: var(--border-radius); background: var(--color-bg-surface); color: var(--color-text); font-size: 0.875rem;"}]
+            [:input {:type "time"
+                     :id sched-time-input-id
+                     :value (or default-time-val "")
+                     :style "padding: 6px; border: 1px solid var(--color-border); border-radius: var(--border-radius); background: var(--color-bg-surface); color: var(--color-text); font-size: 0.875rem;"}]
+            [:button {:style "padding: 6px 14px; background: var(--color-primary); color: white; border: none; border-radius: var(--border-radius); cursor: pointer; font-size: 0.875rem;"
+                      :on-click (fn [e]
+                                  (let [date-el (.getElementById
+                                                  doc
+                                                  sched-date-input-id)
+                                        time-el (.getElementById
+                                                  doc
+                                                  sched-time-input-id)
+                                        dv (let [v (when
+                                                     date-el
+                                                     (dom-get date-el :value))
+]
+                                             (if
+                                               (and v (not= v ""))
+                                               v
+                                               default-date-val))
+                                        tv (let [v (when
+                                                     time-el
+                                                     (dom-get time-el :value))
+]
+                                             (if
+                                               (and v (not= v ""))
+                                               v
+                                               default-time-val))
+                                        dt (when
+                                             (and dv (not= dv ""))
+                                             (str
+                                               dv
+                                               "T"
+                                               (if
+                                                 (and tv (not= tv ""))
+                                                 tv
+                                                 "00:00")))
+                                        ts (when dt (js/Date.parse dt))]
+                                    (when
+                                      (and (number? ts) (> ts (now)))
+                                      (let [fresh (get-item (:id item))
+                                            updated (->
+                                                      fresh
+                                                      (assoc-in
+                                                        [:content :schedule]
+                                                        [["js/Date.parse"
+                                                           {:s dt}]
+])
+                                                      (assoc :modified (now)))]
+                                        (set-item! updated)
+                                        (.scheduleOneFrom sched updated nil)
+                                        (rerender!)))))}
+              "Set"]]]
+        [:div {:id sched-hob-panel-id
+               :style (if has-schedule "display: block" "display: none")}
+          editor-el
+          [:button {:style "margin-top: 6px; padding: 5px 14px; font-size: 0.8125rem; background: var(--color-primary); color: white; border: none; border-radius: var(--border-radius); cursor: pointer;"
+                    :on-click (fn [e]
+                                (when-let [ast (deref pending-schedule-atom)]
+                                  (let [fresh (get-item (:id item))
+                                        updated (->
+                                                  fresh
+                                                  (assoc-in
+                                                    [:content :schedule]
+                                                    ast)
+                                                  (assoc :modified (now)))]
+                                    (set-item! updated)
+                                    (.scheduleOneFrom sched updated nil))
+                                  (reset! pending-schedule-atom nil)
+                                  (rerender!)))}
+            "Save"]]]]
     (when
       (seq attachments)
       [:div {:style "padding-left: 26px; margin-bottom: 8px;"}

@@ -655,6 +655,8 @@ export class RenderingSystem {
     api.openItem = async (event, itemIdOrAttachment) => {
       const itemId = typeof itemIdOrAttachment === 'string' ? itemIdOrAttachment : itemIdOrAttachment?.id;
       const navigateTo = typeof itemIdOrAttachment === 'object' ? itemIdOrAttachment?.view?.navigateTo : undefined;
+      const viewTypeHint = typeof itemIdOrAttachment === 'object' ? itemIdOrAttachment?.view?.type : undefined;
+      const navParams = navigateTo ?? (viewTypeHint ? { view: viewTypeHint } : undefined);
       if (event?.ctrlKey || event?.metaKey) {
         const url = new URL(window.location);
         url.searchParams.set('root', itemId);
@@ -662,7 +664,7 @@ export class RenderingSystem {
         return;
       }
       if (event?.altKey) {
-        await api.navigate(itemId, navigateTo);
+        await api.navigate(itemId, navParams);
         return;
       }
       // Delegate to container-provided handler if available.
@@ -680,13 +682,13 @@ export class RenderingSystem {
       if (openIn === getActiveViewportId()) {
         const parentId = api.getParentId?.();
         if (parentId) await rendering.kernel.detach(getActiveViewportId(), parentId);
-        await api.navigate(itemId, navigateTo);
+        await api.navigate(itemId, navParams);
       } else {
         const target = openIn || api.getParentId?.() || api.getCurrentRoot?.();
         if (target && target !== getActiveViewportId()) {
           await rendering.kernel.attach(target, itemIdOrAttachment);
         } else {
-          await api.navigate(itemId, navigateTo);
+          await api.navigate(itemId, navParams);
         }
       }
     };
