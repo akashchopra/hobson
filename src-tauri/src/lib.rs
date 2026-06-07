@@ -229,7 +229,7 @@ where
     F: FnOnce(&mut imap::Session<rustls_connector::TlsStream<TcpStream>>) -> Result<T, String>,
 {
     let stream = TcpStream::connect((account.host.as_str(), account.port)).map_err(|e| e.to_string())?;
-    let tls = rustls_connector::RustlsConnector::default();
+    let tls = rustls_connector::RustlsConnector::new_with_webpki_root_certs().map_err(|e| e.to_string())?;
     let tlsstream = tls.connect(&account.host, stream).map_err(|e| e.to_string())?;
     let client = imap::Client::new(tlsstream);
     let mut session = client.login(&account.username, &account.password)
@@ -271,7 +271,7 @@ async fn fetch_email_headers(account: EmailAccount, since_date: String, before_d
 async fn list_folders(account: EmailAccount) -> Result<Vec<String>, String> {
     tokio::task::spawn_blocking(move || {
         let stream = TcpStream::connect((account.host.as_str(), account.port)).map_err(|e| e.to_string())?;
-        let tls = rustls_connector::RustlsConnector::default();
+        let tls = rustls_connector::RustlsConnector::new_with_webpki_root_certs().map_err(|e| e.to_string())?;
         let client = imap::Client::new(tls.connect(&account.host, stream).map_err(|e| e.to_string())?);
         let mut session = client.login(&account.username, &account.password)
             .map_err(|(e, _)| e.to_string())?;
