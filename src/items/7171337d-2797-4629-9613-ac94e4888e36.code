@@ -1,7 +1,9 @@
 (defn render [item api]
   (def name-atom (atom nil))
   (def desc-atom (atom nil))
+  (def tags-atom (atom (or (get-in item [:content :tags]) [])))
   (def doc-mod (require "field-view-doc-editable"))
+  (def tags-mod (require "field-view-tags"))
   (def
     desc-el
     (.render
@@ -10,6 +12,13 @@
       {:mode "editable"
        :placeholder "Add a description..."
        :onChange (fn [new-val] (reset! desc-atom new-val))}
+      api))
+  (def
+    tags-el
+    (.render
+      tags-mod
+      (deref tags-atom)
+      {:mode "editable" :onChange (fn [new-tags] (reset! tags-atom new-tags))}
       api))
   [:div {:style "max-width: 700px; margin: 0 auto; padding: 20px; font-family: inherit;"}
 
@@ -20,6 +29,11 @@
              :on-input (fn [e]
                          (reset! name-atom (dom-get (dom-get e :target) :value)))}]
     [:div {:style "margin-bottom: 24px;"} desc-el]
+    [:div {:style "margin-bottom: 24px;"}
+      [:div {:style "font-size: 0.875rem; font-weight: 500; color: var(--color-text); margin-bottom: 6px;"}
+
+        "Tags"]
+      tags-el]
     [:div {:style "display: flex; gap: 10px; justify-content: flex-end; padding-top: 16px; border-top: 1px solid var(--color-border-light);"}
 
       [:button {:style "padding: 8px 16px; cursor: pointer; background: none; border: 1px solid var(--color-border-light); border-radius: var(--border-radius);"
@@ -29,6 +43,7 @@
                 :on-click (fn [e]
                             (let [n (deref name-atom)
                                   d (deref desc-atom)
+                                  t (deref tags-atom)
                                   fresh (get-item (:id item))
                                   with-name (if n (assoc fresh :name n) fresh)
                                   with-desc (if
@@ -37,7 +52,11 @@
                                                 with-name
                                                 [:content :description]
                                                 d)
-                                              with-name)]
-                              (set-item! (assoc with-desc :modified (now))))
+                                              with-name)
+                                  with-tags (assoc-in
+                                              with-desc
+                                              [:content :tags]
+                                              t)]
+                              (set-item! (assoc with-tags :modified (now))))
                             (.restorePreviousView api (:id item)))}
         "Save & View"]]])
