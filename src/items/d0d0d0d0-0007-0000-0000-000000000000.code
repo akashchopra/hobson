@@ -1910,6 +1910,17 @@ export async function render(value, options, api) {
 
   function handleBeforeInput(e, blockEl, path) {
     if (!editor.contains(blockEl)) return;
+    // When autocomplete is open, paste may land in a new text node (browser splits on paste),
+    // breaking the ac.anchorNode identity check in acUpdateQuery. Re-insert as plain typed text
+    // so the cursor stays in the same text node and the query is tracked correctly.
+    if (e.inputType === 'insertFromPaste' && ac) {
+      const text = (e.dataTransfer?.getData('text/plain') ?? e.data ?? '').replace(/[\r\n]+/g, ' ');
+      if (text) {
+        e.preventDefault();
+        document.execCommand('insertText', false, text);
+      }
+      return;
+    }
     const _tr = e.getTargetRanges ? e.getTargetRanges() : [];
     // Android IME may use insertCompositionText to represent backspace/edit operations
     // near non-editable islands. Two cases:
