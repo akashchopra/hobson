@@ -2115,7 +2115,8 @@ export class RenderingSystem {
           mp.appendChild(childDom);
         }
       } catch (e) {
-        console.error(`[fillMountPoints] Error rendering child ${spec.itemId}:`, e);
+        console.error(`[fillMountPoints] Error rendering child ${spec.itemId} (parent=${parentId}):`, e);
+        console.trace('[fillMountPoints] call stack');
         const errDiv = document.createElement('div');
         errDiv.textContent = `Error rendering ${spec.itemId}: ${e.message}`;
         errDiv.style.color = 'red';
@@ -2150,6 +2151,17 @@ export class RenderingSystem {
     this._unsubItemUpdated = this.kernel.events.on(EVENT_IDS.ITEM_UPDATED, (event) => {
       const itemId = event.content?.id;
       if (!itemId) return;
+      // If the viewport's attachments changed and the URL root is no longer present,
+      // navigate home instead of re-rendering (prevents "Item not found" on root deletion)
+      const vpMgr = this.kernel.moduleSystem.getCached('viewport-manager');
+      if (vpMgr && itemId === vpMgr.getViewportId()) {
+        const urlRoot = vpMgr.getRoot();
+        const newAttachments = event.content?.item?.attachments;
+        if (urlRoot && Array.isArray(newAttachments) && !newAttachments.some(a => a.id === urlRoot)) {
+          queueMicrotask(() => vpMgr.navigateHome());
+          return;
+        }
+      }
       const instanceIds = this.registry.byItemId.get(itemId);
       if (instanceIds && instanceIds.size > 0) this._scheduleReRenders(instanceIds, itemId);
       // Also re-render instances that use the changed item as their view
@@ -2181,14 +2193,13 @@ export class RenderingSystem {
         }
       }
     });
-    // item:deleted → same (without library detection — deletion doesn't need re-render)
+    // item:deleted → re-render cross-item dependents only
+    // Do NOT re-render the item's own instances (byItemId) — the item no longer exists
+    // and renderItem would fail with "Item not found". Parent re-renders are already
+    // handled by the item:updated event that fires when the item is detached.
     this._unsubItemDeleted = this.kernel.events.on(EVENT_IDS.ITEM_DELETED, (event) => {
       const itemId = event.content?.id;
       if (!itemId) return;
-      const instanceIds = this.registry.byItemId.get(itemId);
-      if (instanceIds && instanceIds.size > 0) this._scheduleReRenders(instanceIds, itemId);
-      const viewInstanceIds = this.registry.byViewId.get(itemId);
-      if (viewInstanceIds && viewInstanceIds.size > 0) this._scheduleReRenders(viewInstanceIds, itemId);
       const crossDepIds = this.registry.byCrossItemDep.get(itemId);
       if (crossDepIds && crossDepIds.size > 0) this._scheduleReRenders(crossDepIds, itemId);
     });
