@@ -259,7 +259,11 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
     } else {
       result.put("value", true)
     }
-    invoke.resolveObject(result)
+    // resolve(), not resolveObject(): JSObject extends org.json.JSONObject, and
+    // resolveObject serializes with Jackson, which reflects over the internal
+    // nameValuePairs map and emits {"nameValuePairs":{"value":true}} instead of
+    // {"value":true}.
+    invoke.resolve(result)
   }
 
   @Command
