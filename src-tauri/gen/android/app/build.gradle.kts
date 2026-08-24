@@ -39,7 +39,8 @@ android {
         getByName("release") {
             manifestPlaceholders["usesCleartextTraffic"] = "true"
             isDebuggable = true
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 *fileTree(".") { include("**/*.pro") }
                     .plus(getDefaultProguardFile("proguard-android-optimize.txt"))
