@@ -3,7 +3,7 @@
   "name": "viewport-mobile-view",
   "type": "aaaaaaaa-0000-0000-0000-000000000000",
   "created": 1774500000000,
-  "modified": 1781164489964,
+  "modified": 1791817999662,
   "content": {
     "for_type": "77777777-0000-0000-0000-000000000000",
     "screens": {
@@ -18,13 +18,13 @@
         }
       ]
     ],
-    "code": "// viewport-mobile-view — Phone-optimized viewport with bottom action bar.\n// Replaces viewport-desktop-view on touch devices (screens: { touch: true }).\n\nexport async function render(item, api) {\n  // === URL root resolution (same logic as viewport-view) ===\n  const params = new URLSearchParams(window.location.search);\n  const urlRoot = params.get('root');\n  const storedSpec = item.attachments?.[0];\n  const storedRootId = typeof storedSpec === 'string' ? storedSpec : storedSpec?.id;\n\n  let rootId = storedRootId;\n  let rootSpec = storedSpec;\n\n  if (urlRoot && urlRoot !== storedRootId) {\n    try {\n      await api.get(urlRoot);\n      await api.set(\n        { ...item, attachments: [{ id: urlRoot }], modified: Date.now() },\n        { silent: true }\n      );\n      rootId = urlRoot;\n      rootSpec = { id: urlRoot };\n    } catch {\n      // URL root not found, keep stored\n    }\n  }\n\n  if (rootId) {\n    try { await api.get(rootId); }\n    catch { rootId = null; rootSpec = null; }\n  }\n\n  // Honor the user's explicit view choice if it matches this environment,\n  // otherwise let resolveView pick an appropriate view.\n  const storedViewId = rootSpec?.view?.type || rootSpec?.view || rootSpec?.renderer || null;\n  let rootViewId = null;\n  if (storedViewId) {\n    try {\n      const vpRendering = await api.require('viewport-rendering');\n      const rs = vpRendering.getRendering();\n      const storedView = await api.get(storedViewId);\n      if (rs.viewMatchesEnv(storedView)) rootViewId = storedViewId;\n    } catch { /* view not found, let resolveView handle it */ }\n  }\n\n  // === Set document title ===\n  if (rootId) {\n    try {\n      const rootItem = await api.get(rootId);\n      const name = rootItem.content?.title || rootItem.name || rootId.slice(0, 8);\n      document.title = `${name} - Hobson`;\n    } catch {\n      document.title = 'Hobson';\n    }\n  } else {\n    document.title = 'Hobson';\n  }\n  // Sync to Tauri window title\n  if (window.__TAURI__?.window?.getCurrentWindow) {\n    window.__TAURI__.window.getCurrentWindow().setTitle(document.title).catch(() => {});\n  }\n\n  // === Selection state ===\n  let selectedItemId = null;\n  let selectedElement = null;\n\n  function findItemElement(target) {\n    return target.closest('[data-parent-id][data-item-id]')\n      || target.closest('[data-item-id]');\n  }\n\n  function updateSelectionVisual() {\n    container.querySelectorAll('[data-item-id].item-selected').forEach(el =>\n      el.classList.remove('item-selected')\n    );\n    if (selectedElement) selectedElement.classList.add('item-selected');\n  }\n\n  function selectItem(iid, el) {\n    selectedItemId = iid;\n    selectedElement = el;\n    api.viewport.select(iid, el?.getAttribute('data-parent-id'));\n    updateSelectionVisual();\n  }\n\n  function clearSelection() {\n    selectedItemId = null;\n    selectedElement = null;\n    api.viewport.clearSelection();\n    updateSelectionVisual();\n  }\n\n  // === Build DOM ===\n  const container = api.createElement('div', {\n    class: 'mobile-viewport',\n    style: 'display:flex; flex-direction:column; height:100%; position:relative;'\n  });\n\n  // --- Content area ---\n  const contentArea = api.createElement('div', {\n    class: 'mobile-viewport-content',\n    style: 'flex:1; overflow:auto; display:flex; flex-direction:column; min-height:0;'\n  });\n\n  if (rootId) {\n    const decorator = (dom, itemId, theItem) => {\n      dom.setAttribute('data-item-id', itemId);\n      const iname = theItem?.name || theItem?.content?.title || itemId.slice(0, 8);\n      let typeName;\n      try {\n        const ti = theItem?.type;\n        typeName = ti ? ti.slice(0, 8) : '?';\n      } catch { typeName = '?'; }\n      dom.setAttribute('title', `${iname} (${typeName})`);\n    };\n\n    const rootDom = await api.renderItem(rootId, rootViewId, {\n      decorator,\n      onCycle: () => {\n        const el = api.createElement('div', {\n          style: 'padding:20px; color:var(--color-text-secondary); font-style:italic; text-align:center;'\n        });\n        el.textContent = rootId.slice(0, 8) + ' (cycle)';\n        return el;\n      }\n    });\n    if (rootDom) {\n      rootDom.style.cssText = 'flex:1; min-height:0; display:flex; flex-direction:column;';\n      contentArea.appendChild(rootDom);\n    }\n  } else {\n    const empty = api.createElement('div', {\n      style: 'padding:40px; text-align:center; color:var(--color-text-secondary); flex:1; display:flex; align-items:center; justify-content:center;'\n    });\n    empty.innerHTML = 'No item selected.<br><br>Tap Search to find items.';\n    contentArea.appendChild(empty);\n  }\n\n  // Tap to select\n  contentArea.addEventListener('click', (e) => {\n    hideSheet();\n    const el = findItemElement(e.target);\n    if (el) {\n      selectItem(el.getAttribute('data-item-id'), el);\n      e.stopPropagation();\n    } else {\n      clearSelection();\n    }\n  });\n\n  container.appendChild(contentArea);\n\n  // --- Bottom sheet (context menu) ---\n  const backdrop = api.createElement('div', {\n    class: 'mobile-bottom-sheet-backdrop',\n    style: 'display:none; position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.4); z-index:10000;'\n  });\n\n  const sheet = api.createElement('div', {\n    class: 'mobile-bottom-sheet',\n    style: 'position:fixed; bottom:0; left:0; right:0; max-height:60vh; background:var(--color-bg-surface); border-radius:12px 12px 0 0; overflow-y:auto; z-index:10001; padding-bottom:env(safe-area-inset-bottom);'\n  });\n\n  const handle = api.createElement('div', {\n    style: 'width:36px; height:4px; background:var(--color-border); border-radius:2px; margin:8px auto 4px;'\n  });\n  sheet.appendChild(handle);\n\n  const sheetBody = api.createElement('div', { class: 'mobile-sheet-body' });\n  sheet.appendChild(sheetBody);\n  backdrop.appendChild(sheet);\n\n  function hideSheet() {\n    backdrop.style.display = 'none';\n    sheetBody.innerHTML = '';\n  }\n\n  backdrop.addEventListener('click', (e) => {\n    if (e.target === backdrop) hideSheet();\n  });\n\n  async function showContextMenu(itemId) {\n    sheetBody.innerHTML = '';\n    const menuLib = await api.require('context-menu-lib');\n    const dismiss = () => {\n      hideSheet();\n    };\n    const menuEl = await menuLib.buildItemMenu(api, itemId, { onDismiss: dismiss, rootId });\n    // Override desktop positioning for bottom sheet\n    menuEl.style.cssText = 'position:static; display:block; box-shadow:none; max-width:none; border:none; min-width:0; padding:0;';\n    sheetBody.appendChild(menuEl);\n    backdrop.style.display = 'block';\n  }\n\n  container.appendChild(backdrop);\n\n  // --- Overlay rendering (search palette, etc.) ---\n  const overlaySpecs = (item.attachments || []).slice(1);\n  for (const spec of overlaySpecs) {\n    const oid = typeof spec === 'string' ? spec : spec.id;\n    const wrapper = api.createElement('div', {\n      style: 'position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.5); display:flex; align-items:flex-start; justify-content:center; padding-top:5vh; z-index:10000000;'\n    });\n    const modal = api.createElement('div', {\n      style: 'background:var(--color-bg-surface); border-radius:8px; width:92vw; max-height:80vh; display:flex; flex-direction:column; box-shadow:0 4px 20px rgba(0,0,0,0.3); overflow:auto;'\n    });\n\n    const closeOverlay = async () => {\n      await api.detach(item.id, oid);\n      (await api.require('viewport-rendering')).getRendering()?.renderViewport();\n    };\n    wrapper.addEventListener('click', (e) => {\n      if (e.target === wrapper) closeOverlay();\n    });\n    document.addEventListener('keydown', function escHandler(e) {\n      if (e.key === 'Escape') {\n        e.preventDefault();\n        document.removeEventListener('keydown', escHandler);\n        closeOverlay();\n      }\n    });\n\n    const childDom = await api.renderItem(oid);\n    if (childDom) modal.appendChild(childDom);\n\n    wrapper.appendChild(modal);\n    container.appendChild(wrapper);\n\n    setTimeout(() => {\n      const input = modal.querySelector('input');\n      if (input) input.focus();\n    }, 0);\n  }\n\n  // --- Bottom action bar ---\n  const actionBar = api.createElement('div', {\n    class: 'mobile-action-bar',\n    style: [\n      'display:flex', 'background:var(--color-bg-surface)',\n      'border-top:1px solid var(--color-border)',\n      'padding-bottom:env(safe-area-inset-bottom)',\n      'flex-shrink:0'\n    ].join(';')\n  });\n\n  function actionButton(label, icon, handler) {\n    const btn = api.createElement('button', {\n      style: [\n        'flex:1', 'display:flex', 'flex-direction:column', 'align-items:center', 'justify-content:center',\n        'background:none', 'border:none', 'color:var(--color-text-secondary)',\n        'font-size:0.625rem', 'gap:2px', 'cursor:pointer', 'min-height:48px',\n        'padding:4px 0', '-webkit-tap-highlight-color:transparent'\n      ].join(';')\n    });\n    const iconEl = api.createElement('span', { style: 'font-size:1.25rem;' });\n    iconEl.textContent = icon;\n    btn.appendChild(iconEl);\n    const labelEl = api.createElement('span');\n    labelEl.textContent = label;\n    btn.appendChild(labelEl);\n    btn.addEventListener('click', handler);\n    return btn;\n  }\n\n  actionBar.appendChild(actionButton('Search', '\\u2315', async () => {\n    await api.showItemList();\n    (await api.require('viewport-rendering')).getRendering()?.renderViewport();\n  }));\n  actionBar.appendChild(actionButton('Edit', '\\u270e', async () => {\n    // Find the most specific displayed item (e.g. active tab in tabbed view),\n    // falling back to the root item. Exclude items inside transclusion wrappers\n    // (data-provenance-node) — those are embedded content, not navigation targets.\n    const candidates = rootId ? [...document.querySelectorAll(`[data-parent-id=\"${rootId}\"][data-item-id]`)] : [];\n    const activeEl = candidates.find(el => !el.closest('[data-provenance-node]')) ?? null;\n    const editId = activeEl?.getAttribute('data-item-id') || rootId;\n    if (!editId) return;\n    const ctxLib = await api.require('context-menu-lib');\n    const editItem = await api.get(editId);\n    const editView = await ctxLib.findEditableView(api, editItem.type);\n    if (!editView) return;\n    if (editId !== rootId && activeEl) {\n      const parentId = activeEl.getAttribute('data-parent-id');\n      await api.setAttachmentView(parentId, editId, editView.id);\n      await api.rerenderItem(editId);\n    } else {\n      const vpMgr = window.kernel.moduleSystem.getCached('viewport-manager');\n      await vpMgr.navigate(editId, { view: editView.id });\n    }\n  }));\n  actionBar.appendChild(actionButton('More', '\\u22ef', () => {\n    const targetId = selectedItemId || rootId;\n    if (targetId) showContextMenu(targetId);\n  }));\n  actionBar.appendChild(actionButton('REPL', '\\u2328', async () => {\n    // Toggle: if already open, close it\n    const existing = container.querySelector('.mobile-repl-overlay');\n    if (existing) { existing.remove(); return; }\n\n    const overlay = api.createElement('div', {\n      class: 'mobile-repl-overlay',\n      style: 'position:fixed; top:0; left:0; right:0; bottom:0; background:var(--color-bg-surface); display:flex; flex-direction:column; z-index:10000;'\n    });\n\n    // Header with close button\n    const hdr = api.createElement('div', {\n      style: 'display:flex; align-items:center; justify-content:space-between; padding:8px 12px; border-bottom:1px solid var(--color-border); flex-shrink:0; background:var(--color-bg-surface);'\n    });\n    const titleEl = api.createElement('span', { style: 'font-weight:600; font-size:0.875rem;' });\n    titleEl.textContent = 'REPL';\n    hdr.appendChild(titleEl);\n    const closeBtn = api.createElement('button', {\n      style: 'background:none; border:none; color:var(--color-text-secondary); font-size:1.25rem; cursor:pointer; padding:4px 8px; -webkit-tap-highlight-color:transparent;'\n    });\n    closeBtn.textContent = '\\u2715';\n    closeBtn.addEventListener('click', () => overlay.remove());\n    hdr.appendChild(closeBtn);\n    overlay.appendChild(hdr);\n\n    // Override REPL layout to stack vertically on mobile\n    const mobileStyle = api.createElement('style');\n    mobileStyle.textContent = '.mobile-repl-overlay .repl-panel-content{flex-direction:column!important;flex:1;min-height:0} .mobile-repl-overlay .repl-input-section{flex:1!important;min-height:0} .mobile-repl-overlay .repl-vertical-splitter{display:none!important} .mobile-repl-overlay .repl-output-section{flex:1!important;min-height:0}';\n    overlay.appendChild(mobileStyle);\n\n    // Render REPL view into overlay body\n    const body = api.createElement('div', { style: 'flex:1; min-height:0; display:flex; flex-direction:column;' });\n    try {\n      const replItem = await api.get('f1111111-0003-0003-0000-000000000000');\n      const replView = await api.require('f1111111-0003-0002-0000-000000000000');\n      const replDom = await replView.render(replItem, api);\n      replDom.style.cssText = 'flex:1; min-height:0; display:flex; flex-direction:column;';\n      body.appendChild(replDom);\n    } catch (e) {\n      const err = api.createElement('div', { style: 'padding:16px; color:var(--color-danger);' });\n      err.textContent = 'Failed to load REPL: ' + e.message;\n      body.appendChild(err);\n    }\n    overlay.appendChild(body);\n\n    // Escape to close\n    const escHandler = (e) => {\n      if (e.key === 'Escape') { overlay.remove(); document.removeEventListener('keydown', escHandler); }\n    };\n    document.addEventListener('keydown', escHandler);\n\n    container.appendChild(overlay);\n    setTimeout(() => { const ta = overlay.querySelector('textarea'); if (ta) ta.focus(); }, 0);\n  }));\n\n  const syncBtn = actionButton('Sync', '\\u27f3', async () => {\n    const labelEl = syncBtn.querySelector('span:last-child');\n    const iconEl = syncBtn.querySelector('span:first-child');\n    labelEl.textContent = 'Syncing\\u2026';\n    syncBtn.disabled = true;\n    try {\n      const client = await api.require('sync-client');\n      const result = await client.sync();\n      iconEl.textContent = '\\u2713';\n      labelEl.textContent = result.accepted > 0 ? `${result.accepted} new` : 'Done';\n    } catch (e) {\n      iconEl.textContent = '\\u2717';\n      labelEl.textContent = 'Failed';\n      throw e;\n    }\n    syncBtn.disabled = false;\n    setTimeout(() => { iconEl.textContent = '\\u27f3'; labelEl.textContent = 'Sync'; }, 2000);\n  });\n  actionBar.appendChild(syncBtn);\n\n  container.appendChild(actionBar);\n\n  return container;\n}\n",
+    "code": "// viewport-mobile-view — Phone-optimized viewport with bottom action bar.\n// Replaces viewport-desktop-view on touch devices (screens: { touch: true }).\n\nexport async function render(item, api) {\n  // === URL root resolution (same logic as viewport-view) ===\n  const params = new URLSearchParams(window.location.search);\n  const urlRoot = params.get('root');\n  const storedSpec = item.attachments?.[0];\n  const storedRootId = typeof storedSpec === 'string' ? storedSpec : storedSpec?.id;\n\n  let rootId = storedRootId;\n  let rootSpec = storedSpec;\n\n  if (urlRoot && urlRoot !== storedRootId) {\n    try {\n      await api.get(urlRoot);\n      await api.set(\n        { ...item, attachments: [{ id: urlRoot }], modified: Date.now() },\n        { silent: true }\n      );\n      rootId = urlRoot;\n      rootSpec = { id: urlRoot };\n    } catch {\n      // URL root not found, keep stored\n    }\n  }\n\n  if (rootId) {\n    try { await api.get(rootId); }\n    catch { rootId = null; rootSpec = null; }\n  }\n\n  // Honor the user's explicit view choice if it matches this environment,\n  // otherwise let resolveView pick an appropriate view.\n  const storedViewId = rootSpec?.view?.type || rootSpec?.view || rootSpec?.renderer || null;\n  let rootViewId = null;\n  if (storedViewId) {\n    try {\n      const vpRendering = await api.require('viewport-rendering');\n      const rs = vpRendering.getRendering();\n      const storedView = await api.get(storedViewId);\n      if (rs.viewMatchesEnv(storedView)) rootViewId = storedViewId;\n    } catch { /* view not found, let resolveView handle it */ }\n  }\n\n  // === Home target ===\n  // content.homeItemId on this viewport item is what the Home button opens.\n  // Set from the More sheet. Mobile-only: the desktop viewport is a separate item.\n  let homeItemId = item.content?.homeItemId || null;\n  if (homeItemId) {\n    try { if (!(await api.get(homeItemId))) homeItemId = null; }\n    catch { homeItemId = null; }\n  }\n\n  async function setHomeItem(homeId) {\n    const fresh = await api.get(item.id);\n    await api.set({\n      ...fresh,\n      content: { ...fresh.content, homeItemId: homeId },\n      modified: Date.now()\n    });\n  }\n\n  // === Set document title ===\n  if (rootId) {\n    try {\n      const rootItem = await api.get(rootId);\n      const name = rootItem.content?.title || rootItem.name || rootId.slice(0, 8);\n      document.title = `${name} - Hobson`;\n    } catch {\n      document.title = 'Hobson';\n    }\n  } else {\n    document.title = 'Hobson';\n  }\n  // Sync to Tauri window title\n  if (window.__TAURI__?.window?.getCurrentWindow) {\n    window.__TAURI__.window.getCurrentWindow().setTitle(document.title).catch(() => {});\n  }\n\n  // === Selection state ===\n  let selectedItemId = null;\n  let selectedElement = null;\n\n  function findItemElement(target) {\n    return target.closest('[data-parent-id][data-item-id]')\n      || target.closest('[data-item-id]');\n  }\n\n  function updateSelectionVisual() {\n    container.querySelectorAll('[data-item-id].item-selected').forEach(el =>\n      el.classList.remove('item-selected')\n    );\n    if (selectedElement) selectedElement.classList.add('item-selected');\n  }\n\n  function selectItem(iid, el) {\n    selectedItemId = iid;\n    selectedElement = el;\n    api.viewport.select(iid, el?.getAttribute('data-parent-id'));\n    updateSelectionVisual();\n  }\n\n  function clearSelection() {\n    selectedItemId = null;\n    selectedElement = null;\n    api.viewport.clearSelection();\n    updateSelectionVisual();\n  }\n\n  // === Build DOM ===\n  const container = api.createElement('div', {\n    class: 'mobile-viewport',\n    style: 'display:flex; flex-direction:column; height:100%; position:relative;'\n  });\n\n  // --- Content area ---\n  const contentArea = api.createElement('div', {\n    class: 'mobile-viewport-content',\n    style: 'flex:1; overflow:auto; display:flex; flex-direction:column; min-height:0;'\n  });\n\n  if (rootId) {\n    const decorator = (dom, itemId, theItem) => {\n      dom.setAttribute('data-item-id', itemId);\n      const iname = theItem?.name || theItem?.content?.title || itemId.slice(0, 8);\n      let typeName;\n      try {\n        const ti = theItem?.type;\n        typeName = ti ? ti.slice(0, 8) : '?';\n      } catch { typeName = '?'; }\n      dom.setAttribute('title', `${iname} (${typeName})`);\n    };\n\n    const rootDom = await api.renderItem(rootId, rootViewId, {\n      decorator,\n      onCycle: () => {\n        const el = api.createElement('div', {\n          style: 'padding:20px; color:var(--color-text-secondary); font-style:italic; text-align:center;'\n        });\n        el.textContent = rootId.slice(0, 8) + ' (cycle)';\n        return el;\n      }\n    });\n    if (rootDom) {\n      rootDom.style.cssText = 'flex:1; min-height:0; display:flex; flex-direction:column;';\n      contentArea.appendChild(rootDom);\n    }\n  } else {\n    const empty = api.createElement('div', {\n      style: 'padding:40px; text-align:center; color:var(--color-text-secondary); flex:1; display:flex; align-items:center; justify-content:center;'\n    });\n    empty.innerHTML = 'No item selected.<br><br>Tap Search to find items.';\n    contentArea.appendChild(empty);\n  }\n\n  // Tap to select\n  contentArea.addEventListener('click', (e) => {\n    hideSheet();\n    const el = findItemElement(e.target);\n    if (el) {\n      selectItem(el.getAttribute('data-item-id'), el);\n      e.stopPropagation();\n    } else {\n      clearSelection();\n    }\n  });\n\n  container.appendChild(contentArea);\n\n  // --- Bottom sheet (context menu) ---\n  const backdrop = api.createElement('div', {\n    class: 'mobile-bottom-sheet-backdrop',\n    style: 'display:none; position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.4); z-index:10000;'\n  });\n\n  const sheet = api.createElement('div', {\n    class: 'mobile-bottom-sheet',\n    style: 'position:fixed; bottom:0; left:0; right:0; max-height:60vh; background:var(--color-bg-surface); border-radius:12px 12px 0 0; overflow-y:auto; z-index:10001; padding-bottom:env(safe-area-inset-bottom);'\n  });\n\n  const handle = api.createElement('div', {\n    style: 'width:36px; height:4px; background:var(--color-border); border-radius:2px; margin:8px auto 4px;'\n  });\n  sheet.appendChild(handle);\n\n  const sheetBody = api.createElement('div', { class: 'mobile-sheet-body' });\n  sheet.appendChild(sheetBody);\n  backdrop.appendChild(sheet);\n\n  function hideSheet() {\n    backdrop.style.display = 'none';\n    sheetBody.innerHTML = '';\n  }\n\n  backdrop.addEventListener('click', (e) => {\n    if (e.target === backdrop) hideSheet();\n  });\n\n  const sheetMenuStyle = 'position:static; display:block; box-shadow:none; max-width:none; border:none; min-width:0; padding:0;';\n\n  function sheetEntry(label, handler) {\n    const el = api.createElement('div', { class: 'context-menu-item' }, [label]);\n    el.addEventListener('click', async () => {\n      hideSheet();\n      await handler();\n    });\n    return el;\n  }\n\n  async function showContextMenu(itemId) {\n    sheetBody.innerHTML = '';\n    // Mobile-only entry above the shared item menu\n    const mobileMenu = api.createElement('div', { class: 'context-menu', style: sheetMenuStyle });\n    mobileMenu.appendChild(itemId === homeItemId\n      ? sheetEntry('Unset Home', () => setHomeItem(null))\n      : sheetEntry('Set as Home', () => setHomeItem(itemId)));\n    sheetBody.appendChild(mobileMenu);\n    sheetBody.appendChild(api.createElement('div', { class: 'context-menu-separator' }, []));\n    const menuLib = await api.require('context-menu-lib');\n    const dismiss = () => {\n      hideSheet();\n    };\n    const menuEl = await menuLib.buildItemMenu(api, itemId, {\n      onDismiss: dismiss,\n      rootId,\n      extraDebugActions: [{ label: 'REPL', onSelect: toggleRepl }]\n    });\n    // Override desktop positioning for bottom sheet\n    menuEl.style.cssText = sheetMenuStyle;\n    sheetBody.appendChild(menuEl);\n    backdrop.style.display = 'block';\n  }\n\n  container.appendChild(backdrop);\n\n  // --- Overlay rendering (search palette, etc.) ---\n  const overlaySpecs = (item.attachments || []).slice(1);\n  for (const spec of overlaySpecs) {\n    const oid = typeof spec === 'string' ? spec : spec.id;\n    const wrapper = api.createElement('div', {\n      style: 'position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.5); display:flex; align-items:flex-start; justify-content:center; padding-top:5vh; z-index:10000000;'\n    });\n    const modal = api.createElement('div', {\n      style: 'background:var(--color-bg-surface); border-radius:8px; width:92vw; max-height:80vh; display:flex; flex-direction:column; box-shadow:0 4px 20px rgba(0,0,0,0.3); overflow:auto;'\n    });\n\n    const closeOverlay = async () => {\n      await api.detach(item.id, oid);\n      (await api.require('viewport-rendering')).getRendering()?.renderViewport();\n    };\n    wrapper.addEventListener('click', (e) => {\n      if (e.target === wrapper) closeOverlay();\n    });\n    document.addEventListener('keydown', function escHandler(e) {\n      if (e.key === 'Escape') {\n        e.preventDefault();\n        document.removeEventListener('keydown', escHandler);\n        closeOverlay();\n      }\n    });\n\n    const childDom = await api.renderItem(oid);\n    if (childDom) modal.appendChild(childDom);\n\n    wrapper.appendChild(modal);\n    container.appendChild(wrapper);\n\n    setTimeout(() => {\n      const input = modal.querySelector('input');\n      if (input) input.focus();\n    }, 0);\n  }\n\n  // --- Bottom action bar ---\n  const actionBar = api.createElement('div', {\n    class: 'mobile-action-bar',\n    style: [\n      'display:flex', 'background:var(--color-bg-surface)',\n      'border-top:1px solid var(--color-border)',\n      'padding-bottom:env(safe-area-inset-bottom)',\n      'flex-shrink:0'\n    ].join(';')\n  });\n\n  function actionButton(label, icon, handler) {\n    const btn = api.createElement('button', {\n      style: [\n        'flex:1', 'display:flex', 'flex-direction:column', 'align-items:center', 'justify-content:center',\n        'background:none', 'border:none', 'color:var(--color-text-secondary)',\n        'font-size:0.625rem', 'gap:2px', 'cursor:pointer', 'min-height:48px',\n        'padding:4px 0', '-webkit-tap-highlight-color:transparent'\n      ].join(';')\n    });\n    const iconEl = api.createElement('span', { style: 'font-size:1.25rem;' });\n    iconEl.textContent = icon;\n    btn.appendChild(iconEl);\n    const labelEl = api.createElement('span');\n    labelEl.textContent = label;\n    btn.appendChild(labelEl);\n    btn.addEventListener('click', handler);\n    return btn;\n  }\n\n  actionBar.appendChild(actionButton('Search', '\\u2315', async () => {\n    await api.showItemList();\n    (await api.require('viewport-rendering')).getRendering()?.renderViewport();\n  }));\n  actionBar.appendChild(actionButton('Edit', '\\u270e', async () => {\n    // Find the most specific displayed item (e.g. active tab in tabbed view),\n    // falling back to the root item. Exclude items inside transclusion wrappers\n    // (data-provenance-node) — those are embedded content, not navigation targets.\n    const candidates = rootId ? [...document.querySelectorAll(`[data-parent-id=\"${rootId}\"][data-item-id]`)] : [];\n    const activeEl = candidates.find(el => !el.closest('[data-provenance-node]')) ?? null;\n    const editId = activeEl?.getAttribute('data-item-id') || rootId;\n    if (!editId) return;\n    const ctxLib = await api.require('context-menu-lib');\n    const editItem = await api.get(editId);\n    const editView = await ctxLib.findEditableView(api, editItem.type);\n    if (!editView) return;\n    if (editId !== rootId && activeEl) {\n      const parentId = activeEl.getAttribute('data-parent-id');\n      await api.setAttachmentView(parentId, editId, editView.id);\n      await api.rerenderItem(editId);\n    } else {\n      const vpMgr = window.kernel.moduleSystem.getCached('viewport-manager');\n      await vpMgr.navigate(editId, { view: editView.id });\n    }\n  }));\n  const homeBtn = actionButton('Home', '\\u2302', async () => {\n    if (!homeItemId) return;\n    const vpMgr = window.kernel.moduleSystem.getCached('viewport-manager');\n    await vpMgr.navigate(homeItemId);\n  });\n  if (!homeItemId) {\n    homeBtn.disabled = true;\n    homeBtn.style.opacity = '0.4';\n  }\n  actionBar.appendChild(homeBtn);\n  actionBar.appendChild(actionButton('More', '\\u22ef', () => {\n    const targetId = selectedItemId || rootId;\n    if (targetId) showContextMenu(targetId);\n  }));\n  async function toggleRepl() {\n    // Toggle: if already open, close it\n    const existing = container.querySelector('.mobile-repl-overlay');\n    if (existing) { existing.remove(); return; }\n\n    const overlay = api.createElement('div', {\n      class: 'mobile-repl-overlay',\n      style: 'position:fixed; top:0; left:0; right:0; bottom:0; background:var(--color-bg-surface); display:flex; flex-direction:column; z-index:10000;'\n    });\n\n    // Header with close button\n    const hdr = api.createElement('div', {\n      style: 'display:flex; align-items:center; justify-content:space-between; padding:8px 12px; border-bottom:1px solid var(--color-border); flex-shrink:0; background:var(--color-bg-surface);'\n    });\n    const titleEl = api.createElement('span', { style: 'font-weight:600; font-size:0.875rem;' });\n    titleEl.textContent = 'REPL';\n    hdr.appendChild(titleEl);\n    const closeBtn = api.createElement('button', {\n      style: 'background:none; border:none; color:var(--color-text-secondary); font-size:1.25rem; cursor:pointer; padding:4px 8px; -webkit-tap-highlight-color:transparent;'\n    });\n    closeBtn.textContent = '\\u2715';\n    closeBtn.addEventListener('click', () => overlay.remove());\n    hdr.appendChild(closeBtn);\n    overlay.appendChild(hdr);\n\n    // Override REPL layout to stack vertically on mobile\n    const mobileStyle = api.createElement('style');\n    mobileStyle.textContent = '.mobile-repl-overlay .repl-panel-content{flex-direction:column!important;flex:1;min-height:0} .mobile-repl-overlay .repl-input-section{flex:1!important;min-height:0} .mobile-repl-overlay .repl-vertical-splitter{display:none!important} .mobile-repl-overlay .repl-output-section{flex:1!important;min-height:0}';\n    overlay.appendChild(mobileStyle);\n\n    // Render REPL view into overlay body\n    const body = api.createElement('div', { style: 'flex:1; min-height:0; display:flex; flex-direction:column;' });\n    try {\n      const replItem = await api.get('f1111111-0003-0003-0000-000000000000');\n      const replView = await api.require('f1111111-0003-0002-0000-000000000000');\n      const replDom = await replView.render(replItem, api);\n      replDom.style.cssText = 'flex:1; min-height:0; display:flex; flex-direction:column;';\n      body.appendChild(replDom);\n    } catch (e) {\n      const err = api.createElement('div', { style: 'padding:16px; color:var(--color-danger);' });\n      err.textContent = 'Failed to load REPL: ' + e.message;\n      body.appendChild(err);\n    }\n    overlay.appendChild(body);\n\n    // Escape to close\n    const escHandler = (e) => {\n      if (e.key === 'Escape') { overlay.remove(); document.removeEventListener('keydown', escHandler); }\n    };\n    document.addEventListener('keydown', escHandler);\n\n    container.appendChild(overlay);\n    setTimeout(() => { const ta = overlay.querySelector('textarea'); if (ta) ta.focus(); }, 0);\n  }\n\n  const syncBtn = actionButton('Sync', '\\u27f3', async () => {\n    const labelEl = syncBtn.querySelector('span:last-child');\n    const iconEl = syncBtn.querySelector('span:first-child');\n    labelEl.textContent = 'Syncing\\u2026';\n    syncBtn.disabled = true;\n    try {\n      const client = await api.require('sync-client');\n      const result = await client.sync();\n      iconEl.textContent = '\\u2713';\n      labelEl.textContent = result.accepted > 0 ? `${result.accepted} new` : 'Done';\n    } catch (e) {\n      iconEl.textContent = '\\u2717';\n      labelEl.textContent = 'Failed';\n      throw e;\n    }\n    syncBtn.disabled = false;\n    setTimeout(() => { iconEl.textContent = '\\u27f3'; labelEl.textContent = 'Sync'; }, 2000);\n  });\n  actionBar.appendChild(syncBtn);\n\n  container.appendChild(actionBar);\n\n  return container;\n}\n",
     "_symbols": {
       "render": {
         "name": "render",
         "line": 4,
         "col": 7,
-        "endLine": 372,
+        "endLine": 422,
         "endCol": 1,
         "kind": "function",
         "scope": null,
@@ -165,47 +165,102 @@
         "kind": "variable",
         "scope": "render"
       },
+      "render.homeItemId": {
+        "name": "homeItemId",
+        "line": 49,
+        "col": 6,
+        "endLine": 49,
+        "endCol": 51,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.setHomeItem": {
+        "name": "setHomeItem",
+        "line": 55,
+        "col": 2,
+        "endLine": 62,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "render",
+        "signature": "(homeId)"
+      },
+      "setHomeItem.fresh": {
+        "name": "fresh",
+        "line": 56,
+        "col": 10,
+        "endLine": 56,
+        "endCol": 40,
+        "kind": "variable",
+        "scope": "setHomeItem"
+      },
+      "setHomeItem.content": {
+        "name": "content",
+        "line": 59,
+        "col": 6,
+        "endLine": 59,
+        "endCol": 55,
+        "kind": "property",
+        "scope": "setHomeItem"
+      },
+      "setHomeItem.content.homeItemId": {
+        "name": "homeItemId",
+        "line": 59,
+        "col": 35,
+        "endLine": 59,
+        "endCol": 53,
+        "kind": "property",
+        "scope": "setHomeItem.content"
+      },
+      "setHomeItem.modified": {
+        "name": "modified",
+        "line": 60,
+        "col": 6,
+        "endLine": 60,
+        "endCol": 26,
+        "kind": "property",
+        "scope": "setHomeItem"
+      },
       "render.rootItem": {
         "name": "rootItem",
-        "line": 49,
+        "line": 67,
         "col": 12,
-        "endLine": 49,
+        "endLine": 67,
         "endCol": 44,
         "kind": "variable",
         "scope": "render"
       },
       "render.name": {
         "name": "name",
-        "line": 50,
+        "line": 68,
         "col": 12,
-        "endLine": 50,
+        "endLine": 68,
         "endCol": 81,
         "kind": "variable",
         "scope": "render"
       },
       "render.selectedItemId": {
         "name": "selectedItemId",
-        "line": 64,
+        "line": 82,
         "col": 6,
-        "endLine": 64,
+        "endLine": 82,
         "endCol": 27,
         "kind": "variable",
         "scope": "render"
       },
       "render.selectedElement": {
         "name": "selectedElement",
-        "line": 65,
+        "line": 83,
         "col": 6,
-        "endLine": 65,
+        "endLine": 83,
         "endCol": 28,
         "kind": "variable",
         "scope": "render"
       },
       "render.findItemElement": {
         "name": "findItemElement",
-        "line": 67,
+        "line": 85,
         "col": 2,
-        "endLine": 70,
+        "endLine": 88,
         "endCol": 3,
         "kind": "function",
         "scope": "render",
@@ -213,9 +268,9 @@
       },
       "render.updateSelectionVisual": {
         "name": "updateSelectionVisual",
-        "line": 72,
+        "line": 90,
         "col": 2,
-        "endLine": 77,
+        "endLine": 95,
         "endCol": 3,
         "kind": "function",
         "scope": "render",
@@ -223,9 +278,9 @@
       },
       "render.selectItem": {
         "name": "selectItem",
-        "line": 79,
+        "line": 97,
         "col": 2,
-        "endLine": 84,
+        "endLine": 102,
         "endCol": 3,
         "kind": "function",
         "scope": "render",
@@ -233,9 +288,9 @@
       },
       "render.clearSelection": {
         "name": "clearSelection",
-        "line": 86,
+        "line": 104,
         "col": 2,
-        "endLine": 91,
+        "endLine": 109,
         "endCol": 3,
         "kind": "function",
         "scope": "render",
@@ -243,27 +298,27 @@
       },
       "render.container": {
         "name": "container",
-        "line": 94,
+        "line": 112,
         "col": 8,
-        "endLine": 97,
+        "endLine": 115,
         "endCol": 4,
         "kind": "variable",
         "scope": "render"
       },
       "render.contentArea": {
         "name": "contentArea",
-        "line": 100,
+        "line": 118,
         "col": 8,
-        "endLine": 103,
+        "endLine": 121,
         "endCol": 4,
         "kind": "variable",
         "scope": "render"
       },
       "render.decorator": {
         "name": "decorator",
-        "line": 106,
+        "line": 124,
         "col": 10,
-        "endLine": 115,
+        "endLine": 133,
         "endCol": 5,
         "kind": "function",
         "scope": "render",
@@ -271,128 +326,174 @@
       },
       "decorator.iname": {
         "name": "iname",
-        "line": 108,
+        "line": 126,
         "col": 12,
-        "endLine": 108,
+        "endLine": 126,
         "endCol": 82,
         "kind": "variable",
         "scope": "decorator"
       },
       "decorator.typeName": {
         "name": "typeName",
-        "line": 109,
+        "line": 127,
         "col": 10,
-        "endLine": 109,
+        "endLine": 127,
         "endCol": 18,
         "kind": "variable",
         "scope": "decorator"
       },
       "decorator.ti": {
         "name": "ti",
-        "line": 111,
+        "line": 129,
         "col": 14,
-        "endLine": 111,
+        "endLine": 129,
         "endCol": 32,
         "kind": "variable",
         "scope": "decorator"
       },
       "render.rootDom": {
         "name": "rootDom",
-        "line": 117,
+        "line": 135,
         "col": 10,
-        "endLine": 126,
+        "endLine": 144,
         "endCol": 6,
         "kind": "variable",
         "scope": "render"
       },
       "render.empty": {
         "name": "empty",
-        "line": 132,
+        "line": 150,
         "col": 10,
-        "endLine": 134,
+        "endLine": 152,
         "endCol": 6,
         "kind": "variable",
         "scope": "render"
       },
       "render.el": {
         "name": "el",
-        "line": 142,
+        "line": 160,
         "col": 10,
-        "endLine": 142,
+        "endLine": 160,
         "endCol": 40,
         "kind": "variable",
         "scope": "render"
       },
       "render.backdrop": {
         "name": "backdrop",
-        "line": 154,
+        "line": 172,
         "col": 8,
-        "endLine": 157,
+        "endLine": 175,
         "endCol": 4,
         "kind": "variable",
         "scope": "render"
       },
       "render.sheet": {
         "name": "sheet",
-        "line": 159,
+        "line": 177,
         "col": 8,
-        "endLine": 162,
+        "endLine": 180,
         "endCol": 4,
         "kind": "variable",
         "scope": "render"
       },
       "render.handle": {
         "name": "handle",
-        "line": 164,
+        "line": 182,
         "col": 8,
-        "endLine": 166,
+        "endLine": 184,
         "endCol": 4,
         "kind": "variable",
         "scope": "render"
       },
       "render.sheetBody": {
         "name": "sheetBody",
-        "line": 169,
+        "line": 187,
         "col": 8,
-        "endLine": 169,
+        "endLine": 187,
         "endCol": 76,
         "kind": "variable",
         "scope": "render"
       },
       "render.hideSheet": {
         "name": "hideSheet",
-        "line": 173,
+        "line": 191,
         "col": 2,
-        "endLine": 176,
+        "endLine": 194,
         "endCol": 3,
         "kind": "function",
         "scope": "render",
         "signature": "()"
       },
+      "render.sheetMenuStyle": {
+        "name": "sheetMenuStyle",
+        "line": 200,
+        "col": 8,
+        "endLine": 200,
+        "endCol": 128,
+        "kind": "variable",
+        "scope": "render"
+      },
+      "render.sheetEntry": {
+        "name": "sheetEntry",
+        "line": 202,
+        "col": 2,
+        "endLine": 209,
+        "endCol": 3,
+        "kind": "function",
+        "scope": "render",
+        "signature": "(label, handler)"
+      },
+      "sheetEntry.el": {
+        "name": "el",
+        "line": 203,
+        "col": 10,
+        "endLine": 203,
+        "endCol": 80,
+        "kind": "variable",
+        "scope": "sheetEntry"
+      },
       "render.showContextMenu": {
         "name": "showContextMenu",
-        "line": 182,
+        "line": 211,
         "col": 2,
-        "endLine": 193,
+        "endLine": 233,
         "endCol": 3,
         "kind": "function",
         "scope": "render",
         "signature": "(itemId)"
       },
+      "showContextMenu.mobileMenu": {
+        "name": "mobileMenu",
+        "line": 214,
+        "col": 10,
+        "endLine": 214,
+        "endCol": 97,
+        "kind": "variable",
+        "scope": "showContextMenu"
+      },
+      "showContextMenu.class": {
+        "name": "class",
+        "line": 219,
+        "col": 53,
+        "endLine": 219,
+        "endCol": 84,
+        "kind": "property",
+        "scope": "showContextMenu"
+      },
       "showContextMenu.menuLib": {
         "name": "menuLib",
-        "line": 184,
+        "line": 220,
         "col": 10,
-        "endLine": 184,
+        "endLine": 220,
         "endCol": 57,
         "kind": "variable",
         "scope": "showContextMenu"
       },
       "showContextMenu.dismiss": {
         "name": "dismiss",
-        "line": 185,
+        "line": 221,
         "col": 10,
-        "endLine": 187,
+        "endLine": 223,
         "endCol": 5,
         "kind": "function",
         "scope": "showContextMenu",
@@ -400,63 +501,63 @@
       },
       "showContextMenu.menuEl": {
         "name": "menuEl",
-        "line": 188,
+        "line": 224,
         "col": 10,
-        "endLine": 188,
-        "endCol": 91,
+        "endLine": 228,
+        "endCol": 6,
         "kind": "variable",
         "scope": "showContextMenu"
       },
       "render.overlaySpecs": {
         "name": "overlaySpecs",
-        "line": 198,
+        "line": 238,
         "col": 8,
-        "endLine": 198,
+        "endLine": 238,
         "endCol": 56,
         "kind": "variable",
         "scope": "render"
       },
       "render.spec": {
         "name": "spec",
-        "line": 199,
+        "line": 239,
         "col": 13,
-        "endLine": 199,
+        "endLine": 239,
         "endCol": 17,
         "kind": "variable",
         "scope": "render"
       },
       "render.oid": {
         "name": "oid",
-        "line": 200,
+        "line": 240,
         "col": 10,
-        "endLine": 200,
+        "endLine": 240,
         "endCol": 57,
         "kind": "variable",
         "scope": "render"
       },
       "render.wrapper": {
         "name": "wrapper",
-        "line": 201,
+        "line": 241,
         "col": 10,
-        "endLine": 203,
+        "endLine": 243,
         "endCol": 6,
         "kind": "variable",
         "scope": "render"
       },
       "render.modal": {
         "name": "modal",
-        "line": 204,
+        "line": 244,
         "col": 10,
-        "endLine": 206,
+        "endLine": 246,
         "endCol": 6,
         "kind": "variable",
         "scope": "render"
       },
       "render.closeOverlay": {
         "name": "closeOverlay",
-        "line": 208,
+        "line": 248,
         "col": 10,
-        "endLine": 211,
+        "endLine": 251,
         "endCol": 5,
         "kind": "function",
         "scope": "render",
@@ -464,36 +565,36 @@
       },
       "render.childDom": {
         "name": "childDom",
-        "line": 223,
+        "line": 263,
         "col": 10,
-        "endLine": 223,
+        "endLine": 263,
         "endCol": 46,
         "kind": "variable",
         "scope": "render"
       },
       "render.input": {
         "name": "input",
-        "line": 230,
+        "line": 270,
         "col": 12,
-        "endLine": 230,
+        "endLine": 270,
         "endCol": 48,
         "kind": "variable",
         "scope": "render"
       },
       "render.actionBar": {
         "name": "actionBar",
-        "line": 236,
+        "line": 276,
         "col": 8,
-        "endLine": 244,
+        "endLine": 284,
         "endCol": 4,
         "kind": "variable",
         "scope": "render"
       },
       "render.actionButton": {
         "name": "actionButton",
-        "line": 246,
+        "line": 286,
         "col": 2,
-        "endLine": 263,
+        "endLine": 303,
         "endCol": 3,
         "kind": "function",
         "scope": "render",
@@ -501,244 +602,263 @@
       },
       "actionButton.btn": {
         "name": "btn",
-        "line": 247,
+        "line": 287,
         "col": 10,
-        "endLine": 254,
+        "endLine": 294,
         "endCol": 6,
         "kind": "variable",
         "scope": "actionButton"
       },
       "actionButton.iconEl": {
         "name": "iconEl",
-        "line": 255,
+        "line": 295,
         "col": 10,
-        "endLine": 255,
+        "endLine": 295,
         "endCol": 77,
         "kind": "variable",
         "scope": "actionButton"
       },
       "actionButton.labelEl": {
         "name": "labelEl",
-        "line": 258,
+        "line": 298,
         "col": 10,
-        "endLine": 258,
+        "endLine": 298,
         "endCol": 45,
         "kind": "variable",
         "scope": "actionButton"
       },
       "render.candidates": {
         "name": "candidates",
-        "line": 273,
+        "line": 313,
         "col": 10,
-        "endLine": 273,
+        "endLine": 313,
         "endCol": 113,
         "kind": "variable",
         "scope": "render"
       },
       "render.activeEl": {
         "name": "activeEl",
-        "line": 274,
+        "line": 314,
         "col": 10,
-        "endLine": 274,
+        "endLine": 314,
         "endCol": 89,
         "kind": "variable",
         "scope": "render"
       },
       "render.editId": {
         "name": "editId",
-        "line": 275,
+        "line": 315,
         "col": 10,
-        "endLine": 275,
+        "endLine": 315,
         "endCol": 67,
         "kind": "variable",
         "scope": "render"
       },
       "render.ctxLib": {
         "name": "ctxLib",
-        "line": 277,
+        "line": 317,
         "col": 10,
-        "endLine": 277,
+        "endLine": 317,
         "endCol": 56,
         "kind": "variable",
         "scope": "render"
       },
       "render.editItem": {
         "name": "editItem",
-        "line": 278,
+        "line": 318,
         "col": 10,
-        "endLine": 278,
+        "endLine": 318,
         "endCol": 42,
         "kind": "variable",
         "scope": "render"
       },
       "render.editView": {
         "name": "editView",
-        "line": 279,
+        "line": 319,
         "col": 10,
-        "endLine": 279,
+        "endLine": 319,
         "endCol": 70,
         "kind": "variable",
         "scope": "render"
       },
       "render.parentId": {
         "name": "parentId",
-        "line": 282,
+        "line": 322,
         "col": 12,
-        "endLine": 282,
+        "endLine": 322,
         "endCol": 62,
         "kind": "variable",
         "scope": "render"
       },
       "render.vpMgr": {
         "name": "vpMgr",
-        "line": 286,
+        "line": 326,
         "col": 12,
-        "endLine": 286,
+        "endLine": 326,
         "endCol": 76,
         "kind": "variable",
         "scope": "render"
       },
       "render.view": {
         "name": "view",
-        "line": 287,
+        "line": 327,
         "col": 37,
-        "endLine": 287,
+        "endLine": 327,
         "endCol": 54,
         "kind": "property",
         "scope": "render"
       },
+      "render.homeBtn": {
+        "name": "homeBtn",
+        "line": 330,
+        "col": 8,
+        "endLine": 334,
+        "endCol": 4,
+        "kind": "variable",
+        "scope": "render"
+      },
       "render.targetId": {
         "name": "targetId",
-        "line": 291,
+        "line": 341,
         "col": 10,
-        "endLine": 291,
+        "endLine": 341,
         "endCol": 45,
         "kind": "variable",
         "scope": "render"
       },
-      "render.existing": {
-        "name": "existing",
-        "line": 296,
-        "col": 10,
-        "endLine": 296,
-        "endCol": 68,
-        "kind": "variable",
-        "scope": "render"
-      },
-      "render.overlay": {
-        "name": "overlay",
-        "line": 299,
-        "col": 10,
-        "endLine": 302,
-        "endCol": 6,
-        "kind": "variable",
-        "scope": "render"
-      },
-      "render.hdr": {
-        "name": "hdr",
-        "line": 305,
-        "col": 10,
-        "endLine": 307,
-        "endCol": 6,
-        "kind": "variable",
-        "scope": "render"
-      },
-      "render.titleEl": {
-        "name": "titleEl",
-        "line": 308,
-        "col": 10,
-        "endLine": 308,
-        "endCol": 96,
-        "kind": "variable",
-        "scope": "render"
-      },
-      "render.closeBtn": {
-        "name": "closeBtn",
-        "line": 311,
-        "col": 10,
-        "endLine": 313,
-        "endCol": 6,
-        "kind": "variable",
-        "scope": "render"
-      },
-      "render.mobileStyle": {
-        "name": "mobileStyle",
-        "line": 320,
-        "col": 10,
-        "endLine": 320,
-        "endCol": 50,
-        "kind": "variable",
-        "scope": "render"
-      },
-      "render.body": {
-        "name": "body",
-        "line": 325,
-        "col": 10,
-        "endLine": 325,
-        "endCol": 114,
-        "kind": "variable",
-        "scope": "render"
-      },
-      "render.replItem": {
-        "name": "replItem",
-        "line": 327,
-        "col": 12,
-        "endLine": 327,
-        "endCol": 76,
-        "kind": "variable",
-        "scope": "render"
-      },
-      "render.replView": {
-        "name": "replView",
-        "line": 328,
-        "col": 12,
-        "endLine": 328,
-        "endCol": 80,
-        "kind": "variable",
-        "scope": "render"
-      },
-      "render.replDom": {
-        "name": "replDom",
-        "line": 329,
-        "col": 12,
-        "endLine": 329,
-        "endCol": 58,
-        "kind": "variable",
-        "scope": "render"
-      },
-      "render.err": {
-        "name": "err",
-        "line": 333,
-        "col": 12,
-        "endLine": 333,
-        "endCol": 97,
-        "kind": "variable",
-        "scope": "render"
-      },
-      "render.escHandler": {
-        "name": "escHandler",
-        "line": 340,
-        "col": 10,
-        "endLine": 342,
-        "endCol": 5,
+      "render.toggleRepl": {
+        "name": "toggleRepl",
+        "line": 344,
+        "col": 2,
+        "endLine": 397,
+        "endCol": 3,
         "kind": "function",
         "scope": "render",
+        "signature": "()"
+      },
+      "toggleRepl.existing": {
+        "name": "existing",
+        "line": 346,
+        "col": 10,
+        "endLine": 346,
+        "endCol": 68,
+        "kind": "variable",
+        "scope": "toggleRepl"
+      },
+      "toggleRepl.overlay": {
+        "name": "overlay",
+        "line": 349,
+        "col": 10,
+        "endLine": 352,
+        "endCol": 6,
+        "kind": "variable",
+        "scope": "toggleRepl"
+      },
+      "toggleRepl.hdr": {
+        "name": "hdr",
+        "line": 355,
+        "col": 10,
+        "endLine": 357,
+        "endCol": 6,
+        "kind": "variable",
+        "scope": "toggleRepl"
+      },
+      "toggleRepl.titleEl": {
+        "name": "titleEl",
+        "line": 358,
+        "col": 10,
+        "endLine": 358,
+        "endCol": 96,
+        "kind": "variable",
+        "scope": "toggleRepl"
+      },
+      "toggleRepl.closeBtn": {
+        "name": "closeBtn",
+        "line": 361,
+        "col": 10,
+        "endLine": 363,
+        "endCol": 6,
+        "kind": "variable",
+        "scope": "toggleRepl"
+      },
+      "toggleRepl.mobileStyle": {
+        "name": "mobileStyle",
+        "line": 370,
+        "col": 10,
+        "endLine": 370,
+        "endCol": 50,
+        "kind": "variable",
+        "scope": "toggleRepl"
+      },
+      "toggleRepl.body": {
+        "name": "body",
+        "line": 375,
+        "col": 10,
+        "endLine": 375,
+        "endCol": 114,
+        "kind": "variable",
+        "scope": "toggleRepl"
+      },
+      "toggleRepl.replItem": {
+        "name": "replItem",
+        "line": 377,
+        "col": 12,
+        "endLine": 377,
+        "endCol": 76,
+        "kind": "variable",
+        "scope": "toggleRepl"
+      },
+      "toggleRepl.replView": {
+        "name": "replView",
+        "line": 378,
+        "col": 12,
+        "endLine": 378,
+        "endCol": 80,
+        "kind": "variable",
+        "scope": "toggleRepl"
+      },
+      "toggleRepl.replDom": {
+        "name": "replDom",
+        "line": 379,
+        "col": 12,
+        "endLine": 379,
+        "endCol": 58,
+        "kind": "variable",
+        "scope": "toggleRepl"
+      },
+      "toggleRepl.err": {
+        "name": "err",
+        "line": 383,
+        "col": 12,
+        "endLine": 383,
+        "endCol": 97,
+        "kind": "variable",
+        "scope": "toggleRepl"
+      },
+      "toggleRepl.escHandler": {
+        "name": "escHandler",
+        "line": 390,
+        "col": 10,
+        "endLine": 392,
+        "endCol": 5,
+        "kind": "function",
+        "scope": "toggleRepl",
         "signature": "(e)"
       },
-      "render.ta": {
+      "toggleRepl.ta": {
         "name": "ta",
-        "line": 346,
+        "line": 396,
         "col": 29,
-        "endLine": 346,
+        "endLine": 396,
         "endCol": 67,
         "kind": "variable",
-        "scope": "render"
+        "scope": "toggleRepl"
       },
       "render.syncBtn": {
         "name": "syncBtn",
-        "line": 349,
+        "line": 399,
         "col": 8,
-        "endLine": 366,
+        "endLine": 416,
         "endCol": 4,
         "kind": "variable",
         "scope": "render"

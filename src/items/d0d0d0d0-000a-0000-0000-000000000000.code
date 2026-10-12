@@ -43,6 +43,24 @@ export async function render(item, api) {
     } catch { /* view not found, let resolveView handle it */ }
   }
 
+  // === Home target ===
+  // content.homeItemId on this viewport item is what the Home button opens.
+  // Set from the More sheet. Mobile-only: the desktop viewport is a separate item.
+  let homeItemId = item.content?.homeItemId || null;
+  if (homeItemId) {
+    try { if (!(await api.get(homeItemId))) homeItemId = null; }
+    catch { homeItemId = null; }
+  }
+
+  async function setHomeItem(homeId) {
+    const fresh = await api.get(item.id);
+    await api.set({
+      ...fresh,
+      content: { ...fresh.content, homeItemId: homeId },
+      modified: Date.now()
+    });
+  }
+
   // === Set document title ===
   if (rootId) {
     try {
@@ -179,15 +197,37 @@ export async function render(item, api) {
     if (e.target === backdrop) hideSheet();
   });
 
+  const sheetMenuStyle = 'position:static; display:block; box-shadow:none; max-width:none; border:none; min-width:0; padding:0;';
+
+  function sheetEntry(label, handler) {
+    const el = api.createElement('div', { class: 'context-menu-item' }, [label]);
+    el.addEventListener('click', async () => {
+      hideSheet();
+      await handler();
+    });
+    return el;
+  }
+
   async function showContextMenu(itemId) {
     sheetBody.innerHTML = '';
+    // Mobile-only entry above the shared item menu
+    const mobileMenu = api.createElement('div', { class: 'context-menu', style: sheetMenuStyle });
+    mobileMenu.appendChild(itemId === homeItemId
+      ? sheetEntry('Unset Home', () => setHomeItem(null))
+      : sheetEntry('Set as Home', () => setHomeItem(itemId)));
+    sheetBody.appendChild(mobileMenu);
+    sheetBody.appendChild(api.createElement('div', { class: 'context-menu-separator' }, []));
     const menuLib = await api.require('context-menu-lib');
     const dismiss = () => {
       hideSheet();
     };
-    const menuEl = await menuLib.buildItemMenu(api, itemId, { onDismiss: dismiss, rootId });
+    const menuEl = await menuLib.buildItemMenu(api, itemId, {
+      onDismiss: dismiss,
+      rootId,
+      extraDebugActions: [{ label: 'REPL', onSelect: toggleRepl }]
+    });
     // Override desktop positioning for bottom sheet
-    menuEl.style.cssText = 'position:static; display:block; box-shadow:none; max-width:none; border:none; min-width:0; padding:0;';
+    menuEl.style.cssText = sheetMenuStyle;
     sheetBody.appendChild(menuEl);
     backdrop.style.display = 'block';
   }
@@ -287,11 +327,21 @@ export async function render(item, api) {
       await vpMgr.navigate(editId, { view: editView.id });
     }
   }));
+  const homeBtn = actionButton('Home', '\u2302', async () => {
+    if (!homeItemId) return;
+    const vpMgr = window.kernel.moduleSystem.getCached('viewport-manager');
+    await vpMgr.navigate(homeItemId);
+  });
+  if (!homeItemId) {
+    homeBtn.disabled = true;
+    homeBtn.style.opacity = '0.4';
+  }
+  actionBar.appendChild(homeBtn);
   actionBar.appendChild(actionButton('More', '\u22ef', () => {
     const targetId = selectedItemId || rootId;
     if (targetId) showContextMenu(targetId);
   }));
-  actionBar.appendChild(actionButton('REPL', '\u2328', async () => {
+  async function toggleRepl() {
     // Toggle: if already open, close it
     const existing = container.querySelector('.mobile-repl-overlay');
     if (existing) { existing.remove(); return; }
@@ -344,7 +394,7 @@ export async function render(item, api) {
 
     container.appendChild(overlay);
     setTimeout(() => { const ta = overlay.querySelector('textarea'); if (ta) ta.focus(); }, 0);
-  }));
+  }
 
   const syncBtn = actionButton('Sync', '\u27f3', async () => {
     const labelEl = syncBtn.querySelector('span:last-child');
