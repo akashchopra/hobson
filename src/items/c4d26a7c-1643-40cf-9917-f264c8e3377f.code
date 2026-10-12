@@ -85,17 +85,6 @@ export async function snooze(item, durationMs) {
   await _snoozeOne(item, durationMs);
 }
 
-// Returns the currently scheduled OS alarm timestamp for a reminder, or null.
-export async function getScheduledAt(itemId) {
-  if (!_interp) return null;
-  try {
-    const result = await _interp.eval(`(get (deref scheduled-at-map) "${itemId}")`);
-    return typeof result === 'number' ? result : null;
-  } catch (e) {
-    return null;
-  }
-}
-
 // Schedules the next occurrence of a recurring reminder, using baseTime
 // as the reference for the schedule expression. If baseTime is in the
 // past, advances forward until a future slot is found — handles "Done"
@@ -180,8 +169,6 @@ async function checkExactAlarmPermission(api) {
 
 (def notif-id-for (get lib :notif-id-for))
 
-(def scheduled-at-map (atom {}))
-
 (def notif-id-to-item-id (atom {}))
 
 (defn schedule-one! [reminder]
@@ -193,7 +180,6 @@ async function checkExactAlarmPermission(api) {
       (when-let [tauri (dom-get win :__TAURI__)]
         (when-let [notif (dom-get tauri :notification)] (.cancel notif [nid])))
       (catch e nil))
-    (swap! scheduled-at-map dissoc id)
     (swap! notif-id-to-item-id dissoc nid)
     (when
       at
@@ -219,7 +205,6 @@ async function checkExactAlarmPermission(api) {
                                    :allowWhileIdle true}}
 }
 ]))))
-        (swap! scheduled-at-map assoc id at)
         (swap! notif-id-to-item-id assoc nid id)))
     (set-item! (assoc-in (get-item id) [:content :scheduledAt] at))))
 
@@ -245,7 +230,6 @@ async function checkExactAlarmPermission(api) {
       (when-let [tauri (dom-get win :__TAURI__)]
         (when-let [notif (dom-get tauri :notification)] (.cancel notif [nid])))
       (catch e nil))
-    (swap! scheduled-at-map dissoc id)
     (swap! notif-id-to-item-id dissoc nid)
     (when
       (> snooze-at (now))
@@ -266,7 +250,6 @@ async function checkExactAlarmPermission(api) {
                                  :allowWhileIdle true}}
 }
 ]))))
-      (swap! scheduled-at-map assoc id snooze-at)
       (swap! notif-id-to-item-id assoc nid id))
     (set-item! (assoc-in (get-item id) [:content :scheduledAt] snooze-at))))
 
@@ -276,7 +259,6 @@ async function checkExactAlarmPermission(api) {
       (when-let [tauri (dom-get win :__TAURI__)]
         (when-let [notif (dom-get tauri :notification)] (.cancel notif [nid])))
       (catch e nil))
-    (swap! scheduled-at-map dissoc id)
     (swap! notif-id-to-item-id dissoc nid)))
 
 (defn open-notified-reminder! [action]
@@ -300,21 +282,9 @@ async function checkExactAlarmPermission(api) {
         reminders (filter (fn [item] (= (get item :type) REMINDER_TYPE)) all)]
     (when-let [tauri (dom-get win :__TAURI__)]
       (when-let [notif (dom-get tauri :notification)]
-        (let [pending-list (try (.pending notif) (catch e []))
-              pending-map (reduce
-                            (fn [m p] (assoc m (dom-get p :id) p))
-                            {}
-                            (or pending-list []))]
-          (doseq [r reminders]
-            (let [id (get r :id) nid (notif-id-for id) p (get pending-map nid)]
-              (swap! notif-id-to-item-id assoc nid id)
-              (when
-                p
-                (let [sched (dom-get p :schedule)
-                      at (when sched (dom-get sched :at))
-                      date-str (when at (dom-get at :date))
-                      ts (when date-str (.getTime (js/Date. date-str)))]
-                  (when (number? ts) (swap! scheduled-at-map assoc id ts)))))))
+        (doseq [r reminders]
+          (let [id (get r :id)]
+            (swap! notif-id-to-item-id assoc (notif-id-for id) id)))
         (when
           (dom-get notif :onAction)
           (try

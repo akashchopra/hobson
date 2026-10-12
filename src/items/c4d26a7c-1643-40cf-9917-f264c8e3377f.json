@@ -3,7 +3,7 @@
   "name": "reminder-scheduler",
   "type": "66666666-0000-0000-0000-000000000000",
   "created": 1775584579063,
-  "modified": 1791791243895,
+  "modified": 1791816829916,
   "watches": [
     {
       "event": "e0e00000-0002-0002-0000-000000000000"
@@ -28,7 +28,7 @@
         }
       ]
     ],
-    "code": "// reminder-scheduler — JS boot shim\n// Loads and evaluates this item's Hob scheduling logic at boot time.\n// Also watches item:updated to reactively re-schedule edited reminders.\n//\n// evalSchedule is the single source of truth for \"what time does this\n// reminder fire next?\" — used by schedule-one! (in Hob) and the reminder\n// view. It reuses the scheduler's own interpreter, so scheduling helpers\n// like (every :day 21 30) defined in our .hob are in scope.\n//\n// scheduleOneFrom(item, baseTime) is used by the \"Done\" button to schedule\n// the next occurrence after a reminder's most recently scheduled time,\n// even when that time is now in the past.\n\nconst SELF_ID = 'c4d26a7c-1643-40cf-9917-f264c8e3377f';\nconst REMINDER_TYPE = '0a41387e-78a9-4722-ab18-92aa14799385';\nlet _hob = null;\nlet _interp = null;\nlet _scheduleOne = null;\nlet _snoozeOne = null;\nconst _lastHob = new Map();\n\nexport async function onKernelBootComplete({ safeMode }, api) {\n  if (safeMode) return;\n  _hob = await api.require('hob-interpreter');\n  _interp = _hob.createInterpreter(api);\n  await _interp.macrosReady;\n  const self = await api.get(SELF_ID);\n  if (!self?.content?.hob) return;\n  for (const ast of self.content.hob) {\n    await _interp.evaluate(ast);\n  }\n  _scheduleOne = await _interp.eval('schedule-one!');\n  _snoozeOne = await _interp.eval('snooze!');\n  await checkExactAlarmPermission(api);\n  await ensureReminderChannel();\n  await _interp.eval('(boot-scan!)');\n  try {\n    const items = await api.getAll();\n    for (const item of items) {\n      if (item.type === REMINDER_TYPE) {\n        _lastHob.set(item.id, JSON.stringify(item.content?.schedule ?? []));\n      }\n    }\n  } catch (_) {}\n}\n\nexport async function onItemUpdated({ item }, api) {\n  if (!_scheduleOne || !item || item.type !== REMINDER_TYPE) return;\n  // Skip re-schedule when only content.scheduledAt changed (written by schedule-one! itself).\n  const hobKey = JSON.stringify(item.content?.schedule ?? []);\n  if (_lastHob.get(item.id) === hobKey) return;\n  _lastHob.set(item.id, hobKey);\n  await _scheduleOne(item);\n}\n\n// Evaluate a reminder's schedule expression, returning the next-fire\n// timestamp (ms since epoch) or null. If baseTime is provided, sets\n// eval-base-time before evaluation so (every ...) uses it as the\n// reference point instead of (now). Reentrant-safe: may be called\n// from within Hob code running in _interp.\nexport async function evalSchedule(item, baseTime) {\n  if (!_interp || !_hob) return null;\n  const ast = item?.content?.schedule;\n  if (!ast || ast.length === 0) return null;\n  try {\n    if (baseTime != null) {\n      await _interp.eval(`(reset! eval-base-time ${baseTime})`);\n    }\n    const source = _hob.prettyPrintAll(ast);\n    const result = await _interp.eval(source);\n    return typeof result === 'number' ? result : null;\n  } catch (e) {\n    return null;\n  } finally {\n    if (baseTime != null) {\n      await _interp.eval('(reset! eval-base-time nil)');\n    }\n  }\n}\n\n// Snooze a reminder for durationMs milliseconds, capped at its next scheduled time.\nexport async function snooze(item, durationMs) {\n  if (!_snoozeOne) return;\n  await _snoozeOne(item, durationMs);\n}\n\n// Returns the currently scheduled OS alarm timestamp for a reminder, or null.\nexport async function getScheduledAt(itemId) {\n  if (!_interp) return null;\n  try {\n    const result = await _interp.eval(`(get (deref scheduled-at-map) \"${itemId}\")`);\n    return typeof result === 'number' ? result : null;\n  } catch (e) {\n    return null;\n  }\n}\n\n// Schedules the next occurrence of a recurring reminder, using baseTime\n// as the reference for the schedule expression. If baseTime is in the\n// past, advances forward until a future slot is found — handles \"Done\"\n// tapped after the alarm already fired. Used by the \"Done\" button.\nexport async function scheduleOneFrom(item, baseTime) {\n  if (!_interp || !_scheduleOne) return;\n  let base = baseTime;\n  const now = Date.now();\n  // Advance base one recurrence step at a time until we find a future slot.\n  // Bounded to 10 iterations as a guard against expression bugs. If iterations\n  // are exhausted with base still in the past, fall back to now so schedule-one!\n  // finds the next occurrence from the present rather than silently dropping the alarm.\n  let iter = 0;\n  while (base != null && base <= now && iter++ < 10) {\n    const next = await evalSchedule(item, base);\n    if (next == null || next > now) break;\n    base = next;\n  }\n  if (base != null && base <= now) base = null;\n  try {\n    if (base != null) {\n      await _interp.eval(`(reset! eval-base-time ${base})`);\n    }\n    await _scheduleOne(item);\n  } finally {\n    await _interp.eval('(reset! eval-base-time nil)');\n  }\n}\n\nasync function ensureReminderChannel() {\n  try {\n    const notif = window.__TAURI__?.notification;\n    if (!notif?.createChannel) return;\n    await notif.createChannel({\n      id: 'reminders',\n      name: 'Reminders',\n      importance: 4,\n      vibration: true,\n    });\n  } catch (e) {\n    console.error('[reminder-scheduler] createChannel failed:', e);\n  }\n}\n\n// Checks whether exact alarms are available on Android 12+.\n// If not, opens the system settings screen so the user can grant\n// SCHEDULE_EXACT_ALARM — needed for reminders to fire on time.\n// Only prompts if at least one reminder with an active schedule exists.\nasync function checkExactAlarmPermission(api) {\n  try {\n    const notif = window.__TAURI__?.notification;\n    if (!notif?.canScheduleExactAlarms) return;\n    const { value } = await notif.canScheduleExactAlarms();\n    if (value) return;\n    const items = await api.getAll();\n    const hasScheduled = items.some(\n      it => it.type === REMINDER_TYPE && it.content?.schedule?.length > 0\n    );\n    if (!hasScheduled) return;\n    await notif.requestScheduleExactAlarm();\n  } catch (_) {}\n}\n\n\n\n\n\n\n\n",
+    "code": "// reminder-scheduler — JS boot shim\n// Loads and evaluates this item's Hob scheduling logic at boot time.\n// Also watches item:updated to reactively re-schedule edited reminders.\n//\n// evalSchedule is the single source of truth for \"what time does this\n// reminder fire next?\" — used by schedule-one! (in Hob) and the reminder\n// view. It reuses the scheduler's own interpreter, so scheduling helpers\n// like (every :day 21 30) defined in our .hob are in scope.\n//\n// scheduleOneFrom(item, baseTime) is used by the \"Done\" button to schedule\n// the next occurrence after a reminder's most recently scheduled time,\n// even when that time is now in the past.\n\nconst SELF_ID = 'c4d26a7c-1643-40cf-9917-f264c8e3377f';\nconst REMINDER_TYPE = '0a41387e-78a9-4722-ab18-92aa14799385';\nlet _hob = null;\nlet _interp = null;\nlet _scheduleOne = null;\nlet _snoozeOne = null;\nconst _lastHob = new Map();\n\nexport async function onKernelBootComplete({ safeMode }, api) {\n  if (safeMode) return;\n  _hob = await api.require('hob-interpreter');\n  _interp = _hob.createInterpreter(api);\n  await _interp.macrosReady;\n  const self = await api.get(SELF_ID);\n  if (!self?.content?.hob) return;\n  for (const ast of self.content.hob) {\n    await _interp.evaluate(ast);\n  }\n  _scheduleOne = await _interp.eval('schedule-one!');\n  _snoozeOne = await _interp.eval('snooze!');\n  await checkExactAlarmPermission(api);\n  await ensureReminderChannel();\n  await _interp.eval('(boot-scan!)');\n  try {\n    const items = await api.getAll();\n    for (const item of items) {\n      if (item.type === REMINDER_TYPE) {\n        _lastHob.set(item.id, JSON.stringify(item.content?.schedule ?? []));\n      }\n    }\n  } catch (_) {}\n}\n\nexport async function onItemUpdated({ item }, api) {\n  if (!_scheduleOne || !item || item.type !== REMINDER_TYPE) return;\n  // Skip re-schedule when only content.scheduledAt changed (written by schedule-one! itself).\n  const hobKey = JSON.stringify(item.content?.schedule ?? []);\n  if (_lastHob.get(item.id) === hobKey) return;\n  _lastHob.set(item.id, hobKey);\n  await _scheduleOne(item);\n}\n\n// Evaluate a reminder's schedule expression, returning the next-fire\n// timestamp (ms since epoch) or null. If baseTime is provided, sets\n// eval-base-time before evaluation so (every ...) uses it as the\n// reference point instead of (now). Reentrant-safe: may be called\n// from within Hob code running in _interp.\nexport async function evalSchedule(item, baseTime) {\n  if (!_interp || !_hob) return null;\n  const ast = item?.content?.schedule;\n  if (!ast || ast.length === 0) return null;\n  try {\n    if (baseTime != null) {\n      await _interp.eval(`(reset! eval-base-time ${baseTime})`);\n    }\n    const source = _hob.prettyPrintAll(ast);\n    const result = await _interp.eval(source);\n    return typeof result === 'number' ? result : null;\n  } catch (e) {\n    return null;\n  } finally {\n    if (baseTime != null) {\n      await _interp.eval('(reset! eval-base-time nil)');\n    }\n  }\n}\n\n// Snooze a reminder for durationMs milliseconds, capped at its next scheduled time.\nexport async function snooze(item, durationMs) {\n  if (!_snoozeOne) return;\n  await _snoozeOne(item, durationMs);\n}\n\n// Schedules the next occurrence of a recurring reminder, using baseTime\n// as the reference for the schedule expression. If baseTime is in the\n// past, advances forward until a future slot is found — handles \"Done\"\n// tapped after the alarm already fired. Used by the \"Done\" button.\nexport async function scheduleOneFrom(item, baseTime) {\n  if (!_interp || !_scheduleOne) return;\n  let base = baseTime;\n  const now = Date.now();\n  // Advance base one recurrence step at a time until we find a future slot.\n  // Bounded to 10 iterations as a guard against expression bugs. If iterations\n  // are exhausted with base still in the past, fall back to now so schedule-one!\n  // finds the next occurrence from the present rather than silently dropping the alarm.\n  let iter = 0;\n  while (base != null && base <= now && iter++ < 10) {\n    const next = await evalSchedule(item, base);\n    if (next == null || next > now) break;\n    base = next;\n  }\n  if (base != null && base <= now) base = null;\n  try {\n    if (base != null) {\n      await _interp.eval(`(reset! eval-base-time ${base})`);\n    }\n    await _scheduleOne(item);\n  } finally {\n    await _interp.eval('(reset! eval-base-time nil)');\n  }\n}\n\nasync function ensureReminderChannel() {\n  try {\n    const notif = window.__TAURI__?.notification;\n    if (!notif?.createChannel) return;\n    await notif.createChannel({\n      id: 'reminders',\n      name: 'Reminders',\n      importance: 4,\n      vibration: true,\n    });\n  } catch (e) {\n    console.error('[reminder-scheduler] createChannel failed:', e);\n  }\n}\n\n// Checks whether exact alarms are available on Android 12+.\n// If not, opens the system settings screen so the user can grant\n// SCHEDULE_EXACT_ALARM — needed for reminders to fire on time.\n// Only prompts if at least one reminder with an active schedule exists.\nasync function checkExactAlarmPermission(api) {\n  try {\n    const notif = window.__TAURI__?.notification;\n    if (!notif?.canScheduleExactAlarms) return;\n    const { value } = await notif.canScheduleExactAlarms();\n    if (value) return;\n    const items = await api.getAll();\n    const hasScheduled = items.some(\n      it => it.type === REMINDER_TYPE && it.content?.schedule?.length > 0\n    );\n    if (!hasScheduled) return;\n    await notif.requestScheduleExactAlarm();\n  } catch (_) {}\n}\n\n\n\n\n\n\n\n",
     "hob": [
       [
         "def",
@@ -88,16 +88,6 @@
           "get",
           "lib",
           ":notif-id-for"
-        ]
-      ],
-      [
-        "def",
-        "scheduled-at-map",
-        [
-          "atom",
-          {
-            "m": []
-          }
         ]
       ],
       [
@@ -211,12 +201,6 @@
               "e",
               null
             ]
-          ],
-          [
-            "swap!",
-            "scheduled-at-map",
-            "dissoc",
-            "id"
           ],
           [
             "swap!",
@@ -362,13 +346,6 @@
                     ]
                   ]
                 ]
-              ],
-              [
-                "swap!",
-                "scheduled-at-map",
-                "assoc",
-                "id",
-                "at"
               ],
               [
                 "swap!",
@@ -566,12 +543,6 @@
           ],
           [
             "swap!",
-            "scheduled-at-map",
-            "dissoc",
-            "id"
-          ],
-          [
-            "swap!",
             "notif-id-to-item-id",
             "dissoc",
             "nid"
@@ -695,13 +666,6 @@
             ],
             [
               "swap!",
-              "scheduled-at-map",
-              "assoc",
-              "id",
-              "snooze-at"
-            ],
-            [
-              "swap!",
               "notif-id-to-item-id",
               "assoc",
               "nid",
@@ -788,12 +752,6 @@
               "e",
               null
             ]
-          ],
-          [
-            "swap!",
-            "scheduled-at-map",
-            "dissoc",
-            "id"
           ],
           [
             "swap!",
@@ -959,160 +917,34 @@
                 ]
               },
               [
-                "let",
+                "doseq",
                 {
                   "v": [
-                    "pending-list",
-                    [
-                      "try",
-                      [
-                        ".pending",
-                        "notif"
-                      ],
-                      [
-                        "catch",
-                        "e",
-                        {
-                          "v": []
-                        }
-                      ]
-                    ],
-                    "pending-map",
-                    [
-                      "reduce",
-                      [
-                        "fn",
-                        {
-                          "v": [
-                            "m",
-                            "p"
-                          ]
-                        },
-                        [
-                          "assoc",
-                          "m",
-                          [
-                            "dom-get",
-                            "p",
-                            ":id"
-                          ],
-                          "p"
-                        ]
-                      ],
-                      {
-                        "m": []
-                      },
-                      [
-                        "or",
-                        "pending-list",
-                        {
-                          "v": []
-                        }
-                      ]
-                    ]
+                    "r",
+                    "reminders"
                   ]
                 },
                 [
-                  "doseq",
+                  "let",
                   {
                     "v": [
-                      "r",
-                      "reminders"
+                      "id",
+                      [
+                        "get",
+                        "r",
+                        ":id"
+                      ]
                     ]
                   },
                   [
-                    "let",
-                    {
-                      "v": [
-                        "id",
-                        [
-                          "get",
-                          "r",
-                          ":id"
-                        ],
-                        "nid",
-                        [
-                          "notif-id-for",
-                          "id"
-                        ],
-                        "p",
-                        [
-                          "get",
-                          "pending-map",
-                          "nid"
-                        ]
-                      ]
-                    },
+                    "swap!",
+                    "notif-id-to-item-id",
+                    "assoc",
                     [
-                      "swap!",
-                      "notif-id-to-item-id",
-                      "assoc",
-                      "nid",
+                      "notif-id-for",
                       "id"
                     ],
-                    [
-                      "when",
-                      "p",
-                      [
-                        "let",
-                        {
-                          "v": [
-                            "sched",
-                            [
-                              "dom-get",
-                              "p",
-                              ":schedule"
-                            ],
-                            "at",
-                            [
-                              "when",
-                              "sched",
-                              [
-                                "dom-get",
-                                "sched",
-                                ":at"
-                              ]
-                            ],
-                            "date-str",
-                            [
-                              "when",
-                              "at",
-                              [
-                                "dom-get",
-                                "at",
-                                ":date"
-                              ]
-                            ],
-                            "ts",
-                            [
-                              "when",
-                              "date-str",
-                              [
-                                ".getTime",
-                                [
-                                  "js/Date.",
-                                  "date-str"
-                                ]
-                              ]
-                            ]
-                          ]
-                        },
-                        [
-                          "when",
-                          [
-                            "number?",
-                            "ts"
-                          ],
-                          [
-                            "swap!",
-                            "scheduled-at-map",
-                            "assoc",
-                            "id",
-                            "ts"
-                          ]
-                        ]
-                      ]
-                    ]
+                    "id"
                   ]
                 ]
               ],
@@ -1248,11 +1080,6 @@
       },
       "notif-id-for": {
         "name": "notif-id-for",
-        "kind": "variable",
-        "scope": null
-      },
-      "scheduled-at-map": {
-        "name": "scheduled-at-map",
         "kind": "variable",
         "scope": null
       },
