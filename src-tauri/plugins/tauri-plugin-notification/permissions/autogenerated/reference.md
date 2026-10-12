@@ -27,6 +27,7 @@ It allows all notification related features.
 - `allow-permission-state`
 - `allow-can-schedule-exact-alarms`
 - `allow-request-schedule-exact-alarm`
+- `allow-get-launch-action`
 
 ## Permission Table
 
@@ -215,6 +216,32 @@ Enables the get_active command without any pre-configured scope.
 <td>
 
 Denies the get_active command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`notification:allow-get-launch-action`
+
+</td>
+<td>
+
+Enables the get_launch_action command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`notification:deny-get-launch-action`
+
+</td>
+<td>
+
+Denies the get_launch_action command without any pre-configured scope.
 
 </td>
 </tr>

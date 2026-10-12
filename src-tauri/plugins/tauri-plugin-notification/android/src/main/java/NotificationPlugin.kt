@@ -85,6 +85,7 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
   private lateinit var notificationManager: NotificationManager
   private lateinit var notificationStorage: NotificationStorage
   private var channelManager = ChannelManager(activity)
+  private var pendingLaunchAction: JSObject? = null
 
   companion object {
     var instance: NotificationPlugin? = null
@@ -128,10 +129,29 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
     if (Intent.ACTION_MAIN != intent.action) {
       return
     }
-    val dataJson = manager.handleNotificationActionPerformed(intent, notificationStorage)
-    if (dataJson != null) {
-      trigger("actionPerformed", dataJson)
+    // Relaunching from Recents redelivers the task's original intent, which
+    // may be an old notification tap — don't replay it.
+    if ((intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY) != 0) {
+      return
     }
+    val dataJson = manager.handleNotificationActionPerformed(intent, notificationStorage) ?: return
+    // trigger() drops events when nothing is listening. On a cold WebView
+    // start load() runs before JS registers onAction, so hold the action
+    // for JS to collect via getLaunchAction once it has booted.
+    if (hasListener("actionPerformed")) {
+      trigger("actionPerformed", dataJson)
+    } else {
+      pendingLaunchAction = dataJson
+    }
+  }
+
+  @Command
+  fun getLaunchAction(invoke: Invoke) {
+    val result = JSObject()
+    result.put("action", pendingLaunchAction)
+    pendingLaunchAction = null
+    // resolve(), not resolveObject() — see canScheduleExactAlarms.
+    invoke.resolve(result)
   }
 
   @Command

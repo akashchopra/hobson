@@ -279,6 +279,22 @@ async function checkExactAlarmPermission(api) {
     (swap! scheduled-at-map dissoc id)
     (swap! notif-id-to-item-id dissoc nid)))
 
+(defn open-notified-reminder! [action]
+  (let [nid (dom-get action :id)
+        reminder-id (when nid (get (deref notif-id-to-item-id) nid))]
+    (when
+      reminder-id
+      (let [kernel (dom-get win :kernel)
+            vp-mgr (when
+                     kernel
+                     (.getCached
+                       (dom-get kernel :moduleSystem)
+                       "viewport-manager"))]
+        (if
+          vp-mgr
+          (.navigate vp-mgr reminder-id)
+          (dom-set! (dom-get win :location) :search (str "?root=" reminder-id)))))))
+
 (defn boot-scan! []
   (let [all (get-all)
         reminders (filter (fn [item] (= (get item :type) REMINDER_TYPE)) all)]
@@ -302,28 +318,14 @@ async function checkExactAlarmPermission(api) {
         (when
           (dom-get notif :onAction)
           (try
-            (.onAction
-              notif
-              (fn [action]
-                (let [nid (dom-get action :id)
-                      reminder-id (when
-                                    nid
-                                    (get (deref notif-id-to-item-id) nid))]
-                  (when
-                    reminder-id
-                    (let [kernel (dom-get win :kernel)
-                          vp-mgr (when
-                                   kernel
-                                   (.getCached
-                                     (dom-get kernel :moduleSystem)
-                                     "viewport-manager"))]
-                      (if
-                        vp-mgr
-                        (.navigate vp-mgr reminder-id)
-                        (dom-set!
-                          (dom-get win :location)
-                          :search
-                          (str "?root=" reminder-id))))))))
+            (.onAction notif (fn [action] (open-notified-reminder! action)))
+            (catch e nil)))
+        (when
+          (dom-get notif :getLaunchAction)
+          (try
+            (let [launch (.getLaunchAction notif)
+                  action (when launch (dom-get launch :action))]
+              (when action (open-notified-reminder! action)))
             (catch e nil)))))
     (.log
       (dom-get win :console)
