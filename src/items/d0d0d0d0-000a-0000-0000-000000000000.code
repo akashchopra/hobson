@@ -1,6 +1,54 @@
 // viewport-mobile-view — Phone-optimized viewport with bottom action bar.
 // Replaces viewport-desktop-view on touch devices (screens: { touch: true }).
 
+// --- Sync button status ---
+// One module-level subscription + timer updates whichever Sync button is in the
+// document. Per-render wiring would leak: on a same-view re-render morphdom keeps
+// the old button and discards the new one without running its cleanup.
+
+let _syncStatusWired = false;
+
+function wireSyncStatusUpdates(syncClient) {
+  if (_syncStatusWired) return;
+  _syncStatusWired = true;
+  const refresh = async () => {
+    const btn = document.querySelector('[data-sync-button]');
+    if (btn) applySyncStatus(btn, await syncClient.getStatus());
+  };
+  syncClient.onStatusChange(refresh);
+  setInterval(refresh, 60000); // keeps the age current
+}
+
+function formatSyncAge(timestamp) {
+  if (!timestamp) return 'never';
+  const minutes = Math.floor((Date.now() - timestamp) / 60000);
+  if (minutes < 1) return 'now';
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h`;
+  return `${Math.floor(hours / 24)}d`;
+}
+
+/** Set the Sync button's icon, label and title from sync-client status. */
+function applySyncStatus(btn, { inFlight, lastSuccess, lastError }) {
+  const iconEl = btn.querySelector('span:first-child');
+  const labelEl = btn.querySelector('span:last-child');
+  btn.disabled = inFlight;
+  if (inFlight) {
+    iconEl.textContent = '⟳';
+    labelEl.textContent = 'Syncing…';
+    btn.title = '';
+  } else if (lastError) {
+    iconEl.textContent = '✗';
+    labelEl.textContent = `Failed · ${formatSyncAge(lastSuccess)}`;
+    btn.title = lastError;
+  } else {
+    iconEl.textContent = '⟳';
+    labelEl.textContent = `Sync · ${formatSyncAge(lastSuccess)}`;
+    btn.title = '';
+  }
+}
+
 export async function render(item, api) {
   // === URL root resolution (same logic as viewport-view) ===
   const params = new URLSearchParams(window.location.search);
@@ -396,24 +444,16 @@ export async function render(item, api) {
     setTimeout(() => { const ta = overlay.querySelector('textarea'); if (ta) ta.focus(); }, 0);
   }
 
+  // Sync button: shows age of the last successful sync so a silently failing
+  // auto-sync is visible. Status comes from sync-client (auto + manual syncs).
+  const syncClient = await api.require('sync-client');
+  wireSyncStatusUpdates(syncClient);
   const syncBtn = actionButton('Sync', '\u27f3', async () => {
-    const labelEl = syncBtn.querySelector('span:last-child');
-    const iconEl = syncBtn.querySelector('span:first-child');
-    labelEl.textContent = 'Syncing\u2026';
-    syncBtn.disabled = true;
-    try {
-      const client = await api.require('sync-client');
-      const result = await client.sync();
-      iconEl.textContent = '\u2713';
-      labelEl.textContent = result.accepted > 0 ? `${result.accepted} new` : 'Done';
-    } catch (e) {
-      iconEl.textContent = '\u2717';
-      labelEl.textContent = 'Failed';
-      throw e;
-    }
-    syncBtn.disabled = false;
-    setTimeout(() => { iconEl.textContent = '\u27f3'; labelEl.textContent = 'Sync'; }, 2000);
+    await syncClient.sync(); // label updates via onStatusChange
   });
+  syncBtn.setAttribute('data-sync-button', '');
+  // Label computed now so a morphdom patch carries the current status
+  applySyncStatus(syncBtn, await syncClient.getStatus());
   actionBar.appendChild(syncBtn);
 
   container.appendChild(actionBar);

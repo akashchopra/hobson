@@ -1,15 +1,121 @@
 // sync-client — Runs on mobile, syncs with desktop.
 // Collects locally modified items, POSTs to desktop's sync endpoint,
-// applies the response. Triggered manually via exported sync() function.
+// applies the response.
+//
+// Triggers (Android only — see isSyncClientDevice):
+//   - once when the viewport is ready (app start)
+//   - AUTO_SYNC_DELAY_MS after the first unsynced item change
+//   - manually via the exported sync() (mobile viewport's Sync button)
+// Only one sync runs at a time; concurrent callers share the in-flight sync.
 
 const SELF_ID = 'f1111111-0012-0000-0000-000000000000';
+const AUTO_SYNC_DELAY_MS = 30_000;
+const REQUEST_TIMEOUT_MS = 60_000;
 
 let _api = null;
+let _inFlight = null;          // Promise of the running sync, or null
+let _changedDuringSync = false; // item events seen while a sync was running
+let _autoSyncTimer = null;
+let _lastError = null;         // Error from the most recent failed attempt, cleared on success
+const _statusListeners = new Set();
+
+/** True on the device that acts as sync client. The desktop runs sync-server and
+ *  holds a synced copy of this item, so it must never auto-sync with itself. */
+function isSyncClientDevice() {
+  return window.__TAURI_OS_PLUGIN_INTERNALS__?.platform === 'android';
+}
 
 export async function onKernelBootComplete({ safeMode }, api) {
   if (safeMode) return;
   _api = api;
   console.log('[sync-client] Ready');
+}
+
+export async function onViewportReady(_content, api) {
+  if (!isSyncClientDevice()) return;
+  _api = api;
+  runAutoSync('app start');
+}
+
+// Item change watchers: only schedule — the kernel awaits watch handlers.
+export async function onItemCreated() { noteLocalChange(); }
+export async function onItemUpdated() { noteLocalChange(); }
+export async function onItemDeleted() { noteLocalChange(); }
+
+function noteLocalChange() {
+  if (!isSyncClientDevice()) return;
+  // Includes sync's own non-silent deletions; costs at most one extra sync.
+  if (_inFlight) { _changedDuringSync = true; return; }
+  scheduleAutoSync();
+}
+
+/** Start the timer on the first unsynced change; later changes don't reset it,
+ *  so continuous writes can't postpone a sync indefinitely. */
+function scheduleAutoSync() {
+  if (_autoSyncTimer) return;
+  _autoSyncTimer = setTimeout(() => {
+    _autoSyncTimer = null;
+    runAutoSync('item changes');
+  }, AUTO_SYNC_DELAY_MS);
+}
+
+/** Automatic sync: failures are recorded in status rather than thrown. */
+async function runAutoSync(reason) {
+  try {
+    console.log(`[sync-client] Auto-sync (${reason})`);
+    await sync();
+  } catch (e) {
+    console.warn(`[sync-client] Auto-sync (${reason}) failed:`, e.message);
+  }
+}
+
+/** Current sync status for UI.
+ *  @returns {Promise<{inFlight: boolean, lastSuccess: number, lastError: string|null}>}
+ *  lastSuccess is the server time of the last completed sync (0 = never). */
+export async function getStatus() {
+  const self = _api ? await _api.get(SELF_ID) : null;
+  return {
+    inFlight: !!_inFlight,
+    lastSuccess: self?.content?.lastSyncTimestamp || 0,
+    lastError: _lastError ? _lastError.message : null
+  };
+}
+
+/** Register a listener called (with no arguments) whenever sync status changes.
+ *  @returns {Function} unsubscribe */
+export function onStatusChange(listener) {
+  _statusListeners.add(listener);
+  return () => _statusListeners.delete(listener);
+}
+
+function notifyStatus() {
+  for (const listener of _statusListeners) {
+    try { listener(); } catch (e) { console.warn('[sync-client] status listener failed:', e); }
+  }
+}
+
+/** Trigger a sync with the desktop server, or join the one already running.
+ *  Throws on failure. Callable from REPL: (await api.require('sync-client')).sync() */
+export function sync() {
+  if (_inFlight) return _inFlight;
+  if (_autoSyncTimer) { clearTimeout(_autoSyncTimer); _autoSyncTimer = null; }
+  _changedDuringSync = false;
+  _inFlight = (async () => {
+    try {
+      const result = await runSync();
+      _lastError = null;
+      return result;
+    } catch (e) {
+      _lastError = e;
+      throw e;
+    } finally {
+      _inFlight = null;
+      notifyStatus();
+      if (_changedDuringSync && isSyncClientDevice()) scheduleAutoSync();
+    }
+  })();
+  notifyStatus();
+  return _inFlight;
 }
 
 /** Attach blob data (as base64 data URL) to an item for transit, if one exists. */
@@ -49,8 +155,8 @@ async function storeBlob(api, incoming) {
   await api.setBlob(incoming.id, new Blob([bytes], { type: mimeType }));
 }
 
-/** Trigger a sync with the desktop server. Callable from REPL: (await api.require('sync-client')).sync() */
-export async function sync() {
+/** One sync round-trip: push local changes, pull and apply remote ones. */
+async function runSync() {
   if (!_api) throw new Error('sync-client not initialized');
   const api = _api;
 
@@ -92,10 +198,15 @@ export async function sync() {
       payload.deletions = [];
     }
 
+    let j = JSON.stringify(payload);
+    //alert(j.length);
+
     const response = await fetch(`${url}/sync`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
+      body: j,
+      // Unreachable desktop must not hold the in-flight sync open for minutes
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
     });
 
     if (!response.ok) {
